@@ -1,0 +1,8 @@
+/build*/
+/out/
+/.qt/
+/.toolchain/
+*.log
+*.user
+*.user.*
+*.qmlc
