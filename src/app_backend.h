@@ -13,6 +13,8 @@ namespace hotas {
 class AppBackend final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList axes READ axes NOTIFY stateChanged)
+    Q_PROPERTY(int selectedAxisIndex READ selectedAxisIndex NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList selectedAxisCurve READ selectedAxisCurve NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
@@ -35,6 +37,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool vjoyReady READ vjoyReady NOTIFY stateChanged)
     Q_PROPERTY(QString vjoyStatus READ vjoyStatus NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideAvailable READ hidhideAvailable NOTIFY stateChanged)
+    Q_PROPERTY(bool hidhideCloakStateKnown READ hidhideCloakStateKnown NOTIFY stateChanged)
+    Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
@@ -54,6 +58,8 @@ public:
     ~AppBackend() override;
 
     QVariantList axes() const;
+    int selectedAxisIndex() const;
+    QVariantList selectedAxisCurve() const;
     QVariantList buttons() const;
     QVariantList profiles() const;
     QString activeProfileId() const;
@@ -76,6 +82,8 @@ public:
     bool vjoyReady() const;
     QString vjoyStatus() const;
     bool hidhideAvailable() const;
+    bool hidhideCloakStateKnown() const;
+    bool hidhideCloaked() const;
     bool calibrationActive() const;
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
@@ -93,8 +101,11 @@ public:
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
     Q_INVOKABLE bool setMapping(int physicalAxis, const QString &target, bool explicitOverride = false);
+    Q_INVOKABLE void setSelectedAxis(int physicalAxis);
     Q_INVOKABLE void setAxisInverted(int physicalAxis, bool inverted);
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
+    Q_INVOKABLE void setAxisHysteresis(int physicalAxis, double hysteresis);
+    Q_INVOKABLE bool setAxisOutputLimits(int physicalAxis, double minimum, double maximum);
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE void resetButtonMappings();
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
@@ -108,11 +119,14 @@ public:
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
     Q_INVOKABLE bool openVjoyConfiguration();
+    Q_INVOKABLE void refreshHidHideStatus();
+    Q_INVOKABLE bool openHidHideConfiguration();
     Q_INVOKABLE void useConnectedDevice();
     Q_INVOKABLE void resetApplicationConfiguration();
 
 signals:
     void stateChanged();
+    void selectedAxisCurveChanged();
     void eventLogChanged();
 
 private slots:
@@ -122,6 +136,8 @@ private slots:
 
 private:
     void persistAndApply();
+    void rebuildSelectedAxisCurve();
+    bool fallBackToAvailableAxis();
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     const ControllerProfile &currentProfile() const;
@@ -138,6 +154,7 @@ private:
     qint64 m_lastPhysicalUpdateAgeMs = -1;
     bool m_havePhysicalReport = false;
     double m_vjoyWritesPerSecond = 0.0;
+    QVariantList m_selectedAxisCurve;
     QStringList m_events;
 };
 

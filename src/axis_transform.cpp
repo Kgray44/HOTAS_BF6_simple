@@ -44,15 +44,72 @@ float applyRescaledDeadzone(float value, float deadzone)
     return std::copysign(std::min(rescaled, 1.0F), value);
 }
 
-float transformAxis(float raw, const RuntimeAxisMapping &mapping)
+void normalizeAxisProcessing(AxisMapping &mapping)
 {
-    float transformed = normalizeCalibrated(raw, mapping.calibration);
-    transformed = applyRescaledDeadzone(transformed, mapping.profile.deadzone);
+    mapping.deadzone = std::clamp(mapping.deadzone, 0.0F, 0.95F);
+    mapping.hysteresis = std::clamp(mapping.hysteresis, 0.0F, 0.25F);
+    mapping.outputMinimum = clampUnit(mapping.outputMinimum);
+    mapping.outputMaximum = clampUnit(mapping.outputMaximum);
+    if (mapping.outputMinimum >= mapping.outputMaximum) {
+        mapping.outputMinimum = -1.0F;
+        mapping.outputMaximum = 1.0F;
+    }
+}
+
+float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping)
+{
+    return applyRescaledDeadzone(normalizeCalibrated(raw, mapping.calibration),
+                                 mapping.profile.deadzone);
+}
+
+float evaluateResponseCurve(float value, const AxisMapping &)
+{
+    // v1.3 establishes one runtime boundary. All profiles are Linear until
+    // v1.4 introduces editable response curves.
+    return clampUnit(value);
+}
+
+float applyOutputLimits(float value, const AxisMapping &mapping)
+{
+    return std::clamp(value, mapping.outputMinimum, mapping.outputMaximum);
+}
+
+float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &state)
+{
+    threshold = std::max(0.0F, threshold);
+    if (!state.initialized || threshold == 0.0F
+        || std::abs(value - state.lastAcceptedInput) >= threshold) {
+        state.lastAcceptedInput = clampUnit(value);
+        state.initialized = true;
+    }
+    return state.lastAcceptedInput;
+}
+
+float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping)
+{
+    float transformed = preprocessAxisInput(raw, mapping);
     if (mapping.profile.inverted) {
         transformed = -transformed;
     }
-    // Response curves deliberately belong after this point in a future version.
-    return clampUnit(transformed);
+    transformed = evaluateResponseCurve(transformed, mapping.profile);
+    return applyOutputLimits(transformed, mapping.profile);
+}
+
+float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
+                        AxisHysteresisState &hysteresisState)
+{
+    float transformed = preprocessAxisInput(raw, mapping);
+    transformed = applyAxisHysteresis(transformed, mapping.profile.hysteresis, hysteresisState);
+    if (mapping.profile.inverted) {
+        transformed = -transformed;
+    }
+    transformed = evaluateResponseCurve(transformed, mapping.profile);
+    return applyOutputLimits(transformed, mapping.profile);
+}
+
+float transformAxis(float raw, const RuntimeAxisMapping &mapping)
+{
+    return evaluateStaticAxisTransfer(raw, mapping);
 }
 
 bool normalizeMappingConflicts(AxisMappings &mappings)

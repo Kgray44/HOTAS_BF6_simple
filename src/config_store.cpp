@@ -16,7 +16,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 3;
+constexpr int kProfileSchemaVersion = 5;
 
 QString settingsFilePath()
 {
@@ -57,6 +57,9 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
         {u"target"_qs, virtualAxisLabel(mapping.target)},
         {u"inverted"_qs, mapping.inverted},
         {u"deadzone"_qs, mapping.deadzone},
+        {u"hysteresis"_qs, mapping.hysteresis},
+        {u"outputMinimum"_qs, mapping.outputMinimum},
+        {u"outputMaximum"_qs, mapping.outputMaximum},
     };
 }
 
@@ -66,23 +69,29 @@ AxisMapping axisMappingFromJson(const QJsonObject &json)
     mapping.target = virtualAxisFromString(json.value(u"target"_qs).toString());
     mapping.inverted = json.value(u"inverted"_qs).toBool(false);
     mapping.deadzone = std::clamp(float(json.value(u"deadzone"_qs).toDouble(0.03)), 0.0F, 0.95F);
+    mapping.hysteresis = std::clamp(float(json.value(u"hysteresis"_qs).toDouble(0.002)), 0.0F, 0.25F);
+    mapping.outputMinimum = std::clamp(float(json.value(u"outputMinimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
+    mapping.outputMaximum = std::clamp(float(json.value(u"outputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
+    normalizeAxisProcessing(mapping);
     return mapping;
 }
 
 QJsonObject buttonBindingToJson(const ButtonBinding &binding)
 {
     if (binding.type == ButtonActionType::VirtualButton) {
-        return {{u"type"_qs, u"virtualButton"_qs}, {u"target"_qs, binding.target}};
+        return {{u"type"_qs, u"virtualButton"_qs}, {u"target"_qs, binding.target},
+                {u"explicit"_qs, binding.explicitlyConfigured}};
     }
-    return {{u"type"_qs, u"disabled"_qs}};
+    return {{u"type"_qs, u"disabled"_qs}, {u"explicit"_qs, binding.explicitlyConfigured}};
 }
 
 ButtonBinding buttonBindingFromJson(const QJsonObject &json)
 {
+    const bool explicitlyConfigured = json.value(u"explicit"_qs).toBool(false);
     if (json.value(u"type"_qs).toString().trimmed().compare(u"virtualButton"_qs, Qt::CaseInsensitive) == 0) {
-        return {ButtonActionType::VirtualButton, json.value(u"target"_qs).toInt(0)};
+        return {ButtonActionType::VirtualButton, json.value(u"target"_qs).toInt(0), explicitlyConfigured};
     }
-    return {};
+    return {ButtonActionType::Disabled, 0, explicitlyConfigured};
 }
 
 void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configuration)
@@ -90,6 +99,8 @@ void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configurat
     configuration.preferredDeviceId = json.value(u"preferredDeviceId"_qs).toString();
     configuration.vjoyDeviceId = std::clamp(json.value(u"vjoyDeviceId"_qs).toInt(1), 1, 16);
     configuration.startMappingOnLaunch = json.value(u"startMappingOnLaunch"_qs).toBool(false);
+    configuration.selectedAxisIndex = std::clamp(json.value(u"selectedAxisIndex"_qs)
+        .toInt(static_cast<int>(PhysicalAxis::X)), 0, kPhysicalAxisCount - 1);
 }
 
 QJsonArray buttonBindingsToJson(const ButtonBindings &bindings)
@@ -233,6 +244,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
         {u"startMappingOnLaunch"_qs, configuration.startMappingOnLaunch},
+        {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
         {u"profiles"_qs, profiles},
         {u"activeProfileId"_qs, configuration.activeProfileId},
@@ -243,7 +255,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
-    if (version != kProfileSchemaVersion) {
+    if (version != 3 && version != 4 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }

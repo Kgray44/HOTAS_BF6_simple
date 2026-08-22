@@ -68,6 +68,14 @@ private slots:
     void deadzoneIsRescaled();
     void inversionIsAppliedAfterDeadzone();
     void rangeIsClamped();
+    void processingOrderIncludesLimitsAfterInversion();
+    void hysteresisSuppressesNoiseWithoutTemporalSmoothing();
+    void hysteresisHandlesDeadzoneAndFullScaleBoundaries();
+    void outputLimitsSupportAsymmetryAndInversion();
+    void staticPreviewSharesTheTransferEvaluator();
+    void v12ProfileConfigurationMigratesWithSafeAxisDefaults();
+    void virtualControllersAreNeverEligibleAsPhysicalInput();
+    void implicitButtonsDefaultToMatchingVjoyTargets();
     void configurationRoundTrips();
     void duplicateMappingIsRejectedAndNormalized();
     void buttonCapacityMismatchIsReported();
@@ -131,6 +139,136 @@ void MappingCoreTests::rangeIsClamped()
     QCOMPARE(clampUnit(5.0F), 1.0F);
     QCOMPARE(clampUnit(-5.0F), -1.0F);
     QVERIFY(nearlyEqual(applyRescaledDeadzone(4.0F, 0.03F), 1.0F));
+}
+
+void MappingCoreTests::processingOrderIncludesLimitsAfterInversion()
+{
+    RuntimeAxisMapping mapping;
+    mapping.calibration = {true, -0.80F, 0.10F, 0.90F};
+    mapping.profile.deadzone = 0.10F;
+    mapping.profile.inverted = true;
+    mapping.profile.outputMinimum = -0.40F;
+    mapping.profile.outputMaximum = 0.70F;
+
+    // 0.50 raw calibrates to +0.50, rescales beyond the 10% deadzone to
+    // +0.444…, inverts, then clamps at the final output minimum.
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.50F, mapping), -0.40F));
+}
+
+void MappingCoreTests::hysteresisSuppressesNoiseWithoutTemporalSmoothing()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.hysteresis = 0.002F;
+    AxisHysteresisState state;
+
+    QVERIFY(nearlyEqual(transformAxisLive(0.2000F, mapping, state), 0.2000F));
+    QVERIFY(nearlyEqual(transformAxisLive(0.2005F, mapping, state), 0.2000F));
+    QVERIFY(nearlyEqual(transformAxisLive(0.1986F, mapping, state), 0.2000F));
+    QVERIFY(nearlyEqual(transformAxisLive(0.2040F, mapping, state), 0.2040F));
+    QVERIFY(nearlyEqual(transformAxisLive(-0.3000F, mapping, state), -0.3000F));
+    QVERIFY(nearlyEqual(transformAxisLive(-0.3010F, mapping, state), -0.3000F));
+}
+
+void MappingCoreTests::hysteresisHandlesDeadzoneAndFullScaleBoundaries()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.10F;
+    mapping.profile.hysteresis = 0.02F;
+    AxisHysteresisState state;
+
+    QVERIFY(nearlyEqual(transformAxisLive(0.30F, mapping, state), 0.222222F));
+    // Crossing into the deadzone clears the prior accepted command; a later
+    // tiny movement remains centered rather than permanently sticking.
+    QVERIFY(nearlyEqual(transformAxisLive(0.095F, mapping, state), 0.0F));
+    QVERIFY(nearlyEqual(transformAxisLive(0.105F, mapping, state), 0.0F));
+    QVERIFY(nearlyEqual(transformAxisLive(0.20F, mapping, state), 0.111111F));
+    QVERIFY(nearlyEqual(transformAxisLive(1.0F, mapping, state), 1.0F));
+    QVERIFY(nearlyEqual(transformAxisLive(-1.0F, mapping, state), -1.0F));
+}
+
+void MappingCoreTests::outputLimitsSupportAsymmetryAndInversion()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.outputMinimum = -0.70F;
+    mapping.profile.outputMaximum = 0.80F;
+
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-1.0F, mapping), -0.70F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, mapping), 0.80F));
+    mapping.profile.inverted = true;
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, mapping), -0.70F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-1.0F, mapping), 0.80F));
+}
+
+void MappingCoreTests::staticPreviewSharesTheTransferEvaluator()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.20F;
+    mapping.profile.inverted = true;
+    mapping.profile.outputMinimum = -0.60F;
+    mapping.profile.outputMaximum = 0.50F;
+
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.10F, mapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.60F, mapping), -0.50F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-1.0F, mapping), 0.50F));
+    // The compatibility wrapper remains the same static evaluator used for
+    // the v1.3 output trace; hysteresis is deliberately live-only.
+    QVERIFY(nearlyEqual(transformAxis(0.60F, mapping), evaluateStaticAxisTransfer(0.60F, mapping)));
+}
+
+void MappingCoreTests::v12ProfileConfigurationMigratesWithSafeAxisDefaults()
+{
+    QJsonObject v12 = ConfigStore::toJson(defaultConfiguration());
+    v12.insert(QStringLiteral("version"), 3);
+    v12.remove(QStringLiteral("selectedAxisIndex"));
+    QJsonArray profiles = v12.value(QStringLiteral("profiles")).toArray();
+    for (int profileIndex = 0; profileIndex < profiles.size(); ++profileIndex) {
+        QJsonObject profile = profiles.at(profileIndex).toObject();
+        QJsonArray axes = profile.value(QStringLiteral("axes")).toArray();
+        for (int axisIndex = 0; axisIndex < axes.size(); ++axisIndex) {
+            QJsonObject axis = axes.at(axisIndex).toObject();
+            axis.remove(QStringLiteral("hysteresis"));
+            axis.remove(QStringLiteral("outputMinimum"));
+            axis.remove(QStringLiteral("outputMaximum"));
+            axes.replace(axisIndex, axis);
+        }
+        profile.insert(QStringLiteral("axes"), axes);
+        profiles.replace(profileIndex, profile);
+    }
+    v12.insert(QStringLiteral("profiles"), profiles);
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v12, &valid);
+    QVERIFY(valid);
+    QCOMPARE(migrated.selectedAxisIndex, static_cast<int>(PhysicalAxis::X));
+    const AxisMapping &axis = activeProfile(migrated).axes[static_cast<int>(PhysicalAxis::X)];
+    QVERIFY(nearlyEqual(axis.hysteresis, 0.002F));
+    QVERIFY(nearlyEqual(axis.outputMinimum, -1.0F));
+    QVERIFY(nearlyEqual(axis.outputMaximum, 1.0F));
+}
+
+void MappingCoreTests::virtualControllersAreNeverEligibleAsPhysicalInput()
+{
+    QVERIFY(isVirtualControllerName(QStringLiteral("vJoy Device")));
+    QVERIFY(isVirtualControllerName(QStringLiteral("Virtual Joystick 1")));
+    QVERIFY(!isVirtualControllerName(QStringLiteral("T.Flight HOTAS One")));
+    QVERIFY(!isVirtualControllerName(QStringLiteral("Thrustmaster T.16000M")));
+}
+
+void MappingCoreTests::implicitButtonsDefaultToMatchingVjoyTargets()
+{
+    ButtonBindings bindings(4);
+    bindings[1] = {ButtonActionType::Disabled, 0, true}; // User chose Unused.
+    bindings[2] = {ButtonActionType::VirtualButton, 12, true}; // User route.
+
+    QVERIFY(ensureDefaultButtonMappings(bindings, 4, 32));
+    QCOMPARE(bindings[0].target, 1);
+    QCOMPARE(bindings[1].type, ButtonActionType::Disabled);
+    QCOMPARE(bindings[2].target, 12);
+    QCOMPARE(bindings[3].target, 4);
+    QVERIFY(!bindings[0].explicitlyConfigured);
+    QVERIFY(!needsDefaultButtonMappings(bindings, 4, 32));
 }
 
 void MappingCoreTests::configurationRoundTrips()

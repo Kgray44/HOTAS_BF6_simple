@@ -46,6 +46,13 @@ struct AxisMapping {
     VirtualAxis target = VirtualAxis::Disabled;
     bool inverted = false;
     float deadzone = 0.03F;
+    // Hysteresis is evaluated on the normalized, deadzone-rescaled input in
+    // the worker. 0.2% filters tiny report noise without adding temporal lag.
+    float hysteresis = 0.002F;
+    // These are deliberate command-authority limits, independent from
+    // physical-device calibration. They are applied after inversion/curve.
+    float outputMinimum = -1.0F;
+    float outputMaximum = 1.0F;
 };
 
 // Calibration belongs to the physical controller. Runtime mappings combine
@@ -65,6 +72,9 @@ enum class ButtonActionType : int {
 struct ButtonBinding {
     ButtonActionType type = ButtonActionType::Disabled;
     int target = 0; // One-based vJoy button number when type is VirtualButton.
+    // Defaults are filled as 1:1 passthrough when a controller is discovered.
+    // A user edit, including Disabled, makes that source authoritative.
+    bool explicitlyConfigured = false;
 };
 
 using ButtonBindings = std::vector<ButtonBinding>;
@@ -82,6 +92,8 @@ struct MapperConfiguration {
     QString preferredDeviceId;
     int vjoyDeviceId = 1;
     bool startMappingOnLaunch = false;
+    // UI-only selection. It never determines which axes the worker maps.
+    int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
     std::vector<ControllerProfile> profiles;
     QString activeProfileId;
@@ -138,6 +150,23 @@ inline QString physicalAxisDetail(PhysicalAxis axis)
     case PhysicalAxis::Rz: return u"Stick twist"_qs;
     default: return physicalAxisKey(axis).toUpper();
     }
+}
+
+inline bool isVirtualControllerName(const QString &name)
+{
+    const QString normalized = name.trimmed().toCaseFolded();
+    // Never route a virtual controller back into itself. vJoy appears in
+    // DirectInput alongside physical HOTAS devices and may otherwise win a
+    // stale saved preference or fallback enumeration.
+    return normalized.contains(u"vjoy"_qs)
+        || normalized.contains(u"virtual joystick"_qs);
+}
+
+inline bool isUnipolarAxis(PhysicalAxis axis)
+{
+    // The HOTAS throttle is displayed as 0–100%, while the internal mapping
+    // representation remains the vJoy-friendly -1…+1 normalized range.
+    return axis == PhysicalAxis::Z;
 }
 
 inline QString virtualAxisLabel(VirtualAxis axis)

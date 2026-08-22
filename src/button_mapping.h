@@ -23,6 +23,12 @@ ButtonCapacityStatus assessButtonCapacity(int physicalButtonCount, int vjoyButto
 
 // Returns a passthrough map that is limited by both reported device counts.
 ButtonBindings defaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity);
+// Completes only implicit sources with the physical-button-number equivalent.
+// Explicit user routes and explicit Disabled choices are never replaced.
+bool ensureDefaultButtonMappings(ButtonBindings &bindings, int physicalButtonCount,
+                                 int vjoyButtonCapacity);
+bool needsDefaultButtonMappings(const ButtonBindings &bindings, int physicalButtonCount,
+                                int vjoyButtonCapacity);
 
 bool isButtonBindingValid(const ButtonBinding &binding, int vjoyButtonCapacity);
 // Removes malformed, out-of-capacity, and duplicate destinations. The first

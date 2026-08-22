@@ -7,6 +7,11 @@
 #include <dinput.h>
 #include <windows.h>
 
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
+#include <QStringList>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -15,7 +20,6 @@
 #include <iterator>
 #include <memory>
 #include <optional>
-#include <QStringList>
 #include <string>
 #include <utility>
 #include <vector>
@@ -294,6 +298,59 @@ bool hasHidHideService()
     return found;
 }
 
+QString findHidHideCli()
+{
+    const QStringList roots{
+        qEnvironmentVariable("ProgramW6432"), qEnvironmentVariable("ProgramFiles"),
+        u"C:/Program Files"_qs,
+    };
+    for (const QString &root : roots) {
+        if (root.isEmpty()) continue;
+        const QString executable = QDir(root).filePath(
+            u"Nefarius Software Solutions/HidHide/x64/HidHideCLI.exe"_qs);
+        if (QFileInfo(executable).isExecutable()) return executable;
+    }
+    return {};
+}
+
+std::optional<bool> queryHidHideCloakState()
+{
+    const QString executable = findHidHideCli();
+    if (executable.isEmpty()) return std::nullopt;
+
+    QProcess process;
+    // HidHideCLI can otherwise keep its inherited input pipe open after
+    // printing a result. Explicit EOF makes this a bounded one-shot query.
+    process.setStandardInputFile(QProcess::nullDevice());
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(executable, {u"--cloak-state"_qs});
+    // HidHideCLI normally exits in a few milliseconds. Waiting for a separate
+    // started signal can therefore race its normal exit and report a false
+    // unknown state, so wait for the completed command instead.
+    if (!process.waitForFinished(800)) {
+        process.terminate();
+        if (!process.waitForFinished(200)) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+        return std::nullopt;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return std::nullopt;
+    }
+    const QByteArray bytes = process.readAll();
+    QString output = QString::fromLocal8Bit(bytes);
+    // HidHideCLI writes through std::wcout. When stdout is redirected to
+    // QProcess it can be UTF-16LE rather than the console code page.
+    if (!output.contains(u"--cloak-"_qs) && bytes.size() % 2 == 0) {
+        output = QString::fromUtf16(
+            reinterpret_cast<const char16_t *>(bytes.constData()), bytes.size() / 2);
+    }
+    if (output.contains(u"--cloak-on"_qs)) return true;
+    if (output.contains(u"--cloak-off"_qs)) return false;
+    return std::nullopt;
+}
+
 struct DirectInputDevice {
     GUID guid{};
     QString name;
@@ -358,18 +415,25 @@ std::optional<DirectInputDevice> selectDevice(LPDIRECTINPUT8W directInput, const
     }
     if (!configuration.preferredDeviceId.isEmpty()) {
         for (const auto &device : context.devices) {
-            if (guidToString(device.guid) == configuration.preferredDeviceId) {
+            if (guidToString(device.guid) == configuration.preferredDeviceId
+                && !isVirtualControllerName(device.name)) {
                 return device;
             }
         }
     }
     for (const auto &device : context.devices) {
         const QString lower = device.name.toLower();
-        if (lower.contains(u"t.flight"_qs) || lower.contains(u"hotas one"_qs)) {
+        if (!isVirtualControllerName(device.name)
+            && (lower.contains(u"t.flight"_qs) || lower.contains(u"hotas one"_qs))) {
             return device;
         }
     }
-    return context.devices.front();
+    for (const auto &device : context.devices) {
+        if (!isVirtualControllerName(device.name)) return device;
+    }
+    // A mapper must never consume the vJoy controller it produces. Wait for a
+    // real DirectInput device rather than creating a feedback loop.
+    return std::nullopt;
 }
 
 } // namespace
@@ -397,6 +461,16 @@ MappingWorker::~MappingWorker()
 {
     requestStop();
     wait(1500);
+}
+
+void MappingWorker::refreshHidHideState()
+{
+    const bool available = hasHidHideService();
+    m_runtime.hidhideAvailable = available;
+    const std::optional<bool> cloaked = available ? queryHidHideCloakState() : std::nullopt;
+    m_runtime.hidhideCloakStateKnown = cloaked.has_value();
+    m_runtime.hidhideCloaked = cloaked.value_or(false);
+    emit hardwareStateChanged();
 }
 
 void MappingWorker::updateConfiguration(const MapperConfiguration &configuration)
@@ -507,8 +581,7 @@ void MappingWorker::run()
     }
 
     VJoyAdapter vjoy;
-    m_runtime.hidhideAvailable = hasHidHideService();
-    emit hardwareStateChanged();
+    refreshHidHideState();
 
     LPDIRECTINPUTDEVICE8W device = nullptr;
     HANDLE inputEvent = nullptr;
@@ -523,6 +596,7 @@ void MappingWorker::run()
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
     std::array<int, 5> virtualAxisSources{};
     virtualAxisSources.fill(-1);
+    std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
     PhysicalButtonStates latestPhysicalButtons{};
     RuntimeButtonTargets runtimeButtonTargets{};
     VirtualButtonStates lastVirtualButtonStates{};
@@ -563,6 +637,7 @@ void MappingWorker::run()
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         clearVirtualAxisSnapshot();
         clearVirtualButtonSnapshot();
+        for (AxisHysteresisState &state : hysteresisStates) state = {};
     };
 
     const auto releaseInput = [&] {
@@ -651,7 +726,8 @@ void MappingWorker::run()
 
     const auto suggestDefaultButtonsIfNeeded = [&] {
         const int physicalCount = m_runtime.buttonCount.load();
-        if (device && activeMapping->buttons.empty() && physicalCount > 0
+        if (device && needsDefaultButtonMappings(activeMapping->buttons, physicalCount, vjoyButtonCapacity)
+            && physicalCount > 0
             && vjoyButtonCapacity > 0 && !buttonDefaultsPending) {
             buttonDefaultsPending = true;
             emit buttonConfigurationSuggested(physicalCount, vjoyButtonCapacity);
@@ -682,8 +758,11 @@ void MappingWorker::run()
         // The mapping loop owns this reference. It observes a fully compiled
         // profile table or the previous one, never piecemeal field edits.
         activeMapping = std::move(compiled);
+        // Settings/profile updates receive a fully compiled table and begin a
+        // new hysteresis acceptance window on the next report.
+        for (AxisHysteresisState &state : hysteresisStates) state = {};
         appliedVersion = currentVersion;
-        buttonDefaultsPending = !activeMapping->buttons.empty();
+        buttonDefaultsPending = false;
         rebuildButtonTargets();
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
             releaseMappingOutput();
@@ -789,7 +868,7 @@ void MappingWorker::run()
                 m_runtime.calibrationMaximum[index] = std::max(m_runtime.calibrationMaximum[index].load(), raw);
             }
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
-            const float transformed = transformAxis(raw, mapping);
+            const float transformed = transformAxisLive(raw, mapping, hysteresisStates[index]);
             m_runtime.transformed[index] = transformed;
             const int target = static_cast<int>(mapping.profile.target);
             if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {

@@ -33,6 +33,8 @@ struct AtomicRuntimeState {
     std::atomic_bool mappingActive{false};
     std::atomic_bool vjoyReady{false};
     std::atomic_bool hidhideAvailable{false};
+    std::atomic_bool hidhideCloakStateKnown{false};
+    std::atomic_bool hidhideCloaked{false};
     std::atomic_uint64_t inputReports{0};
     std::atomic_uint64_t vjoyWrites{0};
     std::atomic_uint64_t latencyCurrentUs{0};
@@ -62,6 +64,7 @@ public:
     void cancelCalibration();
     bool calibrationRunning() const;
     std::array<Calibration, kPhysicalAxisCount> capturedCalibration() const;
+    void refreshHidHideState();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;

@@ -15,7 +15,6 @@ ApplicationWindow {
 
     property int currentPage: 0
     property bool menuOpen: false
-    property bool otherAxesExpanded: false
     property var allAxes: backend.axes
     property var allButtons: backend.buttons
     property int conflictingAxis: -1
@@ -24,11 +23,22 @@ ApplicationWindow {
     property int conflictingVirtualButton: 0
     readonly property var outputChoices: ["Disabled", "X", "Y", "Z", "Rz"]
     readonly property var buttonOutputChoices: backend.buttonOutputChoices
-    readonly property var primaryAxisOrder: [0, 1, 5, 2]
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
+    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
     function axisAt(index) { return allAxes[index] }
-    function isPrimaryAxis(index) { return primaryAxisOrder.indexOf(index) >= 0 }
+    function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
+    function axisSelectorModel() {
+        const choices = []
+        for (let index = 0; index < allAxes.length; ++index) {
+            const axis = allAxes[index]
+            if (!axis || !axis.available) continue
+            choices.push({ axisIndex: axis.index,
+                display: (isPrimaryAxis(axis.index) ? "PRIMARY  ·  " : "ADDITIONAL  ·  ")
+                    + axis.label + " / " + axis.detail })
+        }
+        return choices
+    }
     function buttonForVirtualButton(target) {
         for (let source = 0; source < allButtons.length; ++source) {
             if (allButtons[source].target === target) return allButtons[source]
@@ -53,7 +63,7 @@ ApplicationWindow {
         return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%"
     }
     function controlValue(info, value) {
-        if (info && info.key === "z") return ((Number(value) + 1) * 50).toFixed(1) + "%"
+        if (info && info.unipolar) return ((Number(value) + 1) * 50).toFixed(1) + "%"
         return valuePercent(value)
     }
     function outputState(info) {
@@ -431,6 +441,118 @@ ApplicationWindow {
             }
         }
     }
+    component CurveViewer: Panel {
+        id: curveViewer
+        property var info: null
+        property var samples: backend.selectedAxisCurve
+        Layout.fillWidth: true
+        Layout.preferredHeight: 356
+        color: "#eb11171b"
+        border.color: "#3b66747d"
+        Column {
+            anchors.fill: parent
+            anchors.margins: 14
+            spacing: 6
+            RowLayout { width: parent.width
+                Text { text: "LIVE TRANSFER"; color: "#dce9eb"; font.pixelSize: 11; font.bold: true }
+                Text { text: curveViewer.info && curveViewer.info.unipolar ? "0–100% THROTTLE DOMAIN" : "−100% TO +100% NORMALIZED DOMAIN"
+                    color: "#758f99"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Row { spacing: 12
+                    Text { text: "— INPUT"; color: "#c5d0d3"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "— OUTPUT"; color: "#88bec8"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "○ PHYSICAL"; color: "#d7e5e7"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "● TRANSFORMED"; color: "#91c8c0"; font.pixelSize: 9; font.bold: true }
+                }
+            }
+            Canvas {
+                id: curveCanvas
+                width: parent.width
+                height: parent.height - 31
+                antialiasing: true
+                renderTarget: Canvas.Image
+                property var curveSamples: curveViewer.samples
+                property real physicalInput: curveViewer.info ? Number(curveViewer.info.raw) : 0
+                property real transformedOutput: curveViewer.info ? Number(curveViewer.info.transformed) : 0
+                function xFor(value, left, plotWidth) { return left + ((value + 1) * 0.5) * plotWidth }
+                function yFor(value, top, plotHeight) { return top + (1 - ((value + 1) * 0.5)) * plotHeight }
+                onCurveSamplesChanged: requestPaint()
+                onPhysicalInputChanged: requestPaint()
+                onTransformedOutputChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+                onPaint: {
+                    const ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    const left = 38, right = 12, top = 10, bottom = 25
+                    const plotWidth = Math.max(1, width - left - right)
+                    const plotHeight = Math.max(1, height - top - bottom)
+                    ctx.fillStyle = "#0a0f12"
+                    ctx.fillRect(left, top, plotWidth, plotHeight)
+                    ctx.strokeStyle = "#25465357"
+                    ctx.lineWidth = 1
+                    for (let tick = 0; tick <= 4; ++tick) {
+                        const x = left + plotWidth * tick / 4
+                        const y = top + plotHeight * tick / 4
+                        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotHeight); ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotWidth, y); ctx.stroke()
+                    }
+                    ctx.strokeStyle = "#5677848c"
+                    ctx.beginPath()
+                    ctx.moveTo(left, yFor(0, top, plotHeight))
+                    ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(xFor(0, left, plotWidth), top)
+                    ctx.lineTo(xFor(0, left, plotWidth), top + plotHeight)
+                    ctx.stroke()
+                    const trace = function(key, color, widthValue) {
+                        if (!curveSamples || curveSamples.length === 0) return
+                        ctx.strokeStyle = color
+                        ctx.lineWidth = widthValue
+                        ctx.beginPath()
+                        for (let index = 0; index < curveSamples.length; ++index) {
+                            const point = curveSamples[index]
+                            const x = xFor(Number(point.input), left, plotWidth)
+                            const y = yFor(key === "input" ? Number(point.input) : Number(point.output), top, plotHeight)
+                            if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                        }
+                        ctx.stroke()
+                    }
+                    trace("input", "#bac8cb", 1.25)
+                    trace("output", "#69aeb8", 2.0)
+                    if (curveViewer.info && Number(curveViewer.info.hysteresis) > 0) {
+                        const halfBand = Number(curveViewer.info.hysteresis)
+                        const x0 = xFor(Math.max(-1, physicalInput - halfBand), left, plotWidth)
+                        const x1 = xFor(Math.min(1, physicalInput + halfBand), left, plotWidth)
+                        ctx.fillStyle = "#377da38c"
+                        ctx.fillRect(x0, top, Math.max(1, x1 - x0), plotHeight)
+                    }
+                    const inputX = xFor(physicalInput, left, plotWidth)
+                    const inputY = yFor(physicalInput, top, plotHeight)
+                    const outputY = yFor(transformedOutput, top, plotHeight)
+                    ctx.fillStyle = "#dbe7e8"
+                    ctx.strokeStyle = "#6d8790"
+                    ctx.lineWidth = 2
+                    ctx.beginPath(); ctx.arc(inputX, inputY, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+                    ctx.fillStyle = "#8fc8c0"
+                    ctx.strokeStyle = "#e2f0ee"
+                    ctx.beginPath(); ctx.arc(inputX, outputY, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+                    ctx.fillStyle = "#76909a"
+                    ctx.font = "10px Consolas"
+                    const labels = curveViewer.info && curveViewer.info.unipolar ? ["0", "25", "50", "75", "100"] : ["-100", "-50", "0", "+50", "+100"]
+                    for (let labelIndex = 0; labelIndex < labels.length; ++labelIndex) {
+                        ctx.fillText(labels[labelIndex], left + plotWidth * labelIndex / 4 - 10, height - 7)
+                        ctx.fillText(labels[4 - labelIndex], 2, top + plotHeight * labelIndex / 4 + 3)
+                    }
+                }
+                Connections {
+                    target: backend
+                    function onStateChanged() { curveCanvas.requestPaint() }
+                }
+            }
+        }
+    }
     component ButtonCard: Panel {
         id: buttonCard
         property var info: null
@@ -620,7 +742,7 @@ ApplicationWindow {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 283
+        height: 330
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -638,9 +760,10 @@ ApplicationWindow {
  spacing: 2
             Repeater {
                 model: [
-                    { label: "MAPPER", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
+                    { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
-                    { label: "SETTINGS", page: 4, future: false }
+                    { label: "SETTINGS", page: 4, future: false }, { label: "", page: -1, future: false },
+                    { label: "CURVE EDITOR", page: 6, future: true }
                 ]
                 delegate: Item {
                     width: parent.width
@@ -691,125 +814,206 @@ ApplicationWindow {
         anchors.fill: parent
  anchors.margins: 24
         Flickable {
-            id: mapperPage
+            id: axesPage
             anchors.fill: parent
- visible: root.currentPage === 0
- contentWidth: width
- contentHeight: mapperContent.implicitHeight + 18
- clip: true
+            visible: root.currentPage === 0
+            contentWidth: width
+            contentHeight: axesContent.implicitHeight + 18
+            clip: true
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             Column {
-                id: mapperContent
+                id: axesContent
                 x: 1
- width: mapperPage.width - 10
- spacing: 16
+                width: axesPage.width - 10
+                spacing: 14
                 RowLayout { width: parent.width
-                    PageTitle { heading: "Mapper"
- detail: "Direct input, output routing, and live state · Profile: " + backend.activeProfileName }
+                    PageTitle { heading: "Axes"
+                        detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
                     CommandButton { label: backend.mappingActive ? "STOP MAPPING" : "START MAPPING"
- subdued: !backend.mappingActive
- onTriggered: backend.toggleMapping() }
+                        subdued: !backend.mappingActive
+                        onTriggered: backend.toggleMapping() }
                 }
-                Panel { width: parent.width
- height: 72
-                    color: "#e71a2025"
-                    RowLayout { anchors.fill: parent
- anchors.leftMargin: 20
- anchors.rightMargin: 20
- spacing: 20
-                        TelemetryItem { caption: "DEVICE"
- value: backend.physicalConnected ? backend.deviceName : "No controller connected"
- tone: root.physicalStatusColor()
- Layout.fillWidth: true }
-                        FineLine { Layout.preferredWidth: 1
- Layout.preferredHeight: 28 }
-                        TelemetryItem { caption: "LIVE INPUT"
- value: backend.physicalConnected ? backend.axisCount + " axes / " + backend.buttonCount + " buttons" : "Waiting for DirectInput"
- tone: backend.inputReportsPerSecond > 0 ? "#b9d1d8" : "#a5afb3"
- Layout.fillWidth: true }
-                        FineLine { Layout.preferredWidth: 1
- Layout.preferredHeight: 28 }
-                        TelemetryItem { caption: "OUTPUT DEVICE " + backend.vjoyDeviceId
- value: backend.vjoyReady ? backend.vjoyButtonCount + " BUTTONS · " + root.capacityState() : "OFFLINE"
- tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3"
- Layout.fillWidth: true }
-                    }
-                }
-                Panel { visible: root.hasPhysicalInput && backend.vjoyReady && !backend.vjoyCapacitySufficient
-                    width: parent.width; height: 58; color: "#e52d2419"; border.color: "#c28b624f"
-                    RowLayout { anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 12
-                        Text { text: "⚠"; color: "#d6a169"; font.pixelSize: 18; font.bold: true }
-                        ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: "VJOY CAPACITY WARNING"; color: "#e0b075"; font.pixelSize: 10; font.bold: true }
-                            Text { text: "Physical controller: " + backend.buttonCount + " buttons   ·   Virtual controller: " + backend.vjoyButtonCount + " buttons   ·   Increase Device 1 to at least " + backend.vjoyRequiredButtonCount + " (32 recommended)."
-                                color: "#bda68f"; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                Panel { width: parent.width; height: 90
+                    color: "#e51a2328"; border.color: "#46657980"
+                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
+                        Column { spacing: 4; Layout.preferredWidth: 96
+                            Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
+                            Text { text: root.hasPhysicalInput ? backend.axisCount + " DETECTED" : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
+                        }
+                        ComboBox {
+                            id: axisSelector
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 42
+                            enabled: root.hasPhysicalInput
+                            model: root.axisSelectorModel()
+                            textRole: "display"
+                            valueRole: "axisIndex"
+                            currentIndex: {
+                                for (let index = 0; index < model.length; ++index) {
+                                    if (model[index].axisIndex === backend.selectedAxisIndex) return index
+                                }
+                                return 0
+                            }
+                            onActivated: backend.setSelectedAxis(currentValue)
+                            background: Rectangle { radius: 3; color: "#0d1216"; border.color: "#546d78" }
+                            contentItem: Text { leftPadding: 12; text: axisSelector.displayText
+                                color: "#dde9e9"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12; font.bold: true }
                         }
                     }
                 }
-                OfflineMapper { width: parent.width
-                    visible: !root.hasPhysicalInput }
-                Text { visible: root.hasPhysicalInput
-                    text: "Primary controls"
-                    color: "#aab4b6"
-                    font.pixelSize: 11
-                    font.weight: Font.DemiBold }
-                GridLayout { width: parent.width
- visible: root.hasPhysicalInput
- columns: width >= 980 ? 2 : 1
- columnSpacing: 12
- rowSpacing: 12
-                    Repeater { model: root.primaryAxisOrder
- delegate: AxisModule { info: root.axisAt(modelData) } }
-                }
-                Panel {
-                    id: otherAxesPanel
+                OfflineMapper { width: parent.width; visible: !root.hasPhysicalInput }
+                Item {
                     width: parent.width
- visible: root.hasPhysicalInput
- height: root.otherAxesExpanded ? otherAxesContent.implicitHeight + 56 : 52
- clip: true
- color: "#dc1a2025"
-                    RowLayout { id: otherAxesHeader
- anchors.left: parent.left
- anchors.right: parent.right
- anchors.top: parent.top
- anchors.margins: 15
- height: 23
-                        Text { text: "Other physical axes"
- color: "#ccd5d5"
- font.pixelSize: 11
- font.weight: Font.DemiBold }
-                        Text { text: Math.max(0, backend.axisCount - 4) + " detected"
- color: "#879399"
- font.pixelSize: 9 }
-                        Item { Layout.fillWidth: true }
-                        Text { text: root.otherAxesExpanded ? "Collapse" : "Expand"
- color: "#aabfc5"
- font.pixelSize: 10
- font.bold: true }
-                    }
-                    MouseArea { anchors.left: parent.left
- anchors.right: parent.right
- anchors.top: parent.top
- height: 52
- cursorShape: Qt.PointingHandCursor
- onClicked: root.otherAxesExpanded = !root.otherAxesExpanded }
+                    height: axesWorkspace.implicitHeight
+                    visible: root.hasPhysicalInput && root.selectedAxisInfo
                     GridLayout {
-                        id: otherAxesContent
-                        visible: root.otherAxesExpanded
-                        anchors.left: parent.left
- anchors.right: parent.right
- anchors.top: otherAxesHeader.bottom
- anchors.topMargin: 14
- anchors.leftMargin: 15
- anchors.rightMargin: 15
-                        columns: width >= 980 ? 2 : 1
- columnSpacing: 12
- rowSpacing: 12
-                        Repeater { model: 8
- delegate: AxisModule { info: root.axisAt(index)
- visible: info && info.available && !root.isPrimaryAxis(index)
- Layout.preferredHeight: 210 } }
+                        id: axesWorkspace
+                        width: parent.width
+                        columns: width >= 1100 ? 2 : 1
+                        columnSpacing: 14
+                        rowSpacing: 14
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignTop
+                            spacing: 14
+                            Panel { id: axisIdentityPanel; Layout.fillWidth: true; Layout.preferredHeight: 144
+                                property var info: root.selectedAxisInfo
+                                color: "#e61a282e"; border.color: "#4b70818a"
+                                ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
+                                    RowLayout { Layout.fillWidth: true
+                                        Column { spacing: 2
+                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: "#edf6f6"; font.pixelSize: 17; font.bold: true }
+                                            Text { text: axisIdentityPanel.info.detail.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                        Row { spacing: 6
+                                            StatusDot { tone: root.physicalStatusColor() }
+                                            Text { text: root.physicalStatusText(); color: root.physicalStatusColor(); font.pixelSize: 10; font.bold: true }
+                                        }
+                                    }
+                                    FineLine { Layout.fillWidth: true }
+                                    RowLayout { Layout.fillWidth: true
+                                        TelemetryItem { caption: "PROFILE"; value: backend.activeProfileName.toUpperCase(); tone: "#c6dce0"; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "ROUTE"; value: axisIdentityPanel.info.target.toUpperCase(); tone: axisIdentityPanel.info.target === "Disabled" ? "#939da1" : "#9bcbd1"; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "STATUS"; value: backend.mappingActive ? "● LIVE" : "STANDBY"; tone: backend.mappingActive ? "#a1cbbb" : "#a5afb3"; Layout.fillWidth: true }
+                                    }
+                                }
+                            }
+                            Panel { id: liveTelemetryPanel; Layout.fillWidth: true; Layout.preferredHeight: 122
+                                property var info: root.selectedAxisInfo
+                                RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 3
+                                        Text { text: "PHYSICAL INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.raw); color: "#dce8ea"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
+                                        Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: "#718a93"; font.pixelSize: 9; font.bold: true }
+                                    }
+                                    FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 3
+                                        Text { text: "VIRTUAL OUTPUT"; color: "#85aaa8"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.transformed); color: "#9ad0c5"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
+                                        Text { text: backend.mappingActive ? "LIVE PROCESSED COMMAND" : "LIVE COMMAND PREVIEW"; color: "#718f8b"; font.pixelSize: 9; font.bold: true }
+                                    }
+                                }
+                            }
+                            CurveViewer { info: root.selectedAxisInfo }
+                        }
+                        Panel {
+                            id: processingPanel
+                            property var info: root.selectedAxisInfo
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignTop
+                            // Processing controls grow with their content so the
+                            // Curve description and action remain inside the panel.
+                            Layout.preferredHeight: processingContent.implicitHeight + 32
+                            color: "#ed151d22"
+                            ColumnLayout { id: processingContent; anchors.fill: parent; anchors.margins: 16; spacing: 12
+                                Text { text: "AXIS PROCESSING"; color: "#e1eded"; font.pixelSize: 12; font.bold: true }
+                                Text { text: "Profile-specific settings compile into the worker between reports."; color: "#8199a1"; font.pixelSize: 9; font.bold: true }
+                                FineLine { Layout.fillWidth: true }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    ComboBox {
+                                        id: selectedAxisDestination
+                                        Layout.fillWidth: true; Layout.preferredHeight: 31
+                                        model: root.outputChoices
+                                        currentIndex: Math.max(0, root.outputChoices.indexOf(processingPanel.info.target))
+                                        onActivated: {
+                                            if (!backend.setMapping(processingPanel.info.index, currentText, false)) {
+                                                root.conflictingAxis = processingPanel.info.index
+                                                root.conflictingTarget = currentText
+                                                currentIndex = root.outputChoices.indexOf(processingPanel.info.target)
+                                                axisConflictDialog.open()
+                                            }
+                                        }
+                                        background: Rectangle { radius: 3; color: "#0d1215"; border.color: "#455d67" }
+                                        contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: "#dce7e8"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+                                    }
+                                }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "INVERT"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Switch {
+                                        id: selectedAxisInvert
+                                        checked: processingPanel.info.inverted
+                                        onToggled: backend.setAxisInverted(processingPanel.info.index, checked)
+                                        indicator: Rectangle { implicitWidth: 36; implicitHeight: 18; radius: 9
+                                            color: selectedAxisInvert.checked ? "#526e77" : "#343d42"; border.color: "#435963"
+                                            Rectangle { width: 14; height: 14; radius: 7; x: selectedAxisInvert.checked ? 19 : 3
+                                                anchors.verticalCenter: parent.verticalCenter; color: "#e5ecec" }
+                                        }
+                                    }
+                                    Text { text: processingPanel.info.inverted ? "ON" : "OFF"; color: "#99b6bb"; font.pixelSize: 10; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                FineLine { Layout.fillWidth: true }
+                                ColumnLayout { Layout.fillWidth: true; spacing: 3
+                                    RowLayout { Layout.fillWidth: true
+                                        Text { text: "DEADZONE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Item { Layout.fillWidth: true }
+                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
+                                    }
+                                    Slider { id: selectedAxisDeadzone; Layout.fillWidth: true; from: 0; to: 0.25; value: Number(processingPanel.info.deadzone)
+                                        onMoved: backend.setAxisDeadzone(processingPanel.info.index, value) }
+                                    Text { text: "Rescaled around center before hysteresis."; color: "#718a93"; font.pixelSize: 9 }
+                                }
+                                ColumnLayout { Layout.fillWidth: true; spacing: 3
+                                    RowLayout { Layout.fillWidth: true
+                                        Text { text: "HYSTERESIS"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Item { Layout.fillWidth: true }
+                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
+                                    }
+                                    Slider { id: selectedAxisHysteresis; Layout.fillWidth: true; from: 0; to: 0.05; value: Number(processingPanel.info.hysteresis)
+                                        onMoved: backend.setAxisHysteresis(processingPanel.info.index, value) }
+                                    Text { text: "Suppresses sub-threshold report noise; no smoothing delay."; color: "#718a93"; font.pixelSize: 9 }
+                                }
+                                FineLine { Layout.fillWidth: true }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    SpinBox { id: outputMinimum; from: -100; to: 99; stepSize: 1
+                                        value: Math.round(Number(processingPanel.info.outputMinimum) * 100)
+                                        onValueModified: backend.setAxisOutputLimits(processingPanel.info.index, value / 100, Number(processingPanel.info.outputMaximum)) }
+                                    Text { text: "%"; color: "#91a9b0"; font.pixelSize: 10; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    SpinBox { id: outputMaximum; from: -99; to: 100; stepSize: 1
+                                        value: Math.round(Number(processingPanel.info.outputMaximum) * 100)
+                                        onValueModified: backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), value / 100) }
+                                    Text { text: "%"; color: "#91a9b0"; font.pixelSize: 10; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                Text { text: "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                FineLine { Layout.fillWidth: true }
+                                RowLayout { Layout.fillWidth: true
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 2
+                                        Text { text: "CURVE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "Linear"; color: "#d5e2e3"; font.pixelSize: 12; font.bold: true }
+                                    }
+                                    CommandButton { label: "EDIT CURVE"; subdued: true; onTriggered: root.currentPage = 6 }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1161,7 +1365,7 @@ ApplicationWindow {
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
                             Text { text: backend.activeProfileName.toUpperCase()
                                 color: "#e8f3f2"; font.pixelSize: 16; font.bold: true }
-                            Text { text: "Current controller configuration · Mapper and Buttons edit this profile"
+                            Text { text: "Current controller configuration · Axes and Buttons edit this profile"
                                 color: "#9db8bd"; font.pixelSize: 10; elide: Text.ElideRight
                                 Layout.fillWidth: true }
                         }
@@ -1324,6 +1528,33 @@ ApplicationWindow {
                     }
                 }
                 Panel { width: parent.width
+ height: 118
+                    color: !backend.hidhideAvailable ? "#e52d2419" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#e51a352f" : "#ed182128"
+                    border.color: !backend.hidhideAvailable ? "#c28b624f" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#3c9ca8a0" : "#41546770"
+                    RowLayout { anchors.fill: parent
+ anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true
+                            Text { text: "HIDHIDE"
+ color: "#e8eeee"
+ font.pixelSize: 12
+ font.bold: true }
+                            Text { text: !backend.hidhideAvailable ? "NOT DETECTED" : !backend.hidhideCloakStateKnown ? "INSTALLED · CLOAK STATE UNAVAILABLE" : backend.hidhideCloaked ? "CLOAKING ACTIVE · MAPPER ALLOWLIST REQUIRED" : "CLOAKING OFF"
+                                color: !backend.hidhideAvailable ? "#d49b62" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#8fd5c9" : "#b7d8df"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Hide the physical HOTAS from games while keeping this mapper allowed. Changes are made in HidHide’s own client."
+                                color: "#9dafb4"; font.pixelSize: 10; wrapMode: Text.WordWrap
+ Layout.fillWidth: true }
+                        }
+                        Column { spacing: 7
+                            CommandButton { label: "REFRESH STATUS"
+ subdued: true
+ onTriggered: backend.refreshHidHideStatus() }
+                            CommandButton { label: "OPEN HIDHIDE"
+ subdued: true
+ onTriggered: backend.openHidHideConfiguration() }
+                        }
+                    }
+                }
+                Panel { width: parent.width
  height: 84
  color: "#ef251a1a"
  border.color: "#44bd7777"
@@ -1349,12 +1580,12 @@ ApplicationWindow {
  visible: root.currentPage === 6
             Column { anchors.centerIn: parent
  spacing: 10
-                Text { text: "CURVES"
+                Text { text: "CURVE EDITOR"
  color: "#dfe7e9"
  font.pixelSize: 22
  font.bold: true
  anchors.horizontalCenter: parent.horizontalCenter }
-                Text { text: "PLANNED FOR A LATER RELEASE"
+                Text { text: "DETAILED RESPONSE-CURVE EDITING ARRIVES IN v1.4 · V1.3 USES LINEAR"
  color: "#829096"
  font.pixelSize: 10
  font.bold: true

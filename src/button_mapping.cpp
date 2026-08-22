@@ -40,6 +40,47 @@ ButtonBindings defaultButtonMappings(int physicalButtonCount, int vjoyButtonCapa
     return bindings;
 }
 
+bool needsDefaultButtonMappings(const ButtonBindings &bindings, int physicalButtonCount,
+                                int vjoyButtonCapacity)
+{
+    const int physicalCount = boundedCount(physicalButtonCount, kMaximumPhysicalButtons);
+    const int virtualCount = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    for (int source = 0; source < physicalCount; ++source) {
+        if (source >= static_cast<int>(bindings.size())) return true;
+        const ButtonBinding &binding = bindings[static_cast<size_t>(source)];
+        if (binding.explicitlyConfigured) continue;
+        const ButtonBinding expected = source < virtualCount
+            ? ButtonBinding{ButtonActionType::VirtualButton, source + 1}
+            : ButtonBinding{};
+        if (binding.type != expected.type || binding.target != expected.target) return true;
+    }
+    return false;
+}
+
+bool ensureDefaultButtonMappings(ButtonBindings &bindings, int physicalButtonCount,
+                                 int vjoyButtonCapacity)
+{
+    const int physicalCount = boundedCount(physicalButtonCount, kMaximumPhysicalButtons);
+    const int virtualCount = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    bool changed = false;
+    if (bindings.size() < static_cast<size_t>(physicalCount)) {
+        bindings.resize(static_cast<size_t>(physicalCount));
+        changed = true;
+    }
+    for (int source = 0; source < physicalCount; ++source) {
+        ButtonBinding &binding = bindings[static_cast<size_t>(source)];
+        if (binding.explicitlyConfigured) continue;
+        const ButtonBinding expected = source < virtualCount
+            ? ButtonBinding{ButtonActionType::VirtualButton, source + 1}
+            : ButtonBinding{};
+        if (binding.type != expected.type || binding.target != expected.target) {
+            binding = expected;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 bool isButtonBindingValid(const ButtonBinding &binding, int vjoyButtonCapacity)
 {
     const int capacity = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
