@@ -30,6 +30,14 @@ constexpr DWORD kVjoyUsageZ = 0x32;
 constexpr DWORD kVjoyUsageRz = 0x35;
 constexpr LONG kVjoyMinimum = 0;
 constexpr LONG kVjoyMaximum = 32767;
+// VjdStat from vJoyInterface.h: OWN = 0, FREE = 1, BUSY = 2,
+// MISSING = 3, UNKNOWN = 4. Keep these values explicit because the DLL is
+// loaded dynamically and its enum is not available at compile time.
+constexpr int kVjoyStatusOwn = 0;
+constexpr int kVjoyStatusFree = 1;
+constexpr int kVjoyStatusBusy = 2;
+constexpr int kVjoyStatusMissing = 3;
+constexpr int kVjoyStatusUnknown = 4;
 constexpr DWORD kPhysicalPollIntervalMs = 4; // 250 Hz bounded worker cadence.
 
 int axisIndexForOffset(DWORD offset)
@@ -114,11 +122,11 @@ public:
             return false;
         }
         const int state = m_getStatus(static_cast<UINT>(deviceId));
-        if (state == 2) {
+        if (state == kVjoyStatusBusy) {
             if (status) *status = QString(u"Device %1 busy in another application"_qs).arg(deviceId);
             return false;
         }
-        if (state == 3 || state == 4) {
+        if (state == kVjoyStatusMissing || state == kVjoyStatusUnknown) {
             if (status) *status = QString(u"Device %1 is unavailable"_qs).arg(deviceId);
             return false;
         }
@@ -145,10 +153,15 @@ public:
         }
         release();
         const int state = m_getStatus(static_cast<UINT>(deviceId));
-        // A FREE device must be acquired before any SetAxis/SetBtn call. OWN
-        // is already this process, while BUSY/UNAVAILABLE were rejected above.
-        if (state == 0 && !m_acquire(static_cast<UINT>(deviceId))) {
+        // vJoy reports OWN as 0 and FREE as 1. A FREE device must be acquired
+        // before any SetAxis/SetBtn call; OWN is already this process, while
+        // BUSY/UNAVAILABLE were rejected above.
+        if (state == kVjoyStatusFree && !m_acquire(static_cast<UINT>(deviceId))) {
             if (status) *status = QString(u"Could not acquire vJoy device %1"_qs).arg(deviceId);
+            return false;
+        }
+        if (state != kVjoyStatusFree && state != kVjoyStatusOwn) {
+            if (status) *status = QString(u"Device %1 is unavailable"_qs).arg(deviceId);
             return false;
         }
         m_acquired = true;
