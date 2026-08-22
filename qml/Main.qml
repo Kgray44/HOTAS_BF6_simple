@@ -763,7 +763,7 @@ ApplicationWindow {
                     { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
                     { label: "SETTINGS", page: 4, future: false }, { label: "", page: -1, future: false },
-                    { label: "CURVE EDITOR", page: 6, future: true }
+                    { label: "CURVE EDITOR", page: 6, future: false }
                 ]
                 delegate: Item {
                     width: parent.width
@@ -1008,7 +1008,7 @@ ApplicationWindow {
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2
                                         Text { text: "CURVE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: "Linear"; color: "#d5e2e3"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: processingPanel.info.curveSummary; color: "#d5e2e3"; font.pixelSize: 12; font.bold: true }
                                     }
                                     CommandButton { label: "EDIT CURVE"; subdued: true; onTriggered: root.currentPage = 6 }
                                 }
@@ -1576,22 +1576,7 @@ ApplicationWindow {
                 }
             }
         }
-        Item { anchors.fill: parent
- visible: root.currentPage === 6
-            Column { anchors.centerIn: parent
- spacing: 10
-                Text { text: "CURVE EDITOR"
- color: "#dfe7e9"
- font.pixelSize: 22
- font.bold: true
- anchors.horizontalCenter: parent.horizontalCenter }
-                Text { text: "DETAILED RESPONSE-CURVE EDITING ARRIVES IN v1.4 · V1.3 USES LINEAR"
- color: "#829096"
- font.pixelSize: 10
- font.bold: true
- anchors.horizontalCenter: parent.horizontalCenter }
-            }
-        }
+        CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
     }
 
     Dialog {

@@ -2,6 +2,7 @@
 
 #include "axis_transform.h"
 #include "button_mapping.h"
+#include "response_curve.h"
 
 #include <QDir>
 #include <QJsonArray>
@@ -16,7 +17,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 5;
+constexpr int kProfileSchemaVersion = 6;
 
 QString settingsFilePath()
 {
@@ -60,10 +61,11 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
         {u"hysteresis"_qs, mapping.hysteresis},
         {u"outputMinimum"_qs, mapping.outputMinimum},
         {u"outputMaximum"_qs, mapping.outputMaximum},
+        {u"curve"_qs, curveDefinitionToJson(mapping.curve)},
     };
 }
 
-AxisMapping axisMappingFromJson(const QJsonObject &json)
+AxisMapping axisMappingFromJson(const QJsonObject &json, bool unipolar)
 {
     AxisMapping mapping;
     mapping.target = virtualAxisFromString(json.value(u"target"_qs).toString());
@@ -72,6 +74,7 @@ AxisMapping axisMappingFromJson(const QJsonObject &json)
     mapping.hysteresis = std::clamp(float(json.value(u"hysteresis"_qs).toDouble(0.002)), 0.0F, 0.25F);
     mapping.outputMinimum = std::clamp(float(json.value(u"outputMinimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
     mapping.outputMaximum = std::clamp(float(json.value(u"outputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
+    mapping.curve = curveDefinitionFromJson(json.value(u"curve"_qs).toObject(), unipolar);
     normalizeAxisProcessing(mapping);
     return mapping;
 }
@@ -153,7 +156,7 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile)
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
         if (axis.isEmpty()) return false;
-        restored.axes[index] = axisMappingFromJson(axis);
+        restored.axes[index] = axisMappingFromJson(axis, isUnipolarAxis(static_cast<PhysicalAxis>(index)));
     }
     normalizeMappingConflicts(restored.axes);
     restored.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
@@ -178,7 +181,7 @@ MapperConfiguration migrateLegacyConfiguration(const QJsonObject &json, int vers
             if (valid) *valid = false;
             return defaultConfiguration();
         }
-        normal.axes[index] = axisMappingFromJson(axis);
+        normal.axes[index] = axisMappingFromJson(axis, isUnipolarAxis(static_cast<PhysicalAxis>(index)));
         configuration.calibration[index] = calibrationFromJson(axis.value(u"calibration"_qs).toObject());
     }
     normalizeMappingConflicts(normal.axes);
@@ -239,6 +242,11 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     QJsonArray profiles;
     for (const ControllerProfile &profile : configuration.profiles) profiles.append(profileToJson(profile));
 
+    QJsonArray personalCurvePresets;
+    for (const PersonalCurvePreset &preset : configuration.personalCurvePresets) {
+        personalCurvePresets.append(personalCurvePresetToJson(preset));
+    }
+
     return {
         {u"version"_qs, kProfileSchemaVersion},
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
@@ -247,6 +255,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
         {u"profiles"_qs, profiles},
+        {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
@@ -255,7 +264,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
-    if (version != 3 && version != 4 && version != kProfileSchemaVersion) {
+    if (version != 3 && version != 4 && version != 5 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -289,6 +298,26 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         ids.insert(profile.id);
         names.insert(profile.name.toCaseFolded());
         configuration.profiles.push_back(std::move(profile));
+    }
+
+    const QJsonArray personalPresets = json.value(u"personalCurvePresets"_qs).toArray();
+    if (personalPresets.size() > 128) {
+        if (valid) *valid = false;
+        return fallbackWithGlobalSettings(json);
+    }
+    QSet<QString> presetIds;
+    QSet<QString> presetNames;
+    for (const QJsonValue &value : personalPresets) {
+        PersonalCurvePreset preset;
+        if (!personalCurvePresetFromJson(value.toObject(), &preset)
+            || presetIds.contains(preset.id)
+            || presetNames.contains(preset.name.toCaseFolded())) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        presetIds.insert(preset.id);
+        presetNames.insert(preset.name.toCaseFolded());
+        configuration.personalCurvePresets.push_back(std::move(preset));
     }
 
     // Normal is the durable, protected recovery profile. A malformed/manual

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <QString>
@@ -35,6 +36,57 @@ enum class VirtualAxis : int {
     Rz,
 };
 
+// A response definition is durable user configuration.  It deliberately
+// contains no compiled or runtime-only state: the worker receives a LUT made
+// from this definition at a configuration boundary.
+enum class CurveFamily : int {
+    Linear = 0,
+    JCurve,
+    SCurve,
+    Advanced,
+    Personal,
+    Custom,
+};
+
+enum class CurveInterpolation : int {
+    Linear = 0,
+    Smooth,
+};
+
+struct CurvePoint {
+    float input = 0.0F;
+    float output = 0.0F;
+    bool locked = false;
+};
+
+struct CurveDefinition {
+    CurveFamily family = CurveFamily::Linear;
+    CurveFamily sourceFamily = CurveFamily::Linear;
+    // Standard J/S strength is a continuous [0, 1] parameter. Presets only
+    // choose named values for it; they do not store arbitrary point arrays.
+    float strength = 0.0F;
+    QString presetId = u"linear"_qs;
+    QString baseLabel = u"Linear"_qs;
+    QString sourcePresetId;
+    bool pointEditing = false;
+    bool symmetry = true;
+    CurveInterpolation interpolation = CurveInterpolation::Smooth;
+    int pointDensity = 9;
+    std::vector<CurvePoint> points;
+};
+
+struct PersonalCurvePreset {
+    QString id;
+    QString name;
+    QString description;
+    // Point-edited definitions use a centered or 0–100% domain. Personal
+    // presets are intentionally offered only to matching axis domains.
+    bool unipolar = false;
+    CurveDefinition definition;
+};
+
+struct CompiledResponseCurve;
+
 struct Calibration {
     bool enabled = false;
     float minimum = -1.0F;
@@ -53,6 +105,7 @@ struct AxisMapping {
     // physical-device calibration. They are applied after inversion/curve.
     float outputMinimum = -1.0F;
     float outputMaximum = 1.0F;
+    CurveDefinition curve;
 };
 
 // Calibration belongs to the physical controller. Runtime mappings combine
@@ -60,6 +113,7 @@ struct AxisMapping {
 struct RuntimeAxisMapping {
     AxisMapping profile;
     Calibration calibration;
+    std::shared_ptr<const CompiledResponseCurve> responseCurve;
 };
 
 // v1.1 intentionally supports just one action. Keeping the type separate
@@ -96,6 +150,7 @@ struct MapperConfiguration {
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
     std::vector<ControllerProfile> profiles;
+    std::vector<PersonalCurvePreset> personalCurvePresets;
     QString activeProfileId;
 };
 
@@ -275,16 +330,9 @@ inline bool isProfileNameAvailable(const MapperConfiguration &configuration, con
     return true;
 }
 
-inline RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration)
-{
-    const ControllerProfile &profile = activeProfile(configuration);
-    RuntimeMappingConfiguration runtime;
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        runtime.axes[index] = {profile.axes[index], configuration.calibration[index]};
-    }
-    runtime.buttons = profile.buttons;
-    return runtime;
-}
+// Implemented by the response-curve subsystem so every active profile is
+// compiled to immutable LUTs before the mapping worker accepts it.
+RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration);
 
 inline MapperConfiguration defaultConfiguration()
 {

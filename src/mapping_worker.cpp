@@ -443,6 +443,11 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
 {
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         m_runtime.raw[index] = 0.0F;
+        m_runtime.normalized[index] = 0.0F;
+        m_runtime.afterDeadzone[index] = 0.0F;
+        m_runtime.afterHysteresis[index] = 0.0F;
+        m_runtime.afterInversion[index] = 0.0F;
+        m_runtime.curveResponse[index] = 0.0F;
         m_runtime.transformed[index] = 0.0F;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
@@ -589,8 +594,12 @@ void MappingWorker::run()
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
     MapperConfiguration configuration = configurationCopy();
+    const auto initialCompileStarted = std::chrono::steady_clock::now();
     std::shared_ptr<const RuntimeMappingConfiguration> activeMapping
         = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(configuration));
+    m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - initialCompileStarted).count());
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -753,7 +762,11 @@ void MappingWorker::run()
         const int previousVjoyDeviceId = configuration.vjoyDeviceId;
         const QString previousProfileId = configuration.activeProfileId;
         MapperConfiguration updated = configurationCopy();
+        const auto curveCompileStarted = std::chrono::steady_clock::now();
         auto compiled = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(updated));
+        m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - curveCompileStarted).count());
         configuration = std::move(updated);
         // The mapping loop owns this reference. It observes a fully compiled
         // profile table or the previous one, never piecemeal field edits.
@@ -868,7 +881,15 @@ void MappingWorker::run()
                 m_runtime.calibrationMaximum[index] = std::max(m_runtime.calibrationMaximum[index].load(), raw);
             }
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
-            const float transformed = transformAxisLive(raw, mapping, hysteresisStates[index]);
+            float curveResponse = 0.0F;
+            AxisSignalPath signalPath;
+            const float transformed = transformAxisLive(raw, mapping, hysteresisStates[index],
+                &curveResponse, &signalPath);
+            m_runtime.normalized[index] = signalPath.normalized;
+            m_runtime.afterDeadzone[index] = signalPath.afterDeadzone;
+            m_runtime.afterHysteresis[index] = signalPath.afterHysteresis;
+            m_runtime.afterInversion[index] = signalPath.afterInversion;
+            m_runtime.curveResponse[index] = curveResponse;
             m_runtime.transformed[index] = transformed;
             const int target = static_cast<int>(mapping.profile.target);
             if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {

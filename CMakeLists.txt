@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(HOTASMapper VERSION 1.3.0 LANGUAGES CXX)
+project(HOTASMapper VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,6 +15,8 @@ set(HOTAS_MAPPER_SOURCES
     src/mapping_types.h
     src/axis_transform.h
     src/axis_transform.cpp
+    src/response_curve.h
+    src/response_curve.cpp
     src/button_mapping.h
     src/button_mapping.cpp
     src/physical_input_monitor.h
@@ -38,6 +40,7 @@ qt_add_qml_module(HOTASMapper
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/CurveEditor.qml
 )
 
 target_link_libraries(HOTASMapper PRIVATE
@@ -52,7 +55,7 @@ if (WIN32)
     target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 else()
-    message(FATAL_ERROR "HOTAS Mapper v1.3 targets Windows (DirectInput and vJoy).")
+    message(FATAL_ERROR "HOTAS Mapper v1.4 targets Windows (DirectInput and vJoy).")
 endif()
 
 include(CTest)
@@ -62,6 +65,8 @@ if (BUILD_TESTING)
         src/mapping_types.h
         src/axis_transform.h
         src/axis_transform.cpp
+        src/response_curve.h
+        src/response_curve.cpp
         src/button_mapping.h
         src/button_mapping.cpp
         src/physical_input_monitor.h

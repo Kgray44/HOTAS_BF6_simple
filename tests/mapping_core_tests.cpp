@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
+#include "response_curve.h"
 
 #include <QtTest>
 
@@ -73,6 +74,11 @@ private slots:
     void hysteresisHandlesDeadzoneAndFullScaleBoundaries();
     void outputLimitsSupportAsymmetryAndInversion();
     void staticPreviewSharesTheTransferEvaluator();
+    void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
+    void advancedPresetsAreDistinctAndQuantified();
+    void curvePointEditingSupportsNonuniformPointsLocksAndResampling();
+    void curveGainUsesAuthoritativeEvaluation();
+    void personalCurvePresetsPersistAsIndependentDefinitions();
     void v12ProfileConfigurationMigratesWithSafeAxisDefaults();
     void virtualControllersAreNeverEligibleAsPhysicalInput();
     void implicitButtonsDefaultToMatchingVjoyTargets();
@@ -215,6 +221,123 @@ void MappingCoreTests::staticPreviewSharesTheTransferEvaluator()
     // The compatibility wrapper remains the same static evaluator used for
     // the v1.3 output trace; hysteresis is deliberately live-only.
     QVERIFY(nearlyEqual(transformAxis(0.60F, mapping), evaluateStaticAxisTransfer(0.60F, mapping)));
+}
+
+void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
+{
+    const CurveDefinition linear = linearCurveDefinition();
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(-0.4F, linear, false), -0.4F));
+    QVERIFY(nearlyEqual(evaluateCurveGain(0.2F, linear, false), 1.0F));
+
+    const CurveDefinition jCurve = standardCurveDefinition(CurveFamily::JCurve, QStringLiteral("medium"));
+    const CurveDefinition sCurve = standardCurveDefinition(CurveFamily::SCurve, QStringLiteral("medium"));
+    QVERIFY(evaluateCurveDefinition(0.35F, jCurve, false) < 0.35F);
+    QVERIFY(evaluateCurveDefinition(0.25F, sCurve, false) < 0.25F);
+    QVERIFY(evaluateCurveDefinition(0.75F, sCurve, false) > 0.75F);
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(-1.0F, jCurve, false), -1.0F));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(1.0F, sCurve, false), 1.0F));
+
+    float previousJ = -1.0F;
+    float previousS = -1.0F;
+    for (int index = 0; index <= 200; ++index) {
+        const float input = -1.0F + static_cast<float>(index) / 100.0F;
+        const float jValue = evaluateCurveDefinition(input, jCurve, false);
+        const float sValue = evaluateCurveDefinition(input, sCurve, false);
+        QVERIFY(jValue >= previousJ - 0.00001F);
+        QVERIFY(sValue >= previousS - 0.00001F);
+        QVERIFY(jValue >= -1.0F && jValue <= 1.0F);
+        QVERIFY(sValue >= -1.0F && sValue <= 1.0F);
+        previousJ = jValue;
+        previousS = sValue;
+    }
+    const auto compiled = compileResponseCurve(jCurve, false);
+    QCOMPARE(static_cast<int>(compiled->samples.size()), kResponseCurveLutSamples);
+    QVERIFY(nearlyEqual(evaluateCompiledResponseCurve(0.35F, compiled),
+                         evaluateCurveDefinition(0.35F, jCurve, false)));
+}
+
+void MappingCoreTests::advancedPresetsAreDistinctAndQuantified()
+{
+    QCOMPARE(static_cast<int>(advancedCurvePresets().size()), 10);
+    std::vector<float> signatures;
+    for (const AdvancedCurvePresetInfo &preset : advancedCurvePresets()) {
+        const CurveDefinition definition = advancedCurveDefinition(preset.id);
+        const CurveAnalysis analysis = analyzeCurveDefinition(definition, false);
+        QVERIFY(analysis.valid);
+        QVERIFY(analysis.monotonic);
+        QVERIFY(analysis.fullAuthority);
+        QVERIFY(std::isfinite(analysis.peakGain));
+        signatures.push_back(evaluateCurveDefinition(0.20F, definition, false)
+            + evaluateCurveDefinition(0.50F, definition, false) * 2.0F
+            + evaluateCurveDefinition(0.80F, definition, false) * 3.0F);
+    }
+    std::sort(signatures.begin(), signatures.end());
+    for (size_t index = 1; index < signatures.size(); ++index) {
+        QVERIFY(std::abs(signatures[index] - signatures[index - 1]) > 0.003F);
+    }
+    const CurveDefinition precision = advancedCurveDefinition(QStringLiteral("precision-tracking"));
+    const CurveDefinition acquisition = advancedCurveDefinition(QStringLiteral("fast-acquisition"));
+    QVERIFY(evaluateCurveGain(0.0F, precision, false) < evaluateCurveGain(0.0F, acquisition, false));
+}
+
+void MappingCoreTests::curvePointEditingSupportsNonuniformPointsLocksAndResampling()
+{
+    CurveDefinition editable = materializeCurveDefinition(
+        standardCurveDefinition(CurveFamily::JCurve, QStringLiteral("medium")), false, 9);
+    QVERIFY(editable.pointEditing);
+    QVERIFY(editable.symmetry);
+    QVERIFY(editable.points.front().locked);
+    QVERIFY(editable.points[4].locked);
+    QVERIFY(updateCurvePoint(editable, false, 6, 0.43F, 0.20F));
+    QVERIFY(nearlyEqual(editable.points[6].input, 0.43F));
+    QVERIFY(nearlyEqual(editable.points[2].input, -0.43F));
+    QVERIFY(!updateCurvePoint(editable, false, 4, 0.1F, 0.1F));
+    QVERIFY(setCurvePointLocked(editable, false, 6, true));
+    QVERIFY(!updateCurvePoint(editable, false, 6, 0.48F, 0.24F));
+    QVERIFY(setCurvePointLocked(editable, false, 6, false));
+    int selected = -1;
+    QVERIFY(addCurvePoint(editable, false, 0.31F, 0.13F, &selected));
+    QCOMPARE(static_cast<int>(editable.points.size()), 11);
+    QVERIFY(selected > 0);
+    QVERIFY(removeCurvePoint(editable, false, selected));
+    QCOMPARE(static_cast<int>(editable.points.size()), 9);
+    editable = resampleCurveDefinition(editable, false, 17);
+    QCOMPARE(static_cast<int>(editable.points.size()), 17);
+    QVERIFY(curveDefinitionIsValid(editable, false));
+}
+
+void MappingCoreTests::curveGainUsesAuthoritativeEvaluation()
+{
+    const CurveDefinition linear = linearCurveDefinition();
+    QVERIFY(nearlyEqual(evaluateCurveGain(-0.5F, linear, false), 1.0F));
+    const CurveDefinition jCurve = standardCurveDefinition(CurveFamily::JCurve, QStringLiteral("strong"));
+    QVERIFY(evaluateCurveGain(0.05F, jCurve, false) < 1.0F);
+    QVERIFY(evaluateCurveGain(0.80F, jCurve, false) > evaluateCurveGain(0.20F, jCurve, false));
+    CurveDefinition custom = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("hybrid-precision")), false, 13);
+    custom.interpolation = CurveInterpolation::Smooth;
+    QVERIFY(std::isfinite(evaluateCurveGain(0.42F, custom, false)));
+    QVERIFY(analyzeCurveDefinition(custom, false).valid);
+}
+
+void MappingCoreTests::personalCurvePresetsPersistAsIndependentDefinitions()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    PersonalCurvePreset preset;
+    preset.id = QStringLiteral("curve-fine-aim");
+    preset.name = QStringLiteral("Fine Aim");
+    preset.definition = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("precision-tracking")), false, 9);
+    configuration.personalCurvePresets.push_back(preset);
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(restored.personalCurvePresets.size()), 1);
+    QCOMPARE(restored.personalCurvePresets.front().name, QStringLiteral("Fine Aim"));
+    CurveDefinition applied = restored.personalCurvePresets.front().definition;
+    QVERIFY(updateCurvePoint(applied, false, 6, 0.45F, 0.22F));
+    QVERIFY(!nearlyEqual(applied.points[6].input,
+                         restored.personalCurvePresets.front().definition.points[6].input));
 }
 
 void MappingCoreTests::v12ProfileConfigurationMigratesWithSafeAxisDefaults()

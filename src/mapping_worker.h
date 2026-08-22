@@ -12,6 +12,11 @@ namespace hotas {
 
 struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> raw{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> normalized{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> afterDeadzone{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> afterHysteresis{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> afterInversion{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> curveResponse{};
     std::array<std::atomic<float>, kPhysicalAxisCount> transformed{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
@@ -42,6 +47,7 @@ struct AtomicRuntimeState {
     std::atomic_uint64_t latencyPeakUs{0};
     std::atomic_uint64_t profileSwitchCount{0};
     std::atomic_uint64_t lastProfileSwapUs{0};
+    std::atomic_uint64_t lastCurveCompileUs{0};
 };
 
 struct DeviceSnapshot {

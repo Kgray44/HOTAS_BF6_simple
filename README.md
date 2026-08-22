@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.3
+# HOTAS BF6 Simple v1.4
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -18,7 +18,7 @@ headers or binaries are copied into this repository. A T.Flight HOTAS One is
 the supported initial device, though any DirectInput game controller is visible
 for diagnostics and mapping.
 
-## v1.3 features
+## v1.4 features
 
 - Independent 250 Hz-bounded DirectInput worker with a 60 Hz UI snapshot
 - Roll, pitch, throttle, and yaw routes to vJoy X, Y, Z, and Rz
@@ -30,9 +30,19 @@ for diagnostics and mapping.
   input/output viewer with separate physical and transformed markers
 - Persistent Normal and Precision profiles with create, clone, rename, safe
   delete, and instant live activation from the Profiles page
-- Per-profile route, inversion, rescaled deadzone, 0.2% default hysteresis,
-  output minimum/maximum authority limits, and an identity response-curve
-  boundary ready for the v1.4 Curve Editor
+- Per-profile/per-axis **Curve Editor** with Linear, calculated J-Curve and
+  S-Curve families, 8 standard strengths, 10 evidence-informed Advanced
+  Presets, reusable Personal Presets, and safe copy/reset actions
+- Optional Point Editing with PCHIP-style Smooth or Linear interpolation,
+  5/7/9/13/17/25-point materialization, nonuniform point placement,
+  add/remove, point locks, snapping, keyboard nudges, and local undo/redo
+- Large dual-curve response instrument with always-visible input/reference and
+  active output traces, live physical/final markers, gain view, comparison and
+  audition overlays, zoom/pan, cursor inspector, health/gain analysis, and a
+  collapsible authoritative Signal Path
+- Immutable 4097-sample response LUTs compiled on configuration changes and
+  swapped between worker reports; editable point count never changes runtime
+  curve resolution
 
 ## Build and run
 
@@ -74,8 +84,8 @@ releases/reacquires DirectInput or vJoy. Held buttons are immediately
 re-evaluated against the new routes, releasing obsolete virtual buttons and
 asserting any new target.
 
-The authoritative v1.3 axis order is **calibration/normalization → rescaled
-deadzone → hysteresis → inversion → Linear response curve → output limits →
+The authoritative v1.4 axis order is **calibration/normalization → rescaled
+deadzone → hysteresis → inversion → compiled response curve → output limits →
 vJoy range conversion**. Hysteresis retains the last accepted normalized input
 only while movement remains under its threshold; it is not temporal smoothing.
 The Axes graph samples the same static C++ evaluator used by the worker for
@@ -84,9 +94,11 @@ does not pretend hysteresis is a fixed curve; hysteresis instead appears in the
 live transformed marker. The graph cache is regenerated only for selection or
 processing changes, while its markers read the worker snapshot at about 60 Hz.
 
-Curve controls are intentionally Linear-only in v1.3. **Edit Curve** leads to
-the visible v1.4 placeholder; no editable response points or curve storage are
-implemented in this release.
+The Curve Editor and worker share the same C++ curve evaluator/compiler. J is
+an endpoint-preserving power family; S is an endpoint-preserving smoothstep
+blend. Advanced presets are honestly labelled evidence-informed derived
+responses, not proprietary Battlefield curves. Mathematical rationale and
+source links are in [docs/curve-research.md](docs/curve-research.md).
 
 ## Button mapping
 

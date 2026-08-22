@@ -7,6 +7,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 
 namespace hotas {
 
@@ -15,6 +16,20 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList axes READ axes NOTIFY stateChanged)
     Q_PROPERTY(int selectedAxisIndex READ selectedAxisIndex NOTIFY stateChanged)
     Q_PROPERTY(QVariantList selectedAxisCurve READ selectedAxisCurve NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList curveEditorResponseCurve READ curveEditorResponseCurve NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList curveGainSamples READ curveGainSamples NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList curveComparisonCurve READ curveComparisonCurve NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList curvePreviewCurve READ curvePreviewCurve NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList selectedCurvePoints READ selectedCurvePoints NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantMap curveEditorState READ curveEditorState NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantMap curveAnalysis READ curveAnalysis NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantMap curveComparisonState READ curveComparisonState NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantList curveStandardPresets READ curveStandardPresets CONSTANT)
+    Q_PROPERTY(QVariantList curveAdvancedPresets READ curveAdvancedPresets CONSTANT)
+    Q_PROPERTY(QVariantList personalCurvePresets READ personalCurvePresets NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
@@ -50,6 +65,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
 
@@ -60,6 +76,20 @@ public:
     QVariantList axes() const;
     int selectedAxisIndex() const;
     QVariantList selectedAxisCurve() const;
+    QVariantList curveEditorResponseCurve() const;
+    QVariantList curveGainSamples() const;
+    QVariantList curveComparisonCurve() const;
+    QVariantList curvePreviewCurve() const;
+    QVariantList selectedCurvePoints() const;
+    QVariantMap curveEditorState() const;
+    QVariantMap curveAnalysis() const;
+    QVariantMap curveComparisonState() const;
+    QVariantList curveStandardPresets() const;
+    QVariantList curveAdvancedPresets() const;
+    QVariantList personalCurvePresets() const;
+    QVariantList curveComparisonChoices() const;
+    QVariantList curvePreviewChoices() const;
+    QVariantList curveCopyChoices() const;
     QVariantList buttons() const;
     QVariantList profiles() const;
     QString activeProfileId() const;
@@ -95,6 +125,7 @@ public:
     qulonglong latencyPeakUs() const;
     qulonglong profileSwitchCount() const;
     qulonglong lastProfileSwapUs() const;
+    qulonglong lastCurveCompileUs() const;
     QStringList buttonOutputChoices() const;
     QStringList eventLog() const { return m_events; }
 
@@ -106,6 +137,33 @@ public:
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
     Q_INVOKABLE void setAxisHysteresis(int physicalAxis, double hysteresis);
     Q_INVOKABLE bool setAxisOutputLimits(int physicalAxis, double minimum, double maximum);
+    Q_INVOKABLE void setCurveFamily(const QString &family);
+    Q_INVOKABLE void setCurveStandardPreset(const QString &presetId);
+    Q_INVOKABLE void applyAdvancedCurvePreset(const QString &presetId);
+    Q_INVOKABLE bool applyPersonalCurvePreset(const QString &presetId);
+    Q_INVOKABLE void setCurvePointEditing(bool enabled);
+    Q_INVOKABLE void setCurveInterpolation(const QString &interpolation);
+    Q_INVOKABLE void setCurvePointDensity(int density);
+    Q_INVOKABLE void setCurveSymmetry(bool enabled);
+    Q_INVOKABLE bool setCurvePoint(int index, double input, double output);
+    Q_INVOKABLE bool setCurvePointLocked(int index, bool locked);
+    Q_INVOKABLE int addCurvePoint(double input, double output);
+    Q_INVOKABLE bool removeCurvePoint(int index);
+    Q_INVOKABLE void resetCurveLinear();
+    Q_INVOKABLE bool resetCurveToSource();
+    Q_INVOKABLE bool copyCurveFrom(const QString &profileId, int axisIndex);
+    Q_INVOKABLE bool copyCurveFromSelection(const QString &selectionId);
+    Q_INVOKABLE bool saveCurrentCurveAsPersonalPreset(const QString &name);
+    Q_INVOKABLE bool renamePersonalCurvePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE bool deletePersonalCurvePreset(const QString &presetId);
+    Q_INVOKABLE bool updatePersonalCurvePreset(const QString &presetId);
+    Q_INVOKABLE void setCurveComparison(const QString &comparisonId);
+    Q_INVOKABLE QVariantMap inspectCurve(double domainInput) const;
+    Q_INVOKABLE QString curveEditorSnapshot() const;
+    Q_INVOKABLE bool restoreCurveEditorSnapshot(const QString &snapshot);
+    Q_INVOKABLE void previewCurvePreset(const QString &presetId);
+    Q_INVOKABLE void clearCurvePreview();
+    Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE void resetButtonMappings();
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
@@ -137,7 +195,10 @@ private slots:
 private:
     void persistAndApply();
     void rebuildSelectedAxisCurve();
+    CurveDefinition comparisonCurveDefinition() const;
     bool fallBackToAvailableAxis();
+    AxisMapping *selectedAxisMapping();
+    const AxisMapping *selectedAxisMapping() const;
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     const ControllerProfile &currentProfile() const;
@@ -155,6 +216,16 @@ private:
     bool m_havePhysicalReport = false;
     double m_vjoyWritesPerSecond = 0.0;
     QVariantList m_selectedAxisCurve;
+    QVariantList m_curveEditorResponseCurve;
+    QVariantList m_curveGainSamples;
+    QVariantList m_curveComparisonCurve;
+    QVariantList m_curvePreviewCurve;
+    QVariantMap m_curveAnalysis;
+    QString m_curveComparisonId;
+    QString m_curveComparisonLabel;
+    QString m_curvePreviewId;
+    QString m_curvePreviewLabel;
+    CurveDefinition m_curvePreviewDefinition;
     QStringList m_events;
 };
 

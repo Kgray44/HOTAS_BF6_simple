@@ -1,5 +1,7 @@
 #include "axis_transform.h"
 
+#include "response_curve.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -62,11 +64,9 @@ float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping)
                                  mapping.profile.deadzone);
 }
 
-float evaluateResponseCurve(float value, const AxisMapping &)
+float evaluateResponseCurve(float value, const RuntimeAxisMapping &mapping)
 {
-    // v1.3 establishes one runtime boundary. All profiles are Linear until
-    // v1.4 introduces editable response curves.
-    return clampUnit(value);
+    return evaluateCompiledResponseCurve(value, mapping.responseCurve);
 }
 
 float applyOutputLimits(float value, const AxisMapping &mapping)
@@ -85,26 +85,50 @@ float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &sta
     return state.lastAcceptedInput;
 }
 
-float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping)
+float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping, float *curveResponse,
+                                 AxisSignalPath *signalPath)
 {
-    float transformed = preprocessAxisInput(raw, mapping);
+    const float normalized = normalizeCalibrated(raw, mapping.calibration);
+    float transformed = applyRescaledDeadzone(normalized, mapping.profile.deadzone);
+    if (signalPath) {
+        signalPath->normalized = normalized;
+        signalPath->afterDeadzone = transformed;
+        signalPath->afterHysteresis = transformed;
+    }
     if (mapping.profile.inverted) {
         transformed = -transformed;
     }
-    transformed = evaluateResponseCurve(transformed, mapping.profile);
-    return applyOutputLimits(transformed, mapping.profile);
+    if (signalPath) signalPath->afterInversion = transformed;
+    transformed = evaluateResponseCurve(transformed, mapping);
+    if (curveResponse) *curveResponse = transformed;
+    if (signalPath) signalPath->afterCurve = transformed;
+    transformed = applyOutputLimits(transformed, mapping.profile);
+    if (signalPath) signalPath->afterLimits = transformed;
+    return transformed;
 }
 
 float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
-                        AxisHysteresisState &hysteresisState)
+                        AxisHysteresisState &hysteresisState, float *curveResponse,
+                        AxisSignalPath *signalPath)
 {
-    float transformed = preprocessAxisInput(raw, mapping);
-    transformed = applyAxisHysteresis(transformed, mapping.profile.hysteresis, hysteresisState);
+    const float normalized = normalizeCalibrated(raw, mapping.calibration);
+    const float afterDeadzone = applyRescaledDeadzone(normalized, mapping.profile.deadzone);
+    float transformed = applyAxisHysteresis(afterDeadzone, mapping.profile.hysteresis, hysteresisState);
+    if (signalPath) {
+        signalPath->normalized = normalized;
+        signalPath->afterDeadzone = afterDeadzone;
+        signalPath->afterHysteresis = transformed;
+    }
     if (mapping.profile.inverted) {
         transformed = -transformed;
     }
-    transformed = evaluateResponseCurve(transformed, mapping.profile);
-    return applyOutputLimits(transformed, mapping.profile);
+    if (signalPath) signalPath->afterInversion = transformed;
+    transformed = evaluateResponseCurve(transformed, mapping);
+    if (curveResponse) *curveResponse = transformed;
+    if (signalPath) signalPath->afterCurve = transformed;
+    transformed = applyOutputLimits(transformed, mapping.profile);
+    if (signalPath) signalPath->afterLimits = transformed;
+    return transformed;
 }
 
 float transformAxis(float raw, const RuntimeAxisMapping &mapping)
