@@ -44,22 +44,22 @@ float applyRescaledDeadzone(float value, float deadzone)
     return std::copysign(std::min(rescaled, 1.0F), value);
 }
 
-float transformAxis(float raw, const AxisMapping &mapping)
+float transformAxis(float raw, const RuntimeAxisMapping &mapping)
 {
     float transformed = normalizeCalibrated(raw, mapping.calibration);
-    transformed = applyRescaledDeadzone(transformed, mapping.deadzone);
-    if (mapping.inverted) {
+    transformed = applyRescaledDeadzone(transformed, mapping.profile.deadzone);
+    if (mapping.profile.inverted) {
         transformed = -transformed;
     }
     // Response curves deliberately belong after this point in a future version.
     return clampUnit(transformed);
 }
 
-bool normalizeMappingConflicts(MapperConfiguration &configuration)
+bool normalizeMappingConflicts(AxisMappings &mappings)
 {
     std::array<bool, 5> occupied{};
     bool clean = true;
-    for (auto &mapping : configuration.axes) {
+    for (auto &mapping : mappings) {
         const int target = static_cast<int>(mapping.target);
         if (mapping.target == VirtualAxis::Disabled) {
             continue;
@@ -74,14 +74,14 @@ bool normalizeMappingConflicts(MapperConfiguration &configuration)
     return clean;
 }
 
-bool hasMappingConflict(const MapperConfiguration &configuration, int sourceIndex,
+bool hasMappingConflict(const AxisMappings &mappings, int sourceIndex,
                         VirtualAxis candidateTarget)
 {
     if (candidateTarget == VirtualAxis::Disabled) {
         return false;
     }
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        if (index != sourceIndex && configuration.axes[index].target == candidateTarget) {
+        if (index != sourceIndex && mappings[index].target == candidateTarget) {
             return true;
         }
     }

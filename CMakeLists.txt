@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(HOTASMapper VERSION 1.1.0 LANGUAGES CXX)
+project(HOTASMapper VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,8 @@ set(HOTAS_MAPPER_SOURCES
     src/button_mapping.cpp
     src/physical_input_monitor.h
     src/physical_input_monitor.cpp
+    src/profile_model.h
+    src/profile_model.cpp
     src/config_store.h
     src/config_store.cpp
     src/mapping_worker.h
@@ -64,6 +66,8 @@ if (BUILD_TESTING)
         src/button_mapping.cpp
         src/physical_input_monitor.h
         src/physical_input_monitor.cpp
+        src/profile_model.h
+        src/profile_model.cpp
         src/config_store.h
         src/config_store.cpp
     )

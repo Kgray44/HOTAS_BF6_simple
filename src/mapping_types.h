@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <QString>
+#include <QUuid>
 
 namespace hotas {
 using namespace Qt::StringLiterals;
@@ -45,6 +46,12 @@ struct AxisMapping {
     VirtualAxis target = VirtualAxis::Disabled;
     bool inverted = false;
     float deadzone = 0.03F;
+};
+
+// Calibration belongs to the physical controller. Runtime mappings combine
+// it with an active profile only after the profile has been selected.
+struct RuntimeAxisMapping {
+    AxisMapping profile;
     Calibration calibration;
 };
 
@@ -62,11 +69,28 @@ struct ButtonBinding {
 
 using ButtonBindings = std::vector<ButtonBinding>;
 
+using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
+
+struct ControllerProfile {
+    QString id;
+    QString name;
+    AxisMappings axes{};
+    ButtonBindings buttons;
+};
+
 struct MapperConfiguration {
     QString preferredDeviceId;
     int vjoyDeviceId = 1;
     bool startMappingOnLaunch = false;
-    std::array<AxisMapping, kPhysicalAxisCount> axes{};
+    std::array<Calibration, kPhysicalAxisCount> calibration{};
+    std::vector<ControllerProfile> profiles;
+    QString activeProfileId;
+};
+
+// This is the complete, allocation-ready mapping payload compiled once when
+// configuration changes. The mapping loop only consumes this structure.
+struct RuntimeMappingConfiguration {
+    std::array<RuntimeAxisMapping, kPhysicalAxisCount> axes{};
     ButtonBindings buttons;
 };
 
@@ -138,13 +162,110 @@ inline VirtualAxis virtualAxisFromString(const QString &value)
     return VirtualAxis::Disabled;
 }
 
+inline QString normalProfileId()
+{
+    return u"profile-normal"_qs;
+}
+
+inline QString precisionProfileId()
+{
+    return u"profile-precision"_qs;
+}
+
+inline bool isProfileNameValid(const QString &name)
+{
+    const QString trimmed = name.trimmed();
+    return !trimmed.isEmpty() && trimmed.size() <= 48;
+}
+
+inline QString newProfileId()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+inline AxisMappings defaultAxisMappings()
+{
+    AxisMappings axes;
+    axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::X;
+    axes[static_cast<int>(PhysicalAxis::Y)].target = VirtualAxis::Y;
+    axes[static_cast<int>(PhysicalAxis::Z)].target = VirtualAxis::Z;
+    axes[static_cast<int>(PhysicalAxis::Rz)].target = VirtualAxis::Rz;
+    return axes;
+}
+
+inline ControllerProfile defaultProfile(const QString &id, const QString &name)
+{
+    ControllerProfile profile;
+    profile.id = id;
+    profile.name = name;
+    profile.axes = defaultAxisMappings();
+    return profile;
+}
+
+inline const ControllerProfile *findProfile(const MapperConfiguration &configuration,
+                                            const QString &id)
+{
+    for (const ControllerProfile &profile : configuration.profiles) {
+        if (profile.id == id) return &profile;
+    }
+    return nullptr;
+}
+
+inline ControllerProfile *findProfile(MapperConfiguration &configuration, const QString &id)
+{
+    for (ControllerProfile &profile : configuration.profiles) {
+        if (profile.id == id) return &profile;
+    }
+    return nullptr;
+}
+
+inline const ControllerProfile &activeProfile(const MapperConfiguration &configuration)
+{
+    if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
+        return *profile;
+    }
+    return configuration.profiles.front();
+}
+
+inline ControllerProfile &activeProfile(MapperConfiguration &configuration)
+{
+    if (ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
+        return *profile;
+    }
+    return configuration.profiles.front();
+}
+
+inline bool isProfileNameAvailable(const MapperConfiguration &configuration, const QString &name,
+                                   const QString &exceptId = {})
+{
+    const QString desired = name.trimmed().toCaseFolded();
+    if (!isProfileNameValid(name)) return false;
+    for (const ControllerProfile &profile : configuration.profiles) {
+        if (profile.id != exceptId && profile.name.toCaseFolded() == desired) return false;
+    }
+    return true;
+}
+
+inline RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration)
+{
+    const ControllerProfile &profile = activeProfile(configuration);
+    RuntimeMappingConfiguration runtime;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        runtime.axes[index] = {profile.axes[index], configuration.calibration[index]};
+    }
+    runtime.buttons = profile.buttons;
+    return runtime;
+}
+
 inline MapperConfiguration defaultConfiguration()
 {
     MapperConfiguration configuration;
-    configuration.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::X;
-    configuration.axes[static_cast<int>(PhysicalAxis::Y)].target = VirtualAxis::Y;
-    configuration.axes[static_cast<int>(PhysicalAxis::Z)].target = VirtualAxis::Z;
-    configuration.axes[static_cast<int>(PhysicalAxis::Rz)].target = VirtualAxis::Rz;
+    ControllerProfile normal = defaultProfile(normalProfileId(), u"Normal"_qs);
+    ControllerProfile precision = normal;
+    precision.id = precisionProfileId();
+    precision.name = u"Precision"_qs;
+    configuration.profiles = {std::move(normal), std::move(precision)};
+    configuration.activeProfileId = normalProfileId();
     return configuration;
 }
 

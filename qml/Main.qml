@@ -590,6 +590,15 @@ ApplicationWindow {
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
+            FineLine { visible: root.width >= 1250; Layout.preferredWidth: 1
+                Layout.preferredHeight: 24 }
+            Row { visible: root.width >= 1250; spacing: 6
+                Text { text: "PROFILE"
+                    color: "#78919a"; font.pixelSize: 9; font.bold: true }
+                Text { text: backend.activeProfileName.toUpperCase()
+                    color: "#c3d8d9"; font.pixelSize: 10; font.bold: true
+                    elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
+            }
             Item { Layout.fillWidth: true }
             Row { spacing: 7
                 StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3") }
@@ -611,7 +620,7 @@ ApplicationWindow {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 248
+        height: 283
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -630,7 +639,7 @@ ApplicationWindow {
             Repeater {
                 model: [
                     { label: "MAPPER", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
-                    { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
+                    { label: "PROFILES", page: 5, future: false }, { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
                     { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
@@ -696,7 +705,7 @@ ApplicationWindow {
  spacing: 16
                 RowLayout { width: parent.width
                     PageTitle { heading: "Mapper"
- detail: "Direct input, output routing, and live state" }
+ detail: "Direct input, output routing, and live state · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
                     CommandButton { label: backend.mappingActive ? "STOP MAPPING" : "START MAPPING"
  subdued: !backend.mappingActive
@@ -820,7 +829,7 @@ ApplicationWindow {
  spacing: 14
                 RowLayout { width: parent.width
                     PageTitle { heading: "Buttons"
- detail: "Physical DirectInput state is visible even while vJoy is offline" }
+ detail: "Physical DirectInput state is visible even while vJoy is offline · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
                     CommandButton { label: "RESET MAPPINGS"
  commandEnabled: backend.buttonCount > 0
@@ -964,7 +973,11 @@ ApplicationWindow {
                         { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
                         { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : "STOPPED", t: backend.mappingActive ? "#a8cfba" : "#a5afb3",
-                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : "PHYSICAL MONITORING CONTINUES" }
+                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : "PHYSICAL MONITORING CONTINUES" },
+                        { c: "ACTIVE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
+                          note: "PERSISTENT MAPPING CONFIGURATION" },
+                        { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",
+                          note: backend.profileSwitchCount + " LIVE SWITCHES" }
                     ]
                         delegate: Panel { Layout.fillWidth: true
  Layout.preferredHeight: 86
@@ -1121,6 +1134,102 @@ ApplicationWindow {
             }
         }
         Flickable {
+            id: profilesPage
+            anchors.fill: parent
+            visible: root.currentPage === 5
+            contentWidth: width
+            contentHeight: profilesContent.implicitHeight + 18
+            clip: true
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            Column {
+                id: profilesContent
+                x: 1
+                width: profilesPage.width - 10
+                spacing: 14
+                RowLayout { width: parent.width
+                    PageTitle { heading: "Profiles"
+                        detail: "Independent mapping configurations; calibration remains tied to the physical controller" }
+                    Item { Layout.fillWidth: true }
+                    CommandButton { label: "+ NEW PROFILE"
+                        onTriggered: newProfileDialog.open() }
+                }
+                Text { text: "ACTIVE PROFILE"
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                Panel { width: parent.width; height: 102
+                    color: "#e51a352f"; border.color: "#4a91a8a0"
+                    RowLayout { anchors.fill: parent; anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: backend.activeProfileName.toUpperCase()
+                                color: "#e8f3f2"; font.pixelSize: 16; font.bold: true }
+                            Text { text: "Current controller configuration · Mapper and Buttons edit this profile"
+                                color: "#9db8bd"; font.pixelSize: 10; elide: Text.ElideRight
+                                Layout.fillWidth: true }
+                        }
+                        Row { spacing: 7
+                            StatusDot { tone: "#98d1bd" }
+                            Text { text: "ACTIVE"; color: "#add8c5"; font.pixelSize: 10; font.bold: true }
+                        }
+                    }
+                }
+                Text { text: "AVAILABLE PROFILES"
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                GridLayout { width: parent.width
+                    columns: width >= 1080 ? 3 : (width >= 700 ? 2 : 1)
+                    columnSpacing: 12; rowSpacing: 12
+                    Repeater { model: backend.profiles
+                        delegate: Panel { Layout.fillWidth: true; Layout.preferredHeight: 164
+                            color: modelData.active ? "#e51a352f" : "#ed182128"
+                            border.color: modelData.active ? "#4a91a8a0" : "#41546770"
+                            ColumnLayout { anchors.fill: parent; anchors.margins: 14; spacing: 7
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: modelData.name.toUpperCase()
+                                        color: "#e8eeee"; font.pixelSize: 13; font.bold: true
+                                        elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Row { visible: modelData.active; spacing: 5
+                                        StatusDot { tone: "#98d1bd" }
+                                        Text { text: "ACTIVE"; color: "#add8c5"; font.pixelSize: 9; font.bold: true }
+                                    }
+                                    ToolButton { text: "⋯"; font.pixelSize: 17
+                                        contentItem: Text { text: parent.text; color: "#a9bbc0"
+                                            font.pixelSize: parent.font.pixelSize
+                                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                        background: Rectangle { radius: 3; color: parent.hovered ? "#2b393f" : "transparent" }
+                                        onClicked: profileActionMenu.open()
+                                        Menu { id: profileActionMenu
+                                            MenuItem { text: "Rename"; enabled: !modelData.protected
+                                                onTriggered: { renameProfileDialog.profileId = modelData.id
+                                                    renameProfileDialog.profileName = modelData.name
+                                                    renameProfileDialog.open() } }
+                                            MenuItem { text: "Clone"; onTriggered: backend.cloneProfile(modelData.id) }
+                                            MenuSeparator { }
+                                            MenuItem { text: "Delete"; enabled: !modelData.protected && !modelData.active
+                                                onTriggered: { deleteProfileDialog.profileId = modelData.id
+                                                    deleteProfileDialog.profileName = modelData.name
+                                                    deleteProfileDialog.open() } }
+                                        }
+                                    }
+                                }
+                                Text { text: modelData.mappedAxes + " mapped axes"
+                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
+                                Text { text: modelData.mappedButtons + " mapped buttons"
+                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
+                                Item { Layout.fillHeight: true }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { visible: modelData.protected; text: "PROTECTED FALLBACK"
+                                        color: "#72858b"; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
+                                    Item { visible: !modelData.protected; Layout.fillWidth: true }
+                                    CommandButton { label: modelData.active ? "ACTIVE" : "ACTIVATE"
+                                        subdued: modelData.active
+                                        commandEnabled: !modelData.active
+                                        onTriggered: backend.activateProfile(modelData.id) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Flickable {
             id: settingsPage
             anchors.fill: parent
  visible: root.currentPage === 4
@@ -1237,10 +1346,10 @@ ApplicationWindow {
             }
         }
         Item { anchors.fill: parent
- visible: root.currentPage === 5 || root.currentPage === 6
+ visible: root.currentPage === 6
             Column { anchors.centerIn: parent
  spacing: 10
-                Text { text: root.currentPage === 5 ? "PROFILES" : "CURVES"
+                Text { text: "CURVES"
  color: "#dfe7e9"
  font.pixelSize: 22
  font.bold: true
@@ -1254,6 +1363,88 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: newProfileDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 410
+        title: "New profile"
+        standardButtons: Dialog.NoButton
+        onOpened: {
+            profileNameField.text = ""
+            startProfile.currentIndex = backend.activeProfileIndex
+            profileNameField.forceActiveFocus()
+        }
+        contentItem: Column { width: 358; spacing: 12
+            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            TextField { id: profileNameField; width: parent.width
+                placeholderText: "Helicopter"; color: "#e7f0f1"
+                selectByMouse: true }
+            Text { text: "START FROM"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            ComboBox { id: startProfile; width: parent.width
+                model: backend.profiles; textRole: "name"; valueRole: "id" }
+            Text { text: "Copies the selected mapping configuration. Calibration remains global to the controller."
+                width: parent.width; wrapMode: Text.WordWrap; color: "#879ba1"; font.pixelSize: 10 }
+            Row { width: parent.width; spacing: 8
+                CommandButton { id: createProfileCancelButton; label: "CANCEL"; subdued: true
+                    onTriggered: newProfileDialog.close() }
+                Item { width: parent.width - createProfileCancelButton.width - createProfileButton.width - 16; height: 1 }
+                CommandButton { id: createProfileButton; label: "CREATE"
+                    commandEnabled: profileNameField.text.trim().length > 0
+                    onTriggered: { if (backend.createProfile(profileNameField.text, startProfile.currentValue)) newProfileDialog.close() } }
+            }
+        }
+        background: Panel { color: "#1b2126"; border.color: "#3adce5e8" }
+    }
+    Dialog {
+        id: renameProfileDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 390
+        property string profileId: ""
+        property string profileName: ""
+        title: "Rename profile"
+        standardButtons: Dialog.NoButton
+        onOpened: { renameProfileField.text = profileName; renameProfileField.forceActiveFocus(); renameProfileField.selectAll() }
+        contentItem: Column { width: 338; spacing: 12
+            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            TextField { id: renameProfileField; width: parent.width; color: "#e7f0f1"; selectByMouse: true }
+            Row { width: parent.width; spacing: 8
+                CommandButton { id: renameProfileCancelButton; label: "CANCEL"; subdued: true
+                    onTriggered: renameProfileDialog.close() }
+                Item { width: parent.width - renameProfileCancelButton.width - renameProfileButton.width - 16; height: 1 }
+                CommandButton { id: renameProfileButton; label: "RENAME"
+                    commandEnabled: renameProfileField.text.trim().length > 0
+                    onTriggered: { if (backend.renameProfile(renameProfileDialog.profileId, renameProfileField.text)) renameProfileDialog.close() } }
+            }
+        }
+        background: Panel { color: "#1b2126"; border.color: "#3adce5e8" }
+    }
+    Dialog {
+        id: deleteProfileDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 390
+        property string profileId: ""
+        property string profileName: ""
+        title: "Delete profile?"
+        standardButtons: Dialog.NoButton
+        contentItem: Column { width: 338; spacing: 14
+            Text { text: "Delete \"" + deleteProfileDialog.profileName + "\"?\n\nThis profile's mappings will be removed."
+                width: parent.width; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+            Row { width: parent.width; spacing: 8
+                CommandButton { id: deleteProfileCancelButton; label: "CANCEL"; subdued: true
+                    onTriggered: deleteProfileDialog.close() }
+                Item { width: parent.width - deleteProfileCancelButton.width - deleteProfileButton.width - 16; height: 1 }
+                CommandButton { id: deleteProfileButton; label: "DELETE"; subdued: true
+                    onTriggered: { if (backend.deleteProfile(deleteProfileDialog.profileId)) deleteProfileDialog.close() } }
+            }
+        }
+        background: Panel { color: "#241b1b"; border.color: "#44bd7777" }
+    }
     Dialog {
         id: axisConflictDialog
         parent: Overlay.overlay

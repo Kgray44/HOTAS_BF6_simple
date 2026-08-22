@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSettings>
+#include <QSet>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -15,6 +16,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
+constexpr int kProfileSchemaVersion = 3;
 
 QString settingsFilePath()
 {
@@ -49,6 +51,24 @@ Calibration calibrationFromJson(const QJsonObject &json)
     return calibration;
 }
 
+QJsonObject axisMappingToJson(const AxisMapping &mapping)
+{
+    return {
+        {u"target"_qs, virtualAxisLabel(mapping.target)},
+        {u"inverted"_qs, mapping.inverted},
+        {u"deadzone"_qs, mapping.deadzone},
+    };
+}
+
+AxisMapping axisMappingFromJson(const QJsonObject &json)
+{
+    AxisMapping mapping;
+    mapping.target = virtualAxisFromString(json.value(u"target"_qs).toString());
+    mapping.inverted = json.value(u"inverted"_qs).toBool(false);
+    mapping.deadzone = std::clamp(float(json.value(u"deadzone"_qs).toDouble(0.03)), 0.0F, 0.95F);
+    return mapping;
+}
+
 QJsonObject buttonBindingToJson(const ButtonBinding &binding)
 {
     if (binding.type == ButtonActionType::VirtualButton) {
@@ -65,6 +85,113 @@ ButtonBinding buttonBindingFromJson(const QJsonObject &json)
     return {};
 }
 
+void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configuration)
+{
+    configuration.preferredDeviceId = json.value(u"preferredDeviceId"_qs).toString();
+    configuration.vjoyDeviceId = std::clamp(json.value(u"vjoyDeviceId"_qs).toInt(1), 1, 16);
+    configuration.startMappingOnLaunch = json.value(u"startMappingOnLaunch"_qs).toBool(false);
+}
+
+QJsonArray buttonBindingsToJson(const ButtonBindings &bindings)
+{
+    QJsonArray buttons;
+    for (const ButtonBinding &binding : bindings) buttons.append(buttonBindingToJson(binding));
+    return buttons;
+}
+
+ButtonBindings buttonBindingsFromJson(const QJsonValue &value)
+{
+    ButtonBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray buttons = value.toArray();
+    const int count = std::min(static_cast<int>(buttons.size()), kMaximumPhysicalButtons);
+    bindings.reserve(static_cast<size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        bindings.push_back(buttonBindingFromJson(buttons.at(index).toObject()));
+    }
+    normalizeButtonMappings(bindings, kMaximumVirtualButtons);
+    return bindings;
+}
+
+QJsonObject profileToJson(const ControllerProfile &profile)
+{
+    QJsonArray axes;
+    for (const AxisMapping &mapping : profile.axes) axes.append(axisMappingToJson(mapping));
+    return {
+        {u"id"_qs, profile.id},
+        {u"name"_qs, profile.name},
+        {u"axes"_qs, axes},
+        {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
+    };
+}
+
+bool profileFromJson(const QJsonObject &json, ControllerProfile *profile)
+{
+    if (!profile) return false;
+    const QString id = json.value(u"id"_qs).toString().trimmed();
+    const QString name = json.value(u"name"_qs).toString().trimmed();
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    if (id.isEmpty() || id.size() > 96 || !isProfileNameValid(name)
+        || axes.size() != kPhysicalAxisCount) {
+        return false;
+    }
+
+    ControllerProfile restored;
+    restored.id = id;
+    restored.name = name;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const QJsonObject axis = axes.at(index).toObject();
+        if (axis.isEmpty()) return false;
+        restored.axes[index] = axisMappingFromJson(axis);
+    }
+    normalizeMappingConflicts(restored.axes);
+    restored.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
+    *profile = std::move(restored);
+    return true;
+}
+
+MapperConfiguration migrateLegacyConfiguration(const QJsonObject &json, int version, bool *valid)
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    readGlobalSettings(json, configuration);
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    if (axes.size() != kPhysicalAxisCount) {
+        if (valid) *valid = false;
+        return defaultConfiguration();
+    }
+
+    ControllerProfile &normal = activeProfile(configuration);
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const QJsonObject axis = axes.at(index).toObject();
+        if (axis.isEmpty()) {
+            if (valid) *valid = false;
+            return defaultConfiguration();
+        }
+        normal.axes[index] = axisMappingFromJson(axis);
+        configuration.calibration[index] = calibrationFromJson(axis.value(u"calibration"_qs).toObject());
+    }
+    normalizeMappingConflicts(normal.axes);
+    if (version >= 2) {
+        // An absent or malformed legacy button list was tolerated in v1.1;
+        // retain that safe behavior while preserving all valid axis routes.
+        normal.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
+    }
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    *precision = normal;
+    precision->id = precisionProfileId();
+    precision->name = u"Precision"_qs;
+    configuration.activeProfileId = normalProfileId();
+    if (valid) *valid = true;
+    return configuration;
+}
+
+MapperConfiguration fallbackWithGlobalSettings(const QJsonObject &json)
+{
+    MapperConfiguration fallback = defaultConfiguration();
+    readGlobalSettings(json, fallback);
+    return fallback;
+}
+
 } // namespace
 
 MapperConfiguration ConfigStore::load()
@@ -72,12 +199,17 @@ MapperConfiguration ConfigStore::load()
     const QSettings stored(settingsFilePath(), QSettings::IniFormat);
     const QByteArray encoded = stored.value(QLatin1String(kConfigKey)).toByteArray();
     const QJsonDocument document = QJsonDocument::fromJson(encoded);
-    if (!document.isObject()) {
-        return defaultConfiguration();
-    }
+    if (!document.isObject()) return defaultConfiguration();
+
     bool valid = false;
     MapperConfiguration configuration = fromJson(document.object(), &valid);
-    return valid ? configuration : defaultConfiguration();
+    if (!valid) return configuration;
+    if (document.object().value(u"version"_qs).toInt() < kProfileSchemaVersion) {
+        // Write the deterministic migration immediately, making every later
+        // launch read the profile schema without duplicate default creation.
+        save(configuration);
+    }
+    return configuration;
 }
 
 bool ConfigStore::save(const MapperConfiguration &configuration)
@@ -90,79 +222,76 @@ bool ConfigStore::save(const MapperConfiguration &configuration)
 
 QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
 {
-    QJsonArray axes;
-    for (const auto &mapping : configuration.axes) {
-        axes.append(QJsonObject{
-            {u"target"_qs, virtualAxisLabel(mapping.target)},
-            {u"inverted"_qs, mapping.inverted},
-            {u"deadzone"_qs, mapping.deadzone},
-            {u"calibration"_qs, calibrationToJson(mapping.calibration)},
-        });
-    }
+    QJsonArray calibration;
+    for (const Calibration &axis : configuration.calibration) calibration.append(calibrationToJson(axis));
 
-    QJsonArray buttons;
-    for (const ButtonBinding &binding : configuration.buttons) {
-        buttons.append(buttonBindingToJson(binding));
-    }
+    QJsonArray profiles;
+    for (const ControllerProfile &profile : configuration.profiles) profiles.append(profileToJson(profile));
 
     return {
-        {u"version"_qs, 2},
+        {u"version"_qs, kProfileSchemaVersion},
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
         {u"startMappingOnLaunch"_qs, configuration.startMappingOnLaunch},
-        {u"axes"_qs, axes},
-        {u"buttons"_qs, buttons},
+        {u"calibration"_qs, calibration},
+        {u"profiles"_qs, profiles},
+        {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
 
 MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
-    MapperConfiguration configuration = defaultConfiguration();
     const int version = json.value(u"version"_qs).toInt();
-    bool result = version == 1 || version == 2;
-    const QJsonArray axes = json.value(u"axes"_qs).toArray();
-    result = result && axes.size() == kPhysicalAxisCount;
-    if (!result) {
+    if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
+    if (version != kProfileSchemaVersion) {
         if (valid) *valid = false;
-        return defaultConfiguration();
+        return fallbackWithGlobalSettings(json);
     }
 
-    configuration.preferredDeviceId = json.value(u"preferredDeviceId"_qs).toString();
-    configuration.vjoyDeviceId = std::clamp(json.value(u"vjoyDeviceId"_qs).toInt(1), 1, 16);
-    configuration.startMappingOnLaunch = json.value(u"startMappingOnLaunch"_qs).toBool(false);
+    MapperConfiguration configuration = fallbackWithGlobalSettings(json);
+    const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
+    const QJsonArray profiles = json.value(u"profiles"_qs).toArray();
+    if (calibration.size() != kPhysicalAxisCount || profiles.empty()) {
+        if (valid) *valid = false;
+        return configuration;
+    }
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        const QJsonObject axis = axes.at(index).toObject();
+        const QJsonObject axis = calibration.at(index).toObject();
         if (axis.isEmpty()) {
-            result = false;
-            break;
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
         }
-        auto &mapping = configuration.axes[index];
-        mapping.target = virtualAxisFromString(axis.value(u"target"_qs).toString());
-        mapping.inverted = axis.value(u"inverted"_qs).toBool(false);
-        mapping.deadzone = std::clamp(float(axis.value(u"deadzone"_qs).toDouble(0.03)), 0.0F, 0.95F);
-        mapping.calibration = calibrationFromJson(axis.value(u"calibration"_qs).toObject());
+        configuration.calibration[index] = calibrationFromJson(axis);
     }
-    // Version 1 had no button configuration. Leaving this empty deliberately
-    // lets the worker create a first-detected passthrough without touching axes.
-    if (result && version >= 2) {
-        const QJsonValue buttonsValue = json.value(u"buttons"_qs);
-        if (buttonsValue.isArray()) {
-            const QJsonArray buttons = buttonsValue.toArray();
-            const int count = std::min(static_cast<int>(buttons.size()), kMaximumPhysicalButtons);
-            configuration.buttons.reserve(static_cast<size_t>(count));
-            for (int index = 0; index < count; ++index) {
-                configuration.buttons.push_back(buttonBindingFromJson(buttons.at(index).toObject()));
-            }
-            // Bad individual button values are safely disabled rather than
-            // discarding the existing axis configuration.
-            normalizeButtonMappings(configuration.buttons, kMaximumVirtualButtons);
+
+    configuration.profiles.clear();
+    QSet<QString> ids;
+    QSet<QString> names;
+    for (const QJsonValue &value : profiles) {
+        ControllerProfile profile;
+        if (!profileFromJson(value.toObject(), &profile)
+            || ids.contains(profile.id) || names.contains(profile.name.toCaseFolded())) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
         }
+        ids.insert(profile.id);
+        names.insert(profile.name.toCaseFolded());
+        configuration.profiles.push_back(std::move(profile));
     }
-    if (!normalizeMappingConflicts(configuration)) {
-        result = false;
+
+    // Normal is the durable, protected recovery profile. A malformed/manual
+    // file that removes it falls back safely instead of leaving no known base.
+    const ControllerProfile *normal = findProfile(configuration, normalProfileId());
+    if (!normal || normal->name.compare(u"Normal"_qs, Qt::CaseInsensitive) != 0) {
+        if (valid) *valid = false;
+        return fallbackWithGlobalSettings(json);
     }
-    if (valid) *valid = result;
-    return result ? configuration : defaultConfiguration();
+    configuration.activeProfileId = json.value(u"activeProfileId"_qs).toString();
+    if (!findProfile(configuration, configuration.activeProfileId)) {
+        configuration.activeProfileId = normalProfileId();
+    }
+    if (valid) *valid = true;
+    return configuration;
 }
 
 } // namespace hotas

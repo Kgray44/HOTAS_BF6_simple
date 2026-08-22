@@ -3,6 +3,7 @@
 #include "axis_transform.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "profile_model.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -45,9 +46,10 @@ QVariantList AppBackend::axes() const
 {
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
+    const ControllerProfile &profile = currentProfile();
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
-        const AxisMapping &mapping = m_configuration.axes[index];
+        const AxisMapping &mapping = profile.axes[index];
         QVariantMap item;
         item.insert(u"index"_qs, index);
         item.insert(u"key"_qs, physicalAxisKey(axis));
@@ -62,7 +64,7 @@ QVariantList AppBackend::axes() const
         item.insert(u"target"_qs, virtualAxisLabel(mapping.target));
         item.insert(u"inverted"_qs, mapping.inverted);
         item.insert(u"deadzone"_qs, mapping.deadzone);
-        item.insert(u"calibrationEnabled"_qs, mapping.calibration.enabled);
+        item.insert(u"calibrationEnabled"_qs, m_configuration.calibration[index].enabled);
         item.insert(u"calibrationMinimum"_qs, runtime.calibrationMinimum[index].load());
         item.insert(u"calibrationCenter"_qs, runtime.calibrationCenter[index].load());
         item.insert(u"calibrationMaximum"_qs, runtime.calibrationMaximum[index].load());
@@ -78,8 +80,9 @@ QVariantList AppBackend::buttons() const
     const int capacity = vjoyButtonCount();
     for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
         if (!runtime.buttonAvailable[source].load()) continue;
-        const ButtonBinding binding = source < static_cast<int>(m_configuration.buttons.size())
-            ? m_configuration.buttons[static_cast<size_t>(source)] : ButtonBinding{};
+        const ButtonBindings &bindings = currentProfile().buttons;
+        const ButtonBinding binding = source < static_cast<int>(bindings.size())
+            ? bindings[static_cast<size_t>(source)] : ButtonBinding{};
         const int target = binding.type == ButtonActionType::VirtualButton
             && isButtonBindingValid(binding, capacity) ? binding.target : 0;
         QVariantMap item;
@@ -94,6 +97,42 @@ QVariantList AppBackend::buttons() const
         result.append(item);
     }
     return result;
+}
+
+QVariantList AppBackend::profiles() const
+{
+    QVariantList result;
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        int mappedAxes = 0;
+        for (const AxisMapping &axis : profile.axes) {
+            if (axis.target != VirtualAxis::Disabled) ++mappedAxes;
+        }
+        int mappedButtons = 0;
+        for (const ButtonBinding &binding : profile.buttons) {
+            if (binding.type == ButtonActionType::VirtualButton) ++mappedButtons;
+        }
+        QVariantMap item;
+        item.insert(u"id"_qs, profile.id);
+        item.insert(u"name"_qs, profile.name);
+        item.insert(u"active"_qs, profile.id == m_configuration.activeProfileId);
+        item.insert(u"protected"_qs, profile.id == normalProfileId());
+        item.insert(u"mappedAxes"_qs, mappedAxes);
+        item.insert(u"mappedButtons"_qs, mappedButtons);
+        result.append(item);
+    }
+    return result;
+}
+
+QString AppBackend::activeProfileId() const { return m_configuration.activeProfileId; }
+QString AppBackend::activeProfileName() const { return currentProfile().name; }
+int AppBackend::activeProfileIndex() const
+{
+    for (int index = 0; index < static_cast<int>(m_configuration.profiles.size()); ++index) {
+        if (m_configuration.profiles[static_cast<size_t>(index)].id == m_configuration.activeProfileId) {
+            return index;
+        }
+    }
+    return 0;
 }
 
 QString AppBackend::deviceName() const { return m_worker.deviceSnapshot().name; }
@@ -121,6 +160,8 @@ int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }
 qulonglong AppBackend::latencyCurrentUs() const { return m_worker.runtime().latencyCurrentUs.load(); }
 qulonglong AppBackend::latencyAverageUs() const { return m_worker.runtime().latencyAverageUs.load(); }
 qulonglong AppBackend::latencyPeakUs() const { return m_worker.runtime().latencyPeakUs.load(); }
+qulonglong AppBackend::profileSwitchCount() const { return m_worker.runtime().profileSwitchCount.load(); }
+qulonglong AppBackend::lastProfileSwapUs() const { return m_worker.runtime().lastProfileSwapUs.load(); }
 
 QStringList AppBackend::buttonOutputChoices() const
 {
@@ -146,16 +187,17 @@ void AppBackend::setMappingActive(bool active)
 bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explicitOverride)
 {
     if (!validAxis(physicalAxis)) return false;
+    ControllerProfile &profile = currentProfile();
     const VirtualAxis virtualAxis = virtualAxisFromString(target);
-    if (hasMappingConflict(m_configuration, physicalAxis, virtualAxis)) {
+    if (hasMappingConflict(profile.axes, physicalAxis, virtualAxis)) {
         if (!explicitOverride) return false;
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            if (index != physicalAxis && m_configuration.axes[index].target == virtualAxis) {
-                m_configuration.axes[index].target = VirtualAxis::Disabled;
+            if (index != physicalAxis && profile.axes[index].target == virtualAxis) {
+                profile.axes[index].target = VirtualAxis::Disabled;
             }
         }
     }
-    m_configuration.axes[physicalAxis].target = virtualAxis;
+    profile.axes[physicalAxis].target = virtualAxis;
     persistAndApply();
     return true;
 }
@@ -163,14 +205,14 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
 void AppBackend::setAxisInverted(int physicalAxis, bool inverted)
 {
     if (!validAxis(physicalAxis)) return;
-    m_configuration.axes[physicalAxis].inverted = inverted;
+    currentProfile().axes[physicalAxis].inverted = inverted;
     persistAndApply();
 }
 
 void AppBackend::setAxisDeadzone(int physicalAxis, double deadzone)
 {
     if (!validAxis(physicalAxis)) return;
-    m_configuration.axes[physicalAxis].deadzone = std::clamp(static_cast<float>(deadzone), 0.0F, 0.95F);
+    currentProfile().axes[physicalAxis].deadzone = std::clamp(static_cast<float>(deadzone), 0.0F, 0.95F);
     persistAndApply();
 }
 
@@ -181,20 +223,21 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
         return false;
     }
     const int source = physicalButton - 1;
-    if (m_configuration.buttons.size() <= static_cast<size_t>(source)) {
-        m_configuration.buttons.resize(static_cast<size_t>(source + 1));
+    ButtonBindings &bindings = currentProfile().buttons;
+    if (bindings.size() <= static_cast<size_t>(source)) {
+        bindings.resize(static_cast<size_t>(source + 1));
     }
-    if (hasButtonMappingConflict(m_configuration.buttons, source, virtualButton, vjoyButtonCount())) {
+    if (hasButtonMappingConflict(bindings, source, virtualButton, vjoyButtonCount())) {
         if (!explicitOverride) return false;
-        for (int index = 0; index < static_cast<int>(m_configuration.buttons.size()); ++index) {
-            ButtonBinding &binding = m_configuration.buttons[static_cast<size_t>(index)];
+        for (int index = 0; index < static_cast<int>(bindings.size()); ++index) {
+            ButtonBinding &binding = bindings[static_cast<size_t>(index)];
             if (index != source && binding.type == ButtonActionType::VirtualButton
                 && binding.target == virtualButton) {
                 binding = {};
             }
         }
     }
-    m_configuration.buttons[static_cast<size_t>(source)] = virtualButton > 0
+    bindings[static_cast<size_t>(source)] = virtualButton > 0
         ? ButtonBinding{ButtonActionType::VirtualButton, virtualButton} : ButtonBinding{};
     persistAndApply();
     appendEvent(QString(u"Button %1 → %2"_qs).arg(physicalButton).arg(
@@ -210,9 +253,75 @@ void AppBackend::resetButtonMappings()
         appendEvent(u"Connect a controller before resetting button mappings"_qs);
         return;
     }
-    m_configuration.buttons = defaultButtonMappings(physicalCount, virtualCount);
+    currentProfile().buttons = defaultButtonMappings(physicalCount, virtualCount);
     persistAndApply();
     appendEvent(u"Button mappings reset to passthrough defaults"_qs);
+}
+
+bool AppBackend::createProfile(const QString &name, const QString &startFromId)
+{
+    const QString trimmedName = name.trimmed();
+    if (!hotas::createProfile(m_configuration, trimmedName, startFromId)) {
+        appendEvent(u"Profile name must be unique and between 1 and 48 characters"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Created profile: "_qs + trimmedName);
+    return true;
+}
+
+bool AppBackend::cloneProfile(const QString &profileId)
+{
+    const ControllerProfile *source = findProfile(m_configuration, profileId);
+    if (!source) return false;
+    const QString sourceName = source->name;
+    if (!hotas::cloneProfile(m_configuration, profileId)) return false;
+    persistAndApply();
+    appendEvent(u"Cloned profile: "_qs + sourceName);
+    return true;
+}
+
+bool AppBackend::renameProfile(const QString &profileId, const QString &name)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    const QString trimmedName = name.trimmed();
+    if (!profile) {
+        return false;
+    }
+    const QString previousName = profile->name;
+    if (!hotas::renameProfile(m_configuration, profileId, trimmedName)) {
+        appendEvent(u"Profile name must be unique and between 1 and 48 characters"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Renamed profile: "_qs + previousName + u" → "_qs + trimmedName);
+    return true;
+}
+
+bool AppBackend::deleteProfile(const QString &profileId)
+{
+    const ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile) return false;
+    const QString name = profile->name;
+    if (!hotas::deleteProfile(m_configuration, profileId)) {
+        appendEvent(u"Activate another profile before deleting this one"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Deleted profile: "_qs + name);
+    return true;
+}
+
+bool AppBackend::activateProfile(const QString &profileId)
+{
+    const ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile) return false;
+    if (profileId == m_configuration.activeProfileId) return true;
+    const QString name = profile->name;
+    if (!hotas::activateProfile(m_configuration, profileId)) return false;
+    persistAndApply();
+    appendEvent(u"Activated profile: "_qs + name);
+    return true;
 }
 
 void AppBackend::beginCalibration()
@@ -230,7 +339,7 @@ bool AppBackend::saveCalibration()
         if (!m_worker.runtime().axisAvailable[index].load()) continue;
         const Calibration calibration = captured[index];
         if (calibration.minimum < calibration.center && calibration.center < calibration.maximum) {
-            m_configuration.axes[index].calibration = calibration;
+            m_configuration.calibration[index] = calibration;
             savedAny = true;
         }
     }
@@ -248,7 +357,7 @@ bool AppBackend::saveCalibration()
 void AppBackend::resetCalibration()
 {
     m_worker.cancelCalibration();
-    for (auto &mapping : m_configuration.axes) mapping.calibration = Calibration{};
+    for (Calibration &calibration : m_configuration.calibration) calibration = Calibration{};
     persistAndApply();
     appendEvent(u"Calibration reset"_qs);
 }
@@ -302,7 +411,7 @@ void AppBackend::resetApplicationConfiguration()
     m_worker.setMappingEnabled(false);
     m_configuration = defaultConfiguration();
     persistAndApply();
-    appendEvent(u"Configuration reset to v1.1 defaults"_qs);
+    appendEvent(u"Configuration reset to v1.2 defaults"_qs);
 }
 
 void AppBackend::refreshUiSnapshot()
@@ -339,12 +448,22 @@ void AppBackend::appendEvent(const QString &event)
 
 void AppBackend::initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity)
 {
-    if (!m_configuration.buttons.empty() || physicalButtonCount <= 0 || vjoyButtonCapacity <= 0) {
+    if (!currentProfile().buttons.empty() || physicalButtonCount <= 0 || vjoyButtonCapacity <= 0) {
         return;
     }
-    m_configuration.buttons = defaultButtonMappings(physicalButtonCount, vjoyButtonCapacity);
+    currentProfile().buttons = defaultButtonMappings(physicalButtonCount, vjoyButtonCapacity);
     persistAndApply();
     appendEvent(u"Default button passthrough initialized from detected device capacity"_qs);
+}
+
+const ControllerProfile &AppBackend::currentProfile() const
+{
+    return activeProfile(m_configuration);
+}
+
+ControllerProfile &AppBackend::currentProfile()
+{
+    return activeProfile(m_configuration);
 }
 
 void AppBackend::persistAndApply()

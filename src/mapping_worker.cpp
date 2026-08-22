@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <QStringList>
 #include <string>
@@ -515,6 +516,8 @@ void MappingWorker::run()
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
     MapperConfiguration configuration = configurationCopy();
+    std::shared_ptr<const RuntimeMappingConfiguration> activeMapping
+        = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(configuration));
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -550,7 +553,7 @@ void MappingWorker::run()
     };
 
     const auto rebuildButtonTargets = [&] {
-        runtimeButtonTargets = buildRuntimeButtonTargets(configuration.buttons, vjoyButtonCapacity);
+        runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity);
     };
 
     const auto releaseMappingOutput = [&] {
@@ -648,7 +651,7 @@ void MappingWorker::run()
 
     const auto suggestDefaultButtonsIfNeeded = [&] {
         const int physicalCount = m_runtime.buttonCount.load();
-        if (device && configuration.buttons.empty() && physicalCount > 0
+        if (device && activeMapping->buttons.empty() && physicalCount > 0
             && vjoyButtonCapacity > 0 && !buttonDefaultsPending) {
             buttonDefaultsPending = true;
             emit buttonConfigurationSuggested(physicalCount, vjoyButtonCapacity);
@@ -670,10 +673,17 @@ void MappingWorker::run()
     const auto applyLatestConfiguration = [&] {
         const quint64 currentVersion = m_configurationVersion.load();
         if (currentVersion == appliedVersion) return;
+        const auto switchStarted = std::chrono::steady_clock::now();
         const int previousVjoyDeviceId = configuration.vjoyDeviceId;
-        configuration = configurationCopy();
+        const QString previousProfileId = configuration.activeProfileId;
+        MapperConfiguration updated = configurationCopy();
+        auto compiled = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(updated));
+        configuration = std::move(updated);
+        // The mapping loop owns this reference. It observes a fully compiled
+        // profile table or the previous one, never piecemeal field edits.
+        activeMapping = std::move(compiled);
         appliedVersion = currentVersion;
-        buttonDefaultsPending = !configuration.buttons.empty();
+        buttonDefaultsPending = !activeMapping->buttons.empty();
         rebuildButtonTargets();
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
             releaseMappingOutput();
@@ -681,6 +691,16 @@ void MappingWorker::run()
         }
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         clearVirtualAxisSnapshot();
+        if (configuration.activeProfileId != previousProfileId) {
+            const auto switchFinished = std::chrono::steady_clock::now();
+            m_runtime.lastProfileSwapUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(switchFinished - switchStarted).count());
+            ++m_runtime.profileSwitchCount;
+            const int lastButton = m_runtime.lastPhysicalButton.load();
+            if (lastButton > 0 && lastButton <= kMaximumPhysicalButtons) {
+                m_runtime.lastPhysicalButtonTarget = runtimeButtonTargets[static_cast<size_t>(lastButton - 1)];
+            }
+        }
         if (inputEvent) SetEvent(inputEvent);
     };
 
@@ -768,10 +788,10 @@ void MappingWorker::run()
                 m_runtime.calibrationMinimum[index] = std::min(m_runtime.calibrationMinimum[index].load(), raw);
                 m_runtime.calibrationMaximum[index] = std::max(m_runtime.calibrationMaximum[index].load(), raw);
             }
-            const AxisMapping &mapping = configuration.axes[index];
+            const RuntimeAxisMapping &mapping = activeMapping->axes[index];
             const float transformed = transformAxis(raw, mapping);
             m_runtime.transformed[index] = transformed;
-            const int target = static_cast<int>(mapping.target);
+            const int target = static_cast<int>(mapping.profile.target);
             if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {
                 output[target] = transformed;
                 targetUsed[target] = true;

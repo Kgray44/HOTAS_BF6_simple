@@ -14,6 +14,10 @@ class AppBackend final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList axes READ axes NOTIFY stateChanged)
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
+    Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
+    Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
+    Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceId READ deviceId NOTIFY stateChanged)
     Q_PROPERTY(bool physicalConnected READ physicalConnected NOTIFY stateChanged)
@@ -40,6 +44,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
 
@@ -49,6 +55,10 @@ public:
 
     QVariantList axes() const;
     QVariantList buttons() const;
+    QVariantList profiles() const;
+    QString activeProfileId() const;
+    QString activeProfileName() const;
+    int activeProfileIndex() const;
     QString deviceName() const;
     QString deviceId() const;
     bool physicalConnected() const;
@@ -75,6 +85,8 @@ public:
     qulonglong latencyCurrentUs() const;
     qulonglong latencyAverageUs() const;
     qulonglong latencyPeakUs() const;
+    qulonglong profileSwitchCount() const;
+    qulonglong lastProfileSwapUs() const;
     QStringList buttonOutputChoices() const;
     QStringList eventLog() const { return m_events; }
 
@@ -85,6 +97,11 @@ public:
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE void resetButtonMappings();
+    Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
+    Q_INVOKABLE bool cloneProfile(const QString &profileId);
+    Q_INVOKABLE bool renameProfile(const QString &profileId, const QString &name);
+    Q_INVOKABLE bool deleteProfile(const QString &profileId);
+    Q_INVOKABLE bool activateProfile(const QString &profileId);
     Q_INVOKABLE void beginCalibration();
     Q_INVOKABLE bool saveCalibration();
     Q_INVOKABLE void resetCalibration();
@@ -107,6 +124,8 @@ private:
     void persistAndApply();
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
+    const ControllerProfile &currentProfile() const;
+    ControllerProfile &currentProfile();
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;

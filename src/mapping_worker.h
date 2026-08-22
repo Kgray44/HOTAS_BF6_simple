@@ -38,6 +38,8 @@ struct AtomicRuntimeState {
     std::atomic_uint64_t latencyCurrentUs{0};
     std::atomic_uint64_t latencyAverageUs{0};
     std::atomic_uint64_t latencyPeakUs{0};
+    std::atomic_uint64_t profileSwitchCount{0};
+    std::atomic_uint64_t lastProfileSwapUs{0};
 };
 
 struct DeviceSnapshot {

@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.1
+# HOTAS BF6 Simple v1.2
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -18,7 +18,7 @@ headers or binaries are copied into this repository. A T.Flight HOTAS One is
 the supported initial device, though any DirectInput game controller is visible
 for diagnostics and mapping.
 
-## v1.1 features
+## v1.2 features
 
 - Independent 250 Hz-bounded DirectInput worker with a 60 Hz UI snapshot
 - Roll, pitch, throttle, and yaw routes to vJoy X, Y, Z, and Rz
@@ -26,6 +26,8 @@ for diagnostics and mapping.
   capability mismatch warning, live diagnostics, and safe output reset on stop
   or disconnect
 - Compact Mapper, Buttons, Calibration, Diagnostics, and Settings pages
+- Persistent Normal and Precision profiles with create, clone, rename, safe
+  delete, and instant live activation from the Profiles page
 
 ## Build and run
 
@@ -55,6 +57,17 @@ Qt Creator run target.
 
 Mapping runs in its own DirectInput worker thread. The QML UI reads a latest
 snapshot at roughly 60 Hz and never schedules virtual-controller writes.
+
+## Profiles
+
+Profiles hold axis routes, deadzones, inversion, and button mappings. The
+physical controller's calibration and device preferences remain global. On the
+first v1.2 launch, the existing v1.1 mapping becomes **Normal** and an
+independent **Precision** clone is created. Switching profiles compiles the
+complete mapping table before the worker swaps it between reports, so it never
+releases/reacquires DirectInput or vJoy. Held buttons are immediately
+re-evaluated against the new routes, releasing obsolete virtual buttons and
+asserting any new target.
 
 ## Button mapping
 
