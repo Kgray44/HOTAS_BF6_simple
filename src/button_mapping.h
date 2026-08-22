@@ -10,6 +10,17 @@ using PhysicalButtonStates = std::array<bool, kMaximumPhysicalButtons>;
 using VirtualButtonStates = std::array<bool, kMaximumVirtualButtons + 1>;
 using RuntimeButtonTargets = std::array<int, kMaximumPhysicalButtons>;
 
+struct ButtonCapacityStatus {
+    int physicalButtons = 0;
+    int virtualButtons = 0;
+    bool sufficient = true;
+    bool recommended = false;
+};
+
+// UI and configuration code use this compact capability result to make an
+// undersized virtual device obvious without coupling the monitor to vJoy.
+ButtonCapacityStatus assessButtonCapacity(int physicalButtonCount, int vjoyButtonCapacity);
+
 // Returns a passthrough map that is limited by both reported device counts.
 ButtonBindings defaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity);
 

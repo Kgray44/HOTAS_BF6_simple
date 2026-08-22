@@ -379,7 +379,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         m_runtime.raw[index] = 0.0F;
         m_runtime.transformed[index] = 0.0F;
-        m_runtime.virtualValues[index] = 0.0F;
+        m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
         m_runtime.calibrationMinimum[index] = -1.0F;
         m_runtime.calibrationCenter[index] = 0.0F;
@@ -518,6 +518,8 @@ void MappingWorker::run()
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+    std::array<int, 5> virtualAxisSources{};
+    virtualAxisSources.fill(-1);
     PhysicalButtonStates latestPhysicalButtons{};
     RuntimeButtonTargets runtimeButtonTargets{};
     VirtualButtonStates lastVirtualButtonStates{};
@@ -532,6 +534,12 @@ void MappingWorker::run()
     const auto clearVirtualButtonSnapshot = [&] {
         lastVirtualButtonStates.fill(false);
         for (auto &button : m_runtime.virtualButtonPressed) button = false;
+    };
+
+    const auto clearVirtualAxisSnapshot = [&] {
+        for (auto &value : m_runtime.virtualValues) {
+            value = std::numeric_limits<float>::quiet_NaN();
+        }
     };
 
     const auto clearPhysicalButtonSnapshot = [&] {
@@ -550,6 +558,7 @@ void MappingWorker::run()
             vjoy.release();
         }
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        clearVirtualAxisSnapshot();
         clearVirtualButtonSnapshot();
     };
 
@@ -671,6 +680,7 @@ void MappingWorker::run()
             emit workerEvent(u"vJoy device changed; reacquiring mapping output"_qs);
         }
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        clearVirtualAxisSnapshot();
         if (inputEvent) SetEvent(inputEvent);
     };
 
@@ -749,6 +759,7 @@ void MappingWorker::run()
 
         std::array<float, 5> output{};
         std::array<bool, 5> targetUsed{};
+        virtualAxisSources.fill(-1);
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             if (!availableAxes[index]) continue;
             const float raw = physicalSnapshot.axes[index];
@@ -760,12 +771,11 @@ void MappingWorker::run()
             const AxisMapping &mapping = configuration.axes[index];
             const float transformed = transformAxis(raw, mapping);
             m_runtime.transformed[index] = transformed;
-            m_runtime.virtualValues[index] = 0.0F;
             const int target = static_cast<int>(mapping.target);
             if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {
                 output[target] = transformed;
                 targetUsed[target] = true;
-                m_runtime.virtualValues[index] = transformed;
+                virtualAxisSources[target] = index;
             }
         }
 
@@ -811,6 +821,8 @@ void MappingWorker::run()
                 }
                 if (vjoy.setAxis(static_cast<VirtualAxis>(target), desired)) {
                     lastVirtualValues[target] = desired;
+                    const int source = virtualAxisSources[target];
+                    if (source >= 0) m_runtime.virtualValues[source] = desired;
                     ++m_runtime.vjoyWrites;
                 }
             }

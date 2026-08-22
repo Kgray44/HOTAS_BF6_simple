@@ -28,8 +28,11 @@ private slots:
     void rangeIsClamped();
     void configurationRoundTrips();
     void duplicateMappingIsRejectedAndNormalized();
+    void buttonCapacityMismatchIsReported();
     void defaultButtonPassthroughIsCapacityBounded();
+    void fifteenButtonPassthroughUsesButtonsOneThroughFifteen();
     void buttonMappingPropagatesPressAndRelease();
+    void buttonsNineThroughFifteenPropagatePressAndRelease();
     void stoppingMappingReleasesVirtualButtons();
     void disabledAndInvalidButtonsDoNotMap();
     void duplicateButtonDestinationIsRejected();
@@ -112,6 +115,19 @@ void MappingCoreTests::duplicateMappingIsRejectedAndNormalized()
     QCOMPARE(configuration.axes[static_cast<int>(PhysicalAxis::Z)].target, VirtualAxis::Disabled);
 }
 
+void MappingCoreTests::buttonCapacityMismatchIsReported()
+{
+    const ButtonCapacityStatus insufficient = assessButtonCapacity(15, 8);
+    QCOMPARE(insufficient.physicalButtons, 15);
+    QCOMPARE(insufficient.virtualButtons, 8);
+    QVERIFY(!insufficient.sufficient);
+    QVERIFY(!insufficient.recommended);
+
+    const ButtonCapacityStatus ready = assessButtonCapacity(15, 32);
+    QVERIFY(ready.sufficient);
+    QVERIFY(ready.recommended);
+}
+
 void MappingCoreTests::defaultButtonPassthroughIsCapacityBounded()
 {
     const ButtonBindings bindings = defaultButtonMappings(5, 3);
@@ -119,6 +135,16 @@ void MappingCoreTests::defaultButtonPassthroughIsCapacityBounded()
     QCOMPARE(bindings[0].target, 1);
     QCOMPARE(bindings[2].target, 3);
     QCOMPARE(bindings[3].type, ButtonActionType::Disabled);
+}
+
+void MappingCoreTests::fifteenButtonPassthroughUsesButtonsOneThroughFifteen()
+{
+    const ButtonBindings bindings = defaultButtonMappings(15, 32);
+    QCOMPARE(static_cast<int>(bindings.size()), 15);
+    for (int source = 0; source < 15; ++source) {
+        QCOMPARE(bindings[static_cast<size_t>(source)].type, ButtonActionType::VirtualButton);
+        QCOMPARE(bindings[static_cast<size_t>(source)].target, source + 1);
+    }
 }
 
 void MappingCoreTests::buttonMappingPropagatesPressAndRelease()
@@ -129,6 +155,21 @@ void MappingCoreTests::buttonMappingPropagatesPressAndRelease()
     QVERIFY(mapButtonStates(physical, targets, 4)[2]);
     physical[1] = false;
     QVERIFY(!mapButtonStates(physical, targets, 4)[2]);
+}
+
+void MappingCoreTests::buttonsNineThroughFifteenPropagatePressAndRelease()
+{
+    const RuntimeButtonTargets targets = buildRuntimeButtonTargets(defaultButtonMappings(15, 32), 32);
+    for (int source = 8; source < 15; ++source) {
+        PhysicalButtonStates physical{};
+        physical[static_cast<size_t>(source)] = true;
+        const VirtualButtonStates pressed = mapButtonStates(physical, targets, 32);
+        QVERIFY(pressed[static_cast<size_t>(source + 1)]);
+
+        physical[static_cast<size_t>(source)] = false;
+        const VirtualButtonStates released = mapButtonStates(physical, targets, 32);
+        QVERIFY(!released[static_cast<size_t>(source + 1)]);
+    }
 }
 
 void MappingCoreTests::stoppingMappingReleasesVirtualButtons()

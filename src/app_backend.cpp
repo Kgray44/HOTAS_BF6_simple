@@ -5,9 +5,13 @@
 #include "config_store.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
 #include <QVariantMap>
 
 #include <algorithm>
+#include <cmath>
 
 namespace hotas {
 using namespace Qt::StringLiterals;
@@ -52,7 +56,9 @@ QVariantList AppBackend::axes() const
         item.insert(u"available"_qs, runtime.axisAvailable[index].load());
         item.insert(u"raw"_qs, runtime.raw[index].load());
         item.insert(u"transformed"_qs, runtime.transformed[index].load());
-        item.insert(u"virtualValue"_qs, runtime.virtualValues[index].load());
+        const float virtualValue = runtime.virtualValues[index].load();
+        item.insert(u"virtualValue"_qs, virtualValue);
+        item.insert(u"virtualValid"_qs, std::isfinite(virtualValue));
         item.insert(u"target"_qs, virtualAxisLabel(mapping.target));
         item.insert(u"inverted"_qs, mapping.inverted);
         item.insert(u"deadzone"_qs, mapping.deadzone);
@@ -98,6 +104,11 @@ int AppBackend::buttonCount() const { return m_worker.runtime().buttonCount.load
 int AppBackend::povCount() const { return m_worker.runtime().povCount.load(); }
 int AppBackend::povValue() const { return m_worker.runtime().povValue.load(); }
 int AppBackend::vjoyButtonCount() const { return m_worker.runtime().vjoyButtonCount.load(); }
+int AppBackend::vjoyRequiredButtonCount() const { return buttonCount(); }
+bool AppBackend::vjoyCapacitySufficient() const
+{
+    return assessButtonCapacity(buttonCount(), vjoyButtonCount()).sufficient;
+}
 int AppBackend::lastPhysicalButton() const { return m_worker.runtime().lastPhysicalButton.load(); }
 int AppBackend::lastPhysicalButtonTarget() const { return m_worker.runtime().lastPhysicalButtonTarget.load(); }
 bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive.load(); }
@@ -252,6 +263,26 @@ void AppBackend::setVjoyDeviceId(int deviceId)
 {
     m_configuration.vjoyDeviceId = std::clamp(deviceId, 1, 16);
     persistAndApply();
+}
+
+bool AppBackend::openVjoyConfiguration()
+{
+    // Request a safe worker-side release before launching the supported utility.
+    m_worker.setMappingEnabled(false);
+    const QStringList roots{
+        qEnvironmentVariable("ProgramW6432"), qEnvironmentVariable("ProgramFiles"),
+        u"C:/Program Files"_qs,
+    };
+    for (const QString &root : roots) {
+        if (root.isEmpty()) continue;
+        const QString executable = QDir(root).filePath(u"vJoy/x64/vJoyConf.exe"_qs);
+        if (QFileInfo(executable).isExecutable() && QProcess::startDetached(executable)) {
+            appendEvent(u"Mapping stopped; opened the supported vJoy configuration utility"_qs);
+            return true;
+        }
+    }
+    appendEvent(u"vJoy configuration utility was not found"_qs);
+    return false;
 }
 
 void AppBackend::useConnectedDevice()

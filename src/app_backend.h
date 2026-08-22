@@ -22,6 +22,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int povCount READ povCount NOTIFY stateChanged)
     Q_PROPERTY(int povValue READ povValue NOTIFY stateChanged)
     Q_PROPERTY(int vjoyButtonCount READ vjoyButtonCount NOTIFY stateChanged)
+    Q_PROPERTY(int vjoyRequiredButtonCount READ vjoyRequiredButtonCount NOTIFY stateChanged)
+    Q_PROPERTY(bool vjoyCapacitySufficient READ vjoyCapacitySufficient NOTIFY stateChanged)
+    Q_PROPERTY(int vjoyRecommendedButtonCount READ vjoyRecommendedButtonCount CONSTANT)
     Q_PROPERTY(int lastPhysicalButton READ lastPhysicalButton NOTIFY stateChanged)
     Q_PROPERTY(int lastPhysicalButtonTarget READ lastPhysicalButtonTarget NOTIFY stateChanged)
     Q_PROPERTY(bool mappingActive READ mappingActive NOTIFY stateChanged)
@@ -54,6 +57,9 @@ public:
     int povCount() const;
     int povValue() const;
     int vjoyButtonCount() const;
+    int vjoyRequiredButtonCount() const;
+    bool vjoyCapacitySufficient() const;
+    int vjoyRecommendedButtonCount() const { return 32; }
     int lastPhysicalButton() const;
     int lastPhysicalButtonTarget() const;
     bool mappingActive() const;
@@ -84,6 +90,7 @@ public:
     Q_INVOKABLE void resetCalibration();
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
+    Q_INVOKABLE bool openVjoyConfiguration();
     Q_INVOKABLE void useConnectedDevice();
     Q_INVOKABLE void resetApplicationConfiguration();
 

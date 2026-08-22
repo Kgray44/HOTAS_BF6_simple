@@ -11,7 +11,7 @@ to the vJoy inputs Battlefield 6 recognizes.
 - Qt 6.5+ with the `Core`, `Gui`, `Qml`, `Quick`, `QuickControls2`, and `Test`
   components
 - [vJoy](https://sourceforge.net/projects/vjoystick/) 2.2.2.0 installed and
-  configured with Device 1 exposing X, Y, Z, Rz, and up to 32 virtual buttons
+  configured with Device 1 exposing X, Y, Z, Rz, and 32 virtual buttons
 
 The app dynamically loads the installed x64 `vJoyInterface.dll`; no vJoy SDK
 headers or binaries are copied into this repository. A T.Flight HOTAS One is
@@ -22,8 +22,9 @@ for diagnostics and mapping.
 
 - Independent 250 Hz-bounded DirectInput worker with a 60 Hz UI snapshot
 - Roll, pitch, throttle, and yaw routes to vJoy X, Y, Z, and Rz
-- One-to-one physical-to-virtual button mapping, calibration, live diagnostics,
-  and safe output reset on stop or disconnect
+- One-to-one physical-to-virtual button mapping through Button 15, calibration,
+  capability mismatch warning, live diagnostics, and safe output reset on stop
+  or disconnect
 - Compact Mapper, Buttons, Calibration, Diagnostics, and Settings pages
 
 ## Build and run
@@ -61,12 +62,17 @@ The **Buttons** page enumerates the controller's actual DirectInput buttons and
 the selected vJoy device's reported button capacity. A newly detected controller
 receives a one-to-one passthrough map until either capacity is exhausted. Each
 vJoy destination has exactly one physical source, avoiding ambiguous releases.
+If the virtual capacity is below the physical count, Mapper, Diagnostics, and
+Settings show a clear warning; the supported **Configure vJoy** action opens
+vJoy's own configuration utility. Existing saved mappings are never overwritten
+when capacity changes.
 
 Button bindings are persisted with axis configuration and a v1.0 configuration
 migrates automatically on first detection. Physical state, press-to-identify,
 and output state are UI snapshots only; transitions are applied from the same
 dedicated worker as the axes. Stop and disconnect reset vJoy output so no
-button remains held.
+button remains held. vJoy writes are change-driven, so a stationary controller
+correctly reports `0 / s · IDLE / CHANGE-DRIVEN` rather than implying a failure.
 
 HidHide is status-only in v1.1. When installed, use its normal UI to hide the
 physical HOTAS from the game if duplicate controller input is a problem.

@@ -18,6 +18,17 @@ void disable(ButtonBinding &binding)
 
 } // namespace
 
+ButtonCapacityStatus assessButtonCapacity(int physicalButtonCount, int vjoyButtonCapacity)
+{
+    ButtonCapacityStatus status;
+    status.physicalButtons = boundedCount(physicalButtonCount, kMaximumPhysicalButtons);
+    status.virtualButtons = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    status.sufficient = status.physicalButtons == 0
+        || status.virtualButtons >= status.physicalButtons;
+    status.recommended = status.virtualButtons >= 32;
+    return status;
+}
+
 ButtonBindings defaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity)
 {
     const int physicalCount = boundedCount(physicalButtonCount, kMaximumPhysicalButtons);

@@ -52,23 +52,53 @@ ApplicationWindow {
     function valuePercent(value) {
         return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%"
     }
+    function controlValue(info, value) {
+        if (info && info.key === "z") return ((Number(value) + 1) * 50).toFixed(1) + "%"
+        return valuePercent(value)
+    }
+    function outputState(info) {
+        if (!backend.vjoyReady) return "OUTPUT OFFLINE"
+        if (!backend.mappingActive || !info.virtualValid) return "STANDBY"
+        return controlValue(info, info.virtualValue)
+    }
+    function capacityState() {
+        if (!backend.vjoyReady) return "VJOY OFFLINE"
+        if (!backend.vjoyCapacitySufficient) return "CAPACITY INSUFFICIENT"
+        return backend.vjoyButtonCount >= backend.vjoyRecommendedButtonCount ? "READY" : "READY · 32 RECOMMENDED"
+    }
+    function capacityColor() {
+        if (!backend.vjoyReady || !backend.vjoyCapacitySufficient) return "#d49b62"
+        return "#9fc9bb"
+    }
 
     component Panel: Rectangle {
-        color: "#f0171c21"
-        border.color: "#3046535c"
+        color: "#e9161d23"
+        border.color: "#41546770"
         border.width: 1
-        radius: 8
+        radius: 6
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 1
+            radius: 5
+            opacity: 0.5
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#2438434d" }
+                GradientStop { position: 0.38; color: "#0a101419" }
+                GradientStop { position: 1.0; color: "#0a0d1016" }
+            }
+        }
         Rectangle {
             x: 1
             y: 1
             width: parent.width - 2
             height: 1
             radius: 1
-            color: "#2d7f9198"
+            color: "#5c9cafb8"
         }
+        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            height: 1; color: "#1026323a" }
     }
-    component FineLine: Rectangle { height: 1
- color: "#203b454c" }
+    component FineLine: Rectangle { height: 1; color: "#33526870" }
     component StatusDot: Rectangle {
         property color tone: "#a5b9c0"
         width: 6
@@ -83,9 +113,9 @@ ApplicationWindow {
         signal triggered()
         implicitWidth: Math.max(110, labelText.implicitWidth + 30)
         implicitHeight: 36
-        radius: 5
-        color: !commandEnabled ? "#171b1f" : commandMouse.containsMouse ? (subdued ? "#2b3439" : "#4b626c") : (subdued ? "#20272c" : "#374a52")
-        border.color: !commandEnabled ? "#182f3539" : (subdued ? "#4a596167" : "#738aa0a9")
+        radius: 3
+        color: !commandEnabled ? "#151a1e" : commandMouse.containsMouse ? (subdued ? "#303d44" : "#456c78") : (subdued ? "#222c32" : "#324f5a")
+        border.color: !commandEnabled ? "#182f3539" : (subdued ? "#536975" : "#78aab9")
         opacity: commandEnabled ? 1.0 : 0.45
         Text { id: labelText
  anchors.centerIn: parent
@@ -103,31 +133,35 @@ ApplicationWindow {
     component InstrumentMeter: Item {
         property real value: 0
         property bool offline: false
+        property bool valid: true
         property color tone: "#a8c2ca"
         implicitHeight: 22
  implicitWidth: 160
         Rectangle { anchors.verticalCenter: parent.verticalCenter
  width: parent.width
- height: 5
- radius: 3
- color: "#0c0f12"
- border.color: "#28384248" }
+ height: 6
+ radius: 1
+ color: "#080c0f"
+ border.color: "#354b5665" }
+        Rectangle { visible: parent.valid; anchors.verticalCenter: parent.verticalCenter
+            x: 2; width: Math.max(0, Math.min(parent.width - 4, ((parent.value + 1) * 0.5) * (parent.width - 4)))
+            height: 2; color: Qt.rgba(parent.tone.r, parent.tone.g, parent.tone.b, 0.42) }
         Rectangle { anchors.verticalCenter: parent.verticalCenter
  x: parent.width / 2
  width: 1
- height: 11
- color: "#4a8296a0" }
-        Rectangle { visible: !parent.offline
- width: 9
- height: 9
- radius: 5
+ height: 14
+ color: "#6a9db0bb" }
+        Rectangle { visible: !parent.offline && parent.valid
+ width: 10
+ height: 10
+ radius: 2
  x: Math.max(0, Math.min(parent.width - width, ((parent.value + 1) * 0.5) * (parent.width - width)))
  anchors.verticalCenter: parent.verticalCenter
  color: parent.tone
- border.color: "#9bcfd8da" }
+ border.color: "#d0edf2" }
         Text { anchors.centerIn: parent
- visible: parent.offline
- text: "OFFLINE"
+ visible: parent.offline || !parent.valid
+ text: parent.offline ? "OFFLINE" : "STANDBY"
  color: "#9d8580"
  font.pixelSize: 9
  font.bold: true }
@@ -140,17 +174,19 @@ ApplicationWindow {
         implicitWidth: 150
         implicitHeight: 46
         Column { anchors.verticalCenter: parent.verticalCenter
+ width: telemetryItem.width
  spacing: 3
             Text { text: telemetryItem.caption
- color: "#8b969c"
+ color: "#8099a4"
  font.pixelSize: 10
  font.bold: true }
             Text { text: telemetryItem.value
  color: telemetryItem.tone
- font.pixelSize: 14
+ font.pixelSize: 15
  font.bold: true
+ font.family: "Consolas"
  elide: Text.ElideRight
- width: parent.width }
+ width: telemetryItem.width }
         }
     }
     component PageTitle: Item {
@@ -162,7 +198,7 @@ ApplicationWindow {
         Column { anchors.verticalCenter: parent.verticalCenter
  spacing: 4
             Text { text: pageTitle.heading
- color: "#f1f3f2"
+ color: "#f3f7f7"
  font.pixelSize: 26
  font.bold: true }
             Text { text: pageTitle.detail
@@ -237,22 +273,36 @@ ApplicationWindow {
         id: axisModule
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 188
+        Layout.preferredHeight: 220
         visible: info && info.available
-        color: "#ec1a2025"
+        color: "#ed182128"
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 15
- spacing: 8
+            anchors.margins: 16
+ spacing: 7
             RowLayout { Layout.fillWidth: true
                 Text { text: axisModule.info.label
- color: "#eef2f1"
- font.pixelSize: 15
+ color: "#eef7f7"
+ font.pixelSize: 14
  font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Text { text: axisModule.info.detail.toUpperCase() + " · ROUTE " + axisModule.info.target
- color: axisModule.info.target === "Disabled" ? "#929da1" : "#a6c2ca"
- font.pixelSize: 10 }
+ color: axisModule.info.target === "Disabled" ? "#929da1" : "#a8d1dc"
+ font.pixelSize: 9
+ font.bold: true }
+            }
+            RowLayout { Layout.fillWidth: true
+                Column { spacing: 1
+                    Text { text: "LIVE COMMAND"; color: "#7694a0"; font.pixelSize: 8; font.bold: true }
+                    Text { text: root.controlValue(axisModule.info, axisModule.info.transformed)
+                        color: "#d9edf1"; font.pixelSize: 28; font.family: "Consolas"; font.weight: Font.DemiBold }
+                }
+                Item { Layout.fillWidth: true }
+                Column { spacing: 2
+                    Text { text: "VIRTUAL OUTPUT"; color: "#7694a0"; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
+                    Text { text: root.outputState(axisModule.info); color: backend.vjoyReady ? "#9fcbbb" : "#d49b62"
+                        font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
+                }
             }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
@@ -264,11 +314,11 @@ ApplicationWindow {
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
  value: Number(axisModule.info.raw)
- tone: "#a7c2ca" }
-                Text { text: root.valuePercent(axisModule.info.raw)
- color: "#d7e5e8"
+ tone: "#8eb5c1" }
+                Text { text: root.controlValue(axisModule.info, axisModule.info.raw)
+ color: "#c6dce1"
  font.family: "Consolas"
- font.pixelSize: 17
+ font.pixelSize: 14
  font.weight: Font.DemiBold
  Layout.preferredWidth: 72
  horizontalAlignment: Text.AlignRight }
@@ -283,19 +333,20 @@ ApplicationWindow {
                 InstrumentMeter { Layout.fillWidth: true
  value: Number(axisModule.info.virtualValue)
  offline: !backend.vjoyReady
- tone: "#b8c7cb" }
-                Text { text: backend.vjoyReady ? root.valuePercent(axisModule.info.virtualValue) : "OFFLINE"
- color: backend.vjoyReady ? "#b9d5dc" : "#a7afb4"
+ valid: axisModule.info.virtualValid
+ tone: "#b7d7bf" }
+                Text { text: root.outputState(axisModule.info)
+ color: backend.vjoyReady && axisModule.info.virtualValid ? "#b8d9c2" : "#c59a79"
  font.family: "Consolas"
- font.pixelSize: backend.vjoyReady ? 13 : 10
- font.weight: backend.vjoyReady ? Font.DemiBold : Font.Normal
+ font.pixelSize: backend.vjoyReady && axisModule.info.virtualValid ? 14 : 9
+ font.weight: Font.DemiBold
  Layout.preferredWidth: 72
  horizontalAlignment: Text.AlignRight }
             }
             Item { Layout.preferredHeight: 1 }
             RowLayout { Layout.fillWidth: true
  spacing: 10
-                Text { text: "OUTPUT"
+                Text { text: "ROUTE"
  color: "#8c989d"
  font.pixelSize: 9
  font.bold: true }
@@ -384,30 +435,32 @@ ApplicationWindow {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 122
-        color: info && info.pressed ? "#e42c3d42" : "#ec1a2025"
-        border.color: info && info.pressed ? "#7686a4a7" : "#26323a40"
+        Layout.preferredHeight: 134
+        color: info && info.pressed ? "#ec263e48" : "#ed182128"
+        border.color: info && info.pressed ? "#93a3cfda" : "#43546770"
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 13
  spacing: 7
             RowLayout { Layout.fillWidth: true
-                Text { text: buttonCard.info.label
- color: "#edf2f1"
+                Text { text: "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
+ color: "#edf7f7"
  font.pixelSize: 13
  font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Row { spacing: 5
-                    StatusDot { tone: buttonCard.info.pressed ? "#a8c8d0" : "#68747a" }
+                    StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
- color: buttonCard.info.pressed ? "#c8e0e1" : "#919ca0"
+ color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"
  font.pixelSize: 9
  font.bold: true }
                 }
             }
-            Text { text: "Input is " + (buttonCard.info.pressed ? "active" : "released")
- color: "#929da1"
- font.pixelSize: 10 }
+            Text { text: "PHYSICAL   " + (buttonCard.info.pressed ? "DOWN" : "UP")
+ color: buttonCard.info.pressed ? "#c4e4e9" : "#849398"
+ font.pixelSize: 10
+ font.family: "Consolas"
+ font.bold: buttonCard.info.pressed }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
                 Text { text: "OUTPUT"
@@ -439,11 +492,13 @@ ApplicationWindow {
  font.pixelSize: 10 }
                 }
             }
-            Text { visible: buttonCard.info.virtualPressed
- text: "VIRTUAL OUTPUT ACTIVE"
- color: "#b7d4bf"
- font.pixelSize: 9
- font.bold: true }
+            Text { text: buttonCard.info.target > 0
+                    ? "VIRTUAL    " + (buttonCard.info.virtualPressed ? "DOWN" : "UP")
+                    : "VIRTUAL    UNROUTED"
+                color: buttonCard.info.virtualPressed ? "#b9dcc2" : "#819297"
+                font.pixelSize: 9
+                font.family: "Consolas"
+                font.bold: buttonCard.info.virtualPressed }
         }
     }
 
@@ -465,6 +520,14 @@ ApplicationWindow {
  y: parent.height - 100
  radius: 180
  color: "#071e2930" }
+        Repeater { model: 18
+            delegate: Rectangle { width: 1; height: parent.height; x: (index + 1) * parent.width / 19
+                color: "#163f5261" }
+        }
+        Repeater { model: 12
+            delegate: Rectangle { height: 1; width: parent.width; y: (index + 1) * parent.height / 13
+                color: "#123f5261" }
+        }
     }
 
     header: Rectangle {
@@ -518,6 +581,15 @@ ApplicationWindow {
  font.pixelSize: 10
  font.bold: true }
             }
+            FineLine { visible: root.width >= 1100; Layout.preferredWidth: 1
+                Layout.preferredHeight: 24 }
+            Row { visible: root.width >= 1100; spacing: 7
+                StatusDot { tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3" }
+                Text { text: "VJOY " + backend.vjoyDeviceId
+                    color: "#c3d2d5"; font.pixelSize: 10; font.bold: true }
+                Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
+                    color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
+            }
             Item { Layout.fillWidth: true }
             Row { spacing: 7
                 StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3") }
@@ -539,10 +611,10 @@ ApplicationWindow {
         x: 12
  y: headerBar.height + 10
         width: 248
- height: 340
+        height: 248
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
-        visible: opacity > 0
+        visible: root.menuOpen
         color: "#fb1a2025"
         border.color: "#48515d65"
         Behavior on opacity { NumberAnimation { duration: 130
@@ -559,8 +631,7 @@ ApplicationWindow {
                 model: [
                     { label: "MAPPER", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
-                    { label: "SETTINGS", page: 4, future: false }, { label: "", page: -1, future: false },
-                    { label: "PROFILES", page: 5, future: true }, { label: "CURVES", page: 6, future: true }
+                    { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
                     width: parent.width
@@ -651,9 +722,20 @@ ApplicationWindow {
                         FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 28 }
                         TelemetryItem { caption: "OUTPUT DEVICE " + backend.vjoyDeviceId
- value: backend.vjoyReady ? "Ready / " + backend.vjoyButtonCount + " buttons" : "Offline"
- tone: backend.vjoyReady ? "#b9d1d8" : "#a5afb3"
+ value: backend.vjoyReady ? backend.vjoyButtonCount + " BUTTONS · " + root.capacityState() : "OFFLINE"
+ tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3"
  Layout.fillWidth: true }
+                    }
+                }
+                Panel { visible: root.hasPhysicalInput && backend.vjoyReady && !backend.vjoyCapacitySufficient
+                    width: parent.width; height: 58; color: "#e52d2419"; border.color: "#c28b624f"
+                    RowLayout { anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 12
+                        Text { text: "⚠"; color: "#d6a169"; font.pixelSize: 18; font.bold: true }
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Text { text: "VJOY CAPACITY WARNING"; color: "#e0b075"; font.pixelSize: 10; font.bold: true }
+                            Text { text: "Physical controller: " + backend.buttonCount + " buttons   ·   Virtual controller: " + backend.vjoyButtonCount + " buttons   ·   Increase Device 1 to at least " + backend.vjoyRequiredButtonCount + " (32 recommended)."
+                                color: "#bda68f"; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                        }
                     }
                 }
                 OfflineMapper { width: parent.width
@@ -758,8 +840,8 @@ ApplicationWindow {
                         FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 30 }
                         TelemetryItem { caption: "VIRTUAL BUTTONS"
- value: backend.vjoyReady ? backend.vjoyButtonCount + " AVAILABLE" : "VJOY OFFLINE"
- tone: backend.vjoyReady ? "#b9d1d8" : "#a5afb3"
+ value: backend.vjoyReady ? backend.vjoyButtonCount + " · " + root.capacityState() : "VJOY OFFLINE"
+ tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3"
  Layout.fillWidth: true }
                         FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 30 }
@@ -823,7 +905,9 @@ ApplicationWindow {
                             property var info: root.axisAt(index)
                             visible: info && info.available
                             Layout.fillWidth: true
- Layout.preferredHeight: 112
+                            Layout.preferredHeight: 118
+                            color: backend.calibrationActive ? "#ea1a2930" : "#ed182128"
+                            border.color: backend.calibrationActive ? "#5a7e9aa8" : "#41546770"
                             RowLayout { anchors.fill: parent
  anchors.margins: 15
                                 ColumnLayout { Layout.preferredWidth: 130
@@ -831,11 +915,11 @@ ApplicationWindow {
  color: "#eaf0f1"
  font.pixelSize: 12
  font.bold: true }
-                                    Text { text: calibrationAxisCard.info.calibrationEnabled ? "SAVED RANGE" : "RAW DEFAULT"
- color: calibrationAxisCard.info.calibrationEnabled ? "#9fc7b1" : "#89979d"
+                                    Text { text: backend.calibrationActive ? "CAPTURING LIVE" : (calibrationAxisCard.info.calibrationEnabled ? "SAVED RANGE" : "RAW DEFAULT")
+ color: backend.calibrationActive ? "#abd7e2" : (calibrationAxisCard.info.calibrationEnabled ? "#9fc7b1" : "#89979d")
  font.pixelSize: 9 }
                                 }
-                                Repeater { model: [{ n: "MIN", v: calibrationAxisCard.info.calibrationMinimum }, { n: "CENTER", v: calibrationAxisCard.info.calibrationCenter }, { n: "MAX", v: calibrationAxisCard.info.calibrationMaximum }]
+                                Repeater { model: [{ n: "MIN", v: calibrationAxisCard.info.calibrationMinimum }, { n: "CURRENT", v: calibrationAxisCard.info.raw }, { n: "MAX", v: calibrationAxisCard.info.calibrationMaximum }]
                                     delegate: Column { Layout.fillWidth: true
  spacing: 5
                                         Text { text: modelData.n
@@ -876,15 +960,17 @@ ApplicationWindow {
                     Repeater { model: [
                         { c: "PHYSICAL RATE", v: backend.inputReportsPerSecond.toFixed(0) + " HZ", t: backend.inputReportsPerSecond > 0 ? "#b9d1d8" : "#a5afb3" },
                         { c: "UPDATE AGE", v: backend.lastPhysicalUpdateAgeMs >= 0 ? backend.lastPhysicalUpdateAgeMs + " MS" : "—", t: backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? "#b9d1d8" : "#a5afb3" },
-                        { c: "POV", v: root.povText(), t: "#c9d6d9" },
                         { c: "MAP LATENCY", v: backend.latencyCurrentUs + " US", t: "#c9d6d9" },
-                        { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d" }
+                        { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
+                          note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
+                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : "STOPPED", t: backend.mappingActive ? "#a8cfba" : "#a5afb3",
+                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : "PHYSICAL MONITORING CONTINUES" }
                     ]
                         delegate: Panel { Layout.fillWidth: true
- Layout.preferredHeight: 78
+ Layout.preferredHeight: 86
                             Column { anchors.fill: parent
  anchors.margins: 13
- spacing: 7
+ spacing: 4
                                 Text { text: modelData.c
  color: "#7f8d94"
  font.pixelSize: 9
@@ -894,17 +980,19 @@ ApplicationWindow {
  font.pixelSize: 16
  font.bold: true
  font.family: "Consolas" }
+                                Text { visible: modelData.note !== undefined; text: modelData.note || ""
+                                    color: "#7895a0"; font.pixelSize: 8; font.bold: true }
                             }
                         }
                     }
                 }
                 RowLayout { width: parent.width
                     Panel { Layout.fillWidth: true
- Layout.preferredHeight: 116
+ Layout.preferredHeight: 122
                         Column { anchors.fill: parent
  anchors.margins: 14
  spacing: 7
-                            Text { text: "DIRECTINPUT DEVICE"
+                            Text { text: "PHYSICAL DEVICE"
  color: "#7f8d94"
  font.pixelSize: 9
  font.bold: true }
@@ -914,44 +1002,42 @@ ApplicationWindow {
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
-                            Text { text: backend.deviceId.length > 0 ? backend.deviceId : "No selected GUID"
+                            Text { text: backend.axisCount + " AXES   ·   " + backend.buttonCount + " BUTTONS   ·   POV " + root.povText()
  color: "#91a0a6"
  font.pixelSize: 10
  font.family: "Consolas"
- elide: Text.ElideRight
  width: parent.width }
-                            Text { text: root.physicalStatusText() + " · " + backend.axisCount + " AXES · " + backend.buttonCount + " BUTTONS"
+                            Text { text: root.physicalStatusText() + " · DIRECTINPUT LIVE SNAPSHOT"
  color: root.physicalStatusColor()
  font.pixelSize: 10
  font.bold: true }
                         }
                     }
                     Panel { Layout.fillWidth: true
- Layout.preferredHeight: 116
+ Layout.preferredHeight: 122
                         Column { anchors.fill: parent
  anchors.margins: 14
  spacing: 7
-                            Text { text: "VJOY OUTPUT"
+                            Text { text: "VIRTUAL DEVICE"
  color: "#7f8d94"
  font.pixelSize: 9
  font.bold: true }
-                            Text { text: backend.vjoyStatus
- color: backend.vjoyReady ? "#e8eeee" : "#b77b86"
+                            Text { text: "vJoy Device " + backend.vjoyDeviceId + " · " + (backend.vjoyReady ? "READY" : "OFFLINE")
+ color: backend.vjoyReady ? "#e8eeee" : "#d49b62"
  font.pixelSize: 14
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
-                            Text { text: backend.vjoyReady ? "X / Y / Z / RZ · " + backend.vjoyButtonCount + " BUTTONS" : "Physical monitoring remains independent"
- color: "#91a0a6"
- font.pixelSize: 10 }
-                            Text { text: backend.mappingActive ? "MAPPING ACQUIRED" : "MAPPING NOT ACQUIRED"
- color: backend.mappingActive ? "#9fc7b1" : "#a5afb3"
+                            Text { text: backend.vjoyReady ? "X / Y / Z / RZ   ·   " + backend.vjoyButtonCount + " BUTTONS" : "Physical monitoring remains independent"
+ color: "#91a0a6"; font.pixelSize: 10; font.family: "Consolas" }
+                            Text { text: backend.vjoyReady ? root.capacityState() + "   ·   REQUIRED " + backend.vjoyRequiredButtonCount : backend.vjoyStatus
+ color: root.capacityColor()
  font.pixelSize: 10
  font.bold: true }
                         }
                     }
                 }
-                Text { text: "RAW AXIS SNAPSHOT"
+                Text { text: "PHYSICAL / VIRTUAL AXIS ROUTES"
  color: "#94a1a6"
  font.pixelSize: 10
  font.bold: true }
@@ -965,7 +1051,7 @@ ApplicationWindow {
                             property var info: root.axisAt(index)
                             visible: info && info.available
                             Layout.fillWidth: true
- Layout.preferredHeight: 78
+ Layout.preferredHeight: 116
                             Column { anchors.fill: parent
  anchors.margins: 12
  spacing: 4
@@ -973,19 +1059,25 @@ ApplicationWindow {
  color: "#aebcc0"
  font.pixelSize: 9
  font.bold: true }
-                                Text { text: "RAW  " + root.valuePercent(diagnosticAxisCard.info.raw)
+                                Text { text: "RAW       " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.raw)
  color: "#dfeaec"
  font.pixelSize: 12
  font.family: "Consolas" }
-                                Text { text: "OUT  " + (backend.vjoyReady ? root.valuePercent(diagnosticAxisCard.info.virtualValue) : "OFFLINE")
- color: backend.vjoyReady ? "#a7c5cd" : "#9a7d75"
+                                Text { text: "PHYSICAL  " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.transformed)
+ color: "#a9cad2"
  font.pixelSize: 10
  font.family: "Consolas" }
+                                Text { text: "OUTPUT    " + root.outputState(diagnosticAxisCard.info)
+ color: diagnosticAxisCard.info.virtualValid ? "#b7d7c0" : "#c59a79"
+ font.pixelSize: 10
+ font.family: "Consolas" }
+                                Text { text: "ROUTE     " + diagnosticAxisCard.info.target.toUpperCase()
+ color: "#7c97a1"; font.pixelSize: 9; font.family: "Consolas" }
                             }
                         }
                     }
                 }
-                Text { text: "BUTTON SNAPSHOT · " + backend.buttonCount + " PHYSICAL"
+                Text { text: "BUTTON ROUTES · " + backend.buttonCount + " PHYSICAL / " + backend.vjoyButtonCount + " VIRTUAL"
  color: "#94a1a6"
  font.pixelSize: 10
  font.bold: true }
@@ -995,22 +1087,17 @@ ApplicationWindow {
  rowSpacing: 8
                     Repeater { model: root.allButtons
                         delegate: Panel { Layout.fillWidth: true
- Layout.preferredHeight: 42
+ Layout.preferredHeight: 62
  color: modelData.pressed ? "#ed20363c" : "#dc151a1f"
-                            Row { anchors.fill: parent
- anchors.margins: 10
- spacing: 7
-                                StatusDot { tone: modelData.pressed ? "#91c4d0" : "#59646a"
- anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: modelData.label.toUpperCase()
- color: "#d6e1e3"
- font.pixelSize: 9
- font.bold: true
- anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: modelData.pressed ? "DOWN" : "UP"
- color: modelData.pressed ? "#b9dbe1" : "#89969b"
- font.pixelSize: 9
- anchors.verticalCenter: parent.verticalCenter }
+                            Column { anchors.fill: parent
+ anchors.margins: 10; spacing: 4
+                                Row { spacing: 7
+                                    StatusDot { tone: modelData.pressed ? "#91c4d0" : "#59646a" }
+                                    Text { text: modelData.label.toUpperCase() + "  " + (modelData.pressed ? "PHYSICAL DOWN" : "PHYSICAL UP")
+                                        color: modelData.pressed ? "#c9e9ee" : "#89969b"; font.pixelSize: 9; font.bold: true }
+                                }
+                                Text { text: modelData.target > 0 ? "ROUTE vJOY " + ("0" + modelData.target).slice(-2) + "  ·  VIRTUAL " + (modelData.virtualPressed ? "DOWN" : "UP") : "ROUTE UNASSIGNED"
+                                    color: modelData.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 8; font.family: "Consolas" }
                             }
                         }
                     }
@@ -1097,7 +1184,9 @@ ApplicationWindow {
                     }
                 }
                 Panel { width: parent.width
- height: 74
+ height: 136
+                    color: backend.vjoyReady && !backend.vjoyCapacitySufficient ? "#e52d2419" : "#ed182128"
+                    border.color: backend.vjoyReady && !backend.vjoyCapacitySufficient ? "#c28b624f" : "#41546770"
                     RowLayout { anchors.fill: parent
  anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true
@@ -1105,14 +1194,24 @@ ApplicationWindow {
  color: "#e8eeee"
  font.pixelSize: 12
  font.bold: true }
-                            Text { text: backend.vjoyReady ? "Available with " + backend.vjoyButtonCount + " buttons" : backend.vjoyStatus
- color: backend.vjoyReady ? "#9fc7b1" : "#a5afb3"
- font.pixelSize: 10 }
+                            Text { text: "Device " + backend.vjoyDeviceId + "   ·   " + (backend.vjoyReady ? "READY" : "OFFLINE")
+                                color: backend.vjoyReady ? "#b7d8df" : "#d49b62"; font.pixelSize: 13; font.bold: true }
+                            Text { text: "Axes       X   Y   Z   Rz"
+                                color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
+                            Text { text: "Buttons    " + backend.vjoyButtonCount + "     Required " + backend.vjoyRequiredButtonCount + "     Recommended " + backend.vjoyRecommendedButtonCount
+                                color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
+                            Text { text: backend.vjoyReady ? root.capacityState() : backend.vjoyStatus
+                                color: root.capacityColor(); font.pixelSize: 10; font.bold: true }
                         }
-                        SpinBox { from: 1
- to: 16
- value: backend.vjoyDeviceId
- onValueModified: backend.setVjoyDeviceId(value) }
+                        Column { spacing: 7
+                            SpinBox { from: 1
+                                to: 16
+                                value: backend.vjoyDeviceId
+                                onValueModified: backend.setVjoyDeviceId(value) }
+                            CommandButton { label: "CONFIGURE VJOY"
+                                subdued: true
+                                onTriggered: backend.openVjoyConfiguration() }
+                        }
                     }
                 }
                 Panel { width: parent.width

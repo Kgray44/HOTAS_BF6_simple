@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
-    application.setApplicationVersion(QStringLiteral("1.0.0"));
+    application.setApplicationVersion(QStringLiteral("1.1.0"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     hotas::AppBackend backend;
