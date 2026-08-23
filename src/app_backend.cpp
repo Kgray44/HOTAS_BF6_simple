@@ -30,7 +30,14 @@ using namespace Qt::StringLiterals;
 
 namespace {
 
-QString automationConditionSummary(const AutomationConditionDefinition &condition)
+QString automationProfileName(const MapperConfiguration &configuration, const QString &id)
+{
+    if (const ControllerProfile *profile = findProfile(configuration, id)) return profile->name;
+    return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
+}
+
+QString automationConditionSummary(const AutomationConditionDefinition &condition,
+                                   const MapperConfiguration &configuration)
 {
     const auto percent = [&condition](float value) {
         // DirectInput throttle is internally normalized to -1..+1, but the
@@ -40,48 +47,67 @@ QString automationConditionSummary(const AutomationConditionDefinition &conditio
         return QString::number(display, 'f', 0) + u"%"_qs;
     };
     switch (condition.type) {
-    case AutomationConditionType::Always: return u"Always"_qs;
+    case AutomationConditionType::Always: return u"All the time"_qs;
     case AutomationConditionType::AxisAbove: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
-        + u" above "_qs + percent(condition.minimum);
+        + u" is above "_qs + percent(condition.minimum);
     case AutomationConditionType::AxisBelow: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
-        + u" below "_qs + percent(condition.minimum);
+        + u" is below "_qs + percent(condition.minimum);
     case AutomationConditionType::AxisBetween: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
-        + u" between "_qs + percent(condition.minimum) + u"–"_qs + percent(condition.maximum);
+        + u" is between "_qs + percent(condition.minimum) + u" and "_qs + percent(condition.maximum);
     case AutomationConditionType::AxisOutsideRange: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
-        + u" outside "_qs + percent(condition.minimum) + u"–"_qs + percent(condition.maximum);
-    case AutomationConditionType::ButtonHeld: return QString(u"Button %1 held"_qs).arg(condition.button);
-    case AutomationConditionType::ButtonReleased: return QString(u"Button %1 released"_qs).arg(condition.button);
-    case AutomationConditionType::PovActive: return QString(u"POV %1 %2"_qs).arg(condition.povHat)
+        + u" is outside "_qs + percent(condition.minimum) + u" to "_qs + percent(condition.maximum);
+    case AutomationConditionType::ButtonHeld: return QString(u"Button %1 is held"_qs).arg(condition.button);
+    case AutomationConditionType::ButtonReleased: return QString(u"Button %1 is not held"_qs).arg(condition.button);
+    case AutomationConditionType::PovActive: return QString(u"POV %1 points %2"_qs).arg(condition.povHat)
         .arg(povDirectionLabel(condition.povDirection));
-    case AutomationConditionType::PovInactive: return QString(u"POV %1 %2 inactive"_qs).arg(condition.povHat)
+    case AutomationConditionType::PovInactive: return QString(u"POV %1 is not pointing %2"_qs).arg(condition.povHat)
         .arg(povDirectionLabel(condition.povDirection));
-    case AutomationConditionType::BaseProfileIs: return u"Base Profile is "_qs + condition.profileId;
-    case AutomationConditionType::EffectiveProfileIs: return u"Effective Profile is "_qs + condition.profileId;
+    case AutomationConditionType::BaseProfileIs: return u"Selected profile is "_qs
+        + automationProfileName(configuration, condition.profileId);
+    case AutomationConditionType::EffectiveProfileIs: return u"Active profile is "_qs
+        + automationProfileName(configuration, condition.profileId);
     }
     return u"Invalid condition"_qs;
 }
 
-QString automationActionSummary(const AutomationActionDefinition &action)
+QString automationActionSummary(const AutomationActionDefinition &action,
+                                const MapperConfiguration &configuration)
 {
     const auto percent = [](float value) { return QString::number(value * 100.0F, 'f', 0) + u"%"_qs; };
     switch (action.type) {
-    case AutomationActionType::VJoyButtonHold: return QString(u"vJoy Button %1 · Hold"_qs).arg(action.virtualButton);
-    case AutomationActionType::VJoyButtonToggle: return QString(u"vJoy Button %1 · Toggle"_qs).arg(action.virtualButton);
-    case AutomationActionType::ProfileHold: return u"Hold Profile · "_qs + action.profileId;
-    case AutomationActionType::ProfileToggle: return u"Toggle Profile · "_qs + action.profileId;
-    case AutomationActionType::AxisScale: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" scale "_qs + percent(action.value);
-    case AutomationActionType::AxisOffset: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" offset "_qs + percent(action.value);
-    case AutomationActionType::AxisClamp: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" clamp "_qs + percent(action.minimum) + u"–"_qs + percent(action.maximum);
-    case AutomationActionType::AxisOverride: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" override "_qs + percent(action.value);
+    case AutomationActionType::VJoyButtonHold: return QString(u"Press and hold virtual button %1"_qs)
+        .arg(action.virtualButton);
+    case AutomationActionType::VJoyButtonToggle: return QString(u"Toggle virtual button %1"_qs)
+        .arg(action.virtualButton);
+    case AutomationActionType::ProfileHold: return u"Use "_qs
+        + automationProfileName(configuration, action.profileId) + u" while active"_qs;
+    case AutomationActionType::ProfileToggle: return u"Switch to "_qs
+        + automationProfileName(configuration, action.profileId);
+    case AutomationActionType::AxisScale: return u"Change "_qs
+        + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis)) + u" sensitivity to "_qs
+        + percent(action.value);
+    case AutomationActionType::AxisOffset: return u"Adjust "_qs
+        + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis)) + u" output by "_qs
+        + percent(action.value);
+    case AutomationActionType::AxisClamp: return u"Limit "_qs
+        + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis)) + u" output to "_qs
+        + percent(action.minimum) + u"–"_qs + percent(action.maximum);
+    case AutomationActionType::AxisOverride: return u"Force "_qs
+        + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis)) + u" to "_qs
+        + percent(action.value);
     case AutomationActionType::AxisMix: return u"Mix "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.sourceAxis))
-        + u" into "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" · "_qs + percent(action.value);
-    case AutomationActionType::AxisFollow: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
-        + u" follows "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.sourceAxis));
+        + (action.sourceStage == AutomationAxisSourceStage::Physical ? u" from controller input into "_qs
+                                                                     : u" from current mapped output into "_qs)
+        + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis)) + u" at "_qs + percent(action.value);
+    case AutomationActionType::AxisFollow: {
+        QString summary = u"Make "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+            + u" follow "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.sourceAxis))
+            + (action.sourceStage == AutomationAxisSourceStage::Physical ? u" from controller input at "_qs
+                                                                         : u" from current mapped output at "_qs)
+            + percent(action.value);
+        if (std::abs(action.offset) > 0.00001F) summary += u" with "_qs + percent(action.offset) + u" offset"_qs;
+        return summary;
+    }
     }
     return u"Invalid action"_qs;
 }
@@ -759,7 +785,7 @@ QVariantList AppBackend::automationRules() const
         QVariantList conditions;
         QStringList conditionLabels;
         for (const AutomationConditionDefinition &condition : definition.conditions) {
-            conditionLabels.append(automationConditionSummary(condition));
+            conditionLabels.append(automationConditionSummary(condition, m_configuration));
             conditions.append(QVariantMap{{u"type"_qs, static_cast<int>(condition.type)},
                 {u"axis"_qs, condition.axis}, {u"minimum"_qs, condition.minimum},
                 {u"maximum"_qs, condition.maximum}, {u"hysteresis"_qs, condition.hysteresis},
@@ -770,7 +796,7 @@ QVariantList AppBackend::automationRules() const
         QVariantList actions;
         QStringList actionLabels;
         for (const AutomationActionDefinition &action : definition.actions) {
-            actionLabels.append(automationActionSummary(action));
+            actionLabels.append(automationActionSummary(action, m_configuration));
             actions.append(QVariantMap{{u"type"_qs, static_cast<int>(action.type)},
                 {u"virtualButton"_qs, action.virtualButton}, {u"profileId"_qs, action.profileId},
                 {u"targetAxis"_qs, action.targetAxis}, {u"sourceAxis"_qs, action.sourceAxis},
@@ -838,10 +864,31 @@ QVariantList AppBackend::automationRules() const
             health = AutomationHealth::Invalid;
             healthMessage = availabilityMessage;
         }
+        const auto always = [](const AutomationConditionDefinition &condition) {
+            return condition.type == AutomationConditionType::Always;
+        };
+        const bool containsAlways = std::any_of(definition.conditions.cbegin(), definition.conditions.cend(), always);
+        if (containsAlways) {
+            // A single Always condition is a friendly rule-level mode. It is
+            // redundant under ALL with other requirements and dominates under
+            // ANY, so never force people to decode it on overview cards.
+            if (definition.matchMode == AutomationMatchMode::Any || definition.conditions.size() == 1) {
+                conditionLabels = {u"All the time"_qs};
+            } else {
+                QStringList filtered;
+                for (int labelIndex = 0; labelIndex < static_cast<int>(definition.conditions.size()); ++labelIndex) {
+                    if (!always(definition.conditions[static_cast<size_t>(labelIndex)])) {
+                        filtered.append(conditionLabels[labelIndex]);
+                    }
+                }
+                conditionLabels = std::move(filtered);
+            }
+        }
+        const QString connector = definition.matchMode == AutomationMatchMode::Any ? u" OR "_qs : u" AND "_qs;
         rules.append(QVariantMap{{u"id"_qs, definition.id}, {u"name"_qs, definition.name},
             {u"enabled"_qs, definition.enabled}, {u"matchMode"_qs, static_cast<int>(definition.matchMode)},
             {u"priority"_qs, definition.priority}, {u"conditions"_qs, conditions}, {u"actions"_qs, actions},
-            {u"conditionSummary"_qs, conditionLabels.join(u" · "_qs)},
+            {u"conditionSummary"_qs, conditionLabels.join(connector)},
             {u"actionSummary"_qs, actionLabels.join(u" · "_qs)},
             {u"active"_qs, m_worker.runtime().automationRuleActive[static_cast<size_t>(index)].load()},
             {u"health"_qs, static_cast<int>(health)}, {u"healthMessage"_qs, healthMessage}});

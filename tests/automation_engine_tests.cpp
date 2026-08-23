@@ -56,6 +56,7 @@ private slots:
     void profileOverrideUsesUnifiedPrecedence();
     void migrationDefaultsToEnabledEmptyEngine();
     void disabledEmptyDraftPersistsWithoutPublishing();
+    void legacyAlwaysRuleRoundTripsWithoutChangingBehavior();
     void masterDisableClearsLatchedAutomationState();
 };
 
@@ -267,6 +268,43 @@ void AutomationEngineTests::disabledEmptyDraftPersistsWithoutPublishing()
     QVERIFY(cache.automation);
     QCOMPARE(cache.automation->ruleHealth[0], AutomationHealth::Invalid);
     QVERIFY(!cache.automation->rules[0].enabled);
+}
+
+void AutomationEngineTests::legacyAlwaysRuleRoundTripsWithoutChangingBehavior()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationDefinition legacy;
+    legacy.id = u"legacy-always-and-button"_qs;
+    legacy.name = u"Legacy always plus button"_qs;
+    legacy.matchMode = AutomationMatchMode::All;
+    legacy.conditions = {always(), {AutomationConditionType::ButtonHeld, 0, 0.0F, 0.0F,
+        0.0F, 6}};
+    AutomationActionDefinition scale;
+    scale.type = AutomationActionType::AxisScale;
+    scale.targetAxis = static_cast<int>(PhysicalAxis::X);
+    scale.value = 0.60F;
+    legacy.actions = {scale};
+    configuration.automations.push_back(legacy);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.automations.size(), size_t{1});
+    QCOMPARE(restored.automations.front().matchMode, AutomationMatchMode::All);
+    QCOMPARE(restored.automations.front().conditions.size(), size_t{2});
+    QCOMPARE(restored.automations.front().conditions[0].type, AutomationConditionType::Always);
+    QCOMPARE(restored.automations.front().conditions[1].type, AutomationConditionType::ButtonHeld);
+    QCOMPARE(restored.automations.front().conditions[1].button, 6);
+    QCOMPARE(restored.automations.front().actions[0].type, AutomationActionType::AxisScale);
+    QCOMPARE(restored.automations.front().actions[0].value, 0.60F);
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(restored);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    snapshot.buttons[5] = true;
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[5] = false;
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
 }
 
 void AutomationEngineTests::masterDisableClearsLatchedAutomationState()

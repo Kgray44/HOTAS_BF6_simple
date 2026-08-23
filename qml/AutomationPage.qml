@@ -16,6 +16,7 @@ Item {
     property bool draftDirty: false
     property var draft: ({})
     property string editingId: ""
+    property bool advancedOpen: false
 
     readonly property color panelFill: legacy ? "#e9161d23" : (themeTokens ? (topGun ? "#d80b1b20" : "#ed182128") : "#1a1d23")
     readonly property color raisedFill: legacy ? "#1b2a31" : (themeTokens ? themeTokens.panelRaised : "#20282d")
@@ -34,13 +35,50 @@ Item {
     readonly property string telemetryFont: themeTokens ? themeTokens.telemetryFont : "Consolas"
     readonly property var rules: backendObject ? backendObject.automationRules : []
     readonly property var axisChoices: ["Roll", "Pitch", "Throttle", "Rotation X", "Rotation Y", "Yaw", "Additional axis 1", "Additional axis 2"]
-    readonly property var conditionTypes: ["Always", "Axis Above", "Axis Below", "Axis Between", "Axis Outside Range", "Button Held", "Button Released", "POV Active", "POV Inactive", "Base Profile Is", "Effective Profile Is"]
-    readonly property var actionTypes: ["vJoy Button · Hold", "vJoy Button · Toggle", "Profile · Hold", "Profile · Toggle", "Axis Scale", "Axis Offset", "Axis Clamp", "Axis Override", "Axis Mix", "Axis Follow"]
-    readonly property var stages: ["Physical", "Processed"]
+    readonly property var requirementKinds: ["Choose what happens", "Button", "Axis", "POV / Hat", "Profile"]
+    readonly property var buttonStates: ["is held", "is not held"]
+    readonly property var axisComparisons: ["is above", "is below", "is between", "is outside"]
+    readonly property var povStates: ["points", "is not pointing"]
+    readonly property var profileStates: ["is selected", "is active"]
+    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another"]
+    readonly property var sourceStages: ["Controller input", "Current mapped output"]
     readonly property var directions: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
 
     function clone(value) { return JSON.parse(JSON.stringify(value)) }
     function setDraft(value) { draft = clone(value); draftDirty = true }
+    function defaultRequirement(type) { return ({ type: type === undefined ? -1 : type, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "" }) }
+    function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1 }) }
+    function requirementKind(condition) {
+        const type = condition && condition.type !== undefined ? Number(condition.type) : -1
+        if (type >= 1 && type <= 4) return 2
+        if (type >= 5 && type <= 6) return 1
+        if (type >= 7 && type <= 8) return 3
+        if (type >= 9 && type <= 10) return 4
+        return 0
+    }
+    function requirementType(kind, previous) {
+        if (kind === 1) return previous === 6 ? 6 : 5
+        if (kind === 2) return previous >= 1 && previous <= 4 ? previous : 1
+        if (kind === 3) return previous === 8 ? 8 : 7
+        if (kind === 4) return previous === 10 ? 10 : 9
+        return -1
+    }
+    function isAlwaysActive(rule) {
+        const requirements = rule && rule.conditions ? rule.conditions : []
+        return requirements.length === 1 && Number(requirements[0].type) === 0
+    }
+    function friendlyDraft(rule) {
+        const next = clone(rule)
+        const requirements = next.conditions || []
+        const ordinary = requirements.filter(function(requirement) { return Number(requirement.type) !== 0 })
+        const hasAlways = ordinary.length !== requirements.length
+        if (hasAlways) {
+            // Existing ALL + Always rules are equivalent without Always;
+            // ANY + Always is equivalent to the rule-level all-time mode.
+            next.conditions = next.matchMode === 1 || ordinary.length === 0 ? [defaultRequirement(0)] : ordinary
+        }
+        return next
+    }
     function ruleForId(id) {
         for (let index = 0; index < rules.length; ++index) if (rules[index].id === id) return rules[index]
         return null
@@ -48,27 +86,123 @@ Item {
     function openRule(rule) {
         if (!rule) return
         editingId = rule.id
-        draft = clone(rule)
+        draft = friendlyDraft(rule)
         draftDirty = false
+        advancedOpen = false
         editing = true
     }
     function openRuleById(id) { openRule(ruleForId(id)) }
-    function closeEditor() { editing = false; draftDirty = false; editingId = ""; draft = ({}) }
+    function closeEditor() { editing = false; draftDirty = false; editingId = ""; draft = ({}); advancedOpen = false }
     function returnToOverview() { if (draftDirty) discardDialog.open(); else closeEditor() }
     function newAutomation() { const id = backendObject.createAutomation(); if (id && id.length) openRuleById(id) }
     function duplicateAutomation(id) { const copyId = backendObject.duplicateAutomation(id); if (copyId && copyId.length) openRuleById(copyId) }
-    function saveDraft() { if (backendObject.saveAutomation(draft)) closeEditor() }
+    function saveDraft() { if (canSaveDraft() && backendObject.saveAutomation(draft)) closeEditor() }
     function updateCondition(index, key, value) { const next = clone(draft); next.conditions[index][key] = value; setDraft(next) }
     function updateAction(index, key, value) { const next = clone(draft); next.actions[index][key] = value; setDraft(next) }
-    function addCondition() { const next = clone(draft); next.conditions.push({ type: 0, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "" }); setDraft(next) }
-    function addAction() { const next = clone(draft); next.actions.push({ type: 0, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1 }); setDraft(next) }
+    function addRequirement(kind) { const next = clone(draft); next.conditions.push(defaultRequirement(requirementType(kind || 0, -1))); setDraft(next) }
+    function addEffect() { const next = clone(draft); next.actions.push(defaultEffect()); setDraft(next) }
     function removeCondition(index) { const next = clone(draft); next.conditions.splice(index, 1); setDraft(next) }
     function removeAction(index) { const next = clone(draft); next.actions.splice(index, 1); setDraft(next) }
+    function setRequirementKind(index, kind) { updateCondition(index, "type", requirementType(kind, Number(draft.conditions[index].type))) }
+    function setEffectType(index, choice) {
+        const next = clone(draft)
+        const effect = next.actions[index]
+        effect.type = choice - 1
+        // The neutral defaults below prevent an unfinished builder row from
+        // quietly changing an axis when a user is still choosing its details.
+        if (effect.type === 4) effect.value = 1
+        if (effect.type === 5 || effect.type === 8) effect.value = 0
+        if (effect.type === 6) { effect.minimum = -1; effect.maximum = 1 }
+        if (effect.type === 7) effect.value = 0
+        if (effect.type === 9) { effect.value = 1; effect.offset = 0 }
+        setDraft(next)
+    }
+    function setTriggerMode(alwaysActive) {
+        const next = clone(draft)
+        next.conditions = alwaysActive ? [defaultRequirement(0)] : []
+        setDraft(next)
+    }
+    function setMatchMode(mode) { const next = clone(draft); next.matchMode = mode; setDraft(next) }
     function percent(value) { return (Number(value) * 100).toFixed(1) + "%" }
     function conditionPercent(value, axis) { const displayed = axis === 2 ? (Number(value) + 1) * 50 : Number(value) * 100; return displayed.toFixed(1) + "%" }
     function conditionValue(text, axis) { const displayed = Number(String(text).replace("%", "")); return axis === 2 ? displayed / 50 - 1 : displayed / 100 }
-    function profileIndex(id) { const choices = backendObject.profileTriggerChoices; for (let index = 0; index < choices.length; ++index) if (choices[index].id === id) return index; return 0 }
-    function profileId(index) { const choices = backendObject.profileTriggerChoices; return index >= 0 && index < choices.length ? choices[index].id : "" }
+    function profileIndex(id) { const choices = backendObject.profileTriggerChoices; for (let index = 0; index < choices.length; ++index) if (choices[index].id === id) return index; return -1 }
+    function profileChoiceIndex(id) { const index = profileIndex(id); return index < 0 ? 0 : index + 1 }
+    function profileChoiceId(index) { const choices = backendObject.profileTriggerChoices; return index > 0 && index <= choices.length ? choices[index - 1].id : "" }
+    function profileChoicesWithPlaceholder() { return [{ label: "Choose a profile", id: "" }].concat(backendObject.profileTriggerChoices) }
+    function profileName(id) { const index = profileIndex(id); const choices = backendObject.profileTriggerChoices; return index >= 0 && choices[index] ? choices[index].label : "a profile" }
+    function axisName(index) { return index >= 0 && index < axisChoices.length ? axisChoices[index] : "axis" }
+    function directionName(direction) { return direction >= 1 && direction <= directions.length ? directions[direction - 1] : "a direction" }
+    function sourceStageName(stage) { return Number(stage) === 0 ? "controller input" : "current mapped output" }
+    function requirementReady(requirement) {
+        if (!requirement || Number(requirement.type) < 0) return false
+        if (Number(requirement.type) === 9 || Number(requirement.type) === 10) return profileIndex(requirement.profileId) >= 0
+        return true
+    }
+    function effectReady(effect) {
+        if (!effect || Number(effect.type) < 0) return false
+        if (Number(effect.type) === 2 || Number(effect.type) === 3) return profileIndex(effect.profileId) >= 0
+        return true
+    }
+    function requirementSummary(requirement) {
+        if (!requirement || Number(requirement.type) < 0) return "Choose what this requirement should react to."
+        switch (Number(requirement.type)) {
+        case 1: return axisName(requirement.axis) + " is above " + conditionPercent(requirement.minimum, requirement.axis)
+        case 2: return axisName(requirement.axis) + " is below " + conditionPercent(requirement.minimum, requirement.axis)
+        case 3: return axisName(requirement.axis) + " is between " + conditionPercent(requirement.minimum, requirement.axis) + " and " + conditionPercent(requirement.maximum, requirement.axis)
+        case 4: return axisName(requirement.axis) + " is outside " + conditionPercent(requirement.minimum, requirement.axis) + " to " + conditionPercent(requirement.maximum, requirement.axis)
+        case 5: return "Button " + requirement.button + " is held"
+        case 6: return "Button " + requirement.button + " is not held"
+        case 7: return "POV " + requirement.povHat + " points " + directionName(requirement.povDirection)
+        case 8: return "POV " + requirement.povHat + " is not pointing " + directionName(requirement.povDirection)
+        case 9: return profileIndex(requirement.profileId) < 0 ? "Choose the selected profile" : "Selected profile is " + profileName(requirement.profileId)
+        case 10: return profileIndex(requirement.profileId) < 0 ? "Choose the active profile" : "Active profile is " + profileName(requirement.profileId)
+        }
+        return "All the time"
+    }
+    function effectSummary(effect) {
+        if (!effect || Number(effect.type) < 0) return "Choose what this automation should do."
+        switch (Number(effect.type)) {
+        case 0: return "Press and hold virtual button " + effect.virtualButton
+        case 1: return "Toggle virtual button " + effect.virtualButton
+        case 2: return profileIndex(effect.profileId) < 0 ? "Choose a profile to use while active" : "Use " + profileName(effect.profileId) + " while active"
+        case 3: return profileIndex(effect.profileId) < 0 ? "Choose a profile to switch to" : "Switch to " + profileName(effect.profileId)
+        case 4: return "Change " + axisName(effect.targetAxis) + " sensitivity to " + percent(effect.value)
+        case 5: return "Adjust " + axisName(effect.targetAxis) + " output by " + percent(effect.value)
+        case 6: return "Limit " + axisName(effect.targetAxis) + " output to " + percent(effect.minimum) + "–" + percent(effect.maximum)
+        case 7: return "Force " + axisName(effect.targetAxis) + " to " + percent(effect.value)
+        case 8: return "Mix " + axisName(effect.sourceAxis) + " from " + sourceStageName(effect.sourceStage) + " into " + axisName(effect.targetAxis) + " at " + percent(effect.value)
+        case 9: return "Make " + axisName(effect.targetAxis) + " follow " + axisName(effect.sourceAxis)
+            + " from " + sourceStageName(effect.sourceStage) + " at " + percent(effect.value)
+            + (Number(effect.offset) === 0 ? "" : " with " + percent(effect.offset) + " offset")
+        }
+        return "Choose what this automation should do."
+    }
+    function joinSummary(values, connector) {
+        if (values.length === 0) return ""
+        if (values.length === 1) return values[0]
+        if (values.length === 2) return values[0] + " " + connector + " " + values[1]
+        return values.slice(0, values.length - 1).join(", ") + ", " + connector + " " + values[values.length - 1]
+    }
+    function ruleSummary() {
+        const requirements = draft.conditions || []
+        const effects = draft.actions || []
+        if (!isAlwaysActive(draft) && requirements.length === 0) return "Choose when this automation should run."
+        if (!isAlwaysActive(draft) && requirements.some(function(requirement) { return !requirementReady(requirement) })) return "Finish choosing what this automation should react to."
+        if (effects.length === 0) return "Add at least one effect."
+        if (effects.some(function(effect) { return !effectReady(effect) })) return "Finish choosing what this automation should do."
+        const effectText = joinSummary(effects.map(function(effect) { return effectSummary(effect) }), "and")
+        if (isAlwaysActive(draft)) return "All the time, " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
+        const whenText = joinSummary(requirements.map(function(requirement) { return requirementSummary(requirement) }), Number(draft.matchMode) === 1 ? "or" : "and")
+        return "When " + whenText + ", " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
+    }
+    function canSaveDraft() {
+        const requirements = draft.conditions || []
+        const effects = draft.actions || []
+        return String(draft.name || "").trim().length > 0
+            && (isAlwaysActive(draft) || (requirements.length > 0 && requirements.every(function(requirement) { return requirementReady(requirement) })))
+            && effects.length > 0 && effects.every(function(effect) { return effectReady(effect) })
+    }
     function ruleState(rule) { if (!rule.enabled) return rule.conditions.length === 0 || rule.actions.length === 0 ? "INCOMPLETE DRAFT" : "DISABLED"; if (rule.health === 2) return "NEEDS ATTENTION"; return rule.active ? "ACTIVE" : "STANDBY" }
     function ruleStateColor(rule) { if (!rule.enabled || rule.health === 2) return rule.conditions.length === 0 || rule.actions.length === 0 ? warningColor : dangerColor; return rule.active ? readyColor : mutedColor }
 
@@ -206,15 +340,14 @@ Item {
                             }
                             FineLine { Layout.fillWidth: true }
                             RowLayout { Layout.fillWidth: true
-                                Text { text: "PRIORITY " + modelData.priority; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: root.telemetryFont }
-                                Text { text: modelData.matchMode === 0 ? "MATCH ALL" : "MATCH ANY"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: root.telemetryFont }
+                                Text { text: modelData.enabled ? "Changes are active after Save" : "This automation is disabled"; color: root.mutedColor; font.pixelSize: 9; font.family: root.displayFont }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "OPEN ›"; color: root.accentColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
                             }
                             Text { text: "WHEN"; color: root.faintColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
-                            Text { text: modelData.conditions.length ? modelData.conditionSummary : "No conditions configured"; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Text { text: "THEN"; color: root.faintColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
-                            Text { text: modelData.actions.length ? modelData.actionSummary : "No actions configured"; color: modelData.actions.length ? root.accentColor : root.warningColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: modelData.conditions.length ? modelData.conditionSummary : "Nothing selected yet"; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: "DO"; color: root.faintColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
+                            Text { text: modelData.actions.length ? modelData.actionSummary : "Nothing selected yet"; color: modelData.actions.length ? root.accentColor : root.warningColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             Text { visible: modelData.healthMessage.length > 0; text: modelData.healthMessage; color: root.dangerColor; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
                                 ActionButton { label: "DUPLICATE"; subdued: true; onTriggered: root.duplicateAutomation(modelData.id) }
@@ -237,41 +370,26 @@ Item {
             RowLayout { width: parent.width
                 ActionButton { label: "‹ AUTOMATION"; subdued: true; onTriggered: root.returnToOverview() }
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                    Text { text: root.topGun ? "AUTOMATION  /  RULE EDITOR" : "Automation / Edit"; color: root.textColor; font.pixelSize: root.topGun ? 32 : 24; font.bold: true; font.family: root.displayFont; style: root.topGun ? Text.Outline : Text.Normal; styleColor: "#8e3321" }
-                    Text { text: "Draft configuration only · active runtime rules change after SAVE AUTOMATION"; color: root.mutedColor; font.pixelSize: 11; font.family: root.displayFont }
+                    Text { text: root.topGun ? "AUTOMATION  /  RULE BUILDER" : "Automation"; color: root.textColor; font.pixelSize: root.topGun ? 32 : 24; font.bold: true; font.family: root.displayFont; style: root.topGun ? Text.Outline : Text.Normal; styleColor: "#8e3321" }
+                    Text { text: "Changes take effect after Save. The running mapper keeps the last saved automation."; color: root.mutedColor; font.pixelSize: 11; font.family: root.displayFont }
                 }
-                Text { text: root.draft.enabled ? "ARMED ON SAVE" : "DISABLED DRAFT"; color: root.draft.enabled ? root.readyColor : root.warningColor; font.pixelSize: 10; font.bold: true; font.family: root.displayFont }
+                Text { text: root.draft.enabled ? "ENABLED ON SAVE" : "DISABLED"; color: root.draft.enabled ? root.readyColor : root.warningColor; font.pixelSize: 10; font.bold: true; font.family: root.displayFont }
             }
             ThemedPanel {
-                width: parent.width; implicitHeight: generalContent.implicitHeight + 28
+                width: parent.width; implicitHeight: basicContent.implicitHeight + 28
                 ColumnLayout {
-                    id: generalContent
+                    id: basicContent
                     anchors.fill: parent; anchors.margins: 14; spacing: 11
-                    RowLayout { Layout.fillWidth: true
-                        Text { text: "GENERAL"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
-                        Item { Layout.fillWidth: true }
-                        ActionButton { label: "DELETE AUTOMATION"; destructive: true; onTriggered: { deleteDialog.ruleId = root.editingId; deleteDialog.fromEditor = true; deleteDialog.open() } }
-                    }
+                    Text { text: "BASIC SETTINGS"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
                     GridLayout {
-                        Layout.fillWidth: true; columns: width >= 900 ? 4 : (width >= 590 ? 2 : 1); columnSpacing: 12; rowSpacing: 10
+                        Layout.fillWidth: true; columns: width >= 650 ? 2 : 1; columnSpacing: 14; rowSpacing: 10
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "AUTOMATION NAME"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
                             EditorTextField { Layout.fillWidth: true; text: root.draft.name || ""; placeholderText: "New Automation"; onTextEdited: { const next = root.clone(root.draft); next.name = text; root.setDraft(next) } }
                         }
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "MATCH MODE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                            EditorCombo { Layout.fillWidth: true; model: ["ALL conditions", "ANY condition"]; currentIndex: root.draft.matchMode || 0; onActivated: { const next = root.clone(root.draft); next.matchMode = currentIndex; root.setDraft(next) } }
-                        }
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "PRIORITY"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                            RowLayout { Layout.fillWidth: true
-                                EditorSpin { from: 0; to: 100; value: root.draft.priority === undefined ? 50 : root.draft.priority; onValueModified: { const next = root.clone(root.draft); next.priority = value; root.setDraft(next) } }
-                                Text { Layout.fillWidth: true; text: "Higher values win competing axis overrides."; color: root.faintColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                            }
-                        }
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "RUNTIME STATE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                            EditorSwitch { text: root.draft.enabled ? "ENABLED" : "DISABLED"; checked: root.draft.enabled || false; onToggled: { const next = root.clone(root.draft); next.enabled = checked; root.setDraft(next) } }
+                            Item { implicitHeight: 11 }
+                            EditorSwitch { text: "Automation enabled"; checked: root.draft.enabled || false; onToggled: { const next = root.clone(root.draft); next.enabled = checked; root.setDraft(next) } }
                         }
                     }
                 }
@@ -280,142 +398,173 @@ Item {
                 width: parent.width; implicitHeight: whenContent.implicitHeight + 28
                 ColumnLayout {
                     id: whenContent
-                    anchors.fill: parent; anchors.margins: 14; spacing: 10
-                    RowLayout { Layout.fillWidth: true
-                        ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: "WHEN"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
-                            Text { text: "Conditions are evaluated together once per physical report."; color: root.mutedColor; font.pixelSize: 10 }
+                    anchors.fill: parent; anchors.margins: 14; spacing: 12
+                    ColumnLayout { Layout.fillWidth: true; spacing: 7
+                        Text { text: "WHEN SHOULD THIS HAPPEN?"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
+                        RowLayout { Layout.fillWidth: true
+                            Text { text: "This automation runs"; color: root.mutedColor; font.pixelSize: 10; Layout.fillWidth: true }
+                            EditorCombo { width: 184; model: ["When something happens", "All the time"]; currentIndex: root.isAlwaysActive(root.draft) ? 1 : 0; onActivated: root.setTriggerMode(currentIndex === 1) }
                         }
-                        Text { text: "MATCH: " + (root.draft.matchMode === 1 ? "ANY" : "ALL"); color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: root.telemetryFont }
+                        Text { text: "Choose what the automation should react to."; color: root.mutedColor; font.pixelSize: 10 }
                     }
-                    Text { visible: (root.draft.conditions || []).length === 0; text: "Add at least one condition before saving this automation."; color: root.warningColor; font.pixelSize: 11 }
-                    Repeater {
-                        model: root.draft.conditions || []
-                        delegate: ThemedPanel {
-                            required property int index
-                            required property var modelData
-                            Layout.fillWidth: true; implicitHeight: conditionContent.implicitHeight + 24; surfaceColor: root.raisedFill
-                            ColumnLayout {
-                                id: conditionContent
-                                anchors.fill: parent; anchors.margins: 12; spacing: 9
-                                RowLayout { Layout.fillWidth: true
-                                    Text { text: "CONDITION " + (index + 1); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont }
-                                    Item { Layout.fillWidth: true }
-                                    ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeCondition(index) }
-                                }
-                                GridLayout {
-                                    Layout.fillWidth: true; columns: width >= 820 ? 4 : (width >= 500 ? 2 : 1); columnSpacing: 10; rowSpacing: 9
-                                    ColumnLayout { Layout.fillWidth: true
-                                        Text { text: "TYPE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.conditionTypes; currentIndex: modelData.type; onActivated: root.updateCondition(index, "type", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type >= 1 && modelData.type <= 4; Layout.fillWidth: true
-                                        Text { text: "SOURCE AXIS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.axisChoices; currentIndex: modelData.axis; onActivated: root.updateCondition(index, "axis", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type >= 1 && modelData.type <= 4; Layout.fillWidth: true
-                                        Text { text: modelData.type === 2 ? "MAXIMUM" : "THRESHOLD / MINIMUM"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "minimum", root.conditionValue(text, modelData.axis)) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 3 || modelData.type === 4; Layout.fillWidth: true
-                                        Text { text: "MAXIMUM"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.conditionPercent(modelData.maximum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "maximum", root.conditionValue(text, modelData.axis)) }
-                                    }
-                                    ColumnLayout { visible: modelData.type >= 1 && modelData.type <= 4; Layout.fillWidth: true
-                                        Text { text: "HYSTERESIS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.percent(modelData.hysteresis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "hysteresis", Number(text.replace("%", "")) / 100) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 5 || modelData.type === 6; Layout.fillWidth: true
-                                        Text { text: "PHYSICAL BUTTON"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorSpin { from: 1; to: 128; value: modelData.button; onValueModified: root.updateCondition(index, "button", value) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 7 || modelData.type === 8; Layout.fillWidth: true
-                                        Text { text: "POV HAT"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorSpin { from: 1; to: 4; value: modelData.povHat; onValueModified: root.updateCondition(index, "povHat", value) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 7 || modelData.type === 8; Layout.fillWidth: true
-                                        Text { text: "DIRECTION"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.directions; currentIndex: modelData.povDirection - 1; onActivated: root.updateCondition(index, "povDirection", currentIndex + 1) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 9 || modelData.type === 10; Layout.fillWidth: true
-                                        Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: backendObject.profileTriggerChoices; textRole: "label"; currentIndex: root.profileIndex(modelData.profileId); onActivated: root.updateCondition(index, "profileId", root.profileId(currentIndex)) }
-                                    }
-                                }
-                                Text { visible: modelData.type === 0; text: "This condition always matches. Add another condition if the rule should respond to a control state."; color: root.faintColor; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Text { visible: root.isAlwaysActive(root.draft); text: "This automation remains active whenever it is enabled."; color: root.readyColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    ThemedPanel {
+                        visible: !root.isAlwaysActive(root.draft) && (root.draft.conditions || []).length === 0
+                        Layout.fillWidth: true; implicitHeight: starterContent.implicitHeight + 24; surfaceColor: root.raisedFill
+                        ColumnLayout {
+                            id: starterContent
+                            anchors.fill: parent; anchors.margins: 12; spacing: 10
+                            Text { text: "Nothing selected yet."; color: root.textColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
+                            Text { text: "Choose what this automation should react to:"; color: root.mutedColor; font.pixelSize: 10 }
+                            Flow { Layout.fillWidth: true; spacing: 8
+                                ActionButton { label: "BUTTON"; subdued: true; onTriggered: root.addRequirement(1) }
+                                ActionButton { label: "AXIS"; subdued: true; onTriggered: root.addRequirement(2) }
+                                ActionButton { label: "POV / HAT"; subdued: true; onTriggered: root.addRequirement(3) }
+                                ActionButton { label: "PROFILE"; subdued: true; onTriggered: root.addRequirement(4) }
+                                ActionButton { label: "ALWAYS ACTIVE"; subdued: true; onTriggered: root.setTriggerMode(true) }
                             }
                         }
                     }
-                    ActionButton { label: "+ ADD CONDITION"; subdued: true; commandEnabled: (root.draft.conditions || []).length < 4; onTriggered: root.addCondition() }
+                    Repeater {
+                        model: root.isAlwaysActive(root.draft) ? [] : (root.draft.conditions || [])
+                        delegate: ColumnLayout {
+                            required property int index
+                            required property var modelData
+                            Layout.fillWidth: true; spacing: 8
+                            RowLayout { visible: index > 0; Layout.fillWidth: true
+                                Item { Layout.fillWidth: true }
+                                EditorCombo { width: 120; model: ["AND", "OR"]; currentIndex: Number(root.draft.matchMode) === 1 ? 1 : 0; onActivated: root.setMatchMode(currentIndex) }
+                                Item { Layout.fillWidth: true }
+                            }
+                            ThemedPanel {
+                                Layout.fillWidth: true; implicitHeight: requirementContent.implicitHeight + 24; surfaceColor: root.raisedFill
+                                ColumnLayout {
+                                    id: requirementContent
+                                    anchors.fill: parent; anchors.margins: 12; spacing: 9
+                                    RowLayout { Layout.fillWidth: true
+                                        Text { text: (index + 1) + " · " + root.requirementSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeCondition(index) }
+                                    }
+                                    Flow {
+                                        id: requirementFlow
+                                        Layout.fillWidth: true; spacing: 8
+                                        EditorCombo { width: 144; model: root.requirementKinds; currentIndex: root.requirementKind(modelData); onActivated: root.setRequirementKind(index, currentIndex) }
+                                        EditorSpin { visible: root.requirementKind(modelData) === 1; width: 108; from: 1; to: 128; value: modelData.button; onValueModified: root.updateCondition(index, "button", value) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 1; width: 132; model: root.buttonStates; currentIndex: Number(modelData.type) === 6 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 6 : 5) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 148; model: root.axisChoices; currentIndex: modelData.axis; onActivated: root.updateCondition(index, "axis", currentIndex) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 132; model: root.axisComparisons; currentIndex: Number(modelData.type) - 1; onActivated: root.updateCondition(index, "type", currentIndex + 1) }
+                                        EditorTextField { visible: root.requirementKind(modelData) === 2; width: 94; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "minimum", root.conditionValue(text, modelData.axis)) }
+                                        Text { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; text: Number(modelData.type) === 3 ? "and" : "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                        EditorTextField { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; width: 94; text: root.conditionPercent(modelData.maximum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "maximum", root.conditionValue(text, modelData.axis)) }
+                                        EditorSpin { visible: root.requirementKind(modelData) === 3; width: 90; from: 1; to: 4; value: modelData.povHat; onValueModified: root.updateCondition(index, "povHat", value) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 144; model: root.povStates; currentIndex: Number(modelData.type) === 8 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 8 : 7) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 124; model: root.directions; currentIndex: Number(modelData.povDirection) - 1; onActivated: root.updateCondition(index, "povDirection", currentIndex + 1) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 132; model: root.profileStates; currentIndex: Number(modelData.type) === 10 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 10 : 9) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 170; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateCondition(index, "profileId", root.profileChoiceId(currentIndex)) }
+                                    }
+                                    RowLayout { visible: root.requirementKind(modelData) === 2; Layout.fillWidth: true
+                                        Text { text: "Input stability"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                                        EditorTextField { Layout.preferredWidth: 88; text: root.percent(modelData.hysteresis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "hysteresis", Number(text.replace("%", "")) / 100) }
+                                        Text { text: "Ignore tiny movements below this amount."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ActionButton { visible: !root.isAlwaysActive(root.draft) && (root.draft.conditions || []).length > 0; label: "+ ADD REQUIREMENT"; subdued: true; commandEnabled: (root.draft.conditions || []).length < 4; onTriggered: root.addRequirement(0) }
                 }
             }
             ThemedPanel {
-                width: parent.width; implicitHeight: thenContent.implicitHeight + 28
+                width: parent.width; implicitHeight: effectsContent.implicitHeight + 28
                 ColumnLayout {
-                    id: thenContent
-                    anchors.fill: parent; anchors.margins: 14; spacing: 10
+                    id: effectsContent
+                    anchors.fill: parent; anchors.margins: 14; spacing: 12
                     ColumnLayout { Layout.fillWidth: true; spacing: 2
-                        Text { text: "THEN"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
-                        Text { text: "Actions apply only after the rule is saved, compiled, and enabled."; color: root.mutedColor; font.pixelSize: 10 }
+                        Text { text: "WHAT SHOULD IT DO?"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
+                        Text { text: "Choose the HOTAS behavior to apply whenever this automation matches."; color: root.mutedColor; font.pixelSize: 10 }
                     }
-                    Text { visible: (root.draft.actions || []).length === 0; text: "Add at least one action before saving this automation."; color: root.warningColor; font.pixelSize: 11 }
+                    Text { visible: (root.draft.actions || []).length === 0; text: "Nothing selected yet."; color: root.warningColor; font.pixelSize: 11 }
                     Repeater {
                         model: root.draft.actions || []
                         delegate: ThemedPanel {
                             required property int index
                             required property var modelData
-                            Layout.fillWidth: true; implicitHeight: actionContent.implicitHeight + 24; surfaceColor: root.raisedFill
+                            Layout.fillWidth: true; implicitHeight: effectContent.implicitHeight + 24; surfaceColor: root.raisedFill
                             ColumnLayout {
-                                id: actionContent
+                                id: effectContent
                                 anchors.fill: parent; anchors.margins: 12; spacing: 9
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "ACTION " + (index + 1); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont }
-                                    Item { Layout.fillWidth: true }
+                                    Text { text: (index + 1) + " · " + root.effectSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
                                     ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeAction(index) }
                                 }
-                                GridLayout {
-                                    Layout.fillWidth: true; columns: width >= 820 ? 4 : (width >= 500 ? 2 : 1); columnSpacing: 10; rowSpacing: 9
-                                    ColumnLayout { Layout.fillWidth: true
-                                        Text { text: "TYPE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.actionTypes; currentIndex: modelData.type; onActivated: root.updateAction(index, "type", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 0 || modelData.type === 1; Layout.fillWidth: true
-                                        Text { text: "VJOY BUTTON"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorSpin { from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 2 || modelData.type === 3; Layout.fillWidth: true
-                                        Text { text: "TARGET PROFILE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: backendObject.profileTriggerChoices; textRole: "label"; currentIndex: root.profileIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileId(currentIndex)) }
-                                    }
-                                    ColumnLayout { visible: modelData.type >= 4; Layout.fillWidth: true
-                                        Text { text: "TARGET AXIS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 8 || modelData.type === 9; Layout.fillWidth: true
-                                        Text { text: "SOURCE AXIS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 8 || modelData.type === 9; Layout.fillWidth: true
-                                        Text { text: "SOURCE STAGE"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorCombo { Layout.fillWidth: true; model: root.stages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
-                                    }
-                                    ColumnLayout { visible: modelData.type >= 4; Layout.fillWidth: true
-                                        Text { text: modelData.type === 6 ? "MINIMUM" : (modelData.type === 9 ? "FOLLOW GAIN" : "VALUE"); color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.percent(modelData.type === 6 ? modelData.minimum : modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, modelData.type === 6 ? "minimum" : "value", Number(text.replace("%", "")) / 100) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 6; Layout.fillWidth: true
-                                        Text { text: "MAXIMUM"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "maximum", Number(text.replace("%", "")) / 100) }
-                                    }
-                                    ColumnLayout { visible: modelData.type === 9; Layout.fillWidth: true
-                                        Text { text: "OFFSET"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.fillWidth: true; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "offset", Number(text.replace("%", "")) / 100) }
-                                    }
+                                Flow {
+                                    id: effectFlow
+                                    Layout.fillWidth: true; spacing: 8
+                                    EditorCombo { width: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: root.setEffectType(index, currentIndex) }
+                                    Text { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorSpin { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; width: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                    EditorCombo { visible: Number(modelData.type) === 2 || Number(modelData.type) === 3; width: 180; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileChoiceId(currentIndex)) }
+                                    EditorCombo { visible: Number(modelData.type) >= 4 && Number(modelData.type) <= 7; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                    Text { visible: Number(modelData.type) === 4; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 4; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 5; text: "by"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 5; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 6; text: "from"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 6; width: 94; text: root.percent(modelData.minimum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "minimum", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 6; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 6; width: 94; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "maximum", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 7; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 7; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    EditorCombo { visible: Number(modelData.type) === 8; width: 148; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
+                                    Text { visible: Number(modelData.type) === 8; text: "into"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorCombo { visible: Number(modelData.type) === 8; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                    Text { visible: Number(modelData.type) === 9; text: "Make"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorCombo { visible: Number(modelData.type) === 9; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                    Text { visible: Number(modelData.type) === 9; text: "follow"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorCombo { visible: Number(modelData.type) === 9; width: 148; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
+                                    EditorCombo { visible: Number(modelData.type) === 8 || Number(modelData.type) === 9; width: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
+                                    Text { visible: Number(modelData.type) === 8; text: "at"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 8; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 9; text: "gain"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 9; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    Text { visible: Number(modelData.type) === 9; text: "offset"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorTextField { visible: Number(modelData.type) === 9; width: 94; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "offset", Number(text.replace("%", "")) / 100) }
                                 }
                             }
                         }
                     }
-                    ActionButton { label: "+ ADD ACTION"; subdued: true; commandEnabled: (root.draft.actions || []).length < 4; onTriggered: root.addAction() }
+                    ActionButton { label: "+ ADD EFFECT"; subdued: true; commandEnabled: (root.draft.actions || []).length < 4; onTriggered: root.addEffect() }
+                }
+            }
+            ThemedPanel {
+                width: parent.width; implicitHeight: summaryContent.implicitHeight + 28; surfaceColor: root.topGun ? "#d80e1e1c" : root.panelFill
+                ColumnLayout {
+                    id: summaryContent
+                    anchors.fill: parent; anchors.margins: 14; spacing: 8
+                    Text { text: "RULE SUMMARY"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
+                    Text { text: root.ruleSummary(); color: root.textColor; font.pixelSize: 13; font.family: root.displayFont; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Text { text: "This summary updates from the draft. It is never generated while controller reports are processed."; color: root.faintColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+            }
+            ThemedPanel {
+                width: parent.width; implicitHeight: advancedContent.implicitHeight + 28
+                ColumnLayout {
+                    id: advancedContent
+                    anchors.fill: parent; anchors.margins: 14; spacing: 10
+                    RowLayout { Layout.fillWidth: true
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Text { text: "ADVANCED"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
+                            Text { text: "Priority and conflict handling."; color: root.mutedColor; font.pixelSize: 10 }
+                        }
+                        ActionButton { label: root.advancedOpen ? "HIDE" : "SHOW"; subdued: true; onTriggered: root.advancedOpen = !root.advancedOpen }
+                    }
+                    ColumnLayout { visible: root.advancedOpen; Layout.fillWidth: true; spacing: 8
+                        RowLayout { Layout.fillWidth: true
+                            Text { text: "Priority"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 110 }
+                            EditorSpin { from: 0; to: 100; value: root.draft.priority === undefined ? 50 : root.draft.priority; onValueModified: { const next = root.clone(root.draft); next.priority = value; root.setDraft(next) } }
+                            Text { text: "When automations force the same axis, the higher priority wins. Equal priorities use saved order."; color: root.faintColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        }
+                    }
                 }
             }
             ThemedPanel {
@@ -423,13 +572,18 @@ Item {
                 ColumnLayout {
                     id: saveContent
                     anchors.fill: parent; anchors.margins: 14; spacing: 10
+                    Text { visible: String(root.draft.name || "").trim().length === 0; text: "Give this automation a name."; color: root.warningColor; font.pixelSize: 10; Layout.fillWidth: true }
+                    Text { visible: !root.isAlwaysActive(root.draft) && (root.draft.conditions || []).length === 0; text: "Choose when this automation should run, or select All the time."; color: root.warningColor; font.pixelSize: 10; Layout.fillWidth: true }
+                    Text { visible: !root.isAlwaysActive(root.draft) && (root.draft.conditions || []).some(function(requirement) { return !root.requirementReady(requirement) }); text: "Finish each requirement before saving."; color: root.warningColor; font.pixelSize: 10; Layout.fillWidth: true }
+                    Text { visible: (root.draft.actions || []).length === 0; text: "Add at least one effect."; color: root.warningColor; font.pixelSize: 10; Layout.fillWidth: true }
+                    Text { visible: (root.draft.actions || []).some(function(effect) { return !root.effectReady(effect) }); text: "Choose what each effect should do."; color: root.warningColor; font.pixelSize: 10; Layout.fillWidth: true }
                     Text { visible: backendObject.automationValidationMessage.length > 0; text: backendObject.automationValidationMessage; color: root.dangerColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                    Text { visible: (root.draft.conditions || []).length === 0 || (root.draft.actions || []).length === 0; text: "This disabled draft is safe to keep, but it needs at least one WHEN condition and one THEN action before it can be saved as a runtime rule."; color: root.warningColor; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     RowLayout { Layout.fillWidth: true
-                        Text { text: root.draftDirty ? "UNSAVED CHANGES" : "SAVED DRAFT"; color: root.draftDirty ? root.warningColor : root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: root.telemetryFont }
+                        ActionButton { label: "DELETE AUTOMATION"; destructive: true; onTriggered: { deleteDialog.ruleId = root.editingId; deleteDialog.fromEditor = true; deleteDialog.open() } }
+                        Text { text: root.draftDirty ? "UNSAVED CHANGES" : "SAVED DRAFT"; color: root.draftDirty ? root.warningColor : root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: root.telemetryFont; Layout.leftMargin: 8 }
                         Item { Layout.fillWidth: true }
                         ActionButton { label: "CANCEL"; subdued: true; onTriggered: root.returnToOverview() }
-                        ActionButton { label: "SAVE AUTOMATION"; onTriggered: root.saveDraft() }
+                        ActionButton { label: "SAVE AUTOMATION"; commandEnabled: root.canSaveDraft(); onTriggered: root.saveDraft() }
                     }
                 }
             }

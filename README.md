@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.8.2
+# HOTAS BF6 Simple v1.8.3
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -44,6 +44,13 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.8.3 Automation rule-builder UX
+
+- The full-page Automation editor now uses plain-language **WHEN SHOULD THIS HAPPEN?** and **WHAT SHOULD IT DO?** builders. Requirements and effects read as simple HOTAS sentences instead of exposing condition/action arrays, enum names, or match-mode terminology.
+- **All the time** is a rule-level choice; the editor creates or normalizes the engine's `Always` condition behind the scenes and hides redundant legacy `Always` terms. Multiple requirements display one consistent **AND** or **OR** connector that maps directly to the existing ALL/ANY behavior.
+- A live **RULE SUMMARY** explains the draft before it is saved. New automations remain disabled and blank, show a friendly starter choice, and cannot publish an incomplete rule. Priority is available only in a collapsed **ADVANCED** section.
+- Overview cards use readable WHEN/DO summaries, including profile names rather than internal IDs. All formatting occurs while UI models refresh or drafts change; the fixed compiled Automation records and report loop are unchanged.
 
 ## v1.8.2 Automation editor redesign
 
