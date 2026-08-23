@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.8
+# HOTAS BF6 Simple v1.8.1
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -18,13 +18,13 @@ The installer upgrades program files only. Existing QSettings data—including p
 - Windows 10/11
 - CMake 3.21 or newer
 - a C++20 Visual Studio build environment
-- Qt 6.5+ with the `Core`, `Gui`, `Qml`, `Quick`, `QuickControls2`, and `Test`
+- Qt 6.5+ with the `Core`, `Gui`, `Network`, `Qml`, `Quick`, `QuickControls2`, and `Test`
   components
 - vJoy configured with Device 1 exposing X, Y, Z, Rz, 32 virtual buttons, and
   a continuous or discrete POV if native hat passthrough is wanted
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
-vJoy is required for virtual output. The v1.8.0 installer can offer the pinned
+vJoy is required for virtual output. The v1.8.1 installer can offer the pinned
 official vJoy and HidHide installers only when they are missing; it never
 updates, downgrades, enables, or otherwise reconfigures an already-present
 component. Each selected payload is SHA-256 and Authenticode verified before
@@ -44,6 +44,30 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.8.1 stabilization and update-awareness release
+
+This stabilization release follows the v1.8.0 automation engine release.
+
+- **Disabled Axis Value** is a global, persistent `-100.0%` to `+100.0%`
+  safety setting. It defaults to `0.0%`, is not stored in a profile, and is
+  applied to every unclaimed virtual X/Y/Z/Rz output by the existing
+  change-driven vJoy path. Diagnostics reports that actual parked output while
+  raw physical input remains unchanged.
+- The **New Profile** dialog now uses the flight UI's rendered title, text
+  entry, button, selector, focus, hover, and popup treatments. Its **Start
+  From** selector retains its delegate model while opening, so all available
+  profile names remain visible. A new profile is a deep copy of the selected
+  profile's profile-owned routes and settings; it has no live parent link.
+- Legacy, Standard, and Top Gun all render the new setting, update controls,
+  update indicator, dialog, input, and profile-source popup through their
+  existing visual systems. Standard and Top Gun share behavior while using
+  distinct theme tokens; Legacy retains its dedicated surface.
+- The mapper checks the launcher's validated stable update manifest
+  asynchronously after startup. When a newer semantic version is available,
+  the top bar and Settings offer an update handoff. The already-installed
+  launcher remains responsible for download, verification, installation, and
+  relaunch; a failed launcher start leaves the mapper running.
 
 ## v1.7.0 theme system
 
@@ -174,7 +198,8 @@ snapshot at roughly 60 Hz and never schedules virtual-controller writes.
 ## Axes processing and profiles
 
 Profiles hold axis routes, deadzones, hysteresis, output limits, inversion, and button mappings. The
-physical controller's calibration and device preferences remain global. On the
+physical controller's calibration, device preferences, and **Disabled Axis
+Value** remain global. On the
 first v1.2 launch, the existing v1.1 mapping becomes **Normal** and an
 independent **Precision** clone is created. Switching profiles compiles the
 complete mapping table before the worker swaps it between reports, so it never

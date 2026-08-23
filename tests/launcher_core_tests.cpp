@@ -43,6 +43,12 @@ void versionTests()
     parseSemanticVersion("2.0.0", newer);
     parseSemanticVersion("1.99.99", older);
     expect(compareSemanticVersions(newer, older) > 0, "compare major version");
+    parseSemanticVersion("1.10.0", newer);
+    parseSemanticVersion("1.9.0", older);
+    expect(compareSemanticVersions(newer, older) > 0, "compare numeric minor version");
+    expect(hotas::launcher::updateManifestUrl()
+               == "https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json",
+           "expose the shared stable update manifest URL");
 }
 
 void manifestTests()

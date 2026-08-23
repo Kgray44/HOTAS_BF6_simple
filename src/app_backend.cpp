@@ -4,14 +4,21 @@
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "hotas_build_version.h"
+#include "launcher_core.h"
 #include "profile_model.h"
 #include "response_curve.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
+#include <QTimer>
+#include <QUrl>
 #include <QUuid>
 #include <QVariantMap>
 
@@ -161,6 +168,12 @@ AppBackend::AppBackend(QObject *parent)
     m_rateClock.start();
     m_physicalUpdateClock.start();
     m_latencyPercentileClock.start();
+    m_updateTimeout.setSingleShot(true);
+    connect(&m_updateTimeout, &QTimer::timeout, this, [this] {
+        if (!m_updateReply) return;
+        m_updateTimedOut = true;
+        m_updateReply->abort();
+    });
     rebuildSelectedAxisCurve();
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
@@ -171,6 +184,10 @@ AppBackend::AppBackend(QObject *parent)
     if (m_configuration.startMappingOnLaunch) {
         m_worker.setMappingEnabled(true);
     }
+    // Update network activity is intentionally scheduled on the UI event loop
+    // after startup. It never enters the DirectInput/vJoy worker or its hot
+    // path, and a bounded timeout leaves mapper startup fully independent.
+    QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
 }
 
 AppBackend::~AppBackend()
@@ -715,6 +732,11 @@ bool AppBackend::hidhideMapperAllowed() const
 bool AppBackend::calibrationActive() const { return m_worker.calibrationRunning(); }
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
 int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }
+
+double AppBackend::disabledAxisValue() const
+{
+    return static_cast<double>(sanitizedDisabledAxisValue(m_configuration.disabledAxisValue)) * 100.0;
+}
 qulonglong AppBackend::latencyCurrentUs() const { return m_worker.runtime().latencyCurrentUs.load(); }
 qulonglong AppBackend::latencyAverageUs() const { return m_worker.runtime().latencyAverageUs.load(); }
 qulonglong AppBackend::latencyPeakUs() const { return m_worker.runtime().latencyPeakUs.load(); }
@@ -1808,6 +1830,134 @@ bool AppBackend::saveAutomation(const QVariantMap &automation)
     m_automationValidationMessage.clear();
     persistAndApply();
     appendEvent(u"Automation saved: "_qs + found->name);
+    return true;
+}
+
+void AppBackend::setDisabledAxisValue(double percent)
+{
+    const float normalized = std::isfinite(percent)
+        ? sanitizedDisabledAxisValue(static_cast<float>(std::clamp(percent, -100.0, 100.0) / 100.0))
+        : 0.0F;
+    if (std::abs(m_configuration.disabledAxisValue - normalized) < 0.00001F) return;
+    m_configuration.disabledAxisValue = normalized;
+    persistAndApply();
+    appendEvent(QString(u"Disabled Axis Value set to %1%"_qs)
+        .arg(static_cast<double>(normalized) * 100.0, 0, 'f', 1));
+}
+
+void AppBackend::checkForUpdates()
+{
+    if (m_updateChecking) return;
+    m_updateChecking = true;
+    m_updateTimedOut = false;
+    m_updateCheckFailed = false;
+    m_updateStatusText = u"Checking for updates…"_qs;
+    appendEvent(u"Update check started"_qs);
+
+    QNetworkRequest request(QUrl(QString::fromUtf8(hotas::launcher::updateManifestUrl().data(),
+                                                     static_cast<qsizetype>(hotas::launcher::updateManifestUrl().size()))));
+    request.setHeader(QNetworkRequest::UserAgentHeader,
+        QString(u"HOTAS-BF6/%1"_qs).arg(QString::fromLatin1(HOTAS_BF6_VERSION)));
+    QNetworkReply *reply = m_updateNetworkManager.get(request);
+    m_updateReply = reply;
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        finishUpdateCheck(reply);
+    });
+    m_updateTimeout.start(3000);
+    emit stateChanged();
+}
+
+void AppBackend::finishUpdateCheck(QNetworkReply *reply)
+{
+    if (!reply || reply != m_updateReply) {
+        if (reply) reply->deleteLater();
+        return;
+    }
+    m_updateTimeout.stop();
+    m_updateReply = nullptr;
+    m_updateChecking = false;
+    const bool timedOut = m_updateTimedOut;
+    m_updateTimedOut = false;
+    const QNetworkReply::NetworkError networkError = reply->error();
+    const QByteArray manifestJson = networkError == QNetworkReply::NoError ? reply->readAll() : QByteArray{};
+    const QString networkReason = timedOut ? u"request timed out"_qs : reply->errorString();
+    reply->deleteLater();
+
+    if (timedOut || networkError != QNetworkReply::NoError) {
+        failUpdateCheck(networkReason);
+        return;
+    }
+    if (manifestJson.isEmpty() || manifestJson.size() > 64 * 1024) {
+        failUpdateCheck(u"release metadata was empty or too large"_qs);
+        return;
+    }
+
+    hotas::launcher::SemanticVersion localVersion{};
+    std::string reason;
+    if (!hotas::launcher::parseSemanticVersion(HOTAS_BF6_VERSION, localVersion, &reason)) {
+        failUpdateCheck(u"installed application version is invalid"_qs);
+        return;
+    }
+    hotas::launcher::UpdateManifest manifest;
+    const std::string response(manifestJson.constData(), static_cast<size_t>(manifestJson.size()));
+    const hotas::launcher::UpdateAction action = hotas::launcher::decideUpdate(
+        true, response, localVersion, &manifest, &reason);
+    if (action == hotas::launcher::UpdateAction::InstallUpdate) {
+        m_updateAvailable = true;
+        m_updateCheckFailed = false;
+        m_updateAvailableVersion = QString(u"v%1"_qs).arg(QString::fromStdString(manifest.versionText));
+        m_updateStatusText = QString(u"%1 is available"_qs).arg(m_updateAvailableVersion);
+        appendEvent(QString(u"Update available: %1"_qs).arg(m_updateAvailableVersion));
+    } else if (reason == "installed version is current or newer") {
+        m_updateAvailable = false;
+        m_updateCheckFailed = false;
+        m_updateAvailableVersion.clear();
+        m_updateStatusText = u"You're running the latest version."_qs;
+        appendEvent(u"Update check completed: application is current"_qs);
+    } else {
+        failUpdateCheck(QString::fromStdString(reason));
+        return;
+    }
+    emit stateChanged();
+}
+
+void AppBackend::failUpdateCheck(const QString &reason)
+{
+    m_updateChecking = false;
+    m_updateAvailable = false;
+    m_updateCheckFailed = true;
+    m_updateAvailableVersion.clear();
+    m_updateStatusText = u"Update status unavailable"_qs;
+    appendEvent(QString(u"Update check error: %1"_qs).arg(reason));
+    emit stateChanged();
+}
+
+bool AppBackend::handoffToLauncher()
+{
+    if (!m_updateAvailable) return false;
+    // Ensure the existing QSettings record is durable before a separate
+    // launcher process takes over. A launcher start is confirmed first; only
+    // then do we begin stopping controller I/O and exit this application.
+    ConfigStore::save(m_configuration);
+    const QString applicationDirectory = QCoreApplication::applicationDirPath();
+    const QString launcherPath = QDir(applicationDirectory).filePath(u"HOTAS BF6 Launcher.exe"_qs);
+    if (!QFileInfo(launcherPath).isExecutable()) {
+        m_updateStatusText = u"Update available, but the HOTAS BF6 Launcher was not found."_qs;
+        appendEvent(QString(u"Launcher-start failure: %1"_qs).arg(launcherPath));
+        emit stateChanged();
+        return false;
+    }
+    const QStringList arguments{u"--wait-for-pid"_qs,
+                                QString::number(QCoreApplication::applicationPid())};
+    if (!QProcess::startDetached(launcherPath, arguments, applicationDirectory)) {
+        m_updateStatusText = u"Update available, but the launcher could not be started."_qs;
+        appendEvent(QString(u"Launcher-start failure: %1"_qs).arg(launcherPath));
+        emit stateChanged();
+        return false;
+    }
+    appendEvent(QString(u"Launcher started for update handoff: %1"_qs).arg(launcherPath));
+    m_worker.setMappingEnabled(false);
+    QTimer::singleShot(100, QCoreApplication::instance(), [] { QCoreApplication::quit(); });
     return true;
 }
 

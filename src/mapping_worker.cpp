@@ -1246,10 +1246,7 @@ void MappingWorker::run()
             }
         }
 
-        std::array<float, kPhysicalAxisCount> processedAxes{};
-        std::array<float, 5> output{};
-        std::array<bool, 5> targetUsed{};
-        virtualAxisSources.fill(-1);
+        std::array<float, kPhysicalAxisCount> transformedAxes{};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             if (!availableAxes[index]) continue;
             const float raw = physicalSnapshot.axes[index];
@@ -1269,10 +1266,10 @@ void MappingWorker::run()
             m_runtime.afterInversion[index] = signalPath.afterInversion;
             m_runtime.curveResponse[index] = curveResponse;
             m_runtime.transformed[index] = transformed;
-            processedAxes[static_cast<size_t>(index)] = transformed;
+            transformedAxes[static_cast<size_t>(index)] = transformed;
         }
         if (automationEffects) {
-            automation.applyAxisActions(automationInput, processedAxes);
+            automation.applyAxisActions(automationInput, transformedAxes);
             // The displayed cost covers the complete compiled Automation pass,
             // including deterministic axis composition, but excludes vJoy I/O.
             if (measuredAutomation) {
@@ -1282,19 +1279,24 @@ void MappingWorker::run()
                         automationFinished - automationStarted).count());
             }
             for (int index = 0; index < kPhysicalAxisCount; ++index) {
-                m_runtime.transformed[index] = processedAxes[static_cast<size_t>(index)];
+                m_runtime.transformed[index] = transformedAxes[static_cast<size_t>(index)];
             }
         }
+        // Every virtual vJoy axis receives a deliberate parking value before
+        // mapped physical routes are overlaid. The fixed-size plan retains the
+        // existing change-driven output cadence and keeps configuration/UI
+        // work outside this real-time path.
+        const VirtualAxisOutputPlan axisOutputPlan = buildVirtualAxisOutputPlan(
+            *activeMapping, availableAxes, transformedAxes, configuration.disabledAxisValue);
+        const std::array<float, kVirtualAxisSlotCount> &output = axisOutputPlan.values;
+        virtualAxisSources = axisOutputPlan.sourceIndexes;
+        const float parkedAxisValue = sanitizedDisabledAxisValue(configuration.disabledAxisValue);
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            if (!availableAxes[index]) continue;
-            const RuntimeAxisMapping &mapping = activeMapping->axes[index];
-            const float transformed = processedAxes[static_cast<size_t>(index)];
-            const int target = static_cast<int>(mapping.profile.target);
-            if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {
-                output[target] = transformed;
-                targetUsed[target] = true;
-                virtualAxisSources[target] = index;
-            }
+            m_runtime.virtualValues[index] = parkedAxisValue;
+        }
+        for (int target = 1; target < static_cast<int>(output.size()); ++target) {
+            const int source = virtualAxisSources[target];
+            if (source >= 0) m_runtime.virtualValues[source] = output[target];
         }
 
         // This DirectInput monitor drives the UI even when vJoy is disabled
@@ -1335,7 +1337,7 @@ void MappingWorker::run()
         }
         if (m_runtime.mappingActive.load()) {
             for (int target = 1; target < static_cast<int>(output.size()); ++target) {
-                const float desired = targetUsed[target] ? output[target] : 0.0F;
+                const float desired = output[target];
                 if (std::isfinite(lastVirtualValues[target])
                     && std::abs(desired - lastVirtualValues[target]) < 0.00001F) {
                     continue;

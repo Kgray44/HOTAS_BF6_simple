@@ -4,7 +4,10 @@
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QObject>
+#include <QPointer>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
@@ -67,6 +70,12 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
+    Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
+    Q_PROPERTY(bool updateChecking READ updateChecking NOTIFY stateChanged)
+    Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY stateChanged)
+    Q_PROPERTY(bool updateCheckFailed READ updateCheckFailed NOTIFY stateChanged)
+    Q_PROPERTY(QString updateAvailableVersion READ updateAvailableVersion NOTIFY stateChanged)
+    Q_PROPERTY(QString updateStatusText READ updateStatusText NOTIFY stateChanged)
     Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY stateChanged)
     Q_PROPERTY(qint64 lastPhysicalUpdateAgeMs READ lastPhysicalUpdateAgeMs NOTIFY stateChanged)
     Q_PROPERTY(double vjoyWritesPerSecond READ vjoyWritesPerSecond NOTIFY stateChanged)
@@ -147,6 +156,12 @@ public:
     bool calibrationActive() const;
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
+    double disabledAxisValue() const;
+    bool updateChecking() const { return m_updateChecking; }
+    bool updateAvailable() const { return m_updateAvailable; }
+    bool updateCheckFailed() const { return m_updateCheckFailed; }
+    QString updateAvailableVersion() const { return m_updateAvailableVersion; }
+    QString updateStatusText() const { return m_updateStatusText; }
     double inputReportsPerSecond() const { return m_inputReportsPerSecond; }
     qint64 lastPhysicalUpdateAgeMs() const { return m_lastPhysicalUpdateAgeMs; }
     double vjoyWritesPerSecond() const { return m_vjoyWritesPerSecond; }
@@ -231,6 +246,9 @@ public:
     Q_INVOKABLE bool deleteAutomation(const QString &id);
     Q_INVOKABLE bool setAutomationEnabled(const QString &id, bool enabled);
     Q_INVOKABLE bool saveAutomation(const QVariantMap &automation);
+    Q_INVOKABLE void setDisabledAxisValue(double percent);
+    Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE bool handoffToLauncher();
     Q_INVOKABLE bool openVjoyConfiguration();
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool openHidHideConfiguration();
@@ -246,6 +264,8 @@ private slots:
     void refreshUiSnapshot();
     void appendEvent(const QString &event);
     void initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity);
+    void finishUpdateCheck(QNetworkReply *reply);
+    void failUpdateCheck(const QString &reason);
 
 private:
     void persistAndApply();
@@ -287,6 +307,15 @@ private:
     CurveDefinition m_curvePreviewDefinition;
     EventLog m_events;
     QString m_automationValidationMessage;
+    QNetworkAccessManager m_updateNetworkManager;
+    QPointer<QNetworkReply> m_updateReply;
+    QTimer m_updateTimeout;
+    bool m_updateChecking = false;
+    bool m_updateTimedOut = false;
+    bool m_updateAvailable = false;
+    bool m_updateCheckFailed = false;
+    QString m_updateAvailableVersion;
+    QString m_updateStatusText = u"Update status not checked"_qs;
 };
 
 } // namespace hotas

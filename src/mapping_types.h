@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -13,6 +14,7 @@ namespace hotas {
 using namespace Qt::StringLiterals;
 
 constexpr int kPhysicalAxisCount = 8;
+constexpr int kVirtualAxisSlotCount = 5;
 // DIJOYSTATE2 exposes up to 128 DirectInput button-state bytes. The actual
 // controller count is always enumerated at runtime; this is only storage.
 constexpr int kMaximumPhysicalButtons = 128;
@@ -329,6 +331,11 @@ struct MapperConfiguration {
     QString preferredDeviceId;
     int vjoyDeviceId = 1;
     bool startMappingOnLaunch = false;
+    // Global safety value for physical routes with no active virtual target,
+    // and for vJoy targets that have no mapped physical source. It is stored
+    // in the same normalized domain as the mapper (-1.0 .. +1.0), never in a
+    // profile, so a profile change cannot alter parked virtual axes.
+    float disabledAxisValue = 0.0F;
     // UI-only selection. It never determines which axes the worker maps.
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
@@ -347,6 +354,11 @@ struct MapperConfiguration {
     std::vector<AutomationDefinition> automations;
     QString activeProfileId;
 };
+
+inline float sanitizedDisabledAxisValue(float value)
+{
+    return std::isfinite(value) ? std::clamp(value, -1.0F, 1.0F) : 0.0F;
+}
 
 // This is the complete, allocation-ready mapping payload compiled once when
 // configuration changes. The mapping loop only consumes this structure.

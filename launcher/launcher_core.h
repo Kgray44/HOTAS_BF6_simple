@@ -16,6 +16,10 @@ bool parseSemanticVersion(std::string_view text, SemanticVersion &version,
                           std::string *error = nullptr);
 int compareSemanticVersions(const SemanticVersion &left, const SemanticVersion &right);
 
+// The launcher and mapper deliberately consume one release manifest. Keeping
+// this URL alongside manifest validation prevents two definitions of "latest".
+std::string_view updateManifestUrl();
+
 struct UpdateManifest {
     SemanticVersion version;
     SemanticVersion minimumLauncherVersion;

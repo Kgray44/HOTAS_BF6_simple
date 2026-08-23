@@ -21,6 +21,8 @@ constexpr std::string_view kRepositoryPrefix =
     "https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/";
 constexpr std::string_view kReleaseNotesPrefix =
     "https://github.com/Kgray44/HOTAS_BF6_simple/releases/tag/";
+constexpr std::string_view kUpdateManifestUrl =
+    "https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json";
 
 void setError(std::string *error, std::string_view message)
 {
@@ -261,6 +263,11 @@ int compareSemanticVersions(const SemanticVersion &left, const SemanticVersion &
     if (left.minor != right.minor) return left.minor < right.minor ? -1 : 1;
     if (left.patch != right.patch) return left.patch < right.patch ? -1 : 1;
     return 0;
+}
+
+std::string_view updateManifestUrl()
+{
+    return kUpdateManifestUrl;
 }
 
 bool parseAndValidateManifest(std::string_view json, UpdateManifest &manifest, std::string *error)

@@ -203,7 +203,10 @@ Page {
                 id: popupList
                 clip: true
                 implicitHeight: contentHeight
-                model: flightCombo.popup.visible ? flightCombo.delegateModel : null
+                // Keep the delegate model attached across the Popup's open
+                // transition. Detaching it while visible can leave a freshly
+                // opened profile-source list with no delegates to paint.
+                model: flightCombo.delegateModel
                 currentIndex: flightCombo.highlightedIndex
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollIndicator.vertical: ScrollIndicator { }
@@ -213,6 +216,28 @@ Page {
                 border.color: theme.borderStrong
                 radius: theme.controlRadius
             }
+        }
+    }
+    component FlightTextInput: TextField {
+        id: flightTextInput
+        implicitHeight: 34
+        leftPadding: 10
+        rightPadding: 10
+        topPadding: 7
+        bottomPadding: 7
+        color: theme.text
+        placeholderTextColor: theme.textFaint
+        verticalAlignment: TextInput.AlignVCenter
+        selectByMouse: true
+        font.pixelSize: 11
+        font.family: theme.topGun ? theme.displayFont : root.font.family
+        background: Rectangle {
+            radius: theme.controlRadius
+            color: !flightTextInput.enabled ? theme.controlDisabled
+                : flightTextInput.activeFocus ? (theme.topGun ? "#102127" : theme.controlPressed)
+                : (flightTextInput.hovered ? theme.controlHover : theme.control)
+            border.color: flightTextInput.activeFocus ? theme.orange
+                : (flightTextInput.hovered ? theme.borderStrong : theme.border)
         }
     }
     component FlightNumericStepper: Item {
@@ -1066,6 +1091,21 @@ Page {
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
             Item { Layout.fillWidth: true }
+            Rectangle {
+                visible: backend.updateAvailable && root.width >= 980
+                width: theme.topGun ? 31 : 27; height: 24; radius: theme.controlRadius
+                color: updateIndicatorMouse.containsMouse ? theme.controlHover : theme.control
+                border.color: theme.topGun ? theme.orange : theme.borderStrong
+                Text { anchors.centerIn: parent; text: theme.topGun ? "UP" : "⇧"
+                    color: theme.topGun ? theme.orangeBright : theme.textStrong
+                    font.pixelSize: theme.topGun ? 10 : 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                MouseArea { id: updateIndicatorMouse; anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor; onClicked: backend.handoffToLauncher() }
+                ToolTip { visible: updateIndicatorMouse.containsMouse; delay: 350
+                    text: "HOTAS BF6 " + backend.updateAvailableVersion + " is available"
+                    background: Panel { color: theme.tooltip; border.color: theme.topGun ? theme.orange : theme.borderStrong }
+                    contentItem: Text { text: parent.text; color: theme.text; font.pixelSize: 10 } }
+            }
             Row { spacing: 7
                 StatusDot { tone: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : (backend.vjoyReady ? theme.cyan : theme.textMuted)) }
                 Text { text: backend.mappingActive ? "MAPPING ACTIVE" : (backend.mappingRequested ? "MAPPING PAUSED · RECONNECTING" : (backend.vjoyReady ? "OUTPUT READY" : "MAPPING STOPPED"))
@@ -2042,22 +2082,52 @@ Page {
                     }
                 }
                 Panel { width: parent.width
-  height: 76
+   height: backend.updateAvailable ? (theme.topGun ? 154 : 146) : (theme.topGun ? 130 : 122)
+                    color: theme.topGun ? "#d80b1b20" : "#e9161d23"
+                    border.color: theme.topGun ? theme.orange : theme.border
                     RowLayout { anchors.fill: parent
-  anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "HOTAS BF6  ·  VERSION " + Qt.application.version
-  color: "#e8eeee"
-  font.pixelSize: 12
-  font.bold: true }
-                            Text { text: "Stable updates are checked automatically before launch."
-  color: "#9dafb4"
-  font.pixelSize: 10 }
+   anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: "APPLICATION UPDATE"; color: theme.topGun ? theme.ivory : theme.text
+                                font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                            Text { text: "Current Version  ·  v" + Qt.application.version
+                                color: theme.textMuted; font.pixelSize: 10 }
+                            Text { text: backend.updateChecking ? "Checking for updates…" : backend.updateStatusText
+                                color: backend.updateCheckFailed ? theme.warning : (backend.updateAvailable ? theme.ready : theme.textMuted)
+                                font.pixelSize: 10 }
+                            Text { visible: backend.updateAvailable; text: "Update Available  ·  " + backend.updateAvailableVersion
+                                color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 10; font.bold: true }
                         }
-                        Text { text: "CHANNEL  STABLE"
-  color: "#8fd5c9"
-  font.pixelSize: 10
-  font.bold: true }
+                        Column { spacing: 7
+                            CommandButton { label: backend.updateChecking ? "CHECKING…" : "CHECK FOR UPDATES"
+                                subdued: true; commandEnabled: !backend.updateChecking; onTriggered: backend.checkForUpdates() }
+                            CommandButton { visible: backend.updateAvailable; label: "UPDATE TO " + backend.updateAvailableVersion
+                                onTriggered: backend.handoffToLauncher() }
+                        }
+                    }
+                }
+                Panel { width: parent.width; height: theme.topGun ? 110 : 102
+                    color: theme.topGun ? "#d80b1b20" : "#e516252c"
+                    border.color: theme.topGun ? theme.orange : theme.border
+                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: "DISABLED AXIS VALUE"; color: theme.topGun ? theme.ivory : theme.text
+                                font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                            Text { text: "Output value held by virtual axes that have no active mapping."
+                                color: theme.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Global safety setting  ·  applies immediately  ·  not stored in profiles"
+                                color: theme.textFaint; font.pixelSize: 9 }
+                        }
+                        FlightTextInput { id: standardDisabledAxisValue; Layout.preferredWidth: 108
+                            text: Number(backend.disabledAxisValue).toFixed(1)
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                            validator: DoubleValidator { bottom: -100.0; top: 100.0; decimals: 1 }
+                            onEditingFinished: {
+                                backend.setDisabledAxisValue(Number(text))
+                                text = Number(backend.disabledAxisValue).toFixed(1)
+                            } }
+                        Text { text: "%"; color: theme.topGun ? theme.orangeBright : theme.textMuted
+                            font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                     }
                 }
                 Panel { width: parent.width
@@ -2206,23 +2276,40 @@ Page {
         anchors.centerIn: parent
         modal: true
         width: 410
-        title: "New profile"
+        title: ""
         standardButtons: Dialog.NoButton
+        padding: 18
         onOpened: {
             profileNameField.text = ""
             startProfile.currentIndex = backend.activeProfileIndex
             profileNameField.forceActiveFocus()
         }
+        header: Rectangle {
+            implicitHeight: theme.topGun ? 74 : 70
+            color: theme.topGun ? "#101b20" : theme.panelRaised
+            border.color: theme.topGun ? theme.orange : theme.borderStrong
+            Column {
+                anchors.left: parent.left
+                anchors.leftMargin: 18
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 3
+                Text { text: "NEW PROFILE"; color: theme.topGun ? theme.orangeBright : theme.textStrong
+                    font.pixelSize: theme.topGun ? 17 : 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "Create a new controller configuration"; color: theme.textMuted; font.pixelSize: 10 }
+            }
+            Rectangle { visible: theme.topGun; anchors.right: parent.right; anchors.rightMargin: 18; anchors.verticalCenter: parent.verticalCenter
+                width: 42; height: 2; color: theme.cyan }
+        }
         contentItem: Column { width: 358; spacing: 12
-            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-            TextField { id: profileNameField; width: parent.width
-                placeholderText: "Helicopter"; color: "#e7f0f1"
-                selectByMouse: true }
-            Text { text: "START FROM"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            Text { text: "NAME"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+            FlightTextInput { id: profileNameField; width: parent.width
+                placeholderText: "Helicopter"
+                onAccepted: { if (backend.createProfile(text, startProfile.currentValue)) newProfileDialog.close() } }
+            Text { text: "START FROM"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
             FlightComboBox { id: startProfile; width: parent.width
                 model: backend.profiles; textRole: "name"; valueRole: "id" }
             Text { text: "Copies the selected mapping configuration. Calibration remains global to the controller."
-                width: parent.width; wrapMode: Text.WordWrap; color: "#879ba1"; font.pixelSize: 10 }
+                width: parent.width; wrapMode: Text.WordWrap; color: theme.textFaint; font.pixelSize: 10 }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: createProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: newProfileDialog.close() }
@@ -2232,7 +2319,7 @@ Page {
                     onTriggered: { if (backend.createProfile(profileNameField.text, startProfile.currentValue)) newProfileDialog.close() } }
             }
         }
-        background: Panel { color: "#1b2126"; border.color: "#3adce5e8" }
+        background: Panel { color: theme.topGun ? "#10171b" : theme.panel; border.color: theme.topGun ? theme.orange : theme.borderStrong }
     }
     Dialog {
         id: renameProfileDialog

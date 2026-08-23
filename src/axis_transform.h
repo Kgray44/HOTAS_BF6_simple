@@ -24,6 +24,36 @@ struct AxisSignalPath {
     float afterLimits = 0.0F;
 };
 
+// The output plan is rebuilt from fixed-size arrays once per physical report.
+// It is deliberately free of UI, allocation, and driver calls so the mapper
+// can publish a configurable safe value for unused vJoy axes without adding
+// work outside its existing change-driven output loop.
+struct VirtualAxisOutputPlan {
+    std::array<float, kVirtualAxisSlotCount> values{};
+    std::array<int, kVirtualAxisSlotCount> sourceIndexes{};
+};
+
+inline VirtualAxisOutputPlan buildVirtualAxisOutputPlan(
+    const RuntimeMappingConfiguration &mapping,
+    const std::array<bool, kPhysicalAxisCount> &availableAxes,
+    const std::array<float, kPhysicalAxisCount> &transformedAxes,
+    float disabledAxisValue)
+{
+    VirtualAxisOutputPlan plan;
+    plan.values.fill(sanitizedDisabledAxisValue(disabledAxisValue));
+    plan.sourceIndexes.fill(-1);
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const int target = static_cast<int>(mapping.axes[static_cast<size_t>(index)].profile.target);
+        if (!availableAxes[static_cast<size_t>(index)] || target <= 0
+            || target >= static_cast<int>(plan.values.size()) || plan.sourceIndexes[target] >= 0) {
+            continue;
+        }
+        plan.values[target] = transformedAxes[static_cast<size_t>(index)];
+        plan.sourceIndexes[target] = index;
+    }
+    return plan;
+}
+
 float clampUnit(float value);
 float normalizeCalibrated(float raw, const Calibration &calibration);
 float applyRescaledDeadzone(float value, float deadzone);

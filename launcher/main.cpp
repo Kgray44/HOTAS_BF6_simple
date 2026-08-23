@@ -26,8 +26,6 @@ using hotas::launcher::SemanticVersion;
 using hotas::launcher::UpdateAction;
 using hotas::launcher::UpdateManifest;
 
-constexpr wchar_t kManifestUrl[] =
-    L"https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json";
 constexpr wchar_t kMapperName[] = L"HOTAS BF6.exe";
 constexpr wchar_t kLauncherName[] = L"HOTAS BF6 Launcher.exe";
 constexpr wchar_t kUpdateMutexName[] = L"Local\\HOTAS-BF6-Update-Mutex";
@@ -290,7 +288,7 @@ bool readHttps(const std::wstring &url, size_t maximumBytes,
 bool fetchManifest(std::string &manifest)
 {
     manifest.clear();
-    const bool fetched = readHttps(kManifestUrl, kMaximumManifestBytes,
+    const bool fetched = readHttps(utf8ToWide(hotas::launcher::updateManifestUrl()), kMaximumManifestBytes,
         [&manifest](const BYTE *data, DWORD count) {
             manifest.append(reinterpret_cast<const char *>(data), count);
             return true;
@@ -497,6 +495,24 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const std::vector<std::wstring> arguments = commandLineArguments();
     if (hasArgument(arguments, L"--apply-update")) return applyUpdate(arguments);
     if (hasArgument(arguments, L"--skip-update")) return launchMapper() ? 0 : 1;
+
+    // The mapper starts this existing launcher before releasing DirectInput
+    // and vJoy. Wait for that confirmed parent to exit before downloading or
+    // installing, so the updater never races a live mapper process.
+    if (const auto waitingParent = argumentValue(arguments, L"--wait-for-pid")) {
+        DWORD parentPid = 0;
+        try {
+            parentPid = static_cast<DWORD>(std::stoul(*waitingParent));
+        } catch (...) {
+            logEvent(L"launcher received an invalid mapper wait PID");
+            return 1;
+        }
+        if (parentPid == 0 || !waitForParentExit(parentPid)) {
+            logEvent(L"launcher timed out waiting for mapper update handoff");
+            return 1;
+        }
+        logEvent(L"mapper exited; continuing requested update handoff");
+    }
 
     HANDLE updateMutex = CreateMutexW(nullptr, TRUE, kUpdateMutexName);
     if (!updateMutex) return launchMapper() ? 0 : 1;

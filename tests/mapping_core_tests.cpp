@@ -117,6 +117,9 @@ private slots:
     void virtualControllersAreNeverEligibleAsPhysicalInput();
     void implicitButtonsDefaultToMatchingVjoyTargets();
     void configurationRoundTrips();
+    void disabledAxisValueDefaultsMigratesAndPersistsGlobally();
+    void disabledAxisValueClampsSafely();
+    void disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes();
     void duplicateMappingIsRejectedAndNormalized();
     void buttonCapacityMismatchIsReported();
     void defaultButtonPassthroughIsCapacityBounded();
@@ -139,6 +142,7 @@ private slots:
     void legacyConfigurationMigratesToNormalAndPrecision();
     void profileMigrationIsIdempotent();
     void profileCrudValidatesNamesAndProtectsNormal();
+    void newProfileClonesRequestedSourceIndependently();
     void profilesRemainIsolatedAndPersist();
     void profileSwitchCompilesCompleteAxisConfiguration();
     void profileSwitchReevaluatesHeldButtons();
@@ -515,6 +519,7 @@ void MappingCoreTests::configurationRoundTrips()
     configuration.preferredDeviceId = QStringLiteral("{0D15EA5E-0000-0000-0000-000000000001}");
     configuration.vjoyDeviceId = 2;
     configuration.startMappingOnLaunch = true;
+    configuration.disabledAxisValue = -0.25F;
     normal.axes[0].inverted = true;
     normal.axes[1].deadzone = 0.12F;
     configuration.calibration[2] = {true, -0.9F, 0.1F, 0.8F};
@@ -528,12 +533,76 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.preferredDeviceId, configuration.preferredDeviceId);
     QCOMPARE(restored.vjoyDeviceId, 2);
     QVERIFY(restored.startMappingOnLaunch);
+    QCOMPARE(restored.disabledAxisValue, -0.25F);
     QCOMPARE(static_cast<int>(restored.profiles.size()), 3);
     QVERIFY(activeProfile(restored).axes[0].inverted);
     QCOMPARE(activeProfile(restored).axes[1].deadzone, 0.12F);
     QVERIFY(restored.calibration[2].enabled);
     QCOMPARE(restored.calibration[2].center, 0.1F);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
+}
+
+void MappingCoreTests::disabledAxisValueDefaultsMigratesAndPersistsGlobally()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QCOMPARE(configuration.disabledAxisValue, 0.0F);
+
+    QJsonObject priorRelease = ConfigStore::toJson(configuration);
+    priorRelease.insert(QStringLiteral("version"), 10);
+    priorRelease.remove(QStringLiteral("disabledAxisValue"));
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(priorRelease, &valid);
+    QVERIFY(valid);
+    QCOMPARE(migrated.disabledAxisValue, 0.0F);
+
+    configuration.disabledAxisValue = -0.25F;
+    QString createdId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), precisionProfileId(), &createdId));
+    QVERIFY(findProfile(configuration, createdId));
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.disabledAxisValue, -0.25F);
+    QVERIFY(activateProfile(configuration, createdId));
+    QCOMPARE(configuration.disabledAxisValue, -0.25F);
+}
+
+void MappingCoreTests::disabledAxisValueClampsSafely()
+{
+    QJsonObject json = ConfigStore::toJson(defaultConfiguration());
+    bool valid = false;
+    json.insert(QStringLiteral("disabledAxisValue"), 4.0);
+    QCOMPARE(ConfigStore::fromJson(json, &valid).disabledAxisValue, 1.0F);
+    QVERIFY(valid);
+    json.insert(QStringLiteral("disabledAxisValue"), -4.0);
+    QCOMPARE(ConfigStore::fromJson(json, &valid).disabledAxisValue, -1.0F);
+    QVERIFY(valid);
+    json.insert(QStringLiteral("disabledAxisValue"), QStringLiteral("invalid"));
+    QCOMPARE(ConfigStore::fromJson(json, &valid).disabledAxisValue, 0.0F);
+    QVERIFY(valid);
+}
+
+void MappingCoreTests::disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    RuntimeMappingConfiguration mapping = compileActiveProfile(configuration);
+    std::array<bool, kPhysicalAxisCount> available{};
+    std::array<float, kPhysicalAxisCount> transformed{};
+    available.fill(true);
+    transformed[static_cast<size_t>(PhysicalAxis::X)] = 0.62F;
+    transformed[static_cast<size_t>(PhysicalAxis::Y)] = -0.40F;
+    transformed[static_cast<size_t>(PhysicalAxis::Z)] = 0.18F;
+    transformed[static_cast<size_t>(PhysicalAxis::Rz)] = -0.75F;
+
+    // Roll has no active route. Its physical input must not leak onto a
+    // virtual axis, and its former target remains safely parked.
+    mapping.axes[static_cast<size_t>(PhysicalAxis::X)].profile.target = VirtualAxis::Disabled;
+    const VirtualAxisOutputPlan plan = buildVirtualAxisOutputPlan(mapping, available, transformed, -0.25F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::X)], -0.25F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Y)], -0.40F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Z)], 0.18F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Rz)], -0.75F);
+    QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::X)], -1);
+    QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::Y)], static_cast<int>(PhysicalAxis::Y));
 }
 
 void MappingCoreTests::duplicateMappingIsRejectedAndNormalized()
@@ -910,6 +979,39 @@ void MappingCoreTests::profileCrudValidatesNamesAndProtectsNormal()
     QVERIFY(activateProfile(configuration, normalProfileId()));
     QVERIFY(deleteProfile(configuration, helicopterId));
     QVERIFY(!findProfile(configuration, helicopterId));
+}
+
+void MappingCoreTests::newProfileClonesRequestedSourceIndependently()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(precision);
+    precision->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.14F;
+    precision->axes[static_cast<int>(PhysicalAxis::Rz)].inverted = true;
+    precision->buttons = defaultButtonMappings(6, 32);
+    precision->buttons[2].target = 20;
+    precision->povs.resize(1);
+    precision->povs[0][0] = {ButtonActionType::VirtualButton, 21, true};
+
+    QString createdId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), precisionProfileId(), &createdId));
+    const ControllerProfile *created = findProfile(configuration, createdId);
+    QVERIFY(created);
+    QCOMPARE(created->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.14F);
+    QVERIFY(created->axes[static_cast<int>(PhysicalAxis::Rz)].inverted);
+    QCOMPARE(created->buttons[2].target, 20);
+    QCOMPARE(created->povs[0][0].target, 21);
+
+    ControllerProfile *mutableCreated = findProfile(configuration, createdId);
+    QVERIFY(mutableCreated);
+    mutableCreated->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.38F;
+    mutableCreated->buttons[2].target = 6;
+    mutableCreated->povs[0][0].target = 7;
+    const ControllerProfile *sourceAfterInsert = findProfile(configuration, precisionProfileId());
+    QVERIFY(sourceAfterInsert);
+    QCOMPARE(sourceAfterInsert->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.14F);
+    QCOMPARE(sourceAfterInsert->buttons[2].target, 20);
+    QCOMPARE(sourceAfterInsert->povs[0][0].target, 21);
 }
 
 void MappingCoreTests::profilesRemainIsolatedAndPersist()

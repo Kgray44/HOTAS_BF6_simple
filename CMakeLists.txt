@@ -15,7 +15,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Test)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -88,6 +88,7 @@ qt_add_resources(HOTASMapper hotas_icon_resources
 target_link_libraries(HOTASMapper PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
@@ -117,6 +118,18 @@ target_include_directories(hotas_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(hotas_launcher_core PUBLIC bcrypt)
 target_compile_definitions(hotas_launcher_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
+# The mapper also consumes the same manifest/parser source, but links Qt's
+# dynamic MSVC runtime. Keep the launcher core's intentionally static CRT for
+# its standalone deployment and build a runtime-compatible sibling for Qt.
+add_library(hotas_update_core STATIC
+    launcher/launcher_core.cpp
+    launcher/launcher_core.h
+)
+target_compile_features(hotas_update_core PUBLIC cxx_std_20)
+target_include_directories(hotas_update_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/launcher")
+target_link_libraries(hotas_update_core PUBLIC bcrypt)
+target_compile_definitions(hotas_update_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+
 add_executable(HOTASBF6Launcher WIN32
     launcher/main.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_version.rc"
@@ -137,6 +150,11 @@ set_target_properties(HOTASBF6Launcher PROPERTIES
     OUTPUT_NAME "HOTAS BF6 Launcher"
     VERSION "${HOTAS_BF6_VERSION}"
 )
+
+# The GUI performs only an asynchronous manifest availability check. Parsing,
+# version ordering, and manifest validation remain the launcher's shared core.
+target_link_libraries(HOTASMapper PRIVATE hotas_update_core)
+target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/launcher")
 
 include(CTest)
 if (BUILD_TESTING)

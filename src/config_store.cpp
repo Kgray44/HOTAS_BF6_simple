@@ -106,6 +106,8 @@ void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configurat
     configuration.preferredDeviceId = json.value(u"preferredDeviceId"_qs).toString();
     configuration.vjoyDeviceId = std::clamp(json.value(u"vjoyDeviceId"_qs).toInt(1), 1, 16);
     configuration.startMappingOnLaunch = json.value(u"startMappingOnLaunch"_qs).toBool(false);
+    configuration.disabledAxisValue = sanitizedDisabledAxisValue(
+        static_cast<float>(json.value(u"disabledAxisValue"_qs).toDouble(0.0)));
     configuration.selectedAxisIndex = std::clamp(json.value(u"selectedAxisIndex"_qs)
         .toInt(static_cast<int>(PhysicalAxis::X)), 0, kPhysicalAxisCount - 1);
     configuration.automationEnabled = json.value(u"automationEnabled"_qs).toBool(true);
@@ -598,6 +600,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
         {u"startMappingOnLaunch"_qs, configuration.startMappingOnLaunch},
+        {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
         {u"profiles"_qs, profiles},
