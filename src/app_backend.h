@@ -49,6 +49,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int lastPhysicalButton READ lastPhysicalButton NOTIFY stateChanged)
     Q_PROPERTY(int lastPhysicalButtonTarget READ lastPhysicalButtonTarget NOTIFY stateChanged)
     Q_PROPERTY(bool mappingActive READ mappingActive NOTIFY stateChanged)
+    Q_PROPERTY(bool mappingRequested READ mappingRequested NOTIFY stateChanged)
     Q_PROPERTY(bool vjoyReady READ vjoyReady NOTIFY stateChanged)
     Q_PROPERTY(QString vjoyStatus READ vjoyStatus NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideAvailable READ hidhideAvailable NOTIFY stateChanged)
@@ -112,6 +113,7 @@ public:
     int lastPhysicalButton() const;
     int lastPhysicalButtonTarget() const;
     bool mappingActive() const;
+    bool mappingRequested() const;
     bool vjoyReady() const;
     QString vjoyStatus() const;
     bool hidhideAvailable() const;

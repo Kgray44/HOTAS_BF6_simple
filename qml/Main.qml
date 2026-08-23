@@ -265,7 +265,7 @@ ApplicationWindow {
                     spacing: 7
                     Text { text: "Virtual output"; color: "#7f8a8f"; font.pixelSize: 11; font.bold: true }
                     Text { text: backend.vjoyReady ? "Device ready" : "No output device in use"; color: "#dce2e0"; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Text { text: backend.mappingActive ? "Output will resume when input returns." : "Mapping stays off until you start it."; color: "#899397"; font.pixelSize: 11 }
+                    Text { text: backend.mappingActive ? "Output will resume when input returns." : backend.mappingRequested ? "Waiting for the controller; output resumes automatically." : "Mapping stays off until you start it."; color: "#899397"; font.pixelSize: 11 }
                 }
             }
             Item { Layout.fillHeight: true }
@@ -723,9 +723,9 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             Row { spacing: 7
-                StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3") }
-                Text { text: backend.mappingActive ? "MAPPING ACTIVE" : (backend.vjoyReady ? "OUTPUT READY" : "MAPPING STOPPED")
- color: backend.mappingActive ? "#c0d8c6" : "#b5c0c1"
+                StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
+                Text { text: backend.mappingActive ? "MAPPING ACTIVE" : (backend.mappingRequested ? "MAPPING PAUSED · RECONNECTING" : (backend.vjoyReady ? "OUTPUT READY" : "MAPPING STOPPED"))
+ color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1")
  font.pixelSize: 10
  font.bold: true }
             }
@@ -830,8 +830,8 @@ ApplicationWindow {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: backend.mappingActive ? "STOP MAPPING" : "START MAPPING"
-                        subdued: !backend.mappingActive
+                    CommandButton { label: backend.mappingRequested ? "STOP MAPPING" : "START MAPPING"
+                        subdued: !backend.mappingRequested
                         onTriggered: backend.toggleMapping() }
                 }
                 Panel { width: parent.width; height: 90
@@ -1178,8 +1178,8 @@ ApplicationWindow {
                           note: "ROLLING LAST 2,048 PHYSICAL REPORTS" },
                         { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
-                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : "STOPPED", t: backend.mappingActive ? "#a8cfba" : "#a5afb3",
-                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : "PHYSICAL MONITORING CONTINUES" },
+                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? "#a8cfba" : (backend.mappingRequested ? "#e1c887" : "#a5afb3"),
+                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT WILL REACQUIRE AUTOMATICALLY" : "PHYSICAL MONITORING CONTINUES") },
                         { c: "ACTIVE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
                           note: "PERSISTENT MAPPING CONFIGURATION" },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",

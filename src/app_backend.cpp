@@ -404,6 +404,7 @@ bool AppBackend::vjoyCapacitySufficient() const
 int AppBackend::lastPhysicalButton() const { return m_worker.runtime().lastPhysicalButton.load(); }
 int AppBackend::lastPhysicalButtonTarget() const { return m_worker.runtime().lastPhysicalButtonTarget.load(); }
 bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive.load(); }
+bool AppBackend::mappingRequested() const { return m_worker.mappingRequested(); }
 bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
 bool AppBackend::hidhideAvailable() const { return m_worker.runtime().hidhideAvailable.load(); }
