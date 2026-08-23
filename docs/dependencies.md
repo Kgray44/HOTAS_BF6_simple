@@ -1,6 +1,6 @@
 # Dependency bootstrap
 
-HOTAS BF6 v1.7.0 keeps driver ownership with the user. The Inno Setup wizard
+HOTAS BF6 v1.8.0 keeps driver ownership with the user. The Inno Setup wizard
 detects vJoy and HidHide from uninstall registration plus their service/driver
 registration; HidHide also uses Nefarius' documented dependency registry key.
 Already-present dependencies are never downloaded, reinstalled, or downgraded.

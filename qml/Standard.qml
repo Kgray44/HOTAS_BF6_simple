@@ -323,8 +323,10 @@ Page {
  spacing: 4
             Text { text: pageTitle.heading
  color: theme.textStrong
- font.pixelSize: 26
+ font.pixelSize: theme.topGun ? 40 : 26
  font.bold: true
+ style: theme.topGun ? Text.Outline : Text.Normal
+ styleColor: theme.topGun ? "#8e3321" : "transparent"
  font.family: theme.topGun ? theme.displayFont : root.font.family }
             Text { text: pageTitle.detail
  color: theme.textMuted
@@ -962,11 +964,12 @@ Page {
 
     header: Rectangle {
         id: headerBar
-        height: theme.topGun ? 78 : 58
+        height: theme.topGun ? 92 : 58
         color: theme.header
         border.color: theme.border
         border.width: 1
         RowLayout {
+            visible: !theme.topGun
             anchors.fill: parent
  anchors.leftMargin: theme.topGun ? 26 : 18
  anchors.rightMargin: 20
@@ -1078,6 +1081,68 @@ Page {
                 Text { anchors.centerIn: parent; text: "✦"; color: theme.ivory; font.pixelSize: 28 }
             }
         }
+        Item {
+            visible: theme.topGun
+            anchors.fill: parent
+            ToolButton {
+                id: topGunMenu
+                x: 10; y: 28; width: 26; height: 30
+                text: root.menuOpen ? "×" : "☰"
+                font.pixelSize: 16
+                onClicked: root.menuOpen = !root.menuOpen
+                background: Rectangle { color: "#0a1519"; border.color: theme.border; radius: 1 }
+                contentItem: Text { text: topGunMenu.text; color: theme.ivory; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+            }
+            Image { x: 42; y: 12; width: 242; height: 70; source: "qrc:/assets/themes/topgun/wing-badge.svg"; fillMode: Image.PreserveAspectFit; smooth: true }
+            Rectangle { x: 300; y: 14; width: 1; height: 64; color: theme.divider }
+            Row {
+                x: 318; y: 15; height: 62; spacing: 0
+                Repeater {
+                    visible: root.width >= 960
+                    model: [
+                        { label: backend.physicalConnected ? backend.deviceName.toUpperCase() : "T.FLIGHT HOTAS ONE", value: root.physicalStatusText(), color: root.physicalStatusColor() },
+                        { label: "VJOY " + backend.vjoyDeviceId, value: backend.vjoyReady ? "READY" : "OFFLINE", color: backend.vjoyReady ? theme.cyan : theme.warning },
+                        { label: "PROFILE", value: backend.effectiveProfileName.toUpperCase(), color: theme.ivory }
+                    ]
+                    delegate: Item {
+                        required property var modelData
+                        width: index === 0 ? 184 : index === 1 ? 116 : 144; height: parent.height
+                        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: index === 2 ? "transparent" : "#7c442f" }
+                        Column { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 14; spacing: 7
+                            Row { spacing: 7
+                                Rectangle { width: 8; height: 8; radius: 4; color: modelData.color; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: modelData.label; color: theme.ivory; font.family: theme.displayFont; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; width: parent.parent.width - 34 }
+                            }
+                            Text { text: modelData.value; color: modelData.color; font.family: theme.displayFont; font.pixelSize: 17; font.bold: true }
+                        }
+                    }
+                }
+            }
+            Item { visible: root.width >= 1180; anchors.right: parent.right; anchors.rightMargin: 18; y: 8; width: 278; height: 76
+                Image { anchors.right: parent.right; y: 3; width: 66; height: 62; source: "qrc:/assets/themes/topgun/fighter-silhouette.svg"; fillMode: Image.PreserveAspectFit; opacity: 0.94 }
+                Image { x: 0; y: 31; width: 80; height: 20; source: "qrc:/assets/themes/topgun/slash-stripes.svg"; fillMode: Image.PreserveAspectFit }
+                Text { x: 85; y: 28; text: backend.mappingActive ? "MAPPING ACTIVE" : "MAPPING STANDBY"; color: backend.mappingActive ? theme.orangeBright : theme.textMuted; font.family: theme.displayFont; font.pixelSize: 15; font.bold: true }
+                Rectangle { x: 0; y: 54; width: 238; height: 1; color: theme.orange }
+                Rectangle { x: 104; y: 58; width: 120; height: 2; color: "#8d291d" }
+            }
+        }
+    }
+
+    footer: Rectangle {
+        visible: theme.topGun
+        height: visible ? 78 : 0
+        color: "#0a1519"
+        border.color: theme.border
+        Rectangle { anchors.fill: parent; anchors.margins: 3; color: "transparent"; border.color: "#4d3b25" }
+        Image { anchors.left: parent.left; anchors.leftMargin: 18; anchors.verticalCenter: parent.verticalCenter; width: 285; height: 60; source: "qrc:/assets/themes/topgun/wing-badge.svg"; fillMode: Image.PreserveAspectFit }
+        Text { anchors.left: parent.left; anchors.leftMargin: Math.min(350, parent.width * 0.29); anchors.verticalCenter: parent.verticalCenter; text: "I FEEL THE NEED... THE NEED FOR SPEED!"; color: "#d53926"; font.family: theme.displayFont; font.pixelSize: 14; font.bold: true }
+        Image { anchors.horizontalCenter: parent.horizontalCenter; anchors.horizontalCenterOffset: 160; anchors.verticalCenter: parent.verticalCenter; width: 210; height: 62; source: "qrc:/assets/themes/topgun/fighter-silhouette.svg"; fillMode: Image.PreserveAspectFit }
+        Rectangle { anchors.right: footerRight.left; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; width: 100; height: 1; color: theme.orange }
+        Item { id: footerRight; anchors.right: parent.right; anchors.rightMargin: 22; anchors.verticalCenter: parent.verticalCenter; width: 222; height: 56
+            Text { anchors.right: parent.right; y: 5; text: "DANGER ZONE"; color: "#d7442b"; font.family: theme.displayFont; font.pixelSize: 18; font.bold: true }
+            Image { anchors.right: parent.right; y: 28; width: 126; height: 22; source: "qrc:/assets/themes/topgun/slash-stripes.svg"; fillMode: Image.PreserveAspectFit }
+            Text { anchors.right: parent.right; anchors.bottom: parent.bottom; text: "★"; color: theme.orange; font.pixelSize: 17 }
+        }
     }
 
     MouseArea { anchors.fill: parent
@@ -1090,7 +1155,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 346
+        height: 382
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1137,9 +1202,9 @@ Page {
             Repeater {
                 model: [
                     { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
-                    { label: "PROFILES", page: 5, future: false }, { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
-                    { label: "SETTINGS", page: 4, future: false }, { label: "", page: -1, future: false },
-                    { label: "CURVE EDITOR", page: 6, future: false }
+                    { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
                     width: parent.width
@@ -1410,7 +1475,7 @@ Page {
                         }
                     }
                 }
-                Panel { visible: theme.topGun; width: parent.width; height: 58
+                Panel { visible: false; width: parent.width; height: 58
                     color: "#d80a171b"; border.color: theme.borderStrong
                     RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 14
                         Item { Layout.preferredWidth: 190; Layout.fillHeight: true
@@ -1615,7 +1680,11 @@ Page {
                         { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: theme.ivory,
                           note: backend.profileSourceLabel.toUpperCase() },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: theme.ivory,
-                          note: backend.profileSwitchCount + " LIVE SWITCHES" }
+                          note: backend.profileSwitchCount + " LIVE SWITCHES" },
+                        { c: "AUTOMATION", v: backend.automationEngineEnabled ? "ENABLED" : "DISABLED", t: backend.automationEngineEnabled ? theme.ready : theme.warning,
+                          note: backend.automationRuleCount + " RULES / " + backend.automationActiveRuleCount + " ACTIVE" },
+                        { c: "AUTO EVAL", v: backend.automationEvaluationUs + " US", t: theme.ivory,
+                          note: "WORKER-SIDE RULE EVALUATION" }
                     ]
                         delegate: Panel { Layout.fillWidth: true
  Layout.preferredHeight: 86
@@ -2128,6 +2197,7 @@ Page {
             }
         }
         CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens }
+        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; topGun: theme.topGun }
     }
 
     Dialog {

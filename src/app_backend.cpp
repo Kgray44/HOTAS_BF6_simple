@@ -1,6 +1,7 @@
 #include "app_backend.h"
 
 #include "axis_transform.h"
+#include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
 #include "profile_model.h"
@@ -19,6 +20,133 @@
 
 namespace hotas {
 using namespace Qt::StringLiterals;
+
+namespace {
+
+QString automationConditionSummary(const AutomationConditionDefinition &condition)
+{
+    const auto percent = [&condition](float value) {
+        // DirectInput throttle is internally normalized to -1..+1, but the
+        // flight-control UI exposes it as its natural 0..100 percent travel.
+        const float display = condition.axis == static_cast<int>(PhysicalAxis::Z)
+            ? (value + 1.0F) * 50.0F : value * 100.0F;
+        return QString::number(display, 'f', 0) + u"%"_qs;
+    };
+    switch (condition.type) {
+    case AutomationConditionType::Always: return u"Always"_qs;
+    case AutomationConditionType::AxisAbove: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" above "_qs + percent(condition.minimum);
+    case AutomationConditionType::AxisBelow: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" below "_qs + percent(condition.minimum);
+    case AutomationConditionType::AxisBetween: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" between "_qs + percent(condition.minimum) + u"–"_qs + percent(condition.maximum);
+    case AutomationConditionType::AxisOutsideRange: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" outside "_qs + percent(condition.minimum) + u"–"_qs + percent(condition.maximum);
+    case AutomationConditionType::ButtonHeld: return QString(u"Button %1 held"_qs).arg(condition.button);
+    case AutomationConditionType::ButtonReleased: return QString(u"Button %1 released"_qs).arg(condition.button);
+    case AutomationConditionType::PovActive: return QString(u"POV %1 %2"_qs).arg(condition.povHat)
+        .arg(povDirectionLabel(condition.povDirection));
+    case AutomationConditionType::PovInactive: return QString(u"POV %1 %2 inactive"_qs).arg(condition.povHat)
+        .arg(povDirectionLabel(condition.povDirection));
+    case AutomationConditionType::BaseProfileIs: return u"Base Profile is "_qs + condition.profileId;
+    case AutomationConditionType::EffectiveProfileIs: return u"Effective Profile is "_qs + condition.profileId;
+    }
+    return u"Invalid condition"_qs;
+}
+
+QString automationActionSummary(const AutomationActionDefinition &action)
+{
+    const auto percent = [](float value) { return QString::number(value * 100.0F, 'f', 0) + u"%"_qs; };
+    switch (action.type) {
+    case AutomationActionType::VJoyButtonHold: return QString(u"vJoy Button %1 · Hold"_qs).arg(action.virtualButton);
+    case AutomationActionType::VJoyButtonToggle: return QString(u"vJoy Button %1 · Toggle"_qs).arg(action.virtualButton);
+    case AutomationActionType::ProfileHold: return u"Hold Profile · "_qs + action.profileId;
+    case AutomationActionType::ProfileToggle: return u"Toggle Profile · "_qs + action.profileId;
+    case AutomationActionType::AxisScale: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" scale "_qs + percent(action.value);
+    case AutomationActionType::AxisOffset: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" offset "_qs + percent(action.value);
+    case AutomationActionType::AxisClamp: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" clamp "_qs + percent(action.minimum) + u"–"_qs + percent(action.maximum);
+    case AutomationActionType::AxisOverride: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" override "_qs + percent(action.value);
+    case AutomationActionType::AxisMix: return u"Mix "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.sourceAxis))
+        + u" into "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" · "_qs + percent(action.value);
+    case AutomationActionType::AxisFollow: return physicalAxisLabel(static_cast<PhysicalAxis>(action.targetAxis))
+        + u" follows "_qs + physicalAxisLabel(static_cast<PhysicalAxis>(action.sourceAxis));
+    }
+    return u"Invalid action"_qs;
+}
+
+bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinition *definition,
+                                     QString *reason)
+{
+    if (!definition) return false;
+    AutomationDefinition restored;
+    restored.id = map.value(u"id"_qs).toString().trimmed();
+    restored.name = map.value(u"name"_qs).toString().trimmed();
+    restored.enabled = map.value(u"enabled"_qs, true).toBool();
+    restored.matchMode = static_cast<AutomationMatchMode>(map.value(u"matchMode"_qs, 0).toInt());
+    restored.priority = std::clamp(map.value(u"priority"_qs, 50).toInt(), 0, 100);
+    if (restored.id.isEmpty() || restored.name.isEmpty() || restored.name.size() > 64
+        || (restored.matchMode != AutomationMatchMode::All && restored.matchMode != AutomationMatchMode::Any)) {
+        if (reason) *reason = u"Name and match mode are required."_qs;
+        return false;
+    }
+    const QVariantList conditions = map.value(u"conditions"_qs).toList();
+    const QVariantList actions = map.value(u"actions"_qs).toList();
+    if (conditions.empty() || conditions.size() > kMaximumAutomationConditions
+        || actions.empty() || actions.size() > kMaximumAutomationActions) {
+        if (reason) *reason = u"Rules support one to four conditions and actions."_qs;
+        return false;
+    }
+    for (const QVariant &value : conditions) {
+        const QVariantMap input = value.toMap();
+        AutomationConditionDefinition condition;
+        condition.type = static_cast<AutomationConditionType>(input.value(u"type"_qs).toInt());
+        condition.axis = input.value(u"axis"_qs, 0).toInt();
+        condition.minimum = static_cast<float>(input.value(u"minimum"_qs, 0.0).toDouble());
+        condition.maximum = static_cast<float>(input.value(u"maximum"_qs, 0.0).toDouble());
+        condition.hysteresis = static_cast<float>(input.value(u"hysteresis"_qs, 0.0).toDouble());
+        condition.button = input.value(u"button"_qs, 1).toInt();
+        condition.povHat = input.value(u"povHat"_qs, 1).toInt();
+        condition.povDirection = static_cast<PovDirection>(input.value(u"povDirection"_qs,
+            static_cast<int>(PovDirection::Up)).toInt());
+        condition.profileId = input.value(u"profileId"_qs).toString().trimmed();
+        if (static_cast<int>(condition.type) < static_cast<int>(AutomationConditionType::Always)
+            || static_cast<int>(condition.type) > static_cast<int>(AutomationConditionType::EffectiveProfileIs)) {
+            if (reason) *reason = u"Condition type is invalid."_qs;
+            return false;
+        }
+        restored.conditions.push_back(std::move(condition));
+    }
+    for (const QVariant &value : actions) {
+        const QVariantMap input = value.toMap();
+        AutomationActionDefinition action;
+        action.type = static_cast<AutomationActionType>(input.value(u"type"_qs).toInt());
+        action.virtualButton = input.value(u"virtualButton"_qs, 1).toInt();
+        action.profileId = input.value(u"profileId"_qs).toString().trimmed();
+        action.targetAxis = input.value(u"targetAxis"_qs, 0).toInt();
+        action.sourceAxis = input.value(u"sourceAxis"_qs, 0).toInt();
+        action.sourceStage = static_cast<AutomationAxisSourceStage>(input.value(u"sourceStage"_qs,
+            static_cast<int>(AutomationAxisSourceStage::Processed)).toInt());
+        action.value = static_cast<float>(input.value(u"value"_qs, 0.0).toDouble());
+        action.offset = static_cast<float>(input.value(u"offset"_qs, 0.0).toDouble());
+        action.minimum = static_cast<float>(input.value(u"minimum"_qs, -1.0).toDouble());
+        action.maximum = static_cast<float>(input.value(u"maximum"_qs, 1.0).toDouble());
+        if (static_cast<int>(action.type) < static_cast<int>(AutomationActionType::VJoyButtonHold)
+            || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::AxisFollow)) {
+            if (reason) *reason = u"Action type is invalid."_qs;
+            return false;
+        }
+        restored.actions.push_back(std::move(action));
+    }
+    *definition = std::move(restored);
+    return true;
+}
+
+} // namespace
 
 AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
@@ -509,6 +637,7 @@ QString AppBackend::profileSourceLabel() const
     const int povDirection = m_worker.runtime().profileOverridePovDirection.load();
     const ProfileTriggerMode mode = static_cast<ProfileTriggerMode>(
         m_worker.runtime().profileOverrideMode.load());
+    const int automationRule = m_worker.runtime().profileOverrideAutomationRule.load();
     if (mode == ProfileTriggerMode::Disabled) return u"Manual base profile"_qs;
     if (button > 0) {
         return QString(u"Button %1 · %2"_qs).arg(button).arg(profileTriggerModeLabel(mode));
@@ -516,6 +645,11 @@ QString AppBackend::profileSourceLabel() const
     if (povHat > 0 && povDirection >= 0 && povDirection < kPovDirectionCount) {
         return QString(u"POV %1 %2 · %3"_qs).arg(povHat)
             .arg(povDirectionLabel(static_cast<PovDirection>(povDirection + 1)))
+            .arg(profileTriggerModeLabel(mode));
+    }
+    if (automationRule >= 0 && automationRule < static_cast<int>(m_configuration.automations.size())) {
+        const QString name = m_configuration.automations[static_cast<size_t>(automationRule)].name;
+        return QString(u"Automation %1 · %2"_qs).arg(name)
             .arg(profileTriggerModeLabel(mode));
     }
     return u"Manual base profile"_qs;
@@ -587,6 +721,111 @@ qulonglong AppBackend::latencyPeakUs() const { return m_worker.runtime().latency
 qulonglong AppBackend::profileSwitchCount() const { return m_worker.runtime().profileSwitchCount.load(); }
 qulonglong AppBackend::lastProfileSwapUs() const { return m_worker.runtime().lastProfileSwapUs.load(); }
 qulonglong AppBackend::lastCurveCompileUs() const { return m_worker.runtime().lastCurveCompileUs.load(); }
+bool AppBackend::automationEngineEnabled() const { return m_configuration.automationEnabled; }
+int AppBackend::automationRuleCount() const { return static_cast<int>(m_configuration.automations.size()); }
+int AppBackend::automationActiveRuleCount() const { return m_worker.runtime().automationActiveRuleCount.load(); }
+qulonglong AppBackend::automationEvaluationUs() const { return m_worker.runtime().automationEvaluationUs.load(); }
+QString AppBackend::automationValidationMessage() const { return m_automationValidationMessage; }
+
+QVariantList AppBackend::automationRules() const
+{
+    QVariantList rules;
+    const std::shared_ptr<const RuntimeProfileCache> compiled = m_worker.runtimeProfileCache();
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 0; index < static_cast<int>(m_configuration.automations.size()); ++index) {
+        const AutomationDefinition &definition = m_configuration.automations[static_cast<size_t>(index)];
+        QVariantList conditions;
+        QStringList conditionLabels;
+        for (const AutomationConditionDefinition &condition : definition.conditions) {
+            conditionLabels.append(automationConditionSummary(condition));
+            conditions.append(QVariantMap{{u"type"_qs, static_cast<int>(condition.type)},
+                {u"axis"_qs, condition.axis}, {u"minimum"_qs, condition.minimum},
+                {u"maximum"_qs, condition.maximum}, {u"hysteresis"_qs, condition.hysteresis},
+                {u"button"_qs, condition.button}, {u"povHat"_qs, condition.povHat},
+                {u"povDirection"_qs, static_cast<int>(condition.povDirection)},
+                {u"profileId"_qs, condition.profileId}});
+        }
+        QVariantList actions;
+        QStringList actionLabels;
+        for (const AutomationActionDefinition &action : definition.actions) {
+            actionLabels.append(automationActionSummary(action));
+            actions.append(QVariantMap{{u"type"_qs, static_cast<int>(action.type)},
+                {u"virtualButton"_qs, action.virtualButton}, {u"profileId"_qs, action.profileId},
+                {u"targetAxis"_qs, action.targetAxis}, {u"sourceAxis"_qs, action.sourceAxis},
+                {u"sourceStage"_qs, static_cast<int>(action.sourceStage)}, {u"value"_qs, action.value},
+                {u"offset"_qs, action.offset}, {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum}});
+        }
+        AutomationHealth health = AutomationHealth::Valid;
+        QString healthMessage;
+        if (compiled && compiled->automation && index < compiled->automation->ruleCount) {
+            health = compiled->automation->ruleHealth[static_cast<size_t>(index)];
+            healthMessage = compiled->automation->ruleMessages[static_cast<size_t>(index)];
+        }
+        // Availability is inherently dynamic, so the compiler cannot decide
+        // it. Surface a connected device's missing route as repairable
+        // attention in the Automation UI without publishing unsafe output.
+        QString availabilityMessage;
+        if (runtime.physicalConnected.load()) {
+            for (const AutomationConditionDefinition &condition : definition.conditions) {
+                const bool axisCondition = condition.type == AutomationConditionType::AxisAbove
+                    || condition.type == AutomationConditionType::AxisBelow
+                    || condition.type == AutomationConditionType::AxisBetween
+                    || condition.type == AutomationConditionType::AxisOutsideRange;
+                if (axisCondition && (condition.axis < 0 || condition.axis >= kPhysicalAxisCount
+                    || !runtime.axisAvailable[static_cast<size_t>(condition.axis)].load())) {
+                    availabilityMessage = u"Required physical axis is unavailable on the connected controller."_qs;
+                    break;
+                }
+                const bool buttonCondition = condition.type == AutomationConditionType::ButtonHeld
+                    || condition.type == AutomationConditionType::ButtonReleased;
+                if (buttonCondition && (condition.button < 1 || condition.button > kMaximumPhysicalButtons
+                    || !runtime.buttonAvailable[static_cast<size_t>(condition.button - 1)].load())) {
+                    availabilityMessage = u"Required physical button is unavailable on the connected controller."_qs;
+                    break;
+                }
+                const bool povCondition = condition.type == AutomationConditionType::PovActive
+                    || condition.type == AutomationConditionType::PovInactive;
+                if (povCondition && (condition.povHat < 1 || condition.povHat > runtime.povCount.load())) {
+                    availabilityMessage = u"Required POV hat is unavailable on the connected controller."_qs;
+                    break;
+                }
+            }
+            if (availabilityMessage.isEmpty()) {
+                for (const AutomationActionDefinition &action : definition.actions) {
+                    const bool axisTarget = action.type >= AutomationActionType::AxisScale;
+                    const bool usesAxisSource = action.type == AutomationActionType::AxisMix
+                        || action.type == AutomationActionType::AxisFollow;
+                    if ((axisTarget && (action.targetAxis < 0 || action.targetAxis >= kPhysicalAxisCount
+                         || !runtime.axisAvailable[static_cast<size_t>(action.targetAxis)].load()))
+                        || (usesAxisSource && (action.sourceAxis < 0 || action.sourceAxis >= kPhysicalAxisCount
+                            || !runtime.axisAvailable[static_cast<size_t>(action.sourceAxis)].load()))) {
+                        availabilityMessage = u"An Automation axis action references an unavailable controller axis."_qs;
+                        break;
+                    }
+                    if ((action.type == AutomationActionType::VJoyButtonHold
+                         || action.type == AutomationActionType::VJoyButtonToggle)
+                        && runtime.vjoyButtonCount.load() > 0
+                        && action.virtualButton > runtime.vjoyButtonCount.load()) {
+                        availabilityMessage = u"Automation targets a vJoy button not exposed by the active device."_qs;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!availabilityMessage.isEmpty()) {
+            health = AutomationHealth::Invalid;
+            healthMessage = availabilityMessage;
+        }
+        rules.append(QVariantMap{{u"id"_qs, definition.id}, {u"name"_qs, definition.name},
+            {u"enabled"_qs, definition.enabled}, {u"matchMode"_qs, static_cast<int>(definition.matchMode)},
+            {u"priority"_qs, definition.priority}, {u"conditions"_qs, conditions}, {u"actions"_qs, actions},
+            {u"conditionSummary"_qs, conditionLabels.join(u" · "_qs)},
+            {u"actionSummary"_qs, actionLabels.join(u" · "_qs)},
+            {u"active"_qs, m_worker.runtime().automationRuleActive[static_cast<size_t>(index)].load()},
+            {u"health"_qs, static_cast<int>(health)}, {u"healthMessage"_qs, healthMessage}});
+    }
+    return rules;
+}
 
 QStringList AppBackend::buttonOutputChoices() const
 {
@@ -1442,6 +1681,134 @@ void AppBackend::setVjoyDeviceId(int deviceId)
 {
     m_configuration.vjoyDeviceId = std::clamp(deviceId, 1, 16);
     persistAndApply();
+}
+
+void AppBackend::setAutomationEngineEnabled(bool enabled)
+{
+    if (m_configuration.automationEnabled == enabled) return;
+    m_configuration.automationEnabled = enabled;
+    persistAndApply();
+    appendEvent(enabled ? u"Automation engine enabled"_qs : u"Automation engine disabled"_qs);
+}
+
+bool AppBackend::createAutomation()
+{
+    if (static_cast<int>(m_configuration.automations.size()) >= kMaximumAutomationRules) {
+        m_automationValidationMessage = u"Automation limit is 64 rules."_qs;
+        emit stateChanged();
+        return false;
+    }
+    AutomationDefinition automation;
+    automation.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    automation.name = u"New Automation"_qs;
+    int suffix = 2;
+    const auto nameTaken = [this, &automation] {
+        return std::any_of(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
+            [&automation](const AutomationDefinition &existing) {
+                return existing.name.compare(automation.name, Qt::CaseInsensitive) == 0;
+            });
+    };
+    while (nameTaken()) automation.name = QString(u"New Automation %1"_qs).arg(suffix++);
+    // A disabled, neutral-scale draft is safe if the user leaves the editor
+    // before changing it. Saving an enabled rule is still fully validated.
+    automation.enabled = false;
+    automation.conditions.push_back({AutomationConditionType::Always});
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::AxisScale;
+    action.targetAxis = static_cast<int>(PhysicalAxis::X);
+    action.value = 1.0F;
+    automation.actions.push_back(action);
+    m_configuration.automations.push_back(std::move(automation));
+    m_automationValidationMessage.clear();
+    persistAndApply();
+    appendEvent(u"Automation draft created"_qs);
+    return true;
+}
+
+bool AppBackend::duplicateAutomation(const QString &id)
+{
+    if (static_cast<int>(m_configuration.automations.size()) >= kMaximumAutomationRules) return false;
+    const auto found = std::find_if(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
+        [&id](const AutomationDefinition &automation) { return automation.id == id; });
+    if (found == m_configuration.automations.cend()) return false;
+    AutomationDefinition copy = *found;
+    copy.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString base = copy.name.left(56).trimmed();
+    int suffix = 2;
+    do {
+        copy.name = QString(u"%1 %2"_qs).arg(base).arg(suffix++);
+    } while (std::any_of(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
+        [&copy](const AutomationDefinition &automation) {
+            return automation.name.compare(copy.name, Qt::CaseInsensitive) == 0;
+        }));
+    m_configuration.automations.push_back(std::move(copy));
+    m_automationValidationMessage.clear();
+    persistAndApply();
+    appendEvent(u"Automation duplicated"_qs);
+    return true;
+}
+
+bool AppBackend::deleteAutomation(const QString &id)
+{
+    const auto found = std::find_if(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
+        [&id](const AutomationDefinition &automation) { return automation.id == id; });
+    if (found == m_configuration.automations.cend()) return false;
+    const QString name = found->name;
+    m_configuration.automations.erase(found);
+    m_automationValidationMessage.clear();
+    persistAndApply();
+    appendEvent(u"Automation deleted: "_qs + name);
+    return true;
+}
+
+bool AppBackend::setAutomationEnabled(const QString &id, bool enabled)
+{
+    const auto found = std::find_if(m_configuration.automations.begin(), m_configuration.automations.end(),
+        [&id](const AutomationDefinition &automation) { return automation.id == id; });
+    if (found == m_configuration.automations.end() || found->enabled == enabled) return false;
+    found->enabled = enabled;
+    m_automationValidationMessage.clear();
+    persistAndApply();
+    appendEvent((enabled ? u"Automation enabled: "_qs : u"Automation disabled: "_qs) + found->name);
+    return true;
+}
+
+bool AppBackend::saveAutomation(const QVariantMap &automation)
+{
+    AutomationDefinition candidate;
+    QString reason;
+    if (!automationDefinitionFromVariant(automation, &candidate, &reason)) {
+        m_automationValidationMessage = reason;
+        emit stateChanged();
+        return false;
+    }
+    const auto found = std::find_if(m_configuration.automations.begin(), m_configuration.automations.end(),
+        [&candidate](const AutomationDefinition &existing) { return existing.id == candidate.id; });
+    if (found == m_configuration.automations.end()) {
+        m_automationValidationMessage = u"Automation no longer exists."_qs;
+        emit stateChanged();
+        return false;
+    }
+    MapperConfiguration proposed = m_configuration;
+    const auto proposedRule = std::find_if(proposed.automations.begin(), proposed.automations.end(),
+        [&candidate](const AutomationDefinition &existing) { return existing.id == candidate.id; });
+    *proposedRule = candidate;
+    const RuntimeProfileCache compiled = compileRuntimeProfileCache(proposed);
+    if (!compiled.automation || !compiled.automation->publishable
+        || compiled.automation->ruleHealth[static_cast<size_t>(std::distance(
+            proposed.automations.begin(), proposedRule))] == AutomationHealth::Invalid) {
+        const int index = static_cast<int>(std::distance(proposed.automations.begin(), proposedRule));
+        m_automationValidationMessage = compiled.automation && !compiled.automation->ruleMessages[
+            static_cast<size_t>(index)].isEmpty() ? compiled.automation->ruleMessages[static_cast<size_t>(index)]
+            : (compiled.automation ? compiled.automation->message : u"Automation validation failed."_qs);
+        emit stateChanged();
+        return false;
+    }
+    *found = std::move(candidate);
+    m_automationValidationMessage.clear();
+    persistAndApply();
+    appendEvent(u"Automation saved: "_qs + found->name);
+    return true;
 }
 
 bool AppBackend::openVjoyConfiguration()

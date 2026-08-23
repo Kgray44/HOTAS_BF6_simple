@@ -41,6 +41,17 @@ EffectiveProfileSelection ProfileTriggerRuntime::selectionFor(int profileIndex, 
             povSource % kPovDirectionCount, mode};
 }
 
+EffectiveProfileSelection ProfileTriggerRuntime::automationSelectionFor(int profileIndex, int source,
+                                                                          ProfileTriggerMode mode)
+{
+    EffectiveProfileSelection selection;
+    selection.profileIndex = profileIndex;
+    selection.sourceMode = mode;
+    selection.sourceAutomationRule = source / kMaximumAutomationActions;
+    selection.sourceAutomationAction = source % kMaximumAutomationActions;
+    return selection;
+}
+
 bool ProfileTriggerRuntime::valid(const RuntimeProfileCache &cache, int source,
                                   ProfileTriggerMode expectedMode) const
 {
@@ -65,7 +76,60 @@ void ProfileTriggerRuntime::reset()
     m_holdOrder.fill(0);
     m_toggleOrder.fill(0);
     m_signatures.fill({});
+    m_automationHoldOrder.fill(0);
+    m_automationToggleOrder.fill(0);
+    m_automationSignatures.fill({});
     m_activationSequence = 0;
+}
+
+void ProfileTriggerRuntime::clearAutomationContributions()
+{
+    m_automationHoldOrder.fill(0);
+    m_automationToggleOrder.fill(0);
+    m_automationSignatures.fill({});
+}
+
+void ProfileTriggerRuntime::updateAutomationContributions(
+    const std::array<AutomationProfileContribution, kMaximumAutomationProfileContributors> &contributions,
+    int contributionCount, int profileCount)
+{
+    std::array<bool, kMaximumAutomationProfileContributors> seen{};
+    const int count = std::clamp(contributionCount, 0, kMaximumAutomationProfileContributors);
+    for (int index = 0; index < count; ++index) {
+        const AutomationProfileContribution &contribution = contributions[static_cast<size_t>(index)];
+        if (contribution.source < 0 || contribution.source >= kMaximumAutomationProfileContributors) continue;
+        const size_t source = static_cast<size_t>(contribution.source);
+        seen[source] = true;
+        const bool targetValid = contribution.targetProfileIndex >= 0
+            && contribution.targetProfileIndex < profileCount;
+        const AutomationSignature signature{contribution.targetProfileIndex, contribution.mode};
+        const bool changed = m_automationSignatures[source] != signature;
+        if (changed || !targetValid) {
+            m_automationHoldOrder[source] = 0;
+            m_automationToggleOrder[source] = 0;
+        }
+        m_automationSignatures[source] = signature;
+        if (!targetValid) continue;
+        if (contribution.mode == ProfileTriggerMode::Hold) {
+            if (contribution.active && m_automationHoldOrder[source] == 0) {
+                m_automationHoldOrder[source] = ++m_activationSequence;
+            }
+            if (!contribution.active) m_automationHoldOrder[source] = 0;
+            m_automationToggleOrder[source] = 0;
+        } else if (contribution.mode == ProfileTriggerMode::Toggle) {
+            m_automationHoldOrder[source] = 0;
+            if (contribution.rising) {
+                m_automationToggleOrder[source] = m_automationToggleOrder[source] == 0
+                    ? ++m_activationSequence : 0;
+            }
+        }
+    }
+    for (int source = 0; source < kMaximumAutomationProfileContributors; ++source) {
+        if (seen[static_cast<size_t>(source)]) continue;
+        m_automationHoldOrder[static_cast<size_t>(source)] = 0;
+        m_automationToggleOrder[static_cast<size_t>(source)] = 0;
+        m_automationSignatures[static_cast<size_t>(source)] = {};
+    }
 }
 
 void ProfileTriggerRuntime::initializeForMapping(const RuntimeProfileCache &cache,
@@ -177,6 +241,16 @@ EffectiveProfileSelection ProfileTriggerRuntime::effectiveProfile(const RuntimeP
                                   ProfileTriggerMode::Hold);
         }
     }
+    for (int source = 0; source < kMaximumAutomationProfileContributors; ++source) {
+        const size_t index = static_cast<size_t>(source);
+        const AutomationSignature &signature = m_automationSignatures[index];
+        if (m_automationHoldOrder[index] > newest && signature.mode == ProfileTriggerMode::Hold
+            && signature.targetProfileIndex >= 0
+            && signature.targetProfileIndex < static_cast<int>(cache.profiles.size())) {
+            newest = m_automationHoldOrder[index];
+            result = automationSelectionFor(signature.targetProfileIndex, source, ProfileTriggerMode::Hold);
+        }
+    }
     if (newest != 0) return result;
     for (int source = 0; source < kProfileTriggerSourceCount; ++source) {
         const size_t index = static_cast<size_t>(source);
@@ -184,6 +258,16 @@ EffectiveProfileSelection ProfileTriggerRuntime::effectiveProfile(const RuntimeP
             newest = m_toggleOrder[index];
             result = selectionFor(triggerFor(cache, source).targetProfileIndex, source,
                                   ProfileTriggerMode::Toggle);
+        }
+    }
+    for (int source = 0; source < kMaximumAutomationProfileContributors; ++source) {
+        const size_t index = static_cast<size_t>(source);
+        const AutomationSignature &signature = m_automationSignatures[index];
+        if (m_automationToggleOrder[index] > newest && signature.mode == ProfileTriggerMode::Toggle
+            && signature.targetProfileIndex >= 0
+            && signature.targetProfileIndex < static_cast<int>(cache.profiles.size())) {
+            newest = m_automationToggleOrder[index];
+            result = automationSelectionFor(signature.targetProfileIndex, source, ProfileTriggerMode::Toggle);
         }
     }
     return result;

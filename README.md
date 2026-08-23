@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.7
+# HOTAS BF6 Simple v1.8
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -24,7 +24,7 @@ The installer upgrades program files only. Existing QSettings data—including p
   a continuous or discrete POV if native hat passthrough is wanted
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
-vJoy is required for virtual output. The v1.7.0 installer can offer the pinned
+vJoy is required for virtual output. The v1.8.0 installer can offer the pinned
 official vJoy and HidHide installers only when they are missing; it never
 updates, downgrades, enables, or otherwise reconfigures an already-present
 component. Each selected payload is SHA-256 and Authenticode verified before
@@ -59,8 +59,20 @@ for diagnostics and mapping.
   aviation-orange actions, ivory reference traces, cyan live-output traces,
   compact technical controls, themed menus, and an Axes flight-deck treatment.
 - The theme ships as local QML presentation resources; it adds no runtime web
-  dependency, external artwork, input processing behavior, automation, or
-  profile semantics.
+dependency, external artwork, input processing behavior, automation, or
+profile semantics.
+
+## v1.8.0 Automation Engine
+
+- Global deterministic rules compile into fixed-capacity worker data before
+  mapping reports are processed: 64 rules with up to four conditions and four
+  actions each.
+- Supports physical axis/button/POV/profile conditions, hysteresis, vJoy
+  Button Hold/Toggle, Profile Hold/Toggle, and bounded axis
+  Scale/Offset/Clamp/Override/Mix/Follow actions.
+- Automation has a persisted master kill switch, explicit invalid-rule health,
+  diagnostics, and a dedicated Classic/Top Gun Automation page. See
+  `docs/v1.8-automation-engineering-report.md` for deterministic ordering.
 
 ## v1.6.3 POV, profile-control, and UI features
 

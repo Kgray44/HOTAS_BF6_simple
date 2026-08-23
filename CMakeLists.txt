@@ -42,6 +42,8 @@ set(HOTAS_MAPPER_SOURCES
     src/profile_model.cpp
     src/profile_trigger_runtime.h
     src/profile_trigger_runtime.cpp
+    src/automation_engine.h
+    src/automation_engine.cpp
     src/config_store.h
     src/config_store.cpp
     src/theme_manager.h
@@ -64,6 +66,7 @@ qt_add_qml_module(HOTASMapper
     VERSION 1.0
     QML_FILES
         qml/AviationPanel.qml
+        qml/AutomationPage.qml
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
         qml/Legacy.qml
@@ -77,6 +80,9 @@ qt_add_resources(HOTASMapper hotas_icon_resources
     PREFIX "/"
     FILES
         assets/icons/png/hotas-bf6-256.png
+        assets/themes/topgun/fighter-silhouette.svg
+        assets/themes/topgun/wing-badge.svg
+        assets/themes/topgun/slash-stripes.svg
 )
 
 target_link_libraries(HOTASMapper PRIVATE
@@ -149,18 +155,20 @@ if (BUILD_TESTING)
         src/profile_model.cpp
         src/profile_trigger_runtime.h
         src/profile_trigger_runtime.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
         src/config_store.h
         src/config_store.cpp
         src/event_log.h
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-add_test(NAME mapping_core_tests COMMAND mapping_core_tests)
+    add_test(NAME mapping_core_tests COMMAND mapping_core_tests)
 
-if (WIN32)
-    set_tests_properties(mapping_core_tests PROPERTIES
-        ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
-endif()
+    if (WIN32)
+        set_tests_properties(mapping_core_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
 
     add_executable(launcher_core_tests tests/launcher_core_tests.cpp)
     target_link_libraries(launcher_core_tests PRIVATE hotas_launcher_core)
@@ -168,6 +176,30 @@ endif()
     if (MSVC)
         set_property(TARGET launcher_core_tests PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
+    qt_add_executable(automation_engine_tests
+        tests/automation_engine_tests.cpp
+        src/mapping_types.h
+        src/axis_transform.h
+        src/axis_transform.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/button_mapping.h
+        src/button_mapping.cpp
+        src/profile_trigger_runtime.h
+        src/profile_trigger_runtime.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+        src/config_store.h
+        src/config_store.cpp
+    )
+    target_link_libraries(automation_engine_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(automation_engine_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME automation_engine_tests COMMAND automation_engine_tests)
+    if (WIN32)
+        set_tests_properties(automation_engine_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
     add_test(NAME launcher_core_tests COMMAND launcher_core_tests)
 
@@ -201,6 +233,8 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/profile_model.cpp
         src/profile_trigger_runtime.h
         src/profile_trigger_runtime.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
     )
     target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
     target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

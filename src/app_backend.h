@@ -78,6 +78,12 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
+    Q_PROPERTY(bool automationEngineEnabled READ automationEngineEnabled NOTIFY stateChanged)
+    Q_PROPERTY(int automationRuleCount READ automationRuleCount NOTIFY stateChanged)
+    Q_PROPERTY(int automationActiveRuleCount READ automationActiveRuleCount NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong automationEvaluationUs READ automationEvaluationUs NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList automationRules READ automationRules NOTIFY stateChanged)
+    Q_PROPERTY(QString automationValidationMessage READ automationValidationMessage NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
@@ -152,6 +158,12 @@ public:
     qulonglong profileSwitchCount() const;
     qulonglong lastProfileSwapUs() const;
     qulonglong lastCurveCompileUs() const;
+    bool automationEngineEnabled() const;
+    int automationRuleCount() const;
+    int automationActiveRuleCount() const;
+    qulonglong automationEvaluationUs() const;
+    QVariantList automationRules() const;
+    QString automationValidationMessage() const;
     QStringList buttonOutputChoices() const;
     QVariantList profileTriggerChoices() const;
     QVariantList nativePovTargetChoices() const;
@@ -213,6 +225,12 @@ public:
     Q_INVOKABLE void resetCalibration();
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
+    Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
+    Q_INVOKABLE bool createAutomation();
+    Q_INVOKABLE bool duplicateAutomation(const QString &id);
+    Q_INVOKABLE bool deleteAutomation(const QString &id);
+    Q_INVOKABLE bool setAutomationEnabled(const QString &id, bool enabled);
+    Q_INVOKABLE bool saveAutomation(const QVariantMap &automation);
     Q_INVOKABLE bool openVjoyConfiguration();
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool openHidHideConfiguration();
@@ -268,6 +286,7 @@ private:
     QString m_curvePreviewLabel;
     CurveDefinition m_curvePreviewDefinition;
     EventLog m_events;
+    QString m_automationValidationMessage;
 };
 
 } // namespace hotas

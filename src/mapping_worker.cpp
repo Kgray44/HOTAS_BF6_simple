@@ -1,6 +1,7 @@
 #include "mapping_worker.h"
 
 #include "axis_transform.h"
+#include "automation_engine.h"
 #include "button_mapping.h"
 #include "physical_input_monitor.h"
 #include "profile_trigger_runtime.h"
@@ -592,6 +593,10 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
     m_preparedProfileCache = std::make_shared<RuntimeProfileCache>(
         compileRuntimeProfileCache(m_configuration));
     m_runtime.effectiveProfileIndex = m_preparedProfileCache->baseProfileIndex;
+    m_runtime.automationEngineEnabled = m_preparedProfileCache->automation
+        && m_preparedProfileCache->automation->engineEnabled;
+    m_runtime.automationRuleCount = m_preparedProfileCache->automation
+        ? m_preparedProfileCache->automation->ruleCount : 0;
     m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - compileStarted).count());
@@ -729,6 +734,12 @@ MappingLatencyPercentiles MappingWorker::latencyPercentiles() const
     return result;
 }
 
+std::shared_ptr<const RuntimeProfileCache> MappingWorker::runtimeProfileCache() const
+{
+    QMutexLocker locker(&m_configurationMutex);
+    return m_preparedProfileCache;
+}
+
 MapperConfiguration MappingWorker::configurationCopy()
 {
     QMutexLocker locker(&m_configurationMutex);
@@ -790,6 +801,8 @@ void MappingWorker::run()
     const RuntimeMappingConfiguration *activeMapping
         = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
     ProfileTriggerRuntime profileTriggers;
+    AutomationRuntime automation;
+    automation.setCompiled(activeProfileCache->automation.get());
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -809,6 +822,7 @@ void MappingWorker::run()
     int vjoyDiscretePovCapacity = 0;
     bool buttonDefaultsPending = false;
     bool profileTriggerSessionActive = false;
+    std::array<bool, kMaximumAutomationRules> lastAutomationRuleStates{};
     bool wasMappingRequested = false;
     std::optional<std::chrono::steady_clock::time_point> pendingProfileSwitchStarted;
     std::uint64_t processedReports = 0;
@@ -855,6 +869,8 @@ void MappingWorker::run()
         m_runtime.profileOverridePovHat = selection.sourcePovHat;
         m_runtime.profileOverridePovDirection = selection.sourcePovDirection;
         m_runtime.profileOverrideMode = static_cast<int>(selection.sourceMode);
+        m_runtime.profileOverrideAutomationRule = selection.sourceAutomationRule;
+        m_runtime.profileOverrideAutomationAction = selection.sourceAutomationAction;
         if (!changed) return false;
         // The current physical snapshot is re-evaluated immediately below.
         // Axis cache invalidation forces a same-report output publication;
@@ -904,7 +920,13 @@ void MappingWorker::run()
         clearPhysicalButtonSnapshot();
         clearVirtualButtonSnapshot();
         profileTriggers.reset();
+        automation.reset();
+        profileTriggers.clearAutomationContributions();
         profileTriggerSessionActive = false;
+        lastAutomationRuleStates.fill(false);
+        m_runtime.automationActiveRuleCount = 0;
+        m_runtime.automationEvaluationUs = 0;
+        for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
         selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                 0, -1, ProfileTriggerMode::Disabled}, false);
         m_runtime.physicalConnected = false;
@@ -1020,6 +1042,15 @@ void MappingWorker::run()
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
         activeProfileCache = std::move(prepared.second);
+        automation.setCompiled(activeProfileCache->automation.get());
+        profileTriggers.clearAutomationContributions();
+        lastAutomationRuleStates.fill(false);
+        m_runtime.automationEngineEnabled = activeProfileCache->automation
+            && activeProfileCache->automation->engineEnabled;
+        m_runtime.automationRuleCount = activeProfileCache->automation
+            ? activeProfileCache->automation->ruleCount : 0;
+        m_runtime.automationActiveRuleCount = 0;
+        for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
         // Settings/profile updates receive a fully compiled table and begin a
         // new hysteresis acceptance window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};
@@ -1061,7 +1092,13 @@ void MappingWorker::run()
         if (!mappingRequestedNow && wasMappingRequested) {
             // Stop Mapping never preserves Hold or Toggle latches.
             profileTriggers.reset();
+            automation.reset();
+            profileTriggers.clearAutomationContributions();
             profileTriggerSessionActive = false;
+            lastAutomationRuleStates.fill(false);
+            m_runtime.automationActiveRuleCount = 0;
+            m_runtime.automationEvaluationUs = 0;
+            for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
             selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                     0, -1, ProfileTriggerMode::Disabled}, false);
         }
@@ -1149,9 +1186,13 @@ void MappingWorker::run()
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
 
-        // Profile controls are evaluated before axes and normal game buttons,
-        // using this DirectInput snapshot only. The selected mapping is an
-        // already-compiled cache entry, so a press affects this same report.
+        // Physical profile controls are resolved first. Automation then sees
+        // exactly this pre-Automation effective profile and physical snapshot;
+        // it never reads another Automation's output from this report.
+        const AutomationEvaluationResult *automationEffects = nullptr;
+        AutomationInputSnapshot automationInput;
+        std::chrono::steady_clock::time_point automationStarted;
+        bool measuredAutomation = false;
         if (mappingRequestedNow) {
             EffectiveProfileSelection selection;
             if (!profileTriggerSessionActive) {
@@ -1168,8 +1209,44 @@ void MappingWorker::run()
             if (changed) {
                 pendingProfileSwitchStarted = profileSwitchStarted;
             }
+
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                automationInput.physicalAxes[static_cast<size_t>(axis)] = normalizeCalibrated(
+                    physicalSnapshot.axes[static_cast<size_t>(axis)],
+                    activeMapping->axes[static_cast<size_t>(axis)].calibration);
+                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)];
+            }
+            automationInput.buttons = physicalSnapshot.buttons;
+            automationInput.povs = physicalSnapshot.povs;
+            automationInput.povCount = m_runtime.povCount.load();
+            automationInput.buttonCount = m_runtime.buttonCount.load();
+            automationInput.baseProfileIndex = activeProfileCache->baseProfileIndex;
+            automationInput.preAutomationEffectiveProfileIndex = effectiveProfileIndex;
+            automationStarted = std::chrono::steady_clock::now();
+            measuredAutomation = true;
+            automationEffects = &automation.evaluate(automationInput);
+            profileTriggers.updateAutomationContributions(automationEffects->profileContributions,
+                automationEffects->profileContributionCount,
+                static_cast<int>(activeProfileCache->profiles.size()));
+            const EffectiveProfileSelection automationSelection = profileTriggers.effectiveProfile(*activeProfileCache);
+            const bool automationProfileChanged = selectEffectiveProfile(automationSelection, true);
+            if (automationProfileChanged) pendingProfileSwitchStarted = automationStarted;
+            m_runtime.automationActiveRuleCount = automationEffects->activeRuleCount;
+            for (int rule = 0; rule < kMaximumAutomationRules; ++rule) {
+                const bool active = automationEffects->activeRules[static_cast<size_t>(rule)];
+                m_runtime.automationRuleActive[static_cast<size_t>(rule)] = active;
+                if (active != lastAutomationRuleStates[static_cast<size_t>(rule)]
+                    && activeProfileCache->automation
+                    && rule < activeProfileCache->automation->ruleCount) {
+                    emit workerEvent((active ? u"Automation activated: "_qs
+                                             : u"Automation cleared: "_qs)
+                        + activeProfileCache->automation->ruleNames[static_cast<size_t>(rule)]);
+                }
+                lastAutomationRuleStates[static_cast<size_t>(rule)] = active;
+            }
         }
 
+        std::array<float, kPhysicalAxisCount> processedAxes{};
         std::array<float, 5> output{};
         std::array<bool, 5> targetUsed{};
         virtualAxisSources.fill(-1);
@@ -1192,6 +1269,26 @@ void MappingWorker::run()
             m_runtime.afterInversion[index] = signalPath.afterInversion;
             m_runtime.curveResponse[index] = curveResponse;
             m_runtime.transformed[index] = transformed;
+            processedAxes[static_cast<size_t>(index)] = transformed;
+        }
+        if (automationEffects) {
+            automation.applyAxisActions(automationInput, processedAxes);
+            // The displayed cost covers the complete compiled Automation pass,
+            // including deterministic axis composition, but excludes vJoy I/O.
+            if (measuredAutomation) {
+                const auto automationFinished = std::chrono::steady_clock::now();
+                m_runtime.automationEvaluationUs = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        automationFinished - automationStarted).count());
+            }
+            for (int index = 0; index < kPhysicalAxisCount; ++index) {
+                m_runtime.transformed[index] = processedAxes[static_cast<size_t>(index)];
+            }
+        }
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            if (!availableAxes[index]) continue;
+            const RuntimeAxisMapping &mapping = activeMapping->axes[index];
+            const float transformed = processedAxes[static_cast<size_t>(index)];
             const int target = static_cast<int>(mapping.profile.target);
             if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[target]) {
                 output[target] = transformed;
@@ -1255,6 +1352,13 @@ void MappingWorker::run()
                 latestPhysicalButtons, runtimeButtonTargets, vjoyButtonCapacity);
             mapPovStates(desiredButtons, latestPovValues, m_runtime.povCount.load(),
                          runtimePovTargets, vjoyButtonCapacity);
+            if (automationEffects) {
+                for (int target = 1; target <= vjoyButtonCapacity; ++target) {
+                    desiredButtons[static_cast<size_t>(target)] = desiredButtons[static_cast<size_t>(target)]
+                        || automationEffects->heldButtons[static_cast<size_t>(target)]
+                        || automationEffects->toggledButtons[static_cast<size_t>(target)];
+                }
+            }
             for (int target = 1; target <= kMaximumVirtualButtons; ++target) {
                 const bool desired = target <= vjoyButtonCapacity && desiredButtons[target];
                 if (desired == lastVirtualButtonStates[target]) continue;

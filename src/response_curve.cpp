@@ -1,4 +1,5 @@
 #include "response_curve.h"
+#include "automation_engine.h"
 
 #include <QJsonArray>
 #include <QUuid>
@@ -961,6 +962,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             cache.nativePovBindings[static_cast<size_t>(hat)] = binding;
         }
     }
+    cache.automation = compileAutomationSet(configuration, cache);
     return cache;
 }
 
