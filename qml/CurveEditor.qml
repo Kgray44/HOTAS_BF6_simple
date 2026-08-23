@@ -755,8 +755,12 @@ Item {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 Layout.columnSpan: editor.width >= 1400 ? 1 : editor.width >= 880 ? 2 : 1
-                Layout.preferredHeight: 352
+                // This card contains wrapped copy and two button rows. Let
+                // its layout determine the surface height so the bottom row
+                // always keeps the same 16 px padding as other cards.
+                Layout.preferredHeight: responsePresetContent.implicitHeight + 32
                 ColumnLayout {
+                    id: responsePresetContent
                     anchors.fill: parent
                     anchors.margins: 16
                     spacing: 9

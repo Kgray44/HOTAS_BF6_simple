@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(HOTASMapper VERSION 1.4.0 LANGUAGES CXX)
+project(HOTASMapper VERSION 1.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,8 @@ set(HOTAS_MAPPER_SOURCES
     src/physical_input_monitor.cpp
     src/profile_model.h
     src/profile_model.cpp
+    src/profile_trigger_runtime.h
+    src/profile_trigger_runtime.cpp
     src/config_store.h
     src/config_store.cpp
     src/mapping_worker.h
@@ -56,7 +58,7 @@ if (WIN32)
     target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 else()
-    message(FATAL_ERROR "HOTAS Mapper v1.4 targets Windows (DirectInput and vJoy).")
+    message(FATAL_ERROR "HOTAS Mapper v1.5 targets Windows (DirectInput and vJoy).")
 endif()
 
 include(CTest)
@@ -74,6 +76,8 @@ if (BUILD_TESTING)
         src/physical_input_monitor.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/profile_trigger_runtime.h
+        src/profile_trigger_runtime.cpp
         src/config_store.h
         src/config_store.cpp
     )
@@ -101,6 +105,8 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/physical_input_monitor.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/profile_trigger_runtime.h
+        src/profile_trigger_runtime.cpp
     )
     target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
     target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

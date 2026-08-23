@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.4
+# HOTAS BF6 Simple v1.5
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -18,7 +18,7 @@ headers or binaries are copied into this repository. A T.Flight HOTAS One is
 the supported initial device, though any DirectInput game controller is visible
 for diagnostics and mapping.
 
-## v1.4 features
+## v1.5 features
 
 - Independent 250 Hz-bounded DirectInput worker with a 60 Hz UI snapshot
 - Roll, pitch, throttle, and yaw routes to vJoy X, Y, Z, and Rz
@@ -30,6 +30,11 @@ for diagnostics and mapping.
   input/output viewer with separate physical and transformed markers
 - Persistent Normal and Precision profiles with create, clone, rename, safe
   delete, and instant live activation from the Profiles page
+- Global physical-button **Profile Controls**: assign any button to any stable
+  profile ID as **Hold** or **Toggle**. Hold takes precedence over Toggle;
+  the newest active control wins within each class. Profile-control buttons are
+  consumed, while their saved per-profile vJoy routes remain intact and resume
+  if the control is removed.
 - Per-profile/per-axis **Curve Editor** with Linear, calculated J-Curve and
   S-Curve families, 8 standard strengths, 10 evidence-informed Advanced
   Presets, reusable Personal Presets, and safe copy/reset actions
@@ -84,7 +89,7 @@ releases/reacquires DirectInput or vJoy. Held buttons are immediately
 re-evaluated against the new routes, releasing obsolete virtual buttons and
 asserting any new target.
 
-The authoritative v1.4 axis order is **calibration/normalization → rescaled
+The authoritative v1.5 axis order is **calibration/normalization → rescaled
 deadzone → hysteresis → inversion → compiled response curve → output limits →
 vJoy range conversion**. Hysteresis retains the last accepted normalized input
 only while movement remains under its threshold; it is not temporal smoothing.
@@ -121,6 +126,18 @@ Each newly discovered physical button defaults to its matching vJoy number
 (Button 1 → vJoy Button 1, and so on). Once you set a button to another target
 or **Disabled**, that choice is explicit and later automatic initialization
 will not replace it.
+
+### Profile Controls
+
+Profile Controls are global to the physical controller rather than stored in a
+profile, preventing a held control from disappearing after it changes the
+effective profile. **Hold** uses its target only while the physical button is
+down. **Toggle** changes state only on a new press. The worker resolves
+**most-recent active Hold → most-recent active Toggle → manual base profile**
+from its precompiled runtime cache; no QML, persistence, or curve compilation
+is involved. Selecting a manual base profile clears Toggle overrides but keeps
+currently held controls until release. Stop Mapping and a controller disconnect
+clear all runtime-only overrides.
 
 The **Settings** page reports whether HidHide is installed and, when the
 supported CLI can answer, whether cloaking is on. It also opens HidHide’s own

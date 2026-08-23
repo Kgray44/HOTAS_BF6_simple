@@ -34,6 +34,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
+    Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY stateChanged)
+    Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY stateChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceId READ deviceId NOTIFY stateChanged)
@@ -71,6 +73,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
+    Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
 
 public:
@@ -98,6 +102,8 @@ public:
     QVariantList profiles() const;
     QString activeProfileId() const;
     QString activeProfileName() const;
+    QString effectiveProfileName() const;
+    QString profileSourceLabel() const;
     int activeProfileIndex() const;
     QString deviceName() const;
     QString deviceId() const;
@@ -135,6 +141,8 @@ public:
     qulonglong lastProfileSwapUs() const;
     qulonglong lastCurveCompileUs() const;
     QStringList buttonOutputChoices() const;
+    QVariantList profileTriggerChoices() const;
+    QStringList profileTriggerBehaviorChoices() const;
     QStringList eventLog() const { return m_events; }
 
     Q_INVOKABLE void toggleMapping();
@@ -174,6 +182,8 @@ public:
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
+    Q_INVOKABLE bool setProfileTrigger(int physicalButton, const QString &targetProfileId,
+                                       const QString &behavior);
     Q_INVOKABLE void resetButtonMappings();
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);
@@ -212,6 +222,7 @@ private:
     bool validPhysicalButton(int physicalButton) const;
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
+    QString effectiveProfileId() const;
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;

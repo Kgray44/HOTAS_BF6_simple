@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
+#include "profile_trigger_runtime.h"
 #include "response_curve.h"
 
 #include <QtTest>
@@ -18,6 +19,24 @@ namespace {
 bool nearlyEqual(float left, float right)
 {
     return std::abs(left - right) < 0.0001F;
+}
+
+int profileIndexFor(const MapperConfiguration &configuration, const QString &id)
+{
+    for (int index = 0; index < static_cast<int>(configuration.profiles.size()); ++index) {
+        if (configuration.profiles[static_cast<size_t>(index)].id == id) return index;
+    }
+    return -1;
+}
+
+void setProfileTrigger(MapperConfiguration &configuration, int physicalButton,
+                       const QString &targetProfileId, ProfileTriggerMode mode)
+{
+    const int source = physicalButton - 1;
+    if (configuration.profileTriggers.size() <= static_cast<size_t>(source)) {
+        configuration.profileTriggers.resize(static_cast<size_t>(source + 1));
+    }
+    configuration.profileTriggers[static_cast<size_t>(source)] = {targetProfileId, mode};
 }
 
 QJsonObject legacyConfigurationJson(const MapperConfiguration &configuration, int version)
@@ -108,6 +127,13 @@ private slots:
     void profileSwitchReevaluatesHeldButtons();
     void calibrationRemainsGlobalAcrossProfiles();
     void malformedProfileConfigurationFallsBackSafely();
+    void profileTriggerConfigurationRoundTripsAndMigrates();
+    void holdProfileTriggerSelectsPrecompiledRuntimeAndConsumesButton();
+    void multipleHoldProfileTriggersUseMostRecentPress();
+    void toggleProfileTriggerUsesRisingEdgesAndActivationOrder();
+    void holdOverridesToggleAndManualBaseChangeClearsToggle();
+    void profileTriggerConfigChangesReconcileHeldState();
+    void missingAndRenamedProfileTriggerTargetsAreSafe();
 };
 
 void MappingCoreTests::calibrationNormalizesBothSides()
@@ -870,6 +896,189 @@ void MappingCoreTests::malformedProfileConfigurationFallsBackSafely()
     QCOMPARE(restored.activeProfileId, normalProfileId());
     QVERIFY(findProfile(restored, normalProfileId()));
     QVERIFY(findProfile(restored, precisionProfileId()));
+}
+
+void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+    QJsonObject json = ConfigStore::toJson(configuration);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 8);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(restored.profileTriggers.size()), 5);
+    QCOMPARE(restored.profileTriggers[4].targetProfileId, precisionProfileId());
+    QCOMPARE(restored.profileTriggers[4].mode, ProfileTriggerMode::Hold);
+
+    json.insert(QStringLiteral("version"), 7);
+    json.remove(QStringLiteral("profileTriggers"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.profileTriggers.empty());
+    QCOMPARE(static_cast<int>(migrated.profiles.size()), static_cast<int>(configuration.profiles.size()));
+}
+
+void MappingCoreTests::holdProfileTriggerSelectsPrecompiledRuntimeAndConsumesButton()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &normal = activeProfile(configuration);
+    normal.buttons = defaultButtonMappings(6, 32);
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(precision);
+    precision->buttons = normal.buttons;
+    precision->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.50F;
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QCOMPARE(static_cast<int>(cache.profiles.size()), 2);
+    const std::uint64_t compileCount = responseCurveCompileCount();
+    ProfileTriggerRuntime triggerRuntime;
+    PhysicalButtonStates buttons{};
+    triggerRuntime.initializeForMapping(cache, buttons);
+
+    buttons[4] = true;
+    const EffectiveProfileSelection held = triggerRuntime.processReport(cache, buttons);
+    QCOMPARE(held.profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    QCOMPARE(held.sourceButton, 5);
+    QCOMPARE(held.sourceMode, ProfileTriggerMode::Hold);
+    QCOMPARE(responseCurveCompileCount(), compileCount);
+    QVERIFY(std::abs(transformAxis(0.45F, cache.profiles[static_cast<size_t>(cache.baseProfileIndex)].axes[0])
+                     - transformAxis(0.45F, cache.profiles[static_cast<size_t>(held.profileIndex)].axes[0])) > 0.1F);
+
+    const RuntimeButtonTargets targets = buildRuntimeButtonTargets(
+        cache.profiles[static_cast<size_t>(held.profileIndex)].buttons, 32, cache.profileTriggers);
+    buttons[0] = true;
+    const VirtualButtonStates output = mapButtonStates(buttons, targets, 32);
+    QVERIFY(output[1]);
+    QVERIFY(!output[5]); // Button 5's saved game route is consumed, not deleted.
+
+    buttons[4] = false;
+    QCOMPARE(triggerRuntime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+}
+
+void MappingCoreTests::multipleHoldProfileTriggersUseMostRecentPress()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString helicopterId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), {}, &helicopterId));
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+    setProfileTrigger(configuration, 6, helicopterId, ProfileTriggerMode::Hold);
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    runtime.initializeForMapping(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    buttons[5] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, helicopterId));
+    buttons[5] = false;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    buttons[4] = false;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+}
+
+void MappingCoreTests::toggleProfileTriggerUsesRisingEdgesAndActivationOrder()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString helicopterId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), {}, &helicopterId));
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Toggle);
+    setProfileTrigger(configuration, 6, helicopterId, ProfileTriggerMode::Toggle);
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    runtime.initializeForMapping(cache, buttons);
+
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    buttons[4] = false;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    buttons[5] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, helicopterId));
+    buttons[5] = false;
+    runtime.processReport(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, helicopterId));
+    buttons[4] = false;
+    runtime.processReport(cache, buttons);
+    buttons[5] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+}
+
+void MappingCoreTests::holdOverridesToggleAndManualBaseChangeClearsToggle()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString helicopterId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), {}, &helicopterId));
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+    setProfileTrigger(configuration, 6, helicopterId, ProfileTriggerMode::Toggle);
+    RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    runtime.initializeForMapping(cache, buttons);
+    buttons[5] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, helicopterId));
+    buttons[5] = false;
+    runtime.processReport(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+
+    QVERIFY(activateProfile(configuration, helicopterId));
+    cache = compileRuntimeProfileCache(configuration);
+    runtime.reconcileConfiguration(cache, buttons, true);
+    QCOMPARE(runtime.effectiveProfile(cache).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    buttons[4] = false;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, helicopterId));
+    runtime.reset(); // Stop Mapping clears both runtime-only override forms.
+    QCOMPARE(runtime.effectiveProfile(cache).profileIndex, profileIndexFor(configuration, helicopterId));
+}
+
+void MappingCoreTests::profileTriggerConfigChangesReconcileHeldState()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+    RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    runtime.initializeForMapping(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Toggle);
+    cache = compileRuntimeProfileCache(configuration);
+    runtime.reconcileConfiguration(cache, buttons, false);
+    QCOMPARE(runtime.effectiveProfile(cache).profileIndex, cache.baseProfileIndex);
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+    buttons[4] = false;
+    runtime.processReport(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+}
+
+void MappingCoreTests::missingAndRenamedProfileTriggerTargetsAreSafe()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
+    QVERIFY(renameProfile(configuration, precisionProfileId(), QStringLiteral("Fine Aim")));
+    RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QCOMPARE(cache.profileTriggers[4].targetProfileIndex, profileIndexFor(configuration, precisionProfileId()));
+
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    runtime.initializeForMapping(cache, buttons);
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons).profileIndex, profileIndexFor(configuration, precisionProfileId()));
+
+    QVERIFY(activateProfile(configuration, normalProfileId()));
+    QVERIFY(deleteProfile(configuration, precisionProfileId()));
+    cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.profileTriggers[4].consumesButton);
+    QCOMPARE(cache.profileTriggers[4].targetProfileIndex, -1);
+    runtime.reconcileConfiguration(cache, buttons, false);
+    QCOMPARE(runtime.effectiveProfile(cache).profileIndex, cache.baseProfileIndex);
 }
 
 #define HOTAS_MAPPING_BENCHMARK_EMBEDDED

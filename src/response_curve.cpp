@@ -4,6 +4,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 
@@ -14,6 +15,7 @@ using namespace Qt::StringLiterals;
 
 constexpr std::array<int, 6> kPointDensities{5, 7, 9, 13, 17, 25};
 constexpr float kPointSpacing = 0.002F;
+std::atomic_uint64_t g_responseCurveCompileCount{0};
 
 float clampUnit(float value)
 {
@@ -756,6 +758,7 @@ CurveAnalysis analyzeCurveDefinition(const CurveDefinition &definition, bool uni
 std::shared_ptr<const CompiledResponseCurve> compileResponseCurve(
     const CurveDefinition &definition, bool unipolar)
 {
+    ++g_responseCurveCompileCount;
     CurveDefinition safe = definition;
     normalizeCurveDefinition(safe, unipolar);
     auto compiled = std::make_shared<CompiledResponseCurve>();
@@ -782,6 +785,11 @@ float evaluateCompiledResponseCurve(float normalizedInput,
     const float fraction = position - static_cast<float>(left);
     return curve->samples[static_cast<size_t>(left)]
         + (curve->samples[static_cast<size_t>(right)] - curve->samples[static_cast<size_t>(left)]) * fraction;
+}
+
+std::uint64_t responseCurveCompileCount()
+{
+    return g_responseCurveCompileCount.load(std::memory_order_relaxed);
 }
 
 QJsonObject curveDefinitionToJson(const CurveDefinition &definition)
@@ -883,6 +891,47 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
     }
     runtime.buttons = profile.buttons;
     return runtime;
+}
+
+RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration)
+{
+    RuntimeProfileCache cache;
+    cache.profiles.reserve(configuration.profiles.size());
+    for (int profileIndex = 0;
+         profileIndex < static_cast<int>(configuration.profiles.size()); ++profileIndex) {
+        const ControllerProfile &profile = configuration.profiles[static_cast<size_t>(profileIndex)];
+        RuntimeMappingConfiguration runtime;
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            runtime.axes[static_cast<size_t>(axis)].profile = profile.axes[static_cast<size_t>(axis)];
+            runtime.axes[static_cast<size_t>(axis)].calibration = configuration.calibration[static_cast<size_t>(axis)];
+            runtime.axes[static_cast<size_t>(axis)].responseCurve = compileResponseCurve(
+                profile.axes[static_cast<size_t>(axis)].curve,
+                isUnipolarAxis(static_cast<PhysicalAxis>(axis)));
+        }
+        runtime.buttons = profile.buttons;
+        if (profile.id == configuration.activeProfileId) cache.baseProfileIndex = profileIndex;
+        cache.profiles.push_back(std::move(runtime));
+    }
+    if (cache.profiles.empty()) {
+        cache.profiles.push_back(compileActiveProfile(defaultConfiguration()));
+        cache.baseProfileIndex = 0;
+    }
+    const int triggerCount = std::min(static_cast<int>(configuration.profileTriggers.size()),
+                                      kMaximumPhysicalButtons);
+    for (int source = 0; source < triggerCount; ++source) {
+        const ProfileTriggerBinding &binding = configuration.profileTriggers[static_cast<size_t>(source)];
+        if (!profileTriggerBindingEnabled(binding)) continue;
+        RuntimeProfileTrigger &trigger = cache.profileTriggers[static_cast<size_t>(source)];
+        trigger.mode = binding.mode;
+        trigger.consumesButton = true;
+        for (int profile = 0; profile < static_cast<int>(configuration.profiles.size()); ++profile) {
+            if (configuration.profiles[static_cast<size_t>(profile)].id == binding.targetProfileId) {
+                trigger.targetProfileIndex = profile;
+                break;
+            }
+        }
+    }
+    return cache;
 }
 
 } // namespace hotas

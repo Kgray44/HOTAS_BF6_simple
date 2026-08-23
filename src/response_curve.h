@@ -89,6 +89,8 @@ float evaluateCurveGain(float domainInput, const CurveDefinition &definition, bo
 CurveAnalysis analyzeCurveDefinition(const CurveDefinition &definition, bool unipolar);
 std::shared_ptr<const CompiledResponseCurve> compileResponseCurve(
     const CurveDefinition &definition, bool unipolar);
+// Test/benchmark instrumentation. Compilation never occurs in the report loop.
+std::uint64_t responseCurveCompileCount();
 float evaluateCompiledResponseCurve(float normalizedInput,
                                     const std::shared_ptr<const CompiledResponseCurve> &curve);
 

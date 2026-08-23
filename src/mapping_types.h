@@ -133,6 +133,22 @@ struct ButtonBinding {
 
 using ButtonBindings = std::vector<ButtonBinding>;
 
+// Profile controls are intentionally separate from profile-specific game
+// button bindings. A configured profile-control button is global to the
+// physical controller and is consumed before normal vJoy routing.
+enum class ProfileTriggerMode : int {
+    Disabled = 0,
+    Hold,
+    Toggle,
+};
+
+struct ProfileTriggerBinding {
+    QString targetProfileId;
+    ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
+};
+
+using ProfileTriggerBindings = std::vector<ProfileTriggerBinding>;
+
 using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
 
 struct ControllerProfile {
@@ -151,6 +167,9 @@ struct MapperConfiguration {
     std::array<Calibration, kPhysicalAxisCount> calibration{};
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> personalCurvePresets;
+    // Global physical-button profile controls. Runtime activation/latch state
+    // is deliberately not persisted here.
+    ProfileTriggerBindings profileTriggers;
     QString activeProfileId;
 };
 
@@ -159,6 +178,20 @@ struct MapperConfiguration {
 struct RuntimeMappingConfiguration {
     std::array<RuntimeAxisMapping, kPhysicalAxisCount> axes{};
     ButtonBindings buttons;
+};
+
+// A complete, immutable profile cache. All curve compilation happens while
+// this is built at a configuration boundary, never when a button is pressed.
+struct RuntimeProfileTrigger {
+    int targetProfileIndex = -1;
+    ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
+    bool consumesButton = false;
+};
+
+struct RuntimeProfileCache {
+    std::vector<RuntimeMappingConfiguration> profiles;
+    std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> profileTriggers{};
+    int baseProfileIndex = 0;
 };
 
 inline constexpr std::array<PhysicalAxis, kPhysicalAxisCount> kPhysicalAxes {
@@ -333,6 +366,30 @@ inline bool isProfileNameAvailable(const MapperConfiguration &configuration, con
 // Implemented by the response-curve subsystem so every active profile is
 // compiled to immutable LUTs before the mapping worker accepts it.
 RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration);
+RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration);
+
+inline QString profileTriggerModeLabel(ProfileTriggerMode mode)
+{
+    switch (mode) {
+    case ProfileTriggerMode::Hold: return u"Hold"_qs;
+    case ProfileTriggerMode::Toggle: return u"Toggle"_qs;
+    case ProfileTriggerMode::Disabled: return u"None"_qs;
+    }
+    return u"None"_qs;
+}
+
+inline ProfileTriggerMode profileTriggerModeFromString(const QString &value)
+{
+    const QString normalized = value.trimmed().toCaseFolded();
+    if (normalized == u"hold"_qs) return ProfileTriggerMode::Hold;
+    if (normalized == u"toggle"_qs) return ProfileTriggerMode::Toggle;
+    return ProfileTriggerMode::Disabled;
+}
+
+inline bool profileTriggerBindingEnabled(const ProfileTriggerBinding &binding)
+{
+    return binding.mode != ProfileTriggerMode::Disabled && !binding.targetProfileId.trimmed().isEmpty();
+}
 
 inline MapperConfiguration defaultConfiguration()
 {

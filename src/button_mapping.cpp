@@ -151,6 +151,19 @@ RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
     return targets;
 }
 
+RuntimeButtonTargets buildRuntimeButtonTargets(
+    const ButtonBindings &bindings, int vjoyButtonCapacity,
+    const std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> &profileTriggers)
+{
+    RuntimeButtonTargets targets = buildRuntimeButtonTargets(bindings, vjoyButtonCapacity);
+    for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
+        if (profileTriggers[static_cast<size_t>(source)].consumesButton) {
+            targets[static_cast<size_t>(source)] = 0;
+        }
+    }
+    return targets;
+}
+
 VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
                                     const RuntimeButtonTargets &targets,
                                     int vjoyButtonCapacity)

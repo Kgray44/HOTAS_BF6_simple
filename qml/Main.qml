@@ -23,6 +23,8 @@ ApplicationWindow {
     property int conflictingVirtualButton: 0
     readonly property var outputChoices: ["Disabled", "X", "Y", "Z", "Rz"]
     readonly property var buttonOutputChoices: backend.buttonOutputChoices
+    readonly property var profileTriggerChoices: backend.profileTriggerChoices
+    readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
@@ -531,43 +533,40 @@ ApplicationWindow {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 134
-        color: info && info.pressed ? "#ec263e48" : "#ed182128"
-        border.color: info && info.pressed ? "#93a3cfda" : "#43546770"
+        Layout.preferredHeight: info && info.profileControlEnabled ? 252 : 180
+        color: info && (info.pressed || info.profileControlActive) ? "#ec263e48" : "#ed182128"
+        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.pressed ? "#93a3cfda" : "#43546770")
+        function triggerChoiceIndex(targetId) {
+            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
+                if (root.profileTriggerChoices[index].id === targetId) return index
+            }
+            return 0
+        }
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 13
- spacing: 7
+            spacing: 7
             RowLayout { Layout.fillWidth: true
                 Text { text: "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
- color: "#edf7f7"
- font.pixelSize: 13
- font.weight: Font.DemiBold }
+                    color: "#edf7f7"; font.pixelSize: 13; font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Row { spacing: 5
                     StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
- color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"
- font.pixelSize: 9
- font.bold: true }
+                        color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
                 }
             }
             Text { text: "PHYSICAL   " + (buttonCard.info.pressed ? "DOWN" : "UP")
- color: buttonCard.info.pressed ? "#c4e4e9" : "#849398"
- font.pixelSize: 10
- font.family: "Consolas"
- font.bold: buttonCard.info.pressed }
+                color: buttonCard.info.pressed ? "#c4e4e9" : "#849398"; font.pixelSize: 10
+                font.family: "Consolas"; font.bold: buttonCard.info.pressed }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "OUTPUT"
- color: "#8c989d"
- font.pixelSize: 9
- font.bold: true }
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 ComboBox {
                     id: buttonDestination
                     Layout.preferredWidth: 126
- Layout.preferredHeight: 29
+                    Layout.preferredHeight: 29
                     model: root.buttonOutputChoices
                     currentIndex: buttonCard.info.target
                     onActivated: {
@@ -579,22 +578,62 @@ ApplicationWindow {
                         }
                     }
                     background: Rectangle { radius: 5
- color: "#0c1013"
- border.color: "#435660" }
+                        color: "#0c1013"; border.color: "#435660" }
                     contentItem: Text { leftPadding: 8
- text: buttonDestination.displayText
- color: "#dce4e4"
- verticalAlignment: Text.AlignVCenter
- font.pixelSize: 10 }
+                        text: buttonDestination.displayText; color: "#dce4e4"
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
                 }
             }
             Text { text: buttonCard.info.target > 0
                     ? "VIRTUAL    " + (buttonCard.info.virtualPressed ? "DOWN" : "UP")
                     : "VIRTUAL    UNROUTED"
                 color: buttonCard.info.virtualPressed ? "#b9dcc2" : "#819297"
-                font.pixelSize: 9
-                font.family: "Consolas"
-                font.bold: buttonCard.info.virtualPressed }
+                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.virtualPressed }
+            FineLine { Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                ComboBox {
+                    id: profileControlTarget
+                    Layout.preferredWidth: 146; Layout.preferredHeight: 29
+                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
+                    currentIndex: buttonCard.triggerChoiceIndex(buttonCard.info.profileControlTargetId)
+                    onActivated: backend.setProfileTrigger(buttonCard.info.index, currentValue,
+                        buttonCard.info.profileControlEnabled ? buttonCard.info.profileControlMode : "Hold")
+                    background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
+                    contentItem: Text { leftPadding: 8; text: profileControlTarget.displayText; color: "#dce4e4"
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+                }
+            }
+            ColumnLayout { Layout.fillWidth: true; visible: buttonCard.info.profileControlEnabled; spacing: 6
+                RowLayout { Layout.fillWidth: true
+                    Text { text: "TARGET PROFILE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    Text { text: buttonCard.info.profileControlTargetName.toUpperCase()
+                        color: buttonCard.info.profileControlTargetAvailable ? "#b8d8dc" : "#d49b62"
+                        font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 150 }
+                }
+                RowLayout { Layout.fillWidth: true
+                    Text { text: "BEHAVIOR"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    ComboBox {
+                        id: profileControlMode
+                        Layout.preferredWidth: 112; Layout.preferredHeight: 28
+                        model: root.profileTriggerBehaviorChoices
+                        currentIndex: buttonCard.info.profileControlMode === "Toggle" ? 1 : 0
+                        onActivated: backend.setProfileTrigger(buttonCard.info.index,
+                            buttonCard.info.profileControlTargetId, currentText)
+                        background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
+                        contentItem: Text { leftPadding: 8; text: profileControlMode.displayText; color: "#dce4e4"
+                            verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+                    }
+                }
+            }
+            Text { visible: buttonCard.info.profileControlEnabled
+                text: buttonCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · "
+                    + buttonCard.info.profileControlMode.toUpperCase() : "Profile control consumes this button."
+                color: buttonCard.info.profileControlActive ? "#a8d9b4" : "#819297"
+                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.profileControlActive }
         }
     }
 
@@ -686,14 +725,17 @@ ApplicationWindow {
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
-            FineLine { visible: root.width >= 1250; Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1250; spacing: 6
+            Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
                 Text { text: "PROFILE"
                     color: "#78919a"; font.pixelSize: 9; font.bold: true }
-                Text { text: backend.activeProfileName.toUpperCase()
+                Text { text: backend.effectiveProfileName.toUpperCase()
                     color: "#c3d8d9"; font.pixelSize: 10; font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
+                Text { visible: backend.profileSourceLabel !== "Manual base profile"
+                    text: "· " + backend.profileSourceLabel.toUpperCase()
+                    color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
             Item { Layout.fillWidth: true }
             Row { spacing: 7
@@ -1156,8 +1198,10 @@ ApplicationWindow {
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
                         { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? "#a8cfba" : (backend.mappingRequested ? "#e1c887" : "#a5afb3"),
                           note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT WILL REACQUIRE AUTOMATICALLY" : "PHYSICAL MONITORING CONTINUES") },
-                        { c: "ACTIVE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
-                          note: "PERSISTENT MAPPING CONFIGURATION" },
+                        { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
+                          note: "PERSISTENT MANUAL SELECTION" },
+                        { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: "#b9d1d8",
+                          note: backend.profileSourceLabel.toUpperCase() },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",
                           note: backend.profileSwitchCount + " LIVE SWITCHES" }
                     ]
@@ -1335,7 +1379,7 @@ ApplicationWindow {
                     CommandButton { label: "+ NEW PROFILE"
                         onTriggered: newProfileDialog.open() }
                 }
-                Text { text: "ACTIVE PROFILE"
+                Text { text: "BASE PROFILE"
                     color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
                 Panel { width: parent.width; height: 102
                     color: "#e51a352f"; border.color: "#4a91a8a0"
@@ -1343,13 +1387,15 @@ ApplicationWindow {
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
                             Text { text: backend.activeProfileName.toUpperCase()
                                 color: "#e8f3f2"; font.pixelSize: 16; font.bold: true }
-                            Text { text: "Current controller configuration · Axes and Buttons edit this profile"
+                            Text { text: backend.effectiveProfileName === backend.activeProfileName
+                                ? "Current controller configuration · Axes and Buttons edit this profile"
+                                : "Effective: " + backend.effectiveProfileName + " · " + backend.profileSourceLabel
                                 color: "#9db8bd"; font.pixelSize: 10; elide: Text.ElideRight
                                 Layout.fillWidth: true }
                         }
                         Row { spacing: 7
                             StatusDot { tone: "#98d1bd" }
-                            Text { text: "ACTIVE"; color: "#add8c5"; font.pixelSize: 10; font.bold: true }
+                            Text { text: "BASE"; color: "#add8c5"; font.pixelSize: 10; font.bold: true }
                         }
                     }
                 }
@@ -1367,9 +1413,9 @@ ApplicationWindow {
                                     Text { text: modelData.name.toUpperCase()
                                         color: "#e8eeee"; font.pixelSize: 13; font.bold: true
                                         elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Row { visible: modelData.active; spacing: 5
+                                    Row { visible: modelData.effective; spacing: 5
                                         StatusDot { tone: "#98d1bd" }
-                                        Text { text: "ACTIVE"; color: "#add8c5"; font.pixelSize: 9; font.bold: true }
+                                        Text { text: modelData.effectiveSource.toUpperCase(); color: "#add8c5"; font.pixelSize: 9; font.bold: true }
                                     }
                                     ToolButton { text: "⋯"; font.pixelSize: 17
                                         contentItem: Text { text: parent.text; color: "#a9bbc0"
@@ -1400,7 +1446,7 @@ ApplicationWindow {
                                     Text { visible: modelData.protected; text: "PROTECTED FALLBACK"
                                         color: "#72858b"; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
                                     Item { visible: !modelData.protected; Layout.fillWidth: true }
-                                    CommandButton { label: modelData.active ? "ACTIVE" : "ACTIVATE"
+                                    CommandButton { label: modelData.active ? "BASE" : "ACTIVATE"
                                         subdued: modelData.active
                                         commandEnabled: !modelData.active
                                         onTriggered: backend.activateProfile(modelData.id) }

@@ -63,6 +63,10 @@ struct AtomicRuntimeState {
     std::atomic_uint64_t latencySampleCount{0};
     std::atomic_uint64_t profileSwitchCount{0};
     std::atomic_uint64_t lastProfileSwapUs{0};
+    // Index/source are small worker-owned values; names stay on the UI side.
+    std::atomic_int effectiveProfileIndex{0};
+    std::atomic_int profileOverrideButton{0};
+    std::atomic_int profileOverrideMode{static_cast<int>(ProfileTriggerMode::Disabled)};
     std::atomic_uint64_t lastCurveCompileUs{0};
 };
 
@@ -102,7 +106,7 @@ protected:
 
 private:
     MapperConfiguration configurationCopy();
-    std::pair<MapperConfiguration, std::shared_ptr<const RuntimeMappingConfiguration>>
+    std::pair<MapperConfiguration, std::shared_ptr<const RuntimeProfileCache>>
     preparedConfigurationCopy();
     void setDeviceSnapshot(const DeviceSnapshot &snapshot);
     void setVjoyStatus(const QString &status);
@@ -116,7 +120,7 @@ private:
     MapperConfiguration m_configuration;
     // Built by the caller before it acquires the configuration mutex. The
     // worker only swaps this fully prepared immutable table between reports.
-    std::shared_ptr<const RuntimeMappingConfiguration> m_preparedMapping;
+    std::shared_ptr<const RuntimeProfileCache> m_preparedProfileCache;
     mutable QMutex m_deviceMutex;
     DeviceSnapshot m_device;
     mutable QMutex m_statusMutex;

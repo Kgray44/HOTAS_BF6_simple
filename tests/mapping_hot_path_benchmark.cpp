@@ -3,6 +3,7 @@
 #include "mapping_worker.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
+#include "profile_trigger_runtime.h"
 #include "response_curve.h"
 
 #include <algorithm>
@@ -45,6 +46,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr int kWarmupReports = 25'000;
 constexpr int kMeasuredReports = 400'000;
+constexpr int kMeasuredProfileSwitches = 120'000;
 constexpr std::array<int, 4> kMappedAxes{
     static_cast<int>(hotas::PhysicalAxis::X),
     static_cast<int>(hotas::PhysicalAxis::Y),
@@ -355,6 +357,114 @@ void printResult(std::string_view condition, const BenchmarkResult &result)
               << '\n';
 }
 
+struct ProfileControlBenchmarkResult {
+    std::string_view name;
+    Percentiles latency;
+    std::uint64_t hotPathAllocations = 0;
+    std::uint64_t curveCompilesDuringTriggers = 0;
+};
+
+template <typename Setup, typename Action>
+ProfileControlBenchmarkResult benchmarkProfileControl(
+    std::string_view name, const hotas::RuntimeProfileCache &cache,
+    const SyntheticReport &baseReport, Setup &&setup, Action &&action)
+{
+    hotas::ProfileTriggerRuntime controls;
+    hotas::PhysicalButtonStates buttons{};
+    controls.initializeForMapping(cache, buttons);
+    int currentProfile = cache.baseProfileIndex;
+    HotPathState state(cache.profiles[static_cast<size_t>(currentProfile)]);
+    volatile float sink = 0.0F;
+    const auto processControlReport = [&](const hotas::PhysicalButtonStates &physicalButtons) {
+        const hotas::EffectiveProfileSelection selection = controls.processReport(cache, physicalButtons);
+        if (selection.profileIndex != currentProfile) {
+            currentProfile = selection.profileIndex;
+            state.buttonTargets = hotas::buildRuntimeButtonTargets(
+                cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
+            state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+            state.hysteresis.fill({});
+        }
+        SyntheticReport report = baseReport;
+        report.buttons = physicalButtons;
+        processReport(report, cache.profiles[static_cast<size_t>(currentProfile)], state, sink);
+    };
+
+    std::vector<std::uint64_t> samples;
+    samples.reserve(kMeasuredProfileSwitches);
+    const std::uint64_t beforeCurves = hotas::responseCurveCompileCount();
+    gHotPathAllocations = 0;
+    gTrackHotPathAllocations = true;
+    for (int iteration = 0; iteration < kMeasuredProfileSwitches; ++iteration) {
+        controls.initializeForMapping(cache, {});
+        buttons.fill(false);
+        currentProfile = cache.baseProfileIndex;
+        state.buttonTargets = hotas::buildRuntimeButtonTargets(
+            cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
+        state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        state.hysteresis.fill({});
+        setup(processControlReport, buttons);
+        const auto started = Clock::now();
+        action(processControlReport, buttons);
+        const auto finished = Clock::now();
+        samples.push_back(static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count()));
+    }
+    gTrackHotPathAllocations = false;
+    if (sink == std::numeric_limits<float>::infinity()) std::cerr << "unexpected sink\n";
+    return {name, summarize(samples), gHotPathAllocations,
+            hotas::responseCurveCompileCount() - beforeCurves};
+}
+
+void printProfileControlResult(const ProfileControlBenchmarkResult &result)
+{
+    std::cout << std::fixed << std::setprecision(3)
+              << "profile-control " << result.name
+              << " typical_us=" << result.latency.typicalUs
+              << " p95_us=" << result.latency.p95Us
+              << " p99_us=" << result.latency.p99Us
+              << " worst_us=" << result.latency.worstUs
+              << " hot_path_allocations=" << result.hotPathAllocations
+              << " curve_compiles_during_triggers=" << result.curveCompilesDuringTriggers
+              << '\n';
+}
+
+void runProfileControlBenchmarks()
+{
+    hotas::MapperConfiguration configuration = configurationFor("Custom-25");
+    QString helicopterId;
+    hotas::createProfile(configuration, QStringLiteral("Helicopter"), {}, &helicopterId);
+    hotas::ControllerProfile *precision = hotas::findProfile(configuration, hotas::precisionProfileId());
+    hotas::ControllerProfile *helicopter = hotas::findProfile(configuration, helicopterId);
+    if (!precision || !helicopter) return;
+    precision->axes[0].curve = hotas::advancedCurveDefinition(QStringLiteral("precision-tracking"));
+    helicopter->axes[0].curve = maximumDensityCustom(false);
+    configuration.profileTriggers.resize(7);
+    configuration.profileTriggers[4] = {hotas::precisionProfileId(), hotas::ProfileTriggerMode::Hold};
+    configuration.profileTriggers[5] = {helicopterId, hotas::ProfileTriggerMode::Hold};
+    configuration.profileTriggers[6] = {helicopterId, hotas::ProfileTriggerMode::Toggle};
+    const hotas::RuntimeProfileCache cache = hotas::compileRuntimeProfileCache(configuration);
+    SyntheticReport report;
+    report.axes[0] = 0.42F;
+    report.axes[1] = -0.31F;
+    report.axes[2] = 0.18F;
+    report.axes[5] = 0.27F;
+
+    const auto noSetup = [](auto &, auto &) {};
+    printProfileControlResult(benchmarkProfileControl("hold-activation", cache, report, noSetup,
+        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); }));
+    printProfileControlResult(benchmarkProfileControl("hold-release", cache, report,
+        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); },
+        [](auto &process, auto &buttons) { buttons[4] = false; process(buttons); }));
+    printProfileControlResult(benchmarkProfileControl("toggle-activation", cache, report, noSetup,
+        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); }));
+    printProfileControlResult(benchmarkProfileControl("toggle-release", cache, report,
+        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); buttons[6] = false; process(buttons); },
+        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); }));
+    printProfileControlResult(benchmarkProfileControl("multiple-hold-precedence", cache, report,
+        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); },
+        [](auto &process, auto &buttons) { buttons[5] = true; process(buttons); }));
+}
+
 void runUiModelStress(std::atomic_bool &stop)
 {
     // This is intentionally harsher than normal browsing: it continuously
@@ -406,6 +516,7 @@ int runMappingHotPathBenchmark(int argc, char *argv[])
     std::cout << "All curve evaluations use the production immutable 4097-sample LUT.\n";
     const bool uiModelStress = argc > 1 && std::string_view(argv[1]) == "--ui-stress";
     runSuite(uiModelStress ? "ui-model-stress" : "idle", reports, uiModelStress);
+    runProfileControlBenchmarks();
     return 0;
 }
 

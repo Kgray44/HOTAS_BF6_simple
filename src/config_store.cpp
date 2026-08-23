@@ -17,7 +17,8 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 7;
+constexpr int kProfileSchemaVersion = 8;
+constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
 {
@@ -124,6 +125,46 @@ ButtonBindings buttonBindingsFromJson(const QJsonValue &value)
         bindings.push_back(buttonBindingFromJson(buttons.at(index).toObject()));
     }
     normalizeButtonMappings(bindings, kMaximumVirtualButtons);
+    return bindings;
+}
+
+QJsonObject profileTriggerToJson(const ProfileTriggerBinding &binding)
+{
+    QString mode = u"disabled"_qs;
+    if (binding.mode == ProfileTriggerMode::Hold) mode = u"hold"_qs;
+    if (binding.mode == ProfileTriggerMode::Toggle) mode = u"toggle"_qs;
+    return {{u"mode"_qs, mode}, {u"targetProfileId"_qs, binding.targetProfileId}};
+}
+
+ProfileTriggerBinding profileTriggerFromJson(const QJsonObject &json)
+{
+    ProfileTriggerBinding binding;
+    binding.mode = profileTriggerModeFromString(json.value(u"mode"_qs).toString());
+    binding.targetProfileId = json.value(u"targetProfileId"_qs).toString().trimmed().left(96);
+    if (!profileTriggerBindingEnabled(binding)) return {};
+    return binding;
+}
+
+QJsonArray profileTriggersToJson(const ProfileTriggerBindings &bindings)
+{
+    QJsonArray triggers;
+    const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalButtons);
+    for (int index = 0; index < count; ++index) {
+        triggers.append(profileTriggerToJson(bindings[static_cast<size_t>(index)]));
+    }
+    return triggers;
+}
+
+ProfileTriggerBindings profileTriggersFromJson(const QJsonValue &value)
+{
+    ProfileTriggerBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray triggers = value.toArray();
+    const int count = std::min(static_cast<int>(triggers.size()), kMaximumPhysicalButtons);
+    bindings.resize(static_cast<size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        bindings[static_cast<size_t>(index)] = profileTriggerFromJson(triggers.at(index).toObject());
+    }
     return bindings;
 }
 
@@ -256,6 +297,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"calibration"_qs, calibration},
         {u"profiles"_qs, profiles},
         {u"personalCurvePresets"_qs, personalCurvePresets},
+        {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
@@ -264,7 +306,8 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
-    if (version != 3 && version != 4 && version != 5 && version != 6 && version != kProfileSchemaVersion) {
+    if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7
+        && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -320,7 +363,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         configuration.personalCurvePresets.push_back(std::move(preset));
     }
 
-    if (version < kProfileSchemaVersion) {
+    if (version < kUniversalStrengthSchemaVersion) {
         // v1.4 before the universal-strength amendment evaluated Advanced,
         // Personal, and point curves at their full definition regardless of
         // the stored (default-zero) strength field. Preserve that effective
@@ -337,6 +380,12 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         for (PersonalCurvePreset &preset : configuration.personalCurvePresets) {
             migrateCurveStrength(preset.definition);
         }
+    }
+
+    // v1.5 introduces global profile controls. Absence in a v1.4-or-earlier
+    // record is intentionally equivalent to no configured controls.
+    if (version >= 8) {
+        configuration.profileTriggers = profileTriggersFromJson(json.value(u"profileTriggers"_qs));
     }
 
     // Normal is the durable, protected recovery profile. A malformed/manual

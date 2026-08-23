@@ -3,6 +3,7 @@
 #include "axis_transform.h"
 #include "button_mapping.h"
 #include "physical_input_monitor.h"
+#include "profile_trigger_runtime.h"
 
 #include <dinput.h>
 #include <windows.h>
@@ -521,8 +522,9 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
     }
     for (std::atomic_uint64_t &sample : m_runtime.latencySamples) sample = 0;
     const auto compileStarted = std::chrono::steady_clock::now();
-    m_preparedMapping = std::make_shared<RuntimeMappingConfiguration>(
-        compileActiveProfile(m_configuration));
+    m_preparedProfileCache = std::make_shared<RuntimeProfileCache>(
+        compileRuntimeProfileCache(m_configuration));
+    m_runtime.effectiveProfileIndex = m_preparedProfileCache->baseProfileIndex;
     m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - compileStarted).count());
@@ -561,13 +563,13 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
     // deliberately complete before the worker can observe this update. A
     // point drag must never put spline construction in the report loop.
     const auto compileStarted = std::chrono::steady_clock::now();
-    auto compiled = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(configuration));
+    auto compiled = std::make_shared<RuntimeProfileCache>(compileRuntimeProfileCache(configuration));
     const auto compileUs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - compileStarted).count());
     QMutexLocker locker(&m_configurationMutex);
     m_configuration = configuration;
-    m_preparedMapping = std::move(compiled);
+    m_preparedProfileCache = std::move(compiled);
     ++m_configurationVersion;
     m_runtime.lastCurveCompileUs = compileUs;
 }
@@ -666,11 +668,11 @@ MapperConfiguration MappingWorker::configurationCopy()
     return m_configuration;
 }
 
-std::pair<MapperConfiguration, std::shared_ptr<const RuntimeMappingConfiguration>>
+std::pair<MapperConfiguration, std::shared_ptr<const RuntimeProfileCache>>
 MappingWorker::preparedConfigurationCopy()
 {
     QMutexLocker locker(&m_configurationMutex);
-    return {m_configuration, m_preparedMapping};
+    return {m_configuration, m_preparedProfileCache};
 }
 
 void MappingWorker::setDeviceSnapshot(const DeviceSnapshot &snapshot)
@@ -715,8 +717,12 @@ void MappingWorker::run()
     PhysicalInputMonitor physicalMonitor;
     auto preparedConfiguration = preparedConfigurationCopy();
     MapperConfiguration configuration = std::move(preparedConfiguration.first);
-    std::shared_ptr<const RuntimeMappingConfiguration> activeMapping
+    std::shared_ptr<const RuntimeProfileCache> activeProfileCache
         = std::move(preparedConfiguration.second);
+    int effectiveProfileIndex = activeProfileCache->baseProfileIndex;
+    const RuntimeMappingConfiguration *activeMapping
+        = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
+    ProfileTriggerRuntime profileTriggers;
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -728,6 +734,9 @@ void MappingWorker::run()
     VirtualButtonStates lastVirtualButtonStates{};
     int vjoyButtonCapacity = 0;
     bool buttonDefaultsPending = false;
+    bool profileTriggerSessionActive = false;
+    bool wasMappingRequested = false;
+    std::optional<std::chrono::steady_clock::time_point> pendingProfileSwitchStarted;
     std::uint64_t processedReports = 0;
     std::uint64_t latencyTotal = 0;
     std::uint64_t latencySampleSequence = 0;
@@ -754,7 +763,32 @@ void MappingWorker::run()
     };
 
     const auto rebuildButtonTargets = [&] {
-        runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity);
+        runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity,
+            activeProfileCache->profileTriggers);
+    };
+
+    const auto selectEffectiveProfile = [&](const EffectiveProfileSelection &selection,
+                                            bool countSwitch) {
+        const int selectedIndex = std::clamp(selection.profileIndex, 0,
+            static_cast<int>(activeProfileCache->profiles.size()) - 1);
+        const bool changed = selectedIndex != effectiveProfileIndex;
+        effectiveProfileIndex = selectedIndex;
+        activeMapping = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
+        m_runtime.effectiveProfileIndex = effectiveProfileIndex;
+        m_runtime.profileOverrideButton = selection.sourceButton;
+        m_runtime.profileOverrideMode = static_cast<int>(selection.sourceMode);
+        if (!changed) return false;
+        // The current physical snapshot is re-evaluated immediately below.
+        // Axis cache invalidation forces a same-report output publication;
+        // the normal button diff loop releases/asserts changed routes.
+        lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        clearVirtualAxisSnapshot();
+        for (AxisHysteresisState &state : hysteresisStates) state = {};
+        rebuildButtonTargets();
+        if (countSwitch) {
+            ++m_runtime.profileSwitchCount;
+        }
+        return true;
     };
 
     const auto releaseMappingOutput = [&] {
@@ -789,6 +823,10 @@ void MappingWorker::run()
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
         clearVirtualButtonSnapshot();
+        profileTriggers.reset();
+        profileTriggerSessionActive = false;
+        selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
+                                ProfileTriggerMode::Disabled}, false);
         m_runtime.physicalConnected = false;
         m_runtime.axisCount = 0;
         m_runtime.buttonCount = 0;
@@ -876,31 +914,37 @@ void MappingWorker::run()
     const auto applyLatestConfiguration = [&] {
         const quint64 currentVersion = m_configurationVersion.load();
         if (currentVersion == appliedVersion) return;
-        const auto switchStarted = std::chrono::steady_clock::now();
         const int previousVjoyDeviceId = configuration.vjoyDeviceId;
         const QString previousProfileId = configuration.activeProfileId;
         auto prepared = preparedConfigurationCopy();
         configuration = std::move(prepared.first);
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
-        activeMapping = std::move(prepared.second);
+        activeProfileCache = std::move(prepared.second);
         // Settings/profile updates receive a fully compiled table and begin a
         // new hysteresis acceptance window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};
         appliedVersion = currentVersion;
         buttonDefaultsPending = false;
+        const bool manualBaseChanged = configuration.activeProfileId != previousProfileId;
+        profileTriggers.reconcileConfiguration(*activeProfileCache, latestPhysicalButtons,
+                                                manualBaseChanged);
+        const EffectiveProfileSelection selection = profileTriggerSessionActive
+            ? profileTriggers.effectiveProfile(*activeProfileCache)
+            : EffectiveProfileSelection{activeProfileCache->baseProfileIndex, 0,
+                                        ProfileTriggerMode::Disabled};
+        const bool switched = selectEffectiveProfile(selection, true);
+        // A profile edit can replace the compiled state at the same index.
+        // Rebind the pointer and force a current-state axis reconciliation.
+        activeMapping = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
+        lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        clearVirtualAxisSnapshot();
         rebuildButtonTargets();
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
             releaseMappingOutput();
             emit workerEvent(u"vJoy device changed; reacquiring mapping output"_qs);
         }
-        lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
-        clearVirtualAxisSnapshot();
-        if (configuration.activeProfileId != previousProfileId) {
-            const auto switchFinished = std::chrono::steady_clock::now();
-            m_runtime.lastProfileSwapUs = static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(switchFinished - switchStarted).count());
-            ++m_runtime.profileSwitchCount;
+        if (switched || manualBaseChanged) {
             const int lastButton = m_runtime.lastPhysicalButton.load();
             if (lastButton > 0 && lastButton <= kMaximumPhysicalButtons) {
                 m_runtime.lastPhysicalButtonTarget = runtimeButtonTargets[static_cast<size_t>(lastButton - 1)];
@@ -912,6 +956,15 @@ void MappingWorker::run()
     while (!m_stopRequested.load()) {
         const auto now = std::chrono::steady_clock::now();
         applyLatestConfiguration();
+        const bool mappingRequestedNow = m_mappingRequested.load();
+        if (!mappingRequestedNow && wasMappingRequested) {
+            // Stop Mapping never preserves Hold or Toggle latches.
+            profileTriggers.reset();
+            profileTriggerSessionActive = false;
+            selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
+                                    ProfileTriggerMode::Disabled}, false);
+        }
+        wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {
             discoverInput();
             nextDiscovery = now + std::chrono::seconds(1);
@@ -992,6 +1045,25 @@ void MappingWorker::run()
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
 
+        // Profile controls are evaluated before axes and normal game buttons,
+        // using this DirectInput snapshot only. The selected mapping is an
+        // already-compiled cache entry, so a press affects this same report.
+        if (mappingRequestedNow) {
+            EffectiveProfileSelection selection;
+            if (!profileTriggerSessionActive) {
+                profileTriggers.initializeForMapping(*activeProfileCache, physicalSnapshot.buttons);
+                profileTriggerSessionActive = true;
+                selection = profileTriggers.effectiveProfile(*activeProfileCache);
+            } else {
+                selection = profileTriggers.processReport(*activeProfileCache, physicalSnapshot.buttons);
+            }
+            const auto profileSwitchStarted = std::chrono::steady_clock::now();
+            const bool changed = selectEffectiveProfile(selection, true);
+            if (changed) {
+                pendingProfileSwitchStarted = profileSwitchStarted;
+            }
+        }
+
         std::array<float, 5> output{};
         std::array<bool, 5> targetUsed{};
         virtualAxisSources.fill(-1);
@@ -1036,7 +1108,7 @@ void MappingWorker::run()
         }
         m_runtime.povValue = physicalSnapshot.pov;
 
-        const bool mappingRequested = m_mappingRequested.load();
+        const bool mappingRequested = mappingRequestedNow;
         if (mappingRequested && !m_runtime.mappingActive.load()
             && std::chrono::steady_clock::now() >= nextVjoyAcquire) {
             QString status;
@@ -1081,6 +1153,18 @@ void MappingWorker::run()
                     ++m_runtime.vjoyWrites;
                 }
             }
+        }
+
+        if (pendingProfileSwitchStarted) {
+            // Software-side profile-control latency: this report was observed,
+            // selected a cached runtime profile, transformed current axes,
+            // reconciled virtual buttons, and reached the vJoy publication
+            // path above. USB and driver scheduling are intentionally out of
+            // scope for this in-process metric.
+            m_runtime.lastProfileSwapUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - *pendingProfileSwitchStarted).count());
+            pendingProfileSwitchStarted.reset();
         }
 
         const auto finished = std::chrono::steady_clock::now();

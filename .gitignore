@@ -1,4 +1,5 @@
 /build*/
+/b[0-9]*/
 /out/
 /.qt/
 /.toolchain/

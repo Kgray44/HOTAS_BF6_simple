@@ -40,6 +40,12 @@ bool hasButtonMappingConflict(const ButtonBindings &bindings, int sourceIndex,
 // Converts persisted bindings to a compact, allocation-free hot-path table.
 RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
                                                int vjoyButtonCapacity);
+// A configured global profile control consumes its physical source while
+// leaving the saved per-profile route untouched for later restoration.
+RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
+                                               int vjoyButtonCapacity,
+                                               const std::array<RuntimeProfileTrigger,
+                                                                kMaximumPhysicalButtons> &profileTriggers);
 VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
                                     const RuntimeButtonTargets &targets,
                                     int vjoyButtonCapacity);

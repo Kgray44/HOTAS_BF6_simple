@@ -338,6 +338,13 @@ QVariantList AppBackend::buttons() const
             ? bindings[static_cast<size_t>(source)] : ButtonBinding{};
         const int target = binding.type == ButtonActionType::VirtualButton
             && isButtonBindingValid(binding, capacity) ? binding.target : 0;
+        const ProfileTriggerBinding trigger = source < static_cast<int>(m_configuration.profileTriggers.size())
+            ? m_configuration.profileTriggers[static_cast<size_t>(source)] : ProfileTriggerBinding{};
+        const bool profileControlEnabled = profileTriggerBindingEnabled(trigger);
+        const ControllerProfile *triggerTarget = profileControlEnabled
+            ? findProfile(m_configuration, trigger.targetProfileId) : nullptr;
+        const ProfileTriggerMode activeMode = static_cast<ProfileTriggerMode>(
+            runtime.profileOverrideMode.load());
         QVariantMap item;
         item.insert(u"index"_qs, source + 1);
         item.insert(u"label"_qs, QString(u"Button %1"_qs).arg(source + 1));
@@ -347,6 +354,14 @@ QVariantList AppBackend::buttons() const
             ? QString(u"vJoy Button %1"_qs).arg(target) : u"Disabled"_qs);
         item.insert(u"virtualPressed"_qs, target > 0
             && runtime.virtualButtonPressed[target - 1].load());
+        item.insert(u"profileControlEnabled"_qs, profileControlEnabled);
+        item.insert(u"profileControlTargetId"_qs, trigger.targetProfileId);
+        item.insert(u"profileControlTargetName"_qs, triggerTarget
+            ? triggerTarget->name : (profileControlEnabled ? u"Target profile unavailable"_qs : QString{}));
+        item.insert(u"profileControlTargetAvailable"_qs, triggerTarget != nullptr);
+        item.insert(u"profileControlMode"_qs, profileTriggerModeLabel(trigger.mode));
+        item.insert(u"profileControlActive"_qs, runtime.profileOverrideButton.load() == source + 1
+            && activeMode == trigger.mode && profileControlEnabled);
         result.append(item);
     }
     return result;
@@ -368,6 +383,9 @@ QVariantList AppBackend::profiles() const
         item.insert(u"id"_qs, profile.id);
         item.insert(u"name"_qs, profile.name);
         item.insert(u"active"_qs, profile.id == m_configuration.activeProfileId);
+        item.insert(u"effective"_qs, profile.id == effectiveProfileId());
+        item.insert(u"effectiveSource"_qs, profile.id == effectiveProfileId()
+            ? profileSourceLabel() : QString{});
         item.insert(u"protected"_qs, profile.id == normalProfileId());
         item.insert(u"mappedAxes"_qs, mappedAxes);
         item.insert(u"mappedButtons"_qs, mappedButtons);
@@ -378,6 +396,32 @@ QVariantList AppBackend::profiles() const
 
 QString AppBackend::activeProfileId() const { return m_configuration.activeProfileId; }
 QString AppBackend::activeProfileName() const { return currentProfile().name; }
+QString AppBackend::effectiveProfileName() const
+{
+    const int index = m_worker.runtime().effectiveProfileIndex.load();
+    if (index >= 0 && index < static_cast<int>(m_configuration.profiles.size())) {
+        return m_configuration.profiles[static_cast<size_t>(index)].name;
+    }
+    return currentProfile().name;
+}
+
+QString AppBackend::effectiveProfileId() const
+{
+    const int index = m_worker.runtime().effectiveProfileIndex.load();
+    if (index >= 0 && index < static_cast<int>(m_configuration.profiles.size())) {
+        return m_configuration.profiles[static_cast<size_t>(index)].id;
+    }
+    return m_configuration.activeProfileId;
+}
+
+QString AppBackend::profileSourceLabel() const
+{
+    const int button = m_worker.runtime().profileOverrideButton.load();
+    const ProfileTriggerMode mode = static_cast<ProfileTriggerMode>(
+        m_worker.runtime().profileOverrideMode.load());
+    if (button <= 0 || mode == ProfileTriggerMode::Disabled) return u"Manual base profile"_qs;
+    return QString(u"Button %1 · %2"_qs).arg(button).arg(profileTriggerModeLabel(mode));
+}
 int AppBackend::activeProfileIndex() const
 {
     for (int index = 0; index < static_cast<int>(m_configuration.profiles.size()); ++index) {
@@ -434,6 +478,21 @@ QStringList AppBackend::buttonOutputChoices() const
         choices.append(QString(u"vJoy Button %1"_qs).arg(button));
     }
     return choices;
+}
+
+QVariantList AppBackend::profileTriggerChoices() const
+{
+    QVariantList choices;
+    choices.append(QVariantMap{{u"id"_qs, QString{}}, {u"label"_qs, u"None"_qs}});
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        choices.append(QVariantMap{{u"id"_qs, profile.id}, {u"label"_qs, profile.name}});
+    }
+    return choices;
+}
+
+QStringList AppBackend::profileTriggerBehaviorChoices() const
+{
+    return {u"Hold"_qs, u"Toggle"_qs};
 }
 
 void AppBackend::toggleMapping()
@@ -973,6 +1032,33 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
     persistAndApply();
     appendEvent(QString(u"Button %1 → %2"_qs).arg(physicalButton).arg(
         virtualButton > 0 ? QString(u"vJoy %1"_qs).arg(virtualButton) : u"Disabled"_qs));
+    return true;
+}
+
+bool AppBackend::setProfileTrigger(int physicalButton, const QString &targetProfileId,
+                                   const QString &behavior)
+{
+    const int source = physicalButton - 1;
+    if (source < 0 || source >= kMaximumPhysicalButtons) return false;
+    if (m_configuration.profileTriggers.size() <= static_cast<size_t>(source)) {
+        m_configuration.profileTriggers.resize(static_cast<size_t>(source + 1));
+    }
+    ProfileTriggerBinding &trigger = m_configuration.profileTriggers[static_cast<size_t>(source)];
+    const QString target = targetProfileId.trimmed();
+    if (target.isEmpty()) {
+        trigger = {};
+        persistAndApply();
+        appendEvent(QString(u"Button %1 profile control cleared; game route restored"_qs).arg(physicalButton));
+        return true;
+    }
+    const ControllerProfile *profile = findProfile(m_configuration, target);
+    if (!profile) return false;
+    const ProfileTriggerMode mode = profileTriggerModeFromString(behavior);
+    if (mode == ProfileTriggerMode::Disabled) return false;
+    trigger = {target, mode};
+    persistAndApply();
+    appendEvent(QString(u"Button %1 → profile %2 · %3 (game route consumed)"_qs)
+        .arg(physicalButton).arg(profile->name).arg(profileTriggerModeLabel(mode)));
     return true;
 }
 
