@@ -6,7 +6,7 @@ ApplicationWindow {
     id: root
     width: 1320
     height: 840
-    minimumWidth: 920
+    minimumWidth: 900
     minimumHeight: 650
     visible: true
     title: "HOTAS BF6"
@@ -81,33 +81,7 @@ ApplicationWindow {
         return "#9fc9bb"
     }
 
-    component Panel: Rectangle {
-        color: "#e9161d23"
-        border.color: "#41546770"
-        border.width: 1
-        radius: 6
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            radius: 5
-            opacity: 0.5
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "#2438434d" }
-                GradientStop { position: 0.38; color: "#0a101419" }
-                GradientStop { position: 1.0; color: "#0a0d1016" }
-            }
-        }
-        Rectangle {
-            x: 1
-            y: 1
-            width: parent.width - 2
-            height: 1
-            radius: 1
-            color: "#5c9cafb8"
-        }
-        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-            height: 1; color: "#1026323a" }
-    }
+    component Panel: AviationPanel {}
     component FineLine: Rectangle { height: 1; color: "#33526870" }
     component StatusDot: Rectangle {
         property color tone: "#a5b9c0"
@@ -1176,6 +1150,8 @@ ApplicationWindow {
                         { c: "MAP LATENCY", v: backend.latencyCurrentUs + " US", t: "#c9d6d9" },
                         { c: "MAP p95 / p99", v: backend.latencyP95Us + " / " + backend.latencyP99Us + " US", t: "#c9d6d9",
                           note: "ROLLING LAST 2,048 PHYSICAL REPORTS" },
+                        { c: "MAP AVG / PEAK", v: backend.latencyAverageUs + " / " + backend.latencyPeakUs + " US", t: "#c9d6d9",
+                          note: "LIFETIME SINCE MAPPING START" },
                         { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
                         { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? "#a8cfba" : (backend.mappingRequested ? "#e1c887" : "#a5afb3"),

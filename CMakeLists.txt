@@ -39,6 +39,7 @@ qt_add_qml_module(HOTASMapper
     URI HOTASMapper
     VERSION 1.0
     QML_FILES
+        qml/AviationPanel.qml
         qml/Main.qml
         qml/CurveEditor.qml
 )
