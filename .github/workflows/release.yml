@@ -125,11 +125,29 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class HotasResourceProbe {
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern IntPtr LoadLibraryEx(string fileName, IntPtr file, uint flags);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern bool FreeLibrary(IntPtr module);
+          }
+'@
           foreach ($binary in @('build\HOTAS BF6.exe', 'build\HOTAS BF6 Launcher.exe')) {
             if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Built binary missing: $binary" }
-            $resources = & dumpbin /resources $binary 2>&1 | Out-String
-            if ($LASTEXITCODE -ne 0 -or $resources -notmatch 'ICON') {
-              throw "Icon resource inspection failed: $binary"
+            $module = [HotasResourceProbe]::LoadLibraryEx((Resolve-Path -LiteralPath $binary), [IntPtr]::Zero, 0x00000002)
+            if ($module -eq [IntPtr]::Zero) { throw "Could not inspect resources: $binary" }
+            try {
+              # Resource 101 is IDI_HOTAS_BF6_ICON; 14 is RT_GROUP_ICON.
+              if ([HotasResourceProbe]::FindResource($module, [IntPtr]101, [IntPtr]14) -eq [IntPtr]::Zero) {
+                throw "Embedded group icon is missing: $binary"
+              }
+            } finally {
+              [void][HotasResourceProbe]::FreeLibrary($module)
             }
           }
 
