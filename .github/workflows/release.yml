@@ -106,9 +106,9 @@ jobs:
             Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Install pinned Inno Setup on CI
+      - name: Install pinned Inno Setup 6.7.1 on CI
         shell: pwsh
-        run: choco install innosetup --version=6.4.2 --yes --no-progress
+        run: choco install innosetup --version=6.7.1 --yes --no-progress
 
       - name: Compile installer
         shell: pwsh
