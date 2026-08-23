@@ -412,6 +412,10 @@ bool AppBackend::hidhideCloakStateKnown() const
     return m_worker.runtime().hidhideCloakStateKnown.load();
 }
 bool AppBackend::hidhideCloaked() const { return m_worker.runtime().hidhideCloaked.load(); }
+bool AppBackend::hidhideMapperAllowed() const
+{
+    return m_worker.runtime().hidhideMapperAllowed.load();
+}
 bool AppBackend::calibrationActive() const { return m_worker.calibrationRunning(); }
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
 int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }

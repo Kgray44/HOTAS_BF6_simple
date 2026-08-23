@@ -54,6 +54,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideAvailable READ hidhideAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloakStateKnown READ hidhideCloakStateKnown NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
+    Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
@@ -116,6 +117,7 @@ public:
     bool hidhideAvailable() const;
     bool hidhideCloakStateKnown() const;
     bool hidhideCloaked() const;
+    bool hidhideMapperAllowed() const;
     bool calibrationActive() const;
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;

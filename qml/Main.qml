@@ -1540,9 +1540,9 @@ ApplicationWindow {
  color: "#e8eeee"
  font.pixelSize: 12
  font.bold: true }
-                            Text { text: !backend.hidhideAvailable ? "NOT DETECTED" : !backend.hidhideCloakStateKnown ? "INSTALLED · CLOAK STATE UNAVAILABLE" : backend.hidhideCloaked ? "CLOAKING ACTIVE · MAPPER ALLOWLIST REQUIRED" : "CLOAKING OFF"
+                            Text { text: !backend.hidhideAvailable ? "NOT DETECTED" : !backend.hidhideCloakStateKnown ? "INSTALLED · CLOAK STATE UNAVAILABLE" : backend.hidhideCloaked ? (backend.hidhideMapperAllowed ? "CLOAKING ACTIVE · MAPPER ALLOWED" : "CLOAKING ACTIVE · MAPPER BLOCKED") : "CLOAKING OFF"
                                 color: !backend.hidhideAvailable ? "#d49b62" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#8fd5c9" : "#b7d8df"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Hide the physical HOTAS from games while keeping this mapper allowed. Changes are made in HidHide’s own client."
+                            Text { text: "The mapper registers only its own executable when cloaking is active, so reconnects do not depend on a build-folder path."
                                 color: "#9dafb4"; font.pixelSize: 10; wrapMode: Text.WordWrap
  Layout.fillWidth: true }
                         }

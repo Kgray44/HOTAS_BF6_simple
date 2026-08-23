@@ -7,6 +7,7 @@
 #include <dinput.h>
 #include <windows.h>
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
@@ -351,6 +352,64 @@ std::optional<bool> queryHidHideCloakState()
     return std::nullopt;
 }
 
+QString hidHideOutput(QProcess *process)
+{
+    const QByteArray bytes = process->readAll();
+    QString output = QString::fromLocal8Bit(bytes);
+    // HidHideCLI writes through std::wcout. When stdout is redirected to
+    // QProcess it can be UTF-16LE rather than the console code page.
+    if (!output.contains(u"--"_qs) && bytes.size() % 2 == 0) {
+        output = QString::fromUtf16(
+            reinterpret_cast<const char16_t *>(bytes.constData()), bytes.size() / 2);
+    }
+    return output;
+}
+
+std::optional<bool> queryHidHideMapperAllowed()
+{
+    const QString executable = findHidHideCli();
+    const QString mapperPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+    if (executable.isEmpty() || mapperPath.isEmpty()) return std::nullopt;
+
+    QProcess process;
+    process.setStandardInputFile(QProcess::nullDevice());
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(executable, {u"--app-list"_qs});
+    if (!process.waitForFinished(800)) {
+        process.terminate();
+        if (!process.waitForFinished(200)) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+        return std::nullopt;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return std::nullopt;
+    }
+    return hidHideOutput(&process).contains(mapperPath, Qt::CaseInsensitive);
+}
+
+bool registerHidHideMapper()
+{
+    const QString executable = findHidHideCli();
+    const QString mapperPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+    if (executable.isEmpty() || mapperPath.isEmpty()) return false;
+
+    QProcess process;
+    process.setStandardInputFile(QProcess::nullDevice());
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(executable, {u"--app-reg"_qs, mapperPath});
+    if (!process.waitForFinished(800)) {
+        process.terminate();
+        if (!process.waitForFinished(200)) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+        return false;
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
 struct DirectInputDevice {
     GUID guid{};
     QString name;
@@ -482,6 +541,17 @@ void MappingWorker::refreshHidHideState()
     const std::optional<bool> cloaked = available ? queryHidHideCloakState() : std::nullopt;
     m_runtime.hidhideCloakStateKnown = cloaked.has_value();
     m_runtime.hidhideCloaked = cloaked.value_or(false);
+    std::optional<bool> mapperAllowed;
+    if (cloaked.value_or(false)) {
+        mapperAllowed = queryHidHideMapperAllowed();
+        if (!mapperAllowed.value_or(false) && registerHidHideMapper()) {
+            mapperAllowed = queryHidHideMapperAllowed();
+        }
+    }
+    m_runtime.hidhideMapperAllowed = mapperAllowed.value_or(!cloaked.value_or(false));
+    if (cloaked.value_or(false) && !m_runtime.hidhideMapperAllowed.load()) {
+        emit workerEvent(u"HidHide is cloaking the HOTAS and did not allow this mapper executable"_qs);
+    }
     emit hardwareStateChanged();
 }
 
@@ -758,7 +828,7 @@ void MappingWorker::run()
             emit workerEvent(u"DirectInput notifications unavailable; using polling"_qs);
         }
         const HRESULT acquired = device->Acquire();
-        if (FAILED(acquired) && acquired != DIERR_INPUTLOST && acquired != DIERR_NOTACQUIRED) {
+        if (FAILED(acquired)) {
             emit workerEvent(u"Could not acquire controller: "_qs + inputErrorMessage(acquired));
             releaseInput();
             return;
@@ -871,6 +941,10 @@ void MappingWorker::run()
         if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_TIMEOUT) {
             emit workerEvent(u"Controller wait failed; reconnecting"_qs);
             releaseInput();
+            // Do one immediate enumeration after an unexpected wait failure.
+            // If Windows has not published the removal/reinsertion yet, the
+            // normal discovery schedule below provides the bounded backoff.
+            nextDiscovery = std::chrono::steady_clock::now();
             continue;
         }
         if (waitResult == WAIT_OBJECT_0 && inputEvent) ResetEvent(inputEvent);
@@ -878,23 +952,29 @@ void MappingWorker::run()
         const auto started = std::chrono::steady_clock::now();
         const HRESULT pollResult = device->Poll();
         if (pollResult == DIERR_INPUTLOST || pollResult == DIERR_NOTACQUIRED) {
-            device->Acquire();
+            emit workerEvent(u"Controller input was lost; rediscovering"_qs);
+            releaseInput();
+            nextDiscovery = std::chrono::steady_clock::now();
             continue;
         }
         if (FAILED(pollResult)) {
             emit workerEvent(u"Controller poll failed: "_qs + inputErrorMessage(pollResult));
             releaseInput();
+            nextDiscovery = std::chrono::steady_clock::now();
             continue;
         }
         DIJOYSTATE2 state{};
         const HRESULT readResult = device->GetDeviceState(sizeof(state), &state);
         if (readResult == DIERR_INPUTLOST || readResult == DIERR_NOTACQUIRED) {
-            device->Acquire();
+            emit workerEvent(u"Controller state was lost; rediscovering"_qs);
+            releaseInput();
+            nextDiscovery = std::chrono::steady_clock::now();
             continue;
         }
         if (FAILED(readResult)) {
             emit workerEvent(u"Controller disconnected: "_qs + inputErrorMessage(readResult));
             releaseInput();
+            nextDiscovery = std::chrono::steady_clock::now();
             continue;
         }
 
