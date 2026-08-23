@@ -2267,7 +2267,7 @@ Page {
             }
         }
         CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens }
-        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; topGun: theme.topGun }
+        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
     }
 
     Dialog {

@@ -241,8 +241,10 @@ public:
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
-    Q_INVOKABLE bool createAutomation();
-    Q_INVOKABLE bool duplicateAutomation(const QString &id);
+    // These return the newly-created stable ID so the presentation can open a
+    // full-page draft editor without ever deriving identity from list order.
+    Q_INVOKABLE QString createAutomation();
+    Q_INVOKABLE QString duplicateAutomation(const QString &id);
     Q_INVOKABLE bool deleteAutomation(const QString &id);
     Q_INVOKABLE bool setAutomationEnabled(const QString &id, bool enabled);
     Q_INVOKABLE bool saveAutomation(const QVariantMap &automation);

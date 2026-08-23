@@ -2097,7 +2097,7 @@ Page {
             }
         }
         LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
-        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; topGun: false }
+        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
     }
 
     Dialog {

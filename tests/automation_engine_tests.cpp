@@ -55,6 +55,7 @@ private slots:
     void rejectsFeedbackAndClampConflicts();
     void profileOverrideUsesUnifiedPrecedence();
     void migrationDefaultsToEnabledEmptyEngine();
+    void disabledEmptyDraftPersistsWithoutPublishing();
     void masterDisableClearsLatchedAutomationState();
 };
 
@@ -243,6 +244,29 @@ void AutomationEngineTests::migrationDefaultsToEnabledEmptyEngine()
     QVERIFY(valid);
     QVERIFY(migrated.automationEnabled);
     QVERIFY(migrated.automations.empty());
+}
+
+void AutomationEngineTests::disabledEmptyDraftPersistsWithoutPublishing()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationDefinition draft;
+    draft.id = u"new-automation"_qs;
+    draft.name = u"New Automation"_qs;
+    draft.enabled = false;
+    configuration.automations.push_back(draft);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.automations.size(), size_t{1});
+    QVERIFY(!restored.automations.front().enabled);
+    QVERIFY(restored.automations.front().conditions.empty());
+    QVERIFY(restored.automations.front().actions.empty());
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(restored);
+    QVERIFY(cache.automation);
+    QCOMPARE(cache.automation->ruleHealth[0], AutomationHealth::Invalid);
+    QVERIFY(!cache.automation->rules[0].enabled);
 }
 
 void AutomationEngineTests::masterDisableClearsLatchedAutomationState()

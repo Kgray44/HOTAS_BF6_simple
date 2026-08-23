@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.8.1
+# HOTAS BF6 Simple v1.8.2
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -24,7 +24,7 @@ The installer upgrades program files only. Existing QSettings data—including p
   a continuous or discrete POV if native hat passthrough is wanted
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
-vJoy is required for virtual output. The v1.8.1 installer can offer the pinned
+vJoy is required for virtual output. The v1.8.2 installer can offer the pinned
 official vJoy and HidHide installers only when they are missing; it never
 updates, downgrades, enables, or otherwise reconfigures an already-present
 component. Each selected payload is SHA-256 and Authenticode verified before
@@ -44,6 +44,24 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.8.2 Automation editor redesign
+
+- Automation rules now open in a dedicated full-page editor instead of a
+  large modal. The overview keeps engine state, rule counts, active count,
+  evaluation time, concise WHEN/THEN summaries, and compact rule actions.
+- New rules are persisted as disabled, intentionally incomplete drafts with
+  no default condition or action. They cannot be enabled or published until
+  they pass normal Automation validation, so creating a rule never alters
+  HOTAS output.
+- The editor keeps a UI-only draft until **Save Automation** validates,
+  persists, and compiles the rule. Its General, WHEN, and THEN sections cover
+  every supported condition/action type, match mode, priority, enabled state,
+  delete confirmation, and unsaved-change handling.
+- Legacy, Standard, and Top Gun share the existing page framework and card
+  systems; Top Gun reuses the same aviation panel treatment and tokens as the
+  rest of the application. Automation remains presentation/configuration work
+  only and adds no per-report UI work.
 
 ## v1.8.1 stabilization and update-awareness release
 

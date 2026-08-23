@@ -1713,12 +1713,12 @@ void AppBackend::setAutomationEngineEnabled(bool enabled)
     appendEvent(enabled ? u"Automation engine enabled"_qs : u"Automation engine disabled"_qs);
 }
 
-bool AppBackend::createAutomation()
+QString AppBackend::createAutomation()
 {
     if (static_cast<int>(m_configuration.automations.size()) >= kMaximumAutomationRules) {
         m_automationValidationMessage = u"Automation limit is 64 rules."_qs;
         emit stateChanged();
-        return false;
+        return {};
     }
     AutomationDefinition automation;
     automation.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -1731,34 +1731,33 @@ bool AppBackend::createAutomation()
             });
     };
     while (nameTaken()) automation.name = QString(u"New Automation %1"_qs).arg(suffix++);
-    // A disabled, neutral-scale draft is safe if the user leaves the editor
-    // before changing it. Saving an enabled rule is still fully validated.
+    // A new rule is an intentionally incomplete, disabled draft. It is
+    // persisted so a user can safely leave and resume editing, but cannot
+    // enter the compiled runtime set until Save supplies valid conditions and
+    // actions. Never invent a default action that can alter flight controls.
     automation.enabled = false;
-    automation.conditions.push_back({AutomationConditionType::Always});
-    AutomationActionDefinition action;
-    action.type = AutomationActionType::AxisScale;
-    action.targetAxis = static_cast<int>(PhysicalAxis::X);
-    action.value = 1.0F;
-    automation.actions.push_back(action);
     m_configuration.automations.push_back(std::move(automation));
     m_automationValidationMessage.clear();
     persistAndApply();
     appendEvent(u"Automation draft created"_qs);
-    return true;
+    return m_configuration.automations.back().id;
 }
 
-bool AppBackend::duplicateAutomation(const QString &id)
+QString AppBackend::duplicateAutomation(const QString &id)
 {
-    if (static_cast<int>(m_configuration.automations.size()) >= kMaximumAutomationRules) return false;
+    if (static_cast<int>(m_configuration.automations.size()) >= kMaximumAutomationRules) return {};
     const auto found = std::find_if(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
         [&id](const AutomationDefinition &automation) { return automation.id == id; });
-    if (found == m_configuration.automations.cend()) return false;
+    if (found == m_configuration.automations.cend()) return {};
     AutomationDefinition copy = *found;
     copy.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const QString base = copy.name.left(56).trimmed();
+    copy.enabled = false;
+    const QString sourceName = copy.name.trimmed();
     int suffix = 2;
+    QString suffixText = u" Copy"_qs;
     do {
-        copy.name = QString(u"%1 %2"_qs).arg(base).arg(suffix++);
+        copy.name = sourceName.left(64 - suffixText.size()).trimmed() + suffixText;
+        suffixText = QString(u" Copy %1"_qs).arg(suffix++);
     } while (std::any_of(m_configuration.automations.cbegin(), m_configuration.automations.cend(),
         [&copy](const AutomationDefinition &automation) {
             return automation.name.compare(copy.name, Qt::CaseInsensitive) == 0;
@@ -1767,7 +1766,7 @@ bool AppBackend::duplicateAutomation(const QString &id)
     m_automationValidationMessage.clear();
     persistAndApply();
     appendEvent(u"Automation duplicated"_qs);
-    return true;
+    return m_configuration.automations.back().id;
 }
 
 bool AppBackend::deleteAutomation(const QString &id)
@@ -1788,6 +1787,22 @@ bool AppBackend::setAutomationEnabled(const QString &id, bool enabled)
     const auto found = std::find_if(m_configuration.automations.begin(), m_configuration.automations.end(),
         [&id](const AutomationDefinition &automation) { return automation.id == id; });
     if (found == m_configuration.automations.end() || found->enabled == enabled) return false;
+    if (enabled) {
+        MapperConfiguration proposed = m_configuration;
+        const auto proposedRule = std::find_if(proposed.automations.begin(), proposed.automations.end(),
+            [&id](const AutomationDefinition &automation) { return automation.id == id; });
+        proposedRule->enabled = true;
+        const RuntimeProfileCache compiled = compileRuntimeProfileCache(proposed);
+        const int index = static_cast<int>(std::distance(proposed.automations.begin(), proposedRule));
+        if (!compiled.automation || !compiled.automation->publishable
+            || compiled.automation->ruleHealth[static_cast<size_t>(index)] == AutomationHealth::Invalid) {
+            m_automationValidationMessage = compiled.automation && !compiled.automation->ruleMessages[
+                static_cast<size_t>(index)].isEmpty() ? compiled.automation->ruleMessages[static_cast<size_t>(index)]
+                : (compiled.automation ? compiled.automation->message : u"Automation validation failed."_qs);
+            emit stateChanged();
+            return false;
+        }
+    }
     found->enabled = enabled;
     m_automationValidationMessage.clear();
     persistAndApply();

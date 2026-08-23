@@ -266,8 +266,13 @@ bool automationFromJson(const QJsonObject &json, AutomationDefinition *automatio
         || !automationMatchModeFromString(json.value(u"matchMode"_qs).toString(), &restored.matchMode)) return false;
     const QJsonArray conditions = json.value(u"conditions"_qs).toArray();
     const QJsonArray actions = json.value(u"actions"_qs).toArray();
-    if (conditions.empty() || conditions.size() > kMaximumAutomationConditions
-        || actions.empty() || actions.size() > kMaximumAutomationActions) return false;
+    const bool emptyDraft = conditions.empty() && actions.empty();
+    // The editor may persist a brand-new, disabled draft before it has any
+    // runtime meaning. This is the one deliberately incomplete shape that is
+    // accepted; all publishable rules still require one to four of each.
+    if (conditions.size() > kMaximumAutomationConditions
+        || actions.size() > kMaximumAutomationActions
+        || (emptyDraft ? restored.enabled : (conditions.empty() || actions.empty()))) return false;
     for (const QJsonValue &value : conditions) {
         AutomationConditionDefinition condition;
         if (!automationConditionFromJson(value.toObject(), &condition)) return false;
