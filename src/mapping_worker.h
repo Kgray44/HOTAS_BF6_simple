@@ -45,6 +45,8 @@ struct AtomicRuntimeState {
     // centered. The UI reads this fixed snapshot without entering the worker.
     std::array<std::atomic_int, kMaximumPhysicalPovs> povValues{};
     std::atomic_int vjoyButtonCount{0};
+    std::atomic_int vjoyContinuousPovCount{0};
+    std::atomic_int vjoyDiscretePovCount{0};
     std::atomic_int lastPhysicalButton{0};
     std::atomic_int lastPhysicalButtonTarget{0};
     std::atomic_bool mappingActive{false};
@@ -67,6 +69,8 @@ struct AtomicRuntimeState {
     // Index/source are small worker-owned values; names stay on the UI side.
     std::atomic_int effectiveProfileIndex{0};
     std::atomic_int profileOverrideButton{0};
+    std::atomic_int profileOverridePovHat{0};
+    std::atomic_int profileOverridePovDirection{-1};
     std::atomic_int profileOverrideMode{static_cast<int>(ProfileTriggerMode::Disabled)};
     std::atomic_uint64_t lastCurveCompileUs{0};
 };

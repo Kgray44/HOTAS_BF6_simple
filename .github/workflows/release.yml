@@ -64,10 +64,38 @@ jobs:
           "QT_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "WINDEPLOYQT=$deploy" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Lint QML declaratively
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lint = Join-Path $env:QT_PREFIX 'bin\qmllint.exe'
+          if (-not (Test-Path -LiteralPath $lint -PathType Leaf)) { throw 'qmllint.exe was not found.' }
+          & $lint "$PWD\qml\Main.qml"
+          if ($LASTEXITCODE -ne 0) { throw "qmllint failed with exit code $LASTEXITCODE." }
+
       - name: Enable the matching MSVC x64 toolchain
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Validate supplied application-icon sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($icon in @(
+            'assets\icons\HOTAS-BF6-App.ico',
+            'assets\icons\HOTAS-BF6-Launcher.ico',
+            'assets\icons\HOTAS-BF6-Setup.ico',
+            'assets\icons\png\hotas-bf6-256.png',
+            'resources\app.rc',
+            'resources\launcher.rc'
+          )) {
+            if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) { throw "Required icon asset is missing: $icon" }
+          }
+
+      - name: Validate pinned dependency bootstrap metadata
+        shell: pwsh
+        run: .\scripts\validate-dependencies.ps1
 
       - name: Configure Release build
         shell: pwsh
@@ -76,6 +104,18 @@ jobs:
       - name: Build mapper, launcher, and tests
         shell: pwsh
         run: cmake --build build --config Release --parallel
+
+      - name: Verify mapper and launcher icon resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($binary in @('build\HOTAS BF6.exe', 'build\HOTAS BF6 Launcher.exe')) {
+            if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Built binary missing: $binary" }
+            $resources = & dumpbin /resources $binary 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0 -or $resources -notmatch 'ICON') {
+              throw "Icon resource inspection failed: $binary"
+            }
+          }
 
       - name: Run headless tests and synthetic benchmark
         shell: pwsh

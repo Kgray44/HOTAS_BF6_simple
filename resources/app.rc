@@ -1,0 +1,3 @@
+#include "resource.h"
+
+IDI_HOTAS_BF6_ICON ICON "../assets/icons/HOTAS-BF6-App.ico"

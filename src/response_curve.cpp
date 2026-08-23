@@ -925,12 +925,40 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
         if (!profileTriggerBindingEnabled(binding)) continue;
         RuntimeProfileTrigger &trigger = cache.profileTriggers[static_cast<size_t>(source)];
         trigger.mode = binding.mode;
-        trigger.consumesButton = true;
+        trigger.consumesInput = true;
         for (int profile = 0; profile < static_cast<int>(configuration.profiles.size()); ++profile) {
             if (configuration.profiles[static_cast<size_t>(profile)].id == binding.targetProfileId) {
                 trigger.targetProfileIndex = profile;
                 break;
             }
+        }
+    }
+    const int povTriggerHats = std::min(static_cast<int>(configuration.povProfileTriggers.size()),
+                                        kMaximumPhysicalPovs);
+    for (int hat = 0; hat < povTriggerHats; ++hat) {
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            const ProfileTriggerBinding &binding = configuration.povProfileTriggers[static_cast<size_t>(hat)]
+                [static_cast<size_t>(direction)];
+            if (!profileTriggerBindingEnabled(binding)) continue;
+            RuntimeProfileTrigger &trigger = cache.povProfileTriggers[static_cast<size_t>(hat)]
+                [static_cast<size_t>(direction)];
+            trigger.mode = binding.mode;
+            trigger.consumesInput = true;
+            for (int profile = 0; profile < static_cast<int>(configuration.profiles.size()); ++profile) {
+                if (configuration.profiles[static_cast<size_t>(profile)].id == binding.targetProfileId) {
+                    trigger.targetProfileIndex = profile;
+                    break;
+                }
+            }
+        }
+    }
+    const int nativePovHats = std::min(static_cast<int>(configuration.nativePovBindings.size()),
+                                       kMaximumPhysicalPovs);
+    for (int hat = 0; hat < nativePovHats; ++hat) {
+        const NativePovBinding &binding = configuration.nativePovBindings[static_cast<size_t>(hat)];
+        if (binding.enabled && binding.targetIndex > 0
+            && binding.targetType != NativePovTargetType::Disabled) {
+            cache.nativePovBindings[static_cast<size_t>(hat)] = binding;
         }
     }
     return cache;

@@ -48,6 +48,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int povCount READ povCount NOTIFY stateChanged)
     Q_PROPERTY(int povValue READ povValue NOTIFY stateChanged)
     Q_PROPERTY(int vjoyButtonCount READ vjoyButtonCount NOTIFY stateChanged)
+    Q_PROPERTY(int vjoyContinuousPovCount READ vjoyContinuousPovCount NOTIFY stateChanged)
+    Q_PROPERTY(int vjoyDiscretePovCount READ vjoyDiscretePovCount NOTIFY stateChanged)
     Q_PROPERTY(int vjoyRequiredButtonCount READ vjoyRequiredButtonCount NOTIFY stateChanged)
     Q_PROPERTY(bool vjoyCapacitySufficient READ vjoyCapacitySufficient NOTIFY stateChanged)
     Q_PROPERTY(int vjoyRecommendedButtonCount READ vjoyRecommendedButtonCount CONSTANT)
@@ -78,6 +80,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
 
@@ -119,6 +122,8 @@ public:
     int povCount() const;
     int povValue() const;
     int vjoyButtonCount() const;
+    int vjoyContinuousPovCount() const;
+    int vjoyDiscretePovCount() const;
     int vjoyRequiredButtonCount() const;
     bool vjoyCapacitySufficient() const;
     int vjoyRecommendedButtonCount() const { return 32; }
@@ -149,6 +154,7 @@ public:
     qulonglong lastCurveCompileUs() const;
     QStringList buttonOutputChoices() const;
     QVariantList profileTriggerChoices() const;
+    QVariantList nativePovTargetChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
     QStringList eventLog() const { return m_events.entries(); }
 
@@ -193,6 +199,9 @@ public:
                                    bool explicitOverride = false);
     Q_INVOKABLE bool setProfileTrigger(int physicalButton, const QString &targetProfileId,
                                        const QString &behavior);
+    Q_INVOKABLE bool setPovProfileTrigger(int povHat, int direction,
+                                          const QString &targetProfileId, const QString &behavior);
+    Q_INVOKABLE bool setNativePovOutput(int povHat, bool enabled, const QString &targetKey);
     Q_INVOKABLE void resetButtonMappings();
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);

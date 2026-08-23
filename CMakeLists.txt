@@ -54,6 +54,7 @@ set(HOTAS_MAPPER_SOURCES
 qt_add_executable(HOTASMapper
     ${HOTAS_MAPPER_SOURCES}
     "${CMAKE_CURRENT_BINARY_DIR}/generated/hotas_version.rc"
+    resources/app.rc
 )
 
 qt_add_qml_module(HOTASMapper
@@ -63,6 +64,12 @@ qt_add_qml_module(HOTASMapper
         qml/AviationPanel.qml
         qml/Main.qml
         qml/CurveEditor.qml
+)
+
+qt_add_resources(HOTASMapper hotas_icon_resources
+    PREFIX "/"
+    FILES
+        assets/icons/png/hotas-bf6-256.png
 )
 
 target_link_libraries(HOTASMapper PRIVATE
@@ -100,6 +107,7 @@ target_compile_definitions(hotas_launcher_core PRIVATE NOMINMAX WIN32_LEAN_AND_M
 add_executable(HOTASBF6Launcher WIN32
     launcher/main.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_version.rc"
+    resources/launcher.rc
 )
 target_compile_features(HOTASBF6Launcher PRIVATE cxx_std_20)
 target_include_directories(HOTASBF6Launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")

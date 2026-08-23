@@ -62,6 +62,8 @@ VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
                                     const RuntimeButtonTargets &targets,
                                     int vjoyButtonCapacity);
 RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity);
+RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity,
+                                         const RuntimePovProfileTriggers &profileTriggers);
 void mapPovStates(VirtualButtonStates &virtualStates, const PhysicalPovValues &rawValues,
                   int povCount, const RuntimePovTargets &targets, int vjoyButtonCapacity);
 

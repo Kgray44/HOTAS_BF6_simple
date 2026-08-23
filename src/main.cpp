@@ -2,6 +2,7 @@
 #include "hotas_build_version.h"
 
 #include <QGuiApplication>
+#include <QIcon>
 #include <QQmlError>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -14,6 +15,9 @@ using namespace Qt::StringLiterals;
 int main(int argc, char *argv[])
 {
     QGuiApplication application(argc, argv);
+    // The executable resource covers shell identity; this runtime icon covers
+    // the Qt title bar, taskbar, Alt+Tab, and task-switching surfaces.
+    application.setWindowIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs));
     // Keep the established QSettings identity so an installer upgrade retains
     // the existing profiles, curves, calibration, and button configuration.
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));

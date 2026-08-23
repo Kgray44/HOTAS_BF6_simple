@@ -37,6 +37,7 @@ constexpr DWORD kVjoyUsageZ = 0x32;
 constexpr DWORD kVjoyUsageRz = 0x35;
 constexpr LONG kVjoyMinimum = 0;
 constexpr LONG kVjoyMaximum = 32767;
+constexpr DWORD kVjoyPovCentered = 0xFFFFFFFFUL;
 // VjdStat from vJoyInterface.h: OWN = 0, FREE = 1, BUSY = 2,
 // MISSING = 3, UNKNOWN = 4. Keep these values explicit because the DLL is
 // loaded dynamically and its enum is not available at compile time.
@@ -144,8 +145,10 @@ public:
             }
         }
         const int buttons = buttonCapacity(deviceId, nullptr);
+        const PovCapabilities povs = povCapabilities(deviceId, nullptr);
         if (status) {
-            *status = QString(u"Device %1 Ready · %2 buttons"_qs).arg(deviceId).arg(buttons);
+            *status = QString(u"Device %1 Ready · %2 buttons · %3 continuous / %4 discrete POV"_qs)
+                .arg(deviceId).arg(buttons).arg(povs.continuous).arg(povs.discrete);
         }
         return true;
     }
@@ -174,8 +177,12 @@ public:
         m_acquired = true;
         m_deviceId = deviceId;
         m_reset(static_cast<UINT>(m_deviceId));
-        if (status) *status = QString(u"Device %1 Ready · %2 buttons"_qs)
-            .arg(deviceId).arg(buttonCapacity(deviceId, nullptr));
+        if (status) {
+            const PovCapabilities povs = povCapabilities(deviceId, nullptr);
+            *status = QString(u"Device %1 Ready · %2 buttons · %3 continuous / %4 discrete POV"_qs)
+                .arg(deviceId).arg(buttonCapacity(deviceId, nullptr))
+                .arg(povs.continuous).arg(povs.discrete);
+        }
         return true;
     }
 
@@ -194,6 +201,48 @@ public:
         }
         const int reported = m_getButtonNumber(static_cast<UINT>(deviceId));
         return std::clamp(reported, 0, kMaximumVirtualButtons);
+    }
+
+    struct PovCapabilities {
+        int continuous = 0;
+        int discrete = 0;
+    };
+
+    PovCapabilities povCapabilities(int deviceId, QString *status)
+    {
+        if (!load(status)) return {};
+        PovCapabilities result;
+        if (m_getContinuousPovNumber) {
+            result.continuous = std::clamp(m_getContinuousPovNumber(static_cast<UINT>(deviceId)), 0, 32);
+        }
+        if (m_getDiscretePovNumber) {
+            result.discrete = std::clamp(m_getDiscretePovNumber(static_cast<UINT>(deviceId)), 0, 32);
+        }
+        return result;
+    }
+
+    bool setPov(const NativePovBinding &binding, int physicalRawAngle)
+    {
+        if (!m_acquired || !binding.enabled || binding.targetIndex < 1) return false;
+        if (binding.targetType == NativePovTargetType::Continuous
+            && m_setContinuousPov) {
+            const DWORD value = physicalRawAngle >= 0 && physicalRawAngle < 36000
+                ? static_cast<DWORD>(physicalRawAngle) : kVjoyPovCentered;
+            return m_setContinuousPov(value, static_cast<UINT>(m_deviceId),
+                                      static_cast<UCHAR>(binding.targetIndex));
+        }
+        if (binding.targetType == NativePovTargetType::Discrete
+            && m_setDiscretePov) {
+            // A vJoy discrete POV is cardinal only. Diagonal physical angles
+            // resolve clockwise at the 45-degree boundary: UR/DR -> Right,
+            // DL -> Left, UL -> Up. Direction-to-button routes remain fully
+            // eight-way and are not affected by this hardware fallback.
+            const int value = physicalRawAngle >= 0 && physicalRawAngle < 36000
+                ? ((physicalRawAngle + 4500) / 9000) % 4 : -1;
+            return m_setDiscretePov(value, static_cast<UINT>(m_deviceId),
+                                    static_cast<UCHAR>(binding.targetIndex));
+        }
+        return false;
     }
 
     bool setButton(int button, bool pressed)
@@ -224,6 +273,9 @@ private:
     using GetVJDButtonNumberFn = int(__cdecl *)(UINT);
     using SetBtnFn = BOOL(__cdecl *)(BOOL, UINT, UCHAR);
     using ResetVJDFn = BOOL(__cdecl *)(UINT);
+    using GetPovNumberFn = int(__cdecl *)(UINT);
+    using SetContinuousPovFn = BOOL(__cdecl *)(DWORD, UINT, UCHAR);
+    using SetDiscretePovFn = BOOL(__cdecl *)(int, UINT, UCHAR);
 
     bool load(QString *status)
     {
@@ -253,6 +305,12 @@ private:
         m_getButtonNumber = reinterpret_cast<GetVJDButtonNumberFn>(GetProcAddress(m_library, "GetVJDButtonNumber"));
         m_setButton = reinterpret_cast<SetBtnFn>(GetProcAddress(m_library, "SetBtn"));
         m_reset = reinterpret_cast<ResetVJDFn>(GetProcAddress(m_library, "ResetVJD"));
+        // POV APIs are optional because a valid vJoy configuration may expose
+        // no hats. Their absence makes the target unavailable, never fatal.
+        m_getContinuousPovNumber = reinterpret_cast<GetPovNumberFn>(GetProcAddress(m_library, "GetVJDContPovNumber"));
+        m_getDiscretePovNumber = reinterpret_cast<GetPovNumberFn>(GetProcAddress(m_library, "GetVJDDiscPovNumber"));
+        m_setContinuousPov = reinterpret_cast<SetContinuousPovFn>(GetProcAddress(m_library, "SetContPov"));
+        m_setDiscretePov = reinterpret_cast<SetDiscretePovFn>(GetProcAddress(m_library, "SetDiscPov"));
         if (!m_getStatus || !m_axisExists || !m_acquire || !m_relinquish || !m_setAxis || !m_reset) {
             if (status) *status = u"vJoyInterface.dll is missing a required API"_qs;
             unload();
@@ -274,6 +332,10 @@ private:
         m_getButtonNumber = nullptr;
         m_setButton = nullptr;
         m_reset = nullptr;
+        m_getContinuousPovNumber = nullptr;
+        m_getDiscretePovNumber = nullptr;
+        m_setContinuousPov = nullptr;
+        m_setDiscretePov = nullptr;
     }
 
     HMODULE m_library = nullptr;
@@ -285,6 +347,10 @@ private:
     GetVJDButtonNumberFn m_getButtonNumber = nullptr;
     SetBtnFn m_setButton = nullptr;
     ResetVJDFn m_reset = nullptr;
+    GetPovNumberFn m_getContinuousPovNumber = nullptr;
+    GetPovNumberFn m_getDiscretePovNumber = nullptr;
+    SetContinuousPovFn m_setContinuousPov = nullptr;
+    SetDiscretePovFn m_setDiscretePov = nullptr;
     bool m_acquired = false;
     int m_deviceId = 0;
 };
@@ -736,7 +802,11 @@ void MappingWorker::run()
     RuntimeButtonTargets runtimeButtonTargets{};
     RuntimePovTargets runtimePovTargets{};
     VirtualButtonStates lastVirtualButtonStates{};
+    std::array<int, kMaximumPhysicalPovs> lastNativePovValues{};
+    lastNativePovValues.fill(-2); // -1 is a valid centered output value.
     int vjoyButtonCapacity = 0;
+    int vjoyContinuousPovCapacity = 0;
+    int vjoyDiscretePovCapacity = 0;
     bool buttonDefaultsPending = false;
     bool profileTriggerSessionActive = false;
     bool wasMappingRequested = false;
@@ -769,7 +839,8 @@ void MappingWorker::run()
     const auto rebuildButtonTargets = [&] {
         runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity,
             activeProfileCache->profileTriggers);
-        runtimePovTargets = buildRuntimePovTargets(activeMapping->povs, vjoyButtonCapacity);
+        runtimePovTargets = buildRuntimePovTargets(activeMapping->povs, vjoyButtonCapacity,
+            activeProfileCache->povProfileTriggers);
     };
 
     const auto selectEffectiveProfile = [&](const EffectiveProfileSelection &selection,
@@ -781,12 +852,15 @@ void MappingWorker::run()
         activeMapping = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
         m_runtime.effectiveProfileIndex = effectiveProfileIndex;
         m_runtime.profileOverrideButton = selection.sourceButton;
+        m_runtime.profileOverridePovHat = selection.sourcePovHat;
+        m_runtime.profileOverridePovDirection = selection.sourcePovDirection;
         m_runtime.profileOverrideMode = static_cast<int>(selection.sourceMode);
         if (!changed) return false;
         // The current physical snapshot is re-evaluated immediately below.
         // Axis cache invalidation forces a same-report output publication;
         // the normal button diff loop releases/asserts changed routes.
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        lastNativePovValues.fill(-2);
         clearVirtualAxisSnapshot();
         for (AxisHysteresisState &state : hysteresisStates) state = {};
         rebuildButtonTargets();
@@ -801,6 +875,7 @@ void MappingWorker::run()
             vjoy.release();
         }
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        lastNativePovValues.fill(-2);
         clearVirtualAxisSnapshot();
         clearVirtualButtonSnapshot();
         for (AxisHysteresisState &state : hysteresisStates) state = {};
@@ -831,7 +906,7 @@ void MappingWorker::run()
         profileTriggers.reset();
         profileTriggerSessionActive = false;
         selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
-                                ProfileTriggerMode::Disabled}, false);
+                                0, -1, ProfileTriggerMode::Disabled}, false);
         m_runtime.physicalConnected = false;
         m_runtime.axisCount = 0;
         m_runtime.buttonCount = 0;
@@ -905,13 +980,24 @@ void MappingWorker::run()
         }
     };
 
-    const auto refreshVjoyButtonCapacity = [&] {
+    const auto refreshVjoyCapabilities = [&] {
         const int reportedCapacity = vjoy.buttonCapacity(configuration.vjoyDeviceId, nullptr);
+        const VJoyAdapter::PovCapabilities reportedPovs = vjoy.povCapabilities(
+            configuration.vjoyDeviceId, nullptr);
         if (reportedCapacity != vjoyButtonCapacity) {
             vjoyButtonCapacity = reportedCapacity;
             m_runtime.vjoyButtonCount = vjoyButtonCapacity;
             rebuildButtonTargets();
             if (inputEvent) SetEvent(inputEvent);
+            emit hardwareStateChanged();
+        }
+        if (reportedPovs.continuous != vjoyContinuousPovCapacity
+            || reportedPovs.discrete != vjoyDiscretePovCapacity) {
+            vjoyContinuousPovCapacity = reportedPovs.continuous;
+            vjoyDiscretePovCapacity = reportedPovs.discrete;
+            m_runtime.vjoyContinuousPovCount = vjoyContinuousPovCapacity;
+            m_runtime.vjoyDiscretePovCount = vjoyDiscretePovCapacity;
+            lastNativePovValues.fill(-2);
             emit hardwareStateChanged();
         }
         suggestDefaultButtonsIfNeeded();
@@ -922,6 +1008,13 @@ void MappingWorker::run()
         if (currentVersion == appliedVersion) return;
         const int previousVjoyDeviceId = configuration.vjoyDeviceId;
         const QString previousProfileId = configuration.activeProfileId;
+        if (m_runtime.mappingActive.load()) {
+            // Clear every old native target before its binding can change or
+            // be disabled. ResetVJD on release is a second safety net.
+            for (const NativePovBinding &binding : activeProfileCache->nativePovBindings) {
+                if (binding.enabled) vjoy.setPov(binding, -1);
+            }
+        }
         auto prepared = preparedConfigurationCopy();
         configuration = std::move(prepared.first);
         // The mapping loop only swaps a table that was fully built before the
@@ -934,10 +1027,11 @@ void MappingWorker::run()
         buttonDefaultsPending = false;
         const bool manualBaseChanged = configuration.activeProfileId != previousProfileId;
         profileTriggers.reconcileConfiguration(*activeProfileCache, latestPhysicalButtons,
+                                                latestPovValues, m_runtime.povCount.load(),
                                                 manualBaseChanged);
         const EffectiveProfileSelection selection = profileTriggerSessionActive
             ? profileTriggers.effectiveProfile(*activeProfileCache)
-            : EffectiveProfileSelection{activeProfileCache->baseProfileIndex, 0,
+            : EffectiveProfileSelection{activeProfileCache->baseProfileIndex, 0, 0, -1,
                                         ProfileTriggerMode::Disabled};
         const bool switched = selectEffectiveProfile(selection, true);
         // A profile edit can replace the compiled state at the same index.
@@ -946,6 +1040,7 @@ void MappingWorker::run()
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         clearVirtualAxisSnapshot();
         rebuildButtonTargets();
+        lastNativePovValues.fill(-2);
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
             releaseMappingOutput();
             emit workerEvent(u"vJoy device changed; reacquiring mapping output"_qs);
@@ -968,7 +1063,7 @@ void MappingWorker::run()
             profileTriggers.reset();
             profileTriggerSessionActive = false;
             selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
-                                    ProfileTriggerMode::Disabled}, false);
+                                    0, -1, ProfileTriggerMode::Disabled}, false);
         }
         wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {
@@ -982,7 +1077,7 @@ void MappingWorker::run()
             m_runtime.vjoyReady = ready;
             setVjoyStatus(status);
             nextVjoyCheck = now + std::chrono::seconds(1);
-            refreshVjoyButtonCapacity();
+            refreshVjoyCapabilities();
         }
 
         if (!device) {
@@ -1060,11 +1155,13 @@ void MappingWorker::run()
         if (mappingRequestedNow) {
             EffectiveProfileSelection selection;
             if (!profileTriggerSessionActive) {
-                profileTriggers.initializeForMapping(*activeProfileCache, physicalSnapshot.buttons);
+                profileTriggers.initializeForMapping(*activeProfileCache, physicalSnapshot.buttons,
+                                                     physicalSnapshot.povs, m_runtime.povCount.load());
                 profileTriggerSessionActive = true;
                 selection = profileTriggers.effectiveProfile(*activeProfileCache);
             } else {
-                selection = profileTriggers.processReport(*activeProfileCache, physicalSnapshot.buttons);
+                selection = profileTriggers.processReport(*activeProfileCache, physicalSnapshot.buttons,
+                                                           physicalSnapshot.povs, m_runtime.povCount.load());
             }
             const auto profileSwitchStarted = std::chrono::steady_clock::now();
             const bool changed = selectEffectiveProfile(selection, true);
@@ -1164,6 +1261,24 @@ void MappingWorker::run()
                 if (target <= vjoyButtonCapacity && vjoy.setButton(target, desired)) {
                     lastVirtualButtonStates[target] = desired;
                     m_runtime.virtualButtonPressed[target - 1] = desired;
+                    ++m_runtime.vjoyWrites;
+                }
+            }
+            // Native POV passthrough is deliberately a separate path from
+            // direction-to-button and profile-control handling. It preserves
+            // a continuous DirectInput angle whenever vJoy exposes one.
+            const int nativePovHats = std::min(m_runtime.povCount.load(), kMaximumPhysicalPovs);
+            for (int hat = 0; hat < nativePovHats; ++hat) {
+                const NativePovBinding &binding = activeProfileCache->nativePovBindings[static_cast<size_t>(hat)];
+                const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
+                    ? binding.targetIndex <= vjoyContinuousPovCapacity
+                    : binding.targetType == NativePovTargetType::Discrete
+                        && binding.targetIndex <= vjoyDiscretePovCapacity;
+                if (!binding.enabled || !targetAvailable) continue;
+                const int desired = latestPovValues[static_cast<size_t>(hat)];
+                if (desired == lastNativePovValues[static_cast<size_t>(hat)]) continue;
+                if (vjoy.setPov(binding, desired)) {
+                    lastNativePovValues[static_cast<size_t>(hat)] = desired;
                     ++m_runtime.vjoyWrites;
                 }
             }

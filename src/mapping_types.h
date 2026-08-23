@@ -158,6 +158,24 @@ using PhysicalPovValues = std::array<int, kMaximumPhysicalPovs>;
 using RuntimePovTargets = std::array<std::array<int, kPovDirectionCount>,
                                      kMaximumPhysicalPovs>;
 
+// Native vJoy POV passthrough is intentionally independent from the eight
+// logical direction routes above. A user can therefore retain a precise
+// physical hat on vJoy while also assigning a direction to a vJoy button or
+// a profile control.
+enum class NativePovTargetType : int {
+    Disabled = 0,
+    Continuous,
+    Discrete,
+};
+
+struct NativePovBinding {
+    bool enabled = false;
+    NativePovTargetType targetType = NativePovTargetType::Disabled;
+    int targetIndex = 0; // One-based index within the selected vJoy POV type.
+};
+
+using NativePovBindings = std::vector<NativePovBinding>;
+
 inline int povDirectionIndex(PovDirection direction)
 {
     const int value = static_cast<int>(direction) - 1;
@@ -204,6 +222,8 @@ struct ProfileTriggerBinding {
 };
 
 using ProfileTriggerBindings = std::vector<ProfileTriggerBinding>;
+using PovProfileTriggerBindings = std::vector<std::array<ProfileTriggerBinding,
+                                                          kPovDirectionCount>>;
 
 using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
 
@@ -226,9 +246,13 @@ struct MapperConfiguration {
     std::array<Calibration, kPhysicalAxisCount> calibration{};
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> personalCurvePresets;
-    // Global physical-button profile controls. Runtime activation/latch state
+    // Global physical-input profile controls. Runtime activation/latch state
     // is deliberately not persisted here.
     ProfileTriggerBindings profileTriggers;
+    PovProfileTriggerBindings povProfileTriggers;
+    // Native vJoy POV passthrough is global to the selected physical device,
+    // rather than profile-specific, and defaults safely off on migration.
+    NativePovBindings nativePovBindings;
     QString activeProfileId;
 };
 
@@ -245,12 +269,18 @@ struct RuntimeMappingConfiguration {
 struct RuntimeProfileTrigger {
     int targetProfileIndex = -1;
     ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
-    bool consumesButton = false;
+    bool consumesInput = false;
 };
+
+using RuntimePovProfileTriggers = std::array<std::array<RuntimeProfileTrigger,
+                                                         kPovDirectionCount>,
+                                           kMaximumPhysicalPovs>;
 
 struct RuntimeProfileCache {
     std::vector<RuntimeMappingConfiguration> profiles;
     std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> profileTriggers{};
+    RuntimePovProfileTriggers povProfileTriggers{};
+    std::array<NativePovBinding, kMaximumPhysicalPovs> nativePovBindings{};
     int baseProfileIndex = 0;
 };
 

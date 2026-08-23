@@ -251,7 +251,7 @@ RuntimeButtonTargets buildRuntimeButtonTargets(
 {
     RuntimeButtonTargets targets = buildRuntimeButtonTargets(bindings, vjoyButtonCapacity);
     for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
-        if (profileTriggers[static_cast<size_t>(source)].consumesButton) {
+        if (profileTriggers[static_cast<size_t>(source)].consumesInput) {
             targets[static_cast<size_t>(source)] = 0;
         }
     }
@@ -275,10 +275,19 @@ VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
 
 RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity)
 {
+    return buildRuntimePovTargets(bindings, vjoyButtonCapacity, {});
+}
+
+RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity,
+                                         const RuntimePovProfileTriggers &profileTriggers)
+{
     RuntimePovTargets targets{};
     const int hats = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalPovs);
     for (int hat = 0; hat < hats; ++hat) {
         for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            if (profileTriggers[static_cast<size_t>(hat)][static_cast<size_t>(direction)].consumesInput) {
+                continue;
+            }
             const ButtonBinding &binding = bindings[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
             if (isButtonBindingValid(binding, vjoyButtonCapacity)) {
                 targets[static_cast<size_t>(hat)][static_cast<size_t>(direction)] = binding.target;

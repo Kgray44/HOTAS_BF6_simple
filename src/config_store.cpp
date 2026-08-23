@@ -17,7 +17,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 9;
+constexpr int kProfileSchemaVersion = 10;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -203,6 +203,94 @@ ProfileTriggerBindings profileTriggersFromJson(const QJsonValue &value)
     return bindings;
 }
 
+QJsonArray povProfileTriggersToJson(const PovProfileTriggerBindings &bindings)
+{
+    QJsonArray hats;
+    const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalPovs);
+    for (int hat = 0; hat < count; ++hat) {
+        QJsonArray directions;
+        for (const ProfileTriggerBinding &binding : bindings[static_cast<size_t>(hat)]) {
+            directions.append(profileTriggerToJson(binding));
+        }
+        hats.append(directions);
+    }
+    return hats;
+}
+
+PovProfileTriggerBindings povProfileTriggersFromJson(const QJsonValue &value)
+{
+    PovProfileTriggerBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray hats = value.toArray();
+    const int count = std::min(static_cast<int>(hats.size()), kMaximumPhysicalPovs);
+    bindings.resize(static_cast<size_t>(count));
+    for (int hat = 0; hat < count; ++hat) {
+        const QJsonArray directions = hats.at(hat).toArray();
+        if (directions.size() != kPovDirectionCount) continue;
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            bindings[static_cast<size_t>(hat)][static_cast<size_t>(direction)] =
+                profileTriggerFromJson(directions.at(direction).toObject());
+        }
+    }
+    return bindings;
+}
+
+QJsonObject nativePovBindingToJson(const NativePovBinding &binding)
+{
+    QString targetType = u"disabled"_qs;
+    if (binding.targetType == NativePovTargetType::Continuous) targetType = u"continuous"_qs;
+    if (binding.targetType == NativePovTargetType::Discrete) targetType = u"discrete"_qs;
+    return {{u"enabled"_qs, binding.enabled}, {u"targetType"_qs, targetType},
+            {u"targetIndex"_qs, binding.targetIndex}};
+}
+
+NativePovBinding nativePovBindingFromJson(const QJsonObject &json)
+{
+    NativePovBinding binding;
+    const QString targetType = json.value(u"targetType"_qs).toString().trimmed();
+    if (targetType.compare(u"continuous"_qs, Qt::CaseInsensitive) == 0) {
+        binding.targetType = NativePovTargetType::Continuous;
+    } else if (targetType.compare(u"discrete"_qs, Qt::CaseInsensitive) == 0) {
+        binding.targetType = NativePovTargetType::Discrete;
+    }
+    binding.enabled = json.value(u"enabled"_qs).toBool(false);
+    binding.targetIndex = std::clamp(json.value(u"targetIndex"_qs).toInt(), 0, 32);
+    if (!binding.enabled || binding.targetType == NativePovTargetType::Disabled
+        || binding.targetIndex <= 0) return {};
+    return binding;
+}
+
+QJsonArray nativePovBindingsToJson(const NativePovBindings &bindings)
+{
+    QJsonArray hats;
+    const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalPovs);
+    for (int hat = 0; hat < count; ++hat) {
+        hats.append(nativePovBindingToJson(bindings[static_cast<size_t>(hat)]));
+    }
+    return hats;
+}
+
+NativePovBindings nativePovBindingsFromJson(const QJsonValue &value)
+{
+    NativePovBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray hats = value.toArray();
+    const int count = std::min(static_cast<int>(hats.size()), kMaximumPhysicalPovs);
+    bindings.resize(static_cast<size_t>(count));
+    for (int hat = 0; hat < count; ++hat) {
+        NativePovBinding candidate = nativePovBindingFromJson(hats.at(hat).toObject());
+        if (!candidate.enabled) continue;
+        bool duplicate = false;
+        for (int previous = 0; previous < hat; ++previous) {
+            const NativePovBinding &existing = bindings[static_cast<size_t>(previous)];
+            duplicate = duplicate || (existing.enabled && existing.targetType == candidate.targetType
+                && existing.targetIndex == candidate.targetIndex);
+        }
+        if (!duplicate) bindings[static_cast<size_t>(hat)] = candidate;
+    }
+    return bindings;
+}
+
 QJsonObject profileToJson(const ControllerProfile &profile)
 {
     QJsonArray axes;
@@ -336,6 +424,8 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"profiles"_qs, profiles},
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
+        {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
+        {u"nativePovBindings"_qs, nativePovBindingsToJson(configuration.nativePovBindings)},
         {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
@@ -345,7 +435,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
-        && version != kProfileSchemaVersion) {
+        && version != 9 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -424,6 +514,12 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     // record is intentionally equivalent to no configured controls.
     if (version >= 8) {
         configuration.profileTriggers = profileTriggersFromJson(json.value(u"profileTriggers"_qs));
+    }
+    // v1.6.2 adds POV profile controls and native vJoy POV passthrough. Older
+    // installations migrate with all new controls safely disabled.
+    if (version >= 10) {
+        configuration.povProfileTriggers = povProfileTriggersFromJson(json.value(u"povProfileTriggers"_qs));
+        configuration.nativePovBindings = nativePovBindingsFromJson(json.value(u"nativePovBindings"_qs));
     }
 
     // Normal is the durable, protected recovery profile. A malformed/manual

@@ -29,6 +29,7 @@ ApplicationWindow {
     readonly property var buttonOutputChoices: backend.buttonOutputChoices
     readonly property var profileTriggerChoices: backend.profileTriggerChoices
     readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
+    readonly property var nativePovTargetChoices: backend.nativePovTargetChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
@@ -130,6 +131,109 @@ ApplicationWindow {
  enabled: parent.commandEnabled
  cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
  onClicked: parent.triggered() }
+    }
+    component FlightComboBox: ComboBox {
+        id: flightCombo
+        implicitHeight: 31
+        leftPadding: 9
+        rightPadding: 28
+        background: Rectangle {
+            radius: 4
+            color: flightCombo.enabled ? (flightCombo.hovered ? "#142128" : "#10171b") : "#0c1013"
+            border.color: flightCombo.activeFocus ? "#78aab9" : flightCombo.hovered ? "#527482" : "#435660"
+        }
+        contentItem: Text {
+            leftPadding: flightCombo.leftPadding
+            rightPadding: flightCombo.rightPadding
+            text: flightCombo.displayText
+            color: flightCombo.enabled ? "#dce7e8" : "#748187"
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            font.pixelSize: 10
+        }
+        indicator: Text {
+            x: flightCombo.width - width - 9
+            y: (flightCombo.height - height) / 2
+            text: "⌄"
+            color: flightCombo.enabled ? "#94adb5" : "#64747a"
+            font.pixelSize: 15
+        }
+        delegate: ItemDelegate {
+            width: flightCombo.width
+            height: 31
+            highlighted: flightCombo.highlightedIndex === index
+            contentItem: Text {
+                text: modelData && modelData.label !== undefined ? modelData.label : modelData
+                color: highlighted ? "#eff8f7" : "#d0dcdd"
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 10
+                rightPadding: 10
+                elide: Text.ElideRight
+                font.pixelSize: 10
+            }
+            background: Rectangle {
+                radius: 3
+                color: highlighted ? "#315a66" : (hovered ? "#1d333b" : "transparent")
+                border.color: highlighted ? "#6f9fac" : "transparent"
+            }
+        }
+        popup: Popup {
+            y: flightCombo.height + 4
+            width: flightCombo.width
+            implicitHeight: Math.min(contentItem.implicitHeight + 12, 264)
+            padding: 6
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: flightCombo.popup.visible ? flightCombo.delegateModel : null
+                currentIndex: flightCombo.highlightedIndex
+                ScrollIndicator.vertical: ScrollIndicator { }
+            }
+            background: Rectangle {
+                color: "#151e23"
+                border.color: "#52717c"
+                radius: 5
+            }
+        }
+    }
+    component FlightNumericStepper: Item {
+        id: flightStepper
+        property int value: 0
+        property int from: -100
+        property int to: 100
+        signal valueEdited(int value)
+        implicitWidth: 148
+        implicitHeight: 30
+        Rectangle {
+            anchors.fill: parent
+            color: "#11191d"
+            border.color: "#435c66"
+            radius: 4
+        }
+        Row {
+            anchors.fill: parent
+            Rectangle {
+                width: 33; height: parent.height
+                color: minusMouse.containsMouse && flightStepper.value > flightStepper.from ? "#244550" : "transparent"
+                Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? "#a8c8cf" : "#56656a"; font.pixelSize: 17 }
+                MouseArea { id: minusMouse; anchors.fill: parent; hoverEnabled: true
+                    enabled: flightStepper.value > flightStepper.from
+                    onClicked: flightStepper.valueEdited(flightStepper.value - 1) }
+            }
+            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: "#304954" }
+            Text { width: parent.width - 68; height: parent.height; text: flightStepper.value + " %"
+                color: "#e3eeee"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                font.pixelSize: 11; font.bold: true; font.family: "Consolas" }
+            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: "#304954" }
+            Rectangle {
+                width: 33; height: parent.height
+                color: plusMouse.containsMouse && flightStepper.value < flightStepper.to ? "#244550" : "transparent"
+                Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? "#a8c8cf" : "#56656a"; font.pixelSize: 15 }
+                MouseArea { id: plusMouse; anchors.fill: parent; hoverEnabled: true
+                    enabled: flightStepper.value < flightStepper.to
+                    onClicked: flightStepper.valueEdited(flightStepper.value + 1) }
+            }
+        }
     }
     component InstrumentMeter: Item {
         property real value: 0
@@ -351,7 +455,7 @@ ApplicationWindow {
  color: "#8c989d"
  font.pixelSize: 9
  font.bold: true }
-                ComboBox {
+                FlightComboBox {
                     id: axisDestination
                     Layout.preferredWidth: 88
  Layout.preferredHeight: 30
@@ -578,7 +682,7 @@ ApplicationWindow {
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
-                ComboBox {
+                FlightComboBox {
                     id: buttonDestination
                     Layout.preferredWidth: 126
                     Layout.preferredHeight: 29
@@ -610,7 +714,7 @@ ApplicationWindow {
             RowLayout { Layout.fillWidth: true
                 Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
-                ComboBox {
+                FlightComboBox {
                     id: profileControlTarget
                     Layout.preferredWidth: 146; Layout.preferredHeight: 29
                     model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
@@ -682,58 +786,120 @@ ApplicationWindow {
         }
     }
 
+    component PovNativeCard: Panel {
+        id: nativeCard
+        property var info: null
+        Layout.fillWidth: true
+        Layout.preferredHeight: 143
+        color: info && info.nativeEnabled ? "#e51a352f" : "#ed182128"
+        border.color: info && info.nativeEnabled ? "#5f9a9f" : "#43546770"
+        function targetIndex(key) {
+            for (let index = 0; index < root.nativePovTargetChoices.length; ++index) {
+                if (root.nativePovTargetChoices[index].key === key) return index
+            }
+            return 0
+        }
+        ColumnLayout {
+            anchors.fill: parent; anchors.margins: 13; spacing: 6
+            RowLayout { Layout.fillWidth: true
+                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: "#edf7f7"; font.pixelSize: 12; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? "#98d1bd" : "#d4ad69"; font.pixelSize: 9; font.bold: true }
+            }
+            Text { text: nativeCard.info.centered ? "LIVE STATE   CENTERED" : "LIVE STATE   " + nativeCard.info.direction.toUpperCase() + " · " + nativeCard.info.angle + "°"
+                color: nativeCard.info.centered ? "#89969b" : "#c4e4e9"; font.pixelSize: 10; font.family: "Consolas" }
+            FineLine { Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "NATIVE vJOY OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Rectangle { id: nativeToggle; Layout.preferredWidth: 43; Layout.preferredHeight: 21; radius: 11
+                    color: nativeCard.info.nativeEnabled ? "#466e78" : "#273136"; border.color: nativeCard.info.nativeEnabled ? "#8fc3c7" : "#4a5a60"
+                    Rectangle { width: 15; height: 15; radius: 8; anchors.verticalCenter: parent.verticalCenter
+                        x: nativeCard.info.nativeEnabled ? parent.width - width - 3 : 3; color: "#e3eeee" }
+                    MouseArea { anchors.fill: parent; hoverEnabled: true
+                        enabled: nativeCard.info.nativeEnabled || root.nativePovTargetChoices.length > 0
+                        onClicked: backend.setNativePovOutput(nativeCard.info.index, !nativeCard.info.nativeEnabled,
+                            nativeTarget.currentValue) }
+                }
+            }
+            FlightComboBox { id: nativeTarget; Layout.fillWidth: true; Layout.preferredHeight: 29
+                model: root.nativePovTargetChoices; textRole: "label"; valueRole: "key"
+                enabled: root.nativePovTargetChoices.length > 0
+                currentIndex: nativeCard.targetIndex(nativeCard.info.nativeTargetKey)
+                onActivated: backend.setNativePovOutput(nativeCard.info.index, nativeCard.info.nativeEnabled, currentValue) }
+            Text { visible: root.nativePovTargetChoices.length === 0
+                text: "Unavailable · selected vJoy device exposes no POV target."
+                color: "#c69a72"; font.pixelSize: 9; font.family: "Consolas" }
+        }
+    }
+
     component PovCard: Panel {
         id: povCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 142
-        color: info && info.active ? "#ec263e48" : "#ed182128"
-        border.color: info && info.active ? "#93a3cfda" : "#43546770"
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 13
-            spacing: 7
-            RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase()
-                    color: "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                Item { Layout.fillWidth: true }
-                Row { spacing: 5
-                    StatusDot { tone: povCard.info.active ? "#a8d9e6" : "#68747a" }
-                    Text { text: povCard.info.active ? "ACTIVE" : "IDLE"
-                        color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
-                }
+        Layout.preferredHeight: 246
+        color: info && (info.active || info.profileControlActive) ? "#ec263e48" : "#ed182128"
+        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.active ? "#93a3cfda" : "#43546770")
+        function triggerChoiceIndex(targetId) {
+            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
+                if (root.profileTriggerChoices[index].id === targetId) return index
             }
-            Text { text: povCard.info.active ? "PHYSICAL   ACTIVE" : "PHYSICAL   INACTIVE"
-                color: povCard.info.active ? "#c4e4e9" : "#849398"; font.pixelSize: 9
-                font.family: "Consolas"; font.bold: povCard.info.active }
-            FineLine { Layout.fillWidth: true }
+            return 0
+        }
+        ColumnLayout {
+            anchors.fill: parent; anchors.margins: 13; spacing: 7
+            RowLayout { Layout.fillWidth: true
+                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Item { Layout.fillWidth: true }
+                Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
+            }
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
-                ComboBox {
-                    id: povDestination
-                    Layout.preferredWidth: 126; Layout.preferredHeight: 29
-                    model: root.buttonOutputChoices
-                    currentIndex: povCard.info.target
+                FlightComboBox { id: povDestination; Layout.preferredWidth: 142
+                    model: root.buttonOutputChoices; currentIndex: povCard.info.target
                     onActivated: {
                         if (!backend.setPovMapping(povCard.info.hat, povCard.info.direction, currentIndex, false)) {
-                            root.conflictingButton = -1
-                            root.conflictingVirtualButton = currentIndex
-                            root.conflictingPovHat = povCard.info.hat
-                            root.conflictingPovDirection = povCard.info.direction
-                            currentIndex = povCard.info.target
-                            buttonConflictDialog.open()
+                            root.conflictingButton = -1; root.conflictingVirtualButton = currentIndex
+                            root.conflictingPovHat = povCard.info.hat; root.conflictingPovDirection = povCard.info.direction
+                            currentIndex = povCard.info.target; buttonConflictDialog.open()
                         }
                     }
-                    background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
-                    contentItem: Text { leftPadding: 8; text: povDestination.displayText; color: "#dce4e4"
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
                 }
             }
-            Text { text: povCard.info.target > 0
-                    ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
-                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"
-                font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
+            Text { text: povCard.info.target > 0 ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
+                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
+            FineLine { Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                FlightComboBox { id: povProfileTarget; Layout.preferredWidth: 150
+                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
+                    currentIndex: povCard.triggerChoiceIndex(povCard.info.profileControlTargetId)
+                    onActivated: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, currentValue,
+                        povCard.info.profileControlEnabled ? povCard.info.profileControlMode : "Hold") }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { text: povCard.info.profileControlEnabled ? povCard.info.profileControlTargetName.toUpperCase() : "NONE"
+                    color: povCard.info.profileControlTargetAvailable || !povCard.info.profileControlEnabled ? "#b8d8dc" : "#d49b62"
+                    font.pixelSize: 9; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                Rectangle { id: povProfileMode; Layout.preferredWidth: 126; Layout.preferredHeight: 26; radius: 4
+                    color: "#0c1013"; border.color: povCard.info.profileControlEnabled ? "#435660" : "#263137"; opacity: povCard.info.profileControlEnabled ? 1 : 0.55
+                    Row { anchors.fill: parent
+                        Repeater { model: ["Hold", "Toggle"]
+                            delegate: Rectangle { width: povProfileMode.width / 2; height: povProfileMode.height; radius: 3
+                                color: povCard.info.profileControlEnabled && povCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
+                                Text { anchors.centerIn: parent; text: modelData.toUpperCase(); color: povCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"; font.pixelSize: 8; font.bold: true }
+                                MouseArea { anchors.fill: parent; enabled: povCard.info.profileControlEnabled
+                                    onClicked: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, povCard.info.profileControlTargetId, modelData) }
+                            }
+                        }
+                    }
+                }
+            }
+            Text { visible: povCard.info.profileControlEnabled
+                text: povCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · " + povCard.info.profileControlMode.toUpperCase() : "Profile control consumes this direction route."
+                color: povCard.info.profileControlActive ? "#a8d9b4" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.profileControlActive }
         }
     }
 
@@ -957,7 +1123,7 @@ ApplicationWindow {
                             Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
                             Text { text: root.hasPhysicalInput ? backend.axisCount + " DETECTED" : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
                         }
-                        ComboBox {
+                        FlightComboBox {
                             id: axisSelector
                             Layout.fillWidth: true
                             Layout.preferredHeight: 42
@@ -1049,7 +1215,7 @@ ApplicationWindow {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    ComboBox {
+                                    FlightComboBox {
                                         id: selectedAxisDestination
                                         Layout.fillWidth: true; Layout.preferredHeight: 31
                                         model: root.outputChoices
@@ -1105,18 +1271,16 @@ ApplicationWindow {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    SpinBox { id: outputMinimum; from: -100; to: 99; stepSize: 1
+                                    FlightNumericStepper { id: outputMinimum; from: -100; to: 99
                                         value: Math.round(Number(processingPanel.info.outputMinimum) * 100)
-                                        onValueModified: backend.setAxisOutputLimits(processingPanel.info.index, value / 100, Number(processingPanel.info.outputMaximum)) }
-                                    Text { text: "%"; color: "#91a9b0"; font.pixelSize: 10; font.bold: true }
+                                        onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    SpinBox { id: outputMaximum; from: -99; to: 100; stepSize: 1
+                                    FlightNumericStepper { id: outputMaximum; from: -99; to: 100
                                         value: Math.round(Number(processingPanel.info.outputMaximum) * 100)
-                                        onValueModified: backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), value / 100) }
-                                    Text { text: "%"; color: "#91a9b0"; font.pixelSize: 10; font.bold: true }
+                                        onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 Text { text: "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -1191,7 +1355,16 @@ ApplicationWindow {
                     Repeater { model: root.allButtons
  delegate: ButtonCard { info: modelData } }
                 }
-                Text { visible: root.allPovInputs.length > 0; text: "POV / HAT"
+                Text { visible: root.allPovs.length > 0; text: "POV / HAT · NATIVE vJOY OUTPUT"
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                GridLayout { visible: root.allPovs.length > 0; width: parent.width
+                    columns: width >= 1160 ? 3 : (width >= 760 ? 2 : 1)
+                    columnSpacing: 12
+                    rowSpacing: 12
+                    Repeater { model: root.allPovs
+                        delegate: PovNativeCard { info: modelData } }
+                }
+                Text { visible: root.allPovInputs.length > 0; text: "POV DIRECTION ROUTES"
                     color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
                 GridLayout { visible: root.allPovInputs.length > 0; width: parent.width
                     columns: width >= 1160 ? 4 : (width >= 760 ? 2 : 1)
@@ -1455,6 +1628,10 @@ ApplicationWindow {
                                     color: "#a9cad2"; font.pixelSize: 10; font.family: "Consolas" }
                                 Text { text: "RAW       " + (diagnosticPovCard.info.centered ? "—" : diagnosticPovCard.info.raw)
                                     color: "#7c97a1"; font.pixelSize: 10; font.family: "Consolas" }
+                                Text { text: "NATIVE    " + diagnosticPovCard.info.nativeStatus
+                                        + (diagnosticPovCard.info.nativeEnabled ? " · " + diagnosticPovCard.info.nativeTargetLabel : "")
+                                    color: diagnosticPovCard.info.nativeAvailable ? "#9fcfbd" : "#c69a72"
+                                    font.pixelSize: 9; font.family: "Consolas" }
                                 Grid { columns: 3; columnSpacing: 9; rowSpacing: 3
                                     Repeater { model: diagnosticPovCard.directions
                                         delegate: Text { width: 50; horizontalAlignment: Text.AlignHCenter
@@ -1814,7 +1991,7 @@ ApplicationWindow {
                 placeholderText: "Helicopter"; color: "#e7f0f1"
                 selectByMouse: true }
             Text { text: "START FROM"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-            ComboBox { id: startProfile; width: parent.width
+            FlightComboBox { id: startProfile; width: parent.width
                 model: backend.profiles; textRole: "name"; valueRole: "id" }
             Text { text: "Copies the selected mapping configuration. Calibration remains global to the controller."
                 width: parent.width; wrapMode: Text.WordWrap; color: "#879ba1"; font.pixelSize: 10 }

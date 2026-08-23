@@ -81,6 +81,8 @@ struct HotPathState {
     std::array<int, 5> virtualAxisSources{};
     hotas::RuntimeButtonTargets buttonTargets{};
     hotas::RuntimePovTargets povTargets{};
+    std::array<hotas::NativePovBinding, hotas::kMaximumPhysicalPovs> nativePovBindings{};
+    std::array<int, hotas::kMaximumPhysicalPovs> lastNativePovValues{};
     hotas::VirtualButtonStates lastVirtualButtons{};
     RuntimePublication publication;
     // Match the production worker's fixed-size latency telemetry write. The
@@ -91,15 +93,20 @@ struct HotPathState {
     std::uint64_t latencySampleSequence = 0;
     std::uint64_t outputWriteDecisions = 0;
 
-    explicit HotPathState(const hotas::RuntimeMappingConfiguration &mapping)
+    explicit HotPathState(const hotas::RuntimeMappingConfiguration &mapping,
+                          const hotas::RuntimePovProfileTriggers &povProfileTriggers = {},
+                          const std::array<hotas::NativePovBinding,
+                                           hotas::kMaximumPhysicalPovs> &nativePovs = {})
     {
         for (const int index : kMappedAxes) availableAxes[static_cast<size_t>(index)] = true;
         for (int index = 0; index < 15; ++index) availableButtons[static_cast<size_t>(index)] = true;
         physicalMonitor.configure(availableAxes, availableButtons, 1);
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        lastNativePovValues.fill(-2); // -1 is a valid centered POV value.
         virtualAxisSources.fill(-1);
         buttonTargets = hotas::buildRuntimeButtonTargets(mapping.buttons, 32);
-        povTargets = hotas::buildRuntimePovTargets(mapping.povs, 32);
+        povTargets = hotas::buildRuntimePovTargets(mapping.povs, 32, povProfileTriggers);
+        nativePovBindings = nativePovs;
     }
 };
 
@@ -224,6 +231,18 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
                                                                                   std::memory_order_relaxed);
         ++state.outputWriteDecisions;
     }
+    // This models the worker's native POV change detection. The actual vJoy
+    // DLL call remains excluded from this synthetic benchmark, just like the
+    // existing axis/button driver calls above.
+    const int nativePovHats = std::min(state.physicalMonitor.povCount(), hotas::kMaximumPhysicalPovs);
+    for (int hat = 0; hat < nativePovHats; ++hat) {
+        const hotas::NativePovBinding &binding = state.nativePovBindings[static_cast<size_t>(hat)];
+        if (!binding.enabled || binding.targetType == hotas::NativePovTargetType::Disabled) continue;
+        const int desired = snapshot.povs[static_cast<size_t>(hat)];
+        if (desired == state.lastNativePovValues[static_cast<size_t>(hat)]) continue;
+        state.lastNativePovValues[static_cast<size_t>(hat)] = desired;
+        ++state.outputWriteDecisions;
+    }
     const size_t latencySlot = static_cast<size_t>(state.latencySampleSequence
         % hotas::kLatencyTelemetrySamples);
     state.latencySamples[latencySlot].store(state.latencySampleSequence,
@@ -259,6 +278,8 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
     profile.povs.resize(1);
     profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Right))] =
         {hotas::ButtonActionType::VirtualButton, 16, true};
+    configuration.nativePovBindings.resize(1);
+    configuration.nativePovBindings[0] = {true, hotas::NativePovTargetType::Continuous, 1};
     for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
         const bool unipolar = hotas::isUnipolarAxis(static_cast<hotas::PhysicalAxis>(index));
         if (name == "J-Curve") {
@@ -306,8 +327,10 @@ Percentiles measureCompile(const hotas::MapperConfiguration &configuration)
 BenchmarkResult benchmark(std::string_view name, const std::vector<SyntheticReport> &reports)
 {
     const hotas::MapperConfiguration configuration = configurationFor(name);
-    const hotas::RuntimeMappingConfiguration mapping = hotas::compileActiveProfile(configuration);
-    HotPathState state(mapping);
+    const hotas::RuntimeProfileCache profileCache = hotas::compileRuntimeProfileCache(configuration);
+    const hotas::RuntimeMappingConfiguration &mapping = profileCache.profiles[
+        static_cast<size_t>(profileCache.baseProfileIndex)];
+    HotPathState state(mapping, profileCache.povProfileTriggers, profileCache.nativePovBindings);
     volatile float sink = 0.0F;
     for (int index = 0; index < kWarmupReports; ++index) {
         processReport(reports[static_cast<size_t>(index) % reports.size()], mapping, state, sink);
@@ -329,7 +352,7 @@ BenchmarkResult benchmark(std::string_view name, const std::vector<SyntheticRepo
     gTrackHotPathAllocations = false;
 
     SyntheticReport stationary;
-    HotPathState stationaryState(mapping);
+    HotPathState stationaryState(mapping, profileCache.povProfileTriggers, profileCache.nativePovBindings);
     processReport(stationary, mapping, stationaryState, sink);
     const std::uint64_t initialWrites = stationaryState.outputWriteDecisions;
     for (int index = 0; index < 10'000; ++index) processReport(stationary, mapping, stationaryState, sink);
@@ -378,23 +401,28 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
 {
     hotas::ProfileTriggerRuntime controls;
     hotas::PhysicalButtonStates buttons{};
-    controls.initializeForMapping(cache, buttons);
+    hotas::PhysicalPovValues povs{};
+    povs.fill(-1);
+    controls.initializeForMapping(cache, buttons, povs, 1);
     int currentProfile = cache.baseProfileIndex;
-    HotPathState state(cache.profiles[static_cast<size_t>(currentProfile)]);
+    HotPathState state(cache.profiles[static_cast<size_t>(currentProfile)],
+                        cache.povProfileTriggers, cache.nativePovBindings);
     volatile float sink = 0.0F;
     const auto processControlReport = [&](const hotas::PhysicalButtonStates &physicalButtons) {
-        const hotas::EffectiveProfileSelection selection = controls.processReport(cache, physicalButtons);
+        const hotas::EffectiveProfileSelection selection = controls.processReport(cache, physicalButtons, povs, 1);
         if (selection.profileIndex != currentProfile) {
             currentProfile = selection.profileIndex;
             state.buttonTargets = hotas::buildRuntimeButtonTargets(
                 cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
             state.povTargets = hotas::buildRuntimePovTargets(
-                cache.profiles[static_cast<size_t>(currentProfile)].povs, 32);
+                cache.profiles[static_cast<size_t>(currentProfile)].povs, 32, cache.povProfileTriggers);
             state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+            state.lastNativePovValues.fill(-2);
             state.hysteresis.fill({});
         }
         SyntheticReport report = baseReport;
         report.buttons = physicalButtons;
+        report.pov = povs[0];
         processReport(report, cache.profiles[static_cast<size_t>(currentProfile)], state, sink);
     };
 
@@ -404,18 +432,20 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
     gHotPathAllocations = 0;
     gTrackHotPathAllocations = true;
     for (int iteration = 0; iteration < kMeasuredProfileSwitches; ++iteration) {
-        controls.initializeForMapping(cache, {});
         buttons.fill(false);
+        povs.fill(-1);
+        controls.initializeForMapping(cache, buttons, povs, 1);
         currentProfile = cache.baseProfileIndex;
         state.buttonTargets = hotas::buildRuntimeButtonTargets(
             cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
         state.povTargets = hotas::buildRuntimePovTargets(
-            cache.profiles[static_cast<size_t>(currentProfile)].povs, 32);
+            cache.profiles[static_cast<size_t>(currentProfile)].povs, 32, cache.povProfileTriggers);
         state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        state.lastNativePovValues.fill(-2);
         state.hysteresis.fill({});
-        setup(processControlReport, buttons);
+        setup(processControlReport, buttons, povs);
         const auto started = Clock::now();
-        action(processControlReport, buttons);
+        action(processControlReport, buttons, povs);
         const auto finished = Clock::now();
         samples.push_back(static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count()));
@@ -453,6 +483,9 @@ void runProfileControlBenchmarks()
     configuration.profileTriggers[4] = {hotas::precisionProfileId(), hotas::ProfileTriggerMode::Hold};
     configuration.profileTriggers[5] = {helicopterId, hotas::ProfileTriggerMode::Hold};
     configuration.profileTriggers[6] = {helicopterId, hotas::ProfileTriggerMode::Toggle};
+    configuration.povProfileTriggers.resize(1);
+    configuration.povProfileTriggers[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Up))]
+        = {hotas::precisionProfileId(), hotas::ProfileTriggerMode::Hold};
     const hotas::RuntimeProfileCache cache = hotas::compileRuntimeProfileCache(configuration);
     SyntheticReport report;
     report.axes[0] = 0.42F;
@@ -460,20 +493,22 @@ void runProfileControlBenchmarks()
     report.axes[2] = 0.18F;
     report.axes[5] = 0.27F;
 
-    const auto noSetup = [](auto &, auto &) {};
+    const auto noSetup = [](auto &, auto &, auto &) {};
     printProfileControlResult(benchmarkProfileControl("hold-activation", cache, report, noSetup,
-        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); }));
+        [](auto &process, auto &buttons, auto &) { buttons[4] = true; process(buttons); }));
     printProfileControlResult(benchmarkProfileControl("hold-release", cache, report,
-        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); },
-        [](auto &process, auto &buttons) { buttons[4] = false; process(buttons); }));
+        [](auto &process, auto &buttons, auto &) { buttons[4] = true; process(buttons); },
+        [](auto &process, auto &buttons, auto &) { buttons[4] = false; process(buttons); }));
     printProfileControlResult(benchmarkProfileControl("toggle-activation", cache, report, noSetup,
-        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); }));
+        [](auto &process, auto &buttons, auto &) { buttons[6] = true; process(buttons); }));
     printProfileControlResult(benchmarkProfileControl("toggle-release", cache, report,
-        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); buttons[6] = false; process(buttons); },
-        [](auto &process, auto &buttons) { buttons[6] = true; process(buttons); }));
+        [](auto &process, auto &buttons, auto &) { buttons[6] = true; process(buttons); buttons[6] = false; process(buttons); },
+        [](auto &process, auto &buttons, auto &) { buttons[6] = true; process(buttons); }));
     printProfileControlResult(benchmarkProfileControl("multiple-hold-precedence", cache, report,
-        [](auto &process, auto &buttons) { buttons[4] = true; process(buttons); },
-        [](auto &process, auto &buttons) { buttons[5] = true; process(buttons); }));
+        [](auto &process, auto &buttons, auto &) { buttons[4] = true; process(buttons); },
+        [](auto &process, auto &buttons, auto &) { buttons[5] = true; process(buttons); }));
+    printProfileControlResult(benchmarkProfileControl("pov-hold-activation", cache, report, noSetup,
+        [](auto &process, auto &buttons, auto &povValues) { povValues[0] = 0; process(buttons); }));
 }
 
 void runUiModelStress(std::atomic_bool &stop)

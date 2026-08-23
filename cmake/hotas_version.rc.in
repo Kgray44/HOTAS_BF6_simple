@@ -18,7 +18,7 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Kgray44"
-            VALUE "FileDescription", "HOTAS BF6"
+            VALUE "FileDescription", "HOTAS BF6 Flight Control Interface"
             VALUE "FileVersion", "@HOTAS_BF6_VERSION@"
             VALUE "InternalName", "HOTAS BF6"
             VALUE "OriginalFilename", "HOTAS BF6.exe"

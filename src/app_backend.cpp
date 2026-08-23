@@ -381,6 +381,26 @@ QVariantList AppBackend::povs() const
         item.insert(u"centered"_qs, direction == PovDirection::Centered);
         item.insert(u"direction"_qs, povDirectionLabel(direction));
         item.insert(u"angle"_qs, direction == PovDirection::Centered ? -1 : raw / 100);
+        const NativePovBinding binding = hat < static_cast<int>(m_configuration.nativePovBindings.size())
+            ? m_configuration.nativePovBindings[static_cast<size_t>(hat)] : NativePovBinding{};
+        const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
+            ? binding.targetIndex <= vjoyContinuousPovCount()
+            : binding.targetType == NativePovTargetType::Discrete
+                && binding.targetIndex <= vjoyDiscretePovCount();
+        const QString targetKind = binding.targetType == NativePovTargetType::Continuous
+            ? u"Continuous"_qs : binding.targetType == NativePovTargetType::Discrete
+                ? u"Discrete"_qs : QString{};
+        item.insert(u"nativeEnabled"_qs, binding.enabled);
+        item.insert(u"nativeTargetKey"_qs, binding.targetType == NativePovTargetType::Continuous
+            ? QString(u"continuous:%1"_qs).arg(binding.targetIndex)
+            : binding.targetType == NativePovTargetType::Discrete
+                ? QString(u"discrete:%1"_qs).arg(binding.targetIndex) : QString{});
+        item.insert(u"nativeTargetLabel"_qs, binding.enabled
+            ? QString(u"vJoy %1 POV %2"_qs).arg(targetKind).arg(binding.targetIndex)
+            : u"Off"_qs);
+        item.insert(u"nativeAvailable"_qs, targetAvailable);
+        item.insert(u"nativeStatus"_qs, !binding.enabled ? u"OFF"_qs
+            : targetAvailable ? u"READY"_qs : u"UNAVAILABLE"_qs);
         result.append(item);
     }
     return result;
@@ -402,6 +422,14 @@ QVariantList AppBackend::povInputs() const
             const int target = binding.type == ButtonActionType::VirtualButton
                 && isButtonBindingValid(binding, capacity) ? binding.target : 0;
             const PovDirection logicalDirection = static_cast<PovDirection>(direction + 1);
+            const ProfileTriggerBinding trigger = hat < static_cast<int>(m_configuration.povProfileTriggers.size())
+                ? m_configuration.povProfileTriggers[static_cast<size_t>(hat)][static_cast<size_t>(direction)]
+                : ProfileTriggerBinding{};
+            const bool profileControlEnabled = profileTriggerBindingEnabled(trigger);
+            const ControllerProfile *triggerTarget = profileControlEnabled
+                ? findProfile(m_configuration, trigger.targetProfileId) : nullptr;
+            const ProfileTriggerMode activeMode = static_cast<ProfileTriggerMode>(
+                runtime.profileOverrideMode.load());
             QVariantMap item;
             item.insert(u"hat"_qs, hat + 1);
             item.insert(u"direction"_qs, direction);
@@ -412,6 +440,15 @@ QVariantList AppBackend::povInputs() const
                 ? QString(u"vJoy Button %1"_qs).arg(target) : u"Disabled"_qs);
             item.insert(u"virtualPressed"_qs, target > 0
                 && runtime.virtualButtonPressed[static_cast<size_t>(target - 1)].load());
+            item.insert(u"profileControlEnabled"_qs, profileControlEnabled);
+            item.insert(u"profileControlTargetId"_qs, trigger.targetProfileId);
+            item.insert(u"profileControlTargetName"_qs, triggerTarget
+                ? triggerTarget->name : (profileControlEnabled ? u"Target profile unavailable"_qs : QString{}));
+            item.insert(u"profileControlTargetAvailable"_qs, triggerTarget != nullptr);
+            item.insert(u"profileControlMode"_qs, profileTriggerModeLabel(trigger.mode));
+            item.insert(u"profileControlActive"_qs, runtime.profileOverridePovHat.load() == hat + 1
+                && runtime.profileOverridePovDirection.load() == direction
+                && activeMode == trigger.mode && profileControlEnabled);
             result.append(item);
         }
     }
@@ -468,10 +505,20 @@ QString AppBackend::effectiveProfileId() const
 QString AppBackend::profileSourceLabel() const
 {
     const int button = m_worker.runtime().profileOverrideButton.load();
+    const int povHat = m_worker.runtime().profileOverridePovHat.load();
+    const int povDirection = m_worker.runtime().profileOverridePovDirection.load();
     const ProfileTriggerMode mode = static_cast<ProfileTriggerMode>(
         m_worker.runtime().profileOverrideMode.load());
-    if (button <= 0 || mode == ProfileTriggerMode::Disabled) return u"Manual base profile"_qs;
-    return QString(u"Button %1 · %2"_qs).arg(button).arg(profileTriggerModeLabel(mode));
+    if (mode == ProfileTriggerMode::Disabled) return u"Manual base profile"_qs;
+    if (button > 0) {
+        return QString(u"Button %1 · %2"_qs).arg(button).arg(profileTriggerModeLabel(mode));
+    }
+    if (povHat > 0 && povDirection >= 0 && povDirection < kPovDirectionCount) {
+        return QString(u"POV %1 %2 · %3"_qs).arg(povHat)
+            .arg(povDirectionLabel(static_cast<PovDirection>(povDirection + 1)))
+            .arg(profileTriggerModeLabel(mode));
+    }
+    return u"Manual base profile"_qs;
 }
 int AppBackend::activeProfileIndex() const
 {
@@ -491,6 +538,14 @@ int AppBackend::buttonCount() const { return m_worker.runtime().buttonCount.load
 int AppBackend::povCount() const { return m_worker.runtime().povCount.load(); }
 int AppBackend::povValue() const { return m_worker.runtime().povValues[0].load(); }
 int AppBackend::vjoyButtonCount() const { return m_worker.runtime().vjoyButtonCount.load(); }
+int AppBackend::vjoyContinuousPovCount() const
+{
+    return m_worker.runtime().vjoyContinuousPovCount.load();
+}
+int AppBackend::vjoyDiscretePovCount() const
+{
+    return m_worker.runtime().vjoyDiscretePovCount.load();
+}
 int AppBackend::vjoyRequiredButtonCount() const
 {
     return requiredVirtualButtonCount(currentProfile().buttons, currentProfile().povs, buttonCount());
@@ -548,6 +603,20 @@ QVariantList AppBackend::profileTriggerChoices() const
     choices.append(QVariantMap{{u"id"_qs, QString{}}, {u"label"_qs, u"None"_qs}});
     for (const ControllerProfile &profile : m_configuration.profiles) {
         choices.append(QVariantMap{{u"id"_qs, profile.id}, {u"label"_qs, profile.name}});
+    }
+    return choices;
+}
+
+QVariantList AppBackend::nativePovTargetChoices() const
+{
+    QVariantList choices;
+    for (int index = 1; index <= vjoyContinuousPovCount(); ++index) {
+        choices.append(QVariantMap{{u"key"_qs, QString(u"continuous:%1"_qs).arg(index)},
+            {u"label"_qs, QString(u"vJoy POV %1 · Continuous"_qs).arg(index)}});
+    }
+    for (int index = 1; index <= vjoyDiscretePovCount(); ++index) {
+        choices.append(QVariantMap{{u"key"_qs, QString(u"discrete:%1"_qs).arg(index)},
+            {u"label"_qs, QString(u"vJoy POV %1 · Discrete"_qs).arg(index)}});
     }
     return choices;
 }
@@ -1172,6 +1241,77 @@ bool AppBackend::setProfileTrigger(int physicalButton, const QString &targetProf
     persistAndApply();
     appendEvent(QString(u"Button %1 → profile %2 · %3 (game route consumed)"_qs)
         .arg(physicalButton).arg(profile->name).arg(profileTriggerModeLabel(mode)));
+    return true;
+}
+
+bool AppBackend::setPovProfileTrigger(int povHat, int direction,
+                                      const QString &targetProfileId, const QString &behavior)
+{
+    const int hat = povHat - 1;
+    if (hat < 0 || hat >= kMaximumPhysicalPovs || direction < 0 || direction >= kPovDirectionCount) {
+        return false;
+    }
+    if (m_configuration.povProfileTriggers.size() <= static_cast<size_t>(hat)) {
+        m_configuration.povProfileTriggers.resize(static_cast<size_t>(hat + 1));
+    }
+    ProfileTriggerBinding &trigger = m_configuration.povProfileTriggers[static_cast<size_t>(hat)]
+        [static_cast<size_t>(direction)];
+    const QString target = targetProfileId.trimmed();
+    const QString inputLabel = QString(u"POV %1 %2"_qs).arg(povHat)
+        .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)));
+    if (target.isEmpty()) {
+        trigger = {};
+        persistAndApply();
+        appendEvent(inputLabel + u" profile control cleared; game route restored"_qs);
+        return true;
+    }
+    const ControllerProfile *profile = findProfile(m_configuration, target);
+    if (!profile) return false;
+    const ProfileTriggerMode mode = profileTriggerModeFromString(behavior);
+    if (mode == ProfileTriggerMode::Disabled) return false;
+    trigger = {target, mode};
+    persistAndApply();
+    appendEvent(QString(u"%1 → profile %2 · %3 (direction route consumed)"_qs)
+        .arg(inputLabel).arg(profile->name).arg(profileTriggerModeLabel(mode)));
+    return true;
+}
+
+bool AppBackend::setNativePovOutput(int povHat, bool enabled, const QString &targetKey)
+{
+    const int hat = povHat - 1;
+    if (hat < 0 || hat >= kMaximumPhysicalPovs) return false;
+    if (m_configuration.nativePovBindings.size() <= static_cast<size_t>(hat)) {
+        m_configuration.nativePovBindings.resize(static_cast<size_t>(hat + 1));
+    }
+    NativePovBinding binding;
+    if (enabled) {
+        const QStringList parts = targetKey.split(u':'_qs);
+        if (parts.size() != 2) return false;
+        if (parts[0] == u"continuous"_qs) binding.targetType = NativePovTargetType::Continuous;
+        else if (parts[0] == u"discrete"_qs) binding.targetType = NativePovTargetType::Discrete;
+        else return false;
+        bool ok = false;
+        binding.targetIndex = parts[1].toInt(&ok);
+        if (!ok || binding.targetIndex < 1) return false;
+        const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
+            ? binding.targetIndex <= vjoyContinuousPovCount()
+            : binding.targetIndex <= vjoyDiscretePovCount();
+        if (!targetAvailable) return false;
+        for (int otherHat = 0; otherHat < static_cast<int>(m_configuration.nativePovBindings.size()); ++otherHat) {
+            if (otherHat == hat) continue;
+            const NativePovBinding &existing = m_configuration.nativePovBindings[static_cast<size_t>(otherHat)];
+            if (existing.enabled && existing.targetType == binding.targetType
+                && existing.targetIndex == binding.targetIndex) {
+                appendEvent(u"Each native vJoy POV target can have only one physical POV owner"_qs);
+                return false;
+            }
+        }
+        binding.enabled = true;
+    }
+    m_configuration.nativePovBindings[static_cast<size_t>(hat)] = binding;
+    persistAndApply();
+    appendEvent(enabled ? QString(u"POV %1 native vJoy output enabled"_qs).arg(povHat)
+                        : QString(u"POV %1 native vJoy output disabled"_qs).arg(povHat));
     return true;
 }
 

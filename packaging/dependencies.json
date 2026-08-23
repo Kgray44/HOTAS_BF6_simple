@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "components": [
+    {
+      "name": "vJoy",
+      "version": "2.1.9.1",
+      "architecture": "x64",
+      "installerType": "exe",
+      "filename": "vJoySetup.exe",
+      "officialSourceUrl": "https://github.com/jshafer817/vJoy/releases/download/v2.1.9.1/vJoySetup.exe",
+      "sha256": "f103ced4e7ff7ccb49c8415a542c56768ed4da4fea252b8f4ffdac343074654a",
+      "authenticodeSubjectContains": "On-site Dental Systems (Justin Shafer)",
+      "silentArguments": null,
+      "rebootBehavior": "May request a restart; HOTAS BF6 never restarts Windows automatically.",
+      "detection": {
+        "uninstallDisplayNameContains": "vJoy",
+        "service": "vjoy"
+      }
+    },
+    {
+      "name": "HidHide",
+      "version": "1.5.230",
+      "architecture": "x64",
+      "installerType": "exe",
+      "filename": "HidHide_1.5.230_x64.exe",
+      "officialSourceUrl": "https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe",
+      "sha256": "f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6",
+      "authenticodeSubjectContains": "Nefarius Software Solutions e.U.",
+      "silentArguments": null,
+      "rebootBehavior": "May require a restart before device hiding becomes available; HOTAS BF6 never restarts Windows automatically.",
+      "detection": {
+        "dependencyRegistryKey": "HKCR\\Installer\\Dependencies\\NSS.Drivers.HidHide.x64\\Version",
+        "uninstallDisplayNameContains": "HidHide",
+        "service": "HidHide"
+      }
+    }
+  ]
+}

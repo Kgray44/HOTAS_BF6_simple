@@ -20,11 +20,16 @@ The installer upgrades program files only. Existing QSettings data—including p
 - a C++20 Visual Studio build environment
 - Qt 6.5+ with the `Core`, `Gui`, `Qml`, `Quick`, `QuickControls2`, and `Test`
   components
-- [vJoy](https://sourceforge.net/projects/vjoystick/) 2.2.2.0 installed and
-  configured with Device 1 exposing X, Y, Z, Rz, and 32 virtual buttons
+- vJoy configured with Device 1 exposing X, Y, Z, Rz, 32 virtual buttons, and
+  a continuous or discrete POV if native hat passthrough is wanted
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
-vJoy is required for virtual output. HidHide is never bundled, installed, updated, enabled, or modified by HOTAS BF6; it remains an independent system component.
+vJoy is required for virtual output. The v1.6.2 installer can offer the pinned
+official vJoy and HidHide installers only when they are missing; it never
+updates, downgrades, enables, or otherwise reconfigures an already-present
+component. Each selected payload is SHA-256 and Authenticode verified before
+its normal vendor installer is opened. UAC, device configuration, and any
+restart remain user-controlled. See [dependency bootstrap details](docs/dependencies.md).
 
 The app dynamically loads the installed x64 `vJoyInterface.dll`; no vJoy SDK
 headers or binaries are copied into this repository. A T.Flight HOTAS One is
@@ -39,6 +44,29 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.6.2 POV, profile-control, and UI features
+
+- Global **native vJoy POV passthrough** sends a selected DirectInput hat to a
+  unique continuous or discrete POV target reported by the active vJoy device.
+  Continuous targets preserve the raw DirectInput angle; discrete targets use a
+  documented cardinal fallback for diagonals. No native target is enabled by a
+  migrated configuration.
+- Each of the eight logical POV directions can instead be a global **Hold** or
+  **Toggle** profile control. They share the existing deterministic rule:
+  newest active Hold, then newest active Toggle, then the manual base profile.
+  A profile-control direction is consumed from its vJoy-button route without
+  deleting the saved route.
+- The Buttons workspace now keeps native-hat output separate from direction
+  routing, reports continuous/discrete capacity and availability, and exposes
+  profile source feedback for button or POV controls.
+- Closed selectors and their popups use the same dark Flight UI treatment;
+  axis output limits use compact bounded minus/value/plus steppers instead of
+  editable minimum/maximum boxes.
+- The supplied HOTAS BF6 icon package is embedded in the mapper, launcher,
+  installer, and generated shortcuts. CI verifies its source files, Windows
+  resources, dependency metadata, build, headless tests, benchmark, and
+  installer smoke layout before publication.
 
 ## v1.5 mapping features
 

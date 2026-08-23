@@ -40,6 +40,18 @@ void setProfileTrigger(MapperConfiguration &configuration, int physicalButton,
     configuration.profileTriggers[static_cast<size_t>(source)] = {targetProfileId, mode};
 }
 
+void setPovProfileTrigger(MapperConfiguration &configuration, int povHat, PovDirection direction,
+                          const QString &targetProfileId, ProfileTriggerMode mode)
+{
+    const int hat = povHat - 1;
+    const int index = povDirectionIndex(direction);
+    if (configuration.povProfileTriggers.size() <= static_cast<size_t>(hat)) {
+        configuration.povProfileTriggers.resize(static_cast<size_t>(hat + 1));
+    }
+    configuration.povProfileTriggers[static_cast<size_t>(hat)][static_cast<size_t>(index)] =
+        {targetProfileId, mode};
+}
+
 QJsonObject legacyConfigurationJson(const MapperConfiguration &configuration, int version)
 {
     const ControllerProfile &profile = activeProfile(configuration);
@@ -139,6 +151,8 @@ private slots:
     void holdOverridesToggleAndManualBaseChangeClearsToggle();
     void profileTriggerConfigChangesReconcileHeldState();
     void missingAndRenamedProfileTriggerTargetsAreSafe();
+    void povProfileControlsShareGlobalPrecedenceAndConsumeDirectionRoute();
+    void povProfileAndNativePovConfigurationRoundTripWithSafeMigration();
 };
 
 void MappingCoreTests::calibrationNormalizesBothSides()
@@ -1173,10 +1187,93 @@ void MappingCoreTests::missingAndRenamedProfileTriggerTargetsAreSafe()
     QVERIFY(activateProfile(configuration, normalProfileId()));
     QVERIFY(deleteProfile(configuration, precisionProfileId()));
     cache = compileRuntimeProfileCache(configuration);
-    QVERIFY(cache.profileTriggers[4].consumesButton);
+    QVERIFY(cache.profileTriggers[4].consumesInput);
     QCOMPARE(cache.profileTriggers[4].targetProfileIndex, -1);
     runtime.reconcileConfiguration(cache, buttons, false);
     QCOMPARE(runtime.effectiveProfile(cache).profileIndex, cache.baseProfileIndex);
+}
+
+void MappingCoreTests::povProfileControlsShareGlobalPrecedenceAndConsumeDirectionRoute()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString helicopterId;
+    QVERIFY(createProfile(configuration, QStringLiteral("Helicopter"), {}, &helicopterId));
+    ControllerProfile &normal = activeProfile(configuration);
+    normal.povs.resize(1);
+    normal.povs[0][static_cast<size_t>(povDirectionIndex(PovDirection::Up))] =
+        {ButtonActionType::VirtualButton, 16, true};
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(precision);
+    precision->povs = normal.povs;
+
+    setProfileTrigger(configuration, 5, helicopterId, ProfileTriggerMode::Toggle);
+    setPovProfileTrigger(configuration, 1, PovDirection::Up, precisionProfileId(),
+                         ProfileTriggerMode::Hold);
+    setPovProfileTrigger(configuration, 1, PovDirection::UpRight, helicopterId,
+                         ProfileTriggerMode::Toggle);
+    configuration.nativePovBindings.resize(1);
+    configuration.nativePovBindings[0] = {true, NativePovTargetType::Continuous, 1};
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.povProfileTriggers[0][0].consumesInput);
+    QCOMPARE(cache.nativePovBindings[0].targetIndex, 1);
+    const RuntimePovTargets targets = buildRuntimePovTargets(normal.povs, 32,
+                                                              cache.povProfileTriggers);
+    QCOMPARE(targets[0][0], 0); // Saved Up -> vJoy 16 route is consumed, not deleted.
+
+    ProfileTriggerRuntime runtime;
+    PhysicalButtonStates buttons{};
+    PhysicalPovValues povs{};
+    povs.fill(-1);
+    runtime.initializeForMapping(cache, buttons, povs, 1);
+
+    buttons[4] = true;
+    QCOMPARE(runtime.processReport(cache, buttons, povs, 1).profileIndex,
+             profileIndexFor(configuration, helicopterId));
+    buttons[4] = false;
+    runtime.processReport(cache, buttons, povs, 1);
+
+    povs[0] = 0; // Up Hold takes precedence over the active Button Toggle.
+    const EffectiveProfileSelection up = runtime.processReport(cache, buttons, povs, 1);
+    QCOMPARE(up.profileIndex, profileIndexFor(configuration, precisionProfileId()));
+    QCOMPARE(up.sourcePovHat, 1);
+    QCOMPARE(up.sourcePovDirection, 0);
+
+    povs[0] = 4500; // Up releases and Up-Right gets one distinct entry edge.
+    QCOMPARE(runtime.processReport(cache, buttons, povs, 1).profileIndex,
+             profileIndexFor(configuration, helicopterId));
+    povs[0] = -1;
+    runtime.processReport(cache, buttons, povs, 1);
+    povs[0] = 4500;
+    QCOMPARE(runtime.processReport(cache, buttons, povs, 1).profileIndex,
+             profileIndexFor(configuration, helicopterId));
+}
+
+void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigration()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    setPovProfileTrigger(configuration, 1, PovDirection::Right, precisionProfileId(),
+                         ProfileTriggerMode::Toggle);
+    configuration.nativePovBindings.resize(1);
+    configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
+
+    QJsonObject json = ConfigStore::toJson(configuration);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 10);
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.povProfileTriggers[0][2].targetProfileId, precisionProfileId());
+    QCOMPARE(restored.povProfileTriggers[0][2].mode, ProfileTriggerMode::Toggle);
+    QCOMPARE(restored.nativePovBindings[0].targetType, NativePovTargetType::Discrete);
+    QCOMPARE(restored.nativePovBindings[0].targetIndex, 2);
+
+    json.insert(QStringLiteral("version"), 9);
+    json.remove(QStringLiteral("povProfileTriggers"));
+    json.remove(QStringLiteral("nativePovBindings"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.povProfileTriggers.empty());
+    QVERIFY(migrated.nativePovBindings.empty());
 }
 
 #define HOTAS_MAPPING_BENCHMARK_EMBEDDED
