@@ -34,7 +34,11 @@ AppBackend::AppBackend(QObject *parent)
     m_physicalUpdateClock.start();
     rebuildSelectedAxisCurve();
     appendEvent(u"HOTAS Mapper ready"_qs);
-    m_worker.start();
+    // The mapping thread consumes physical reports while the GUI may be
+    // rebuilding editor data. HighPriority is intentionally below
+    // TimeCriticalPriority: it favors real input responsiveness without
+    // starving normal system or rendering work on a constrained CPU.
+    m_worker.start(QThread::HighPriority);
     if (m_configuration.startMappingOnLaunch) {
         m_worker.setMappingEnabled(true);
     }

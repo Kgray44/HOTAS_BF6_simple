@@ -106,6 +106,19 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
 endif()
 endif()
 
+option(HOTAS_BUILD_CURVE_RESEARCH_REPORT
+    "Build the deterministic advanced-curve research metrics generator" OFF)
+if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
+    qt_add_executable(curve_research_report
+        tests/curve_research_report.cpp
+        src/mapping_types.h
+        src/response_curve.h
+        src/response_curve.cpp
+    )
+    target_link_libraries(curve_research_report PRIVATE Qt6::Core)
+    target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+
 install(TARGETS HOTASMapper
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin

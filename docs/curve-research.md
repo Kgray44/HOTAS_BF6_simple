@@ -100,6 +100,25 @@ All rows below use symmetric monotonic point definitions on a centered domain. F
 
 The first ten are preserved from the original v1.4 record. The final five are a distinct Shooter / Flight Derived subcategory with different purposes, not five strength variants. Names deliberately signal inspiration rather than an unverifiable exact clone.
 
+### Generated quantitative record
+
+The complete per-preset numerical table is generated, not maintained by hand.
+It includes every normalized control point and the authoritative center output,
+center/25%/50%/75% local gains, and peak gain for all 15 presets at 100%
+Response Strength. Configure and run it from a release build with:
+
+```powershell
+cmake -S . -B build-v14-release -DHOTAS_BUILD_CURVE_RESEARCH_REPORT=ON
+cmake --build build-v14-release --config Release --target curve_research_report
+.\build-v14-release\curve_research_report.exe > docs\advanced-preset-metrics.generated.md
+```
+
+`tests/curve_research_report.cpp` calls `advancedCurveDefinition`,
+`evaluateCurveDefinition`, and `analyzeCurveDefinition`, so the generated
+record cannot drift from the app's production evaluator. The point list is the
+centered normalized source definition; unipolar axes use the documented
+normalize-to-centered-and-back adaptation before the same full-response blend.
+
 ## Editing and health guarantees
 
 Custom and Personal definitions accept ordered inputs, monotonic outputs, bounded domains, protected endpoints, optional centered symmetry, locks, and 0.1–5% grid snapping. Smooth interpolation is a shape-preserving PCHIP-style curve clamped to each adjacent output range; Linear interpolation remains available. The health evaluator reports monotonicity, continuity, full authority, no overshoot, local gains, and the centered-J neutral offset.
