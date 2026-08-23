@@ -1285,7 +1285,7 @@ bool AppBackend::setNativePovOutput(int povHat, bool enabled, const QString &tar
     }
     NativePovBinding binding;
     if (enabled) {
-        const QStringList parts = targetKey.split(u':'_qs);
+        const QStringList parts = targetKey.split(u":"_qs);
         if (parts.size() != 2) return false;
         if (parts[0] == u"continuous"_qs) binding.targetType = NativePovTargetType::Continuous;
         else if (parts[0] == u"discrete"_qs) binding.targetType = NativePovTargetType::Discrete;
