@@ -136,7 +136,7 @@ jobs:
             [DllImport("kernel32.dll", SetLastError = true)]
             public static extern bool FreeLibrary(IntPtr module);
           }
-'@
+          '@
           foreach ($binary in @('build\HOTAS BF6.exe', 'build\HOTAS BF6 Launcher.exe')) {
             if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Built binary missing: $binary" }
             $module = [HotasResourceProbe]::LoadLibraryEx((Resolve-Path -LiteralPath $binary), [IntPtr]::Zero, 0x00000002)
