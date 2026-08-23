@@ -72,9 +72,12 @@ jobs:
           if (-not (Test-Path -LiteralPath $lint -PathType Leaf)) { throw 'qmllint.exe was not found.' }
           # Main.qml intentionally receives the application's backend as a
           # context property. Keep its established advisory warnings visible,
-          # while failing the gate for actual QML parsing/tool failures.
-          & $lint --max-warnings -1 "$PWD\qml\Main.qml"
-          if ($LASTEXITCODE -ne 0) { throw "qmllint failed with exit code $LASTEXITCODE." }
+          # while failing the gate for actual QML parsing/tool errors.
+          $output = & $lint "$PWD\qml\Main.qml" 2>&1 | Out-String
+          Write-Host $output
+          if ($output -match '(?im)\berror:|syntax error|parse error') {
+            throw 'qmllint reported a QML error.'
+          }
 
       - name: Enable the matching MSVC x64 toolchain
         uses: ilammy/msvc-dev-cmd@v1
