@@ -1,6 +1,7 @@
 #include "axis_transform.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "event_log.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
 #include "profile_trigger_runtime.h"
@@ -115,6 +116,10 @@ private slots:
     void duplicateButtonDestinationIsRejected();
     void buttonConfigurationRoundTripsAndMigratesV1();
     void malformedButtonConfigurationPreservesAxisConfiguration();
+    void povRawValuesCompileToLogicalDirections();
+    void povMappingsPressTransitionAndRelease();
+    void povMappingsRejectDuplicatesAndRoundTrip();
+    void eventLogIsBoundedAndOrdered();
     void physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnavailable();
     void physicalMonitorRetainsFullOfflineButtonCount();
     void physicalMonitorPropagatesPressReleaseAndDisconnect();
@@ -650,6 +655,99 @@ void MappingCoreTests::malformedButtonConfigurationPreservesAxisConfiguration()
     QVERIFY(activeProfile(restored).axes[static_cast<int>(PhysicalAxis::Y)].inverted);
 }
 
+void MappingCoreTests::povRawValuesCompileToLogicalDirections()
+{
+    const std::array<std::pair<int, PovDirection>, 10> cases{{
+        {-1, PovDirection::Centered}, {0, PovDirection::Up}, {4500, PovDirection::UpRight},
+        {9000, PovDirection::Right}, {13500, PovDirection::DownRight}, {18000, PovDirection::Down},
+        {22500, PovDirection::DownLeft}, {27000, PovDirection::Left}, {31500, PovDirection::UpLeft},
+        {45000, PovDirection::Centered},
+    }};
+    for (const auto &[raw, expected] : cases) {
+        QCOMPARE(static_cast<int>(povDirectionFromRaw(raw)), static_cast<int>(expected));
+    }
+}
+
+void MappingCoreTests::povMappingsPressTransitionAndRelease()
+{
+    PovBindings bindings(1);
+    bindings[0][static_cast<size_t>(povDirectionIndex(PovDirection::Up))] =
+        {ButtonActionType::VirtualButton, 16, true};
+    bindings[0][static_cast<size_t>(povDirectionIndex(PovDirection::UpRight))] =
+        {ButtonActionType::VirtualButton, 17, true};
+    const RuntimePovTargets targets = buildRuntimePovTargets(bindings, 32);
+    PhysicalPovValues raw{};
+    raw.fill(-1);
+
+    raw[0] = 0;
+    VirtualButtonStates up{};
+    mapPovStates(up, raw, 1, targets, 32);
+    QVERIFY(up[16]);
+    QVERIFY(!up[17]);
+
+    raw[0] = 4500;
+    VirtualButtonStates diagonal{};
+    mapPovStates(diagonal, raw, 1, targets, 32);
+    QVERIFY(!diagonal[16]);
+    QVERIFY(diagonal[17]);
+
+    raw[0] = -1;
+    VirtualButtonStates centered{};
+    mapPovStates(centered, raw, 1, targets, 32);
+    QVERIFY(!centered[16]);
+    QVERIFY(!centered[17]);
+}
+
+void MappingCoreTests::povMappingsRejectDuplicatesAndRoundTrip()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.buttons.resize(1);
+    profile.buttons[0] = {ButtonActionType::VirtualButton, 16, true};
+    profile.povs.resize(1);
+    profile.povs[0][static_cast<size_t>(povDirectionIndex(PovDirection::Up))] =
+        {ButtonActionType::VirtualButton, 16, true};
+    QVERIFY(hasPovMappingConflict(profile.buttons, profile.povs, 0,
+                                  povDirectionIndex(PovDirection::Up), 16, 32));
+    QVERIFY(!normalizePovMappings(profile.povs, profile.buttons, 32));
+    QCOMPARE(profile.povs[0][static_cast<size_t>(povDirectionIndex(PovDirection::Up))].type,
+             ButtonActionType::Disabled);
+
+    profile.povs[0][static_cast<size_t>(povDirectionIndex(PovDirection::Right))] =
+        {ButtonActionType::VirtualButton, 17, true};
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(activeProfile(restored).povs.size(), size_t{1});
+    QCOMPARE(activeProfile(restored).povs[0][static_cast<size_t>(povDirectionIndex(PovDirection::Right))].target,
+             17);
+
+    QJsonObject v16 = ConfigStore::toJson(configuration);
+    v16.insert(QStringLiteral("version"), 8);
+    QJsonArray profiles = v16.value(QStringLiteral("profiles")).toArray();
+    for (int index = 0; index < profiles.size(); ++index) {
+        QJsonObject profileObject = profiles[index].toObject();
+        profileObject.remove(QStringLiteral("povs"));
+        profiles[index] = profileObject;
+    }
+    v16.insert(QStringLiteral("profiles"), profiles);
+    const MapperConfiguration migrated = ConfigStore::fromJson(v16, &valid);
+    QVERIFY(valid);
+    QVERIFY(activeProfile(migrated).povs.empty());
+}
+
+void MappingCoreTests::eventLogIsBoundedAndOrdered()
+{
+    EventLog events(3);
+    events.append(QStringLiteral("first"));
+    events.append(QStringLiteral("second"));
+    events.append(QStringLiteral("third"));
+    events.append(QStringLiteral("fourth"));
+    QCOMPARE(events.maximumEntries(), 3);
+    QCOMPARE(events.entries(), QStringList({QStringLiteral("second"), QStringLiteral("third"),
+                                             QStringLiteral("fourth")}));
+}
+
 void MappingCoreTests::physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnavailable()
 {
     // PhysicalInputMonitor intentionally has no mapping/vJoy dependency. The
@@ -664,12 +762,12 @@ void MappingCoreTests::physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnav
     PhysicalInputReport report;
     report.axes[static_cast<int>(PhysicalAxis::X)] = 0.421F;
     report.buttons[0] = true;
-    report.pov = 9000;
+    report.povs[0] = 9000;
     monitor.accept(report);
 
     QVERIFY(nearlyEqual(monitor.snapshot().axes[static_cast<int>(PhysicalAxis::X)], 0.421F));
     QVERIFY(monitor.snapshot().buttons[0]);
-    QCOMPARE(monitor.snapshot().pov, 9000);
+    QCOMPARE(monitor.snapshot().povs[0], 9000);
     QCOMPARE(monitor.snapshot().reportCount, std::uint64_t{1});
 }
 
@@ -729,12 +827,12 @@ void MappingCoreTests::physicalMonitorRecoversAfterReconnect()
     PhysicalInputReport afterReconnect;
     afterReconnect.axes[static_cast<int>(PhysicalAxis::X)] = 0.75F;
     afterReconnect.buttons[14] = false;
-    afterReconnect.pov = 27000;
+    afterReconnect.povs[0] = 27000;
     monitor.accept(afterReconnect);
 
     QVERIFY(nearlyEqual(monitor.snapshot().axes[static_cast<int>(PhysicalAxis::X)], 0.75F));
     QVERIFY(!monitor.snapshot().buttons[14]);
-    QCOMPARE(monitor.snapshot().pov, 27000);
+    QCOMPARE(monitor.snapshot().povs[0], 27000);
     QCOMPARE(monitor.snapshot().reportCount, std::uint64_t{1});
 }
 
@@ -903,7 +1001,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 8);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 9);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);

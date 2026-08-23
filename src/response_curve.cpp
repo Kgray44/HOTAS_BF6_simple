@@ -890,6 +890,7 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
             isUnipolarAxis(static_cast<PhysicalAxis>(index)));
     }
     runtime.buttons = profile.buttons;
+    runtime.povs = profile.povs;
     return runtime;
 }
 
@@ -909,6 +910,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
                 isUnipolarAxis(static_cast<PhysicalAxis>(axis)));
         }
         runtime.buttons = profile.buttons;
+        runtime.povs = profile.povs;
         if (profile.id == configuration.activeProfileId) cache.baseProfileIndex = profileIndex;
         cache.profiles.push_back(std::move(runtime));
     }

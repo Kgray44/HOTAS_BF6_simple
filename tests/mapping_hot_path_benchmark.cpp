@@ -80,6 +80,7 @@ struct HotPathState {
     std::array<float, 5> lastVirtualValues{};
     std::array<int, 5> virtualAxisSources{};
     hotas::RuntimeButtonTargets buttonTargets{};
+    hotas::RuntimePovTargets povTargets{};
     hotas::VirtualButtonStates lastVirtualButtons{};
     RuntimePublication publication;
     // Match the production worker's fixed-size latency telemetry write. The
@@ -98,6 +99,7 @@ struct HotPathState {
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         virtualAxisSources.fill(-1);
         buttonTargets = hotas::buildRuntimeButtonTargets(mapping.buttons, 32);
+        povTargets = hotas::buildRuntimePovTargets(mapping.povs, 32);
     }
 };
 
@@ -168,7 +170,7 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
     hotas::PhysicalInputReport physicalReport;
     physicalReport.axes = report.axes;
     physicalReport.buttons = report.buttons;
-    physicalReport.pov = report.pov;
+    physicalReport.povs[0] = report.pov;
     state.physicalMonitor.accept(physicalReport);
     const hotas::PhysicalInputSnapshot &snapshot = state.physicalMonitor.snapshot();
 
@@ -210,8 +212,10 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
             ++state.outputWriteDecisions;
         }
     }
-    const hotas::VirtualButtonStates desiredButtons = hotas::mapButtonStates(
+    hotas::VirtualButtonStates desiredButtons = hotas::mapButtonStates(
         snapshot.buttons, state.buttonTargets, 32);
+    hotas::mapPovStates(desiredButtons, snapshot.povs, state.physicalMonitor.povCount(),
+                         state.povTargets, 32);
     for (int target = 1; target <= hotas::kMaximumVirtualButtons; ++target) {
         const bool desired = desiredButtons[static_cast<size_t>(target)];
         if (desired == state.lastVirtualButtons[static_cast<size_t>(target)]) continue;
@@ -252,6 +256,9 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
     hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
     hotas::ControllerProfile &profile = hotas::activeProfile(configuration);
     profile.buttons = hotas::defaultButtonMappings(15, 32);
+    profile.povs.resize(1);
+    profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Right))] =
+        {hotas::ButtonActionType::VirtualButton, 16, true};
     for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
         const bool unipolar = hotas::isUnipolarAxis(static_cast<hotas::PhysicalAxis>(index));
         if (name == "J-Curve") {
@@ -381,6 +388,8 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
             currentProfile = selection.profileIndex;
             state.buttonTargets = hotas::buildRuntimeButtonTargets(
                 cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
+            state.povTargets = hotas::buildRuntimePovTargets(
+                cache.profiles[static_cast<size_t>(currentProfile)].povs, 32);
             state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
             state.hysteresis.fill({});
         }
@@ -400,6 +409,8 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
         currentProfile = cache.baseProfileIndex;
         state.buttonTargets = hotas::buildRuntimeButtonTargets(
             cache.profiles[static_cast<size_t>(currentProfile)].buttons, 32, cache.profileTriggers);
+        state.povTargets = hotas::buildRuntimePovTargets(
+            cache.profiles[static_cast<size_t>(currentProfile)].povs, 32);
         state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         state.hysteresis.fill({});
         setup(processControlReport, buttons);

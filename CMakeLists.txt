@@ -44,6 +44,7 @@ set(HOTAS_MAPPER_SOURCES
     src/profile_trigger_runtime.cpp
     src/config_store.h
     src/config_store.cpp
+    src/event_log.h
     src/mapping_worker.h
     src/mapping_worker.cpp
     src/app_backend.h
@@ -135,6 +136,7 @@ if (BUILD_TESTING)
         src/profile_trigger_runtime.cpp
         src/config_store.h
         src/config_store.cpp
+        src/event_log.h
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -175,6 +177,10 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
     target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
     target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME mapping_hot_path_benchmark COMMAND mapping_hot_path_benchmark)
+    if (WIN32)
+        set_tests_properties(mapping_hot_path_benchmark PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
 endif()
 endif()
 

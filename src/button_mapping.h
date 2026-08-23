@@ -36,6 +36,18 @@ bool isButtonBindingValid(const ButtonBinding &binding, int vjoyButtonCapacity);
 bool normalizeButtonMappings(ButtonBindings &bindings, int vjoyButtonCapacity);
 bool hasButtonMappingConflict(const ButtonBindings &bindings, int sourceIndex,
                               int candidateVirtualButton, int vjoyButtonCapacity);
+bool hasButtonMappingConflict(const ButtonBindings &buttons, const PovBindings &povs,
+                              int sourceIndex, int candidateVirtualButton,
+                              int vjoyButtonCapacity);
+bool hasPovMappingConflict(const ButtonBindings &buttons, const PovBindings &povs,
+                           int povIndex, int directionIndex, int candidateVirtualButton,
+                           int vjoyButtonCapacity);
+// Retains valid, first-declared destinations and disables invalid or duplicate
+// POV routes. Normal physical button routes take precedence for compatibility.
+bool normalizePovMappings(PovBindings &povs, const ButtonBindings &buttons,
+                          int vjoyButtonCapacity);
+int requiredVirtualButtonCount(const ButtonBindings &buttons, const PovBindings &povs,
+                               int physicalButtonCount);
 
 // Converts persisted bindings to a compact, allocation-free hot-path table.
 RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
@@ -49,5 +61,8 @@ RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
 VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
                                     const RuntimeButtonTargets &targets,
                                     int vjoyButtonCapacity);
+RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity);
+void mapPovStates(VirtualButtonStates &virtualStates, const PhysicalPovValues &rawValues,
+                  int povCount, const RuntimePovTargets &targets, int vjoyButtonCapacity);
 
 } // namespace hotas

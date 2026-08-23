@@ -17,7 +17,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 8;
+constexpr int kProfileSchemaVersion = 9;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -128,6 +128,41 @@ ButtonBindings buttonBindingsFromJson(const QJsonValue &value)
     return bindings;
 }
 
+QJsonArray povBindingsToJson(const PovBindings &bindings)
+{
+    QJsonArray hats;
+    const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalPovs);
+    for (int hat = 0; hat < count; ++hat) {
+        QJsonArray directions;
+        for (const ButtonBinding &binding : bindings[static_cast<size_t>(hat)]) {
+            directions.append(buttonBindingToJson(binding));
+        }
+        hats.append(directions);
+    }
+    return hats;
+}
+
+PovBindings povBindingsFromJson(const QJsonValue &value)
+{
+    PovBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray hats = value.toArray();
+    const int count = std::min(static_cast<int>(hats.size()), kMaximumPhysicalPovs);
+    bindings.resize(static_cast<size_t>(count));
+    for (int hat = 0; hat < count; ++hat) {
+        const QJsonArray directions = hats.at(hat).toArray();
+        if (directions.size() != kPovDirectionCount) {
+            bindings[static_cast<size_t>(hat)] = {};
+            continue;
+        }
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            bindings[static_cast<size_t>(hat)][static_cast<size_t>(direction)] =
+                buttonBindingFromJson(directions.at(direction).toObject());
+        }
+    }
+    return bindings;
+}
+
 QJsonObject profileTriggerToJson(const ProfileTriggerBinding &binding)
 {
     QString mode = u"disabled"_qs;
@@ -177,6 +212,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"name"_qs, profile.name},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
+        {u"povs"_qs, povBindingsToJson(profile.povs)},
     };
 }
 
@@ -201,6 +237,8 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile)
     }
     normalizeMappingConflicts(restored.axes);
     restored.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
+    restored.povs = povBindingsFromJson(json.value(u"povs"_qs));
+    normalizePovMappings(restored.povs, restored.buttons, kMaximumVirtualButtons);
     *profile = std::move(restored);
     return true;
 }
@@ -306,7 +344,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
-    if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7
+    if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);

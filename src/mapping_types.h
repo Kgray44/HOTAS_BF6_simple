@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -16,6 +17,10 @@ constexpr int kPhysicalAxisCount = 8;
 // controller count is always enumerated at runtime; this is only storage.
 constexpr int kMaximumPhysicalButtons = 128;
 constexpr int kMaximumVirtualButtons = 128;
+// DIJOYSTATE2 exposes four POV values. Keep the physical report fixed-size so
+// the input thread can retain every reported hat without allocating.
+constexpr int kMaximumPhysicalPovs = 4;
+constexpr int kPovDirectionCount = 8;
 
 enum class PhysicalAxis : int {
     X = 0,
@@ -133,6 +138,57 @@ struct ButtonBinding {
 
 using ButtonBindings = std::vector<ButtonBinding>;
 
+// A POV is a distinct physical input, not eight fabricated DirectInput
+// buttons. The runtime table uses the compact direction index below.
+enum class PovDirection : int {
+    Centered = 0,
+    Up,
+    UpRight,
+    Right,
+    DownRight,
+    Down,
+    DownLeft,
+    Left,
+    UpLeft,
+};
+
+using PovDirectionBindings = std::array<ButtonBinding, kPovDirectionCount>;
+using PovBindings = std::vector<PovDirectionBindings>;
+using PhysicalPovValues = std::array<int, kMaximumPhysicalPovs>;
+using RuntimePovTargets = std::array<std::array<int, kPovDirectionCount>,
+                                     kMaximumPhysicalPovs>;
+
+inline int povDirectionIndex(PovDirection direction)
+{
+    const int value = static_cast<int>(direction) - 1;
+    return value >= 0 && value < kPovDirectionCount ? value : -1;
+}
+
+inline PovDirection povDirectionFromRaw(int rawValue)
+{
+    // DirectInput uses hundredths of a degree and UINT_MAX when centered.
+    // Values outside the documented range are treated as safely centered.
+    if (rawValue < 0 || rawValue >= 36000) return PovDirection::Centered;
+    const int sector = ((rawValue + 2250) / 4500) % kPovDirectionCount;
+    return static_cast<PovDirection>(sector + 1);
+}
+
+inline QString povDirectionLabel(PovDirection direction)
+{
+    switch (direction) {
+    case PovDirection::Up: return u"Up"_qs;
+    case PovDirection::UpRight: return u"Up-Right"_qs;
+    case PovDirection::Right: return u"Right"_qs;
+    case PovDirection::DownRight: return u"Down-Right"_qs;
+    case PovDirection::Down: return u"Down"_qs;
+    case PovDirection::DownLeft: return u"Down-Left"_qs;
+    case PovDirection::Left: return u"Left"_qs;
+    case PovDirection::UpLeft: return u"Up-Left"_qs;
+    case PovDirection::Centered: return u"Centered"_qs;
+    }
+    return u"Centered"_qs;
+}
+
 // Profile controls are intentionally separate from profile-specific game
 // button bindings. A configured profile-control button is global to the
 // physical controller and is consumed before normal vJoy routing.
@@ -156,6 +212,9 @@ struct ControllerProfile {
     QString name;
     AxisMappings axes{};
     ButtonBindings buttons;
+    // Missing entries mean safely disabled hats. A saved controller can have
+    // fewer hats than a later-connected controller without losing anything.
+    PovBindings povs;
 };
 
 struct MapperConfiguration {
@@ -178,6 +237,7 @@ struct MapperConfiguration {
 struct RuntimeMappingConfiguration {
     std::array<RuntimeAxisMapping, kPhysicalAxisCount> axes{};
     ButtonBindings buttons;
+    PovBindings povs;
 };
 
 // A complete, immutable profile cache. All curve compilation happens while

@@ -17,10 +17,14 @@ ApplicationWindow {
     property bool menuOpen: false
     property var allAxes: backend.axes
     property var allButtons: backend.buttons
+    property var allPovs: backend.povs
+    property var allPovInputs: backend.povInputs
     property int conflictingAxis: -1
     property string conflictingTarget: "Disabled"
     property int conflictingButton: -1
     property int conflictingVirtualButton: 0
+    property int conflictingPovHat: 0
+    property int conflictingPovDirection: -1
     readonly property var outputChoices: ["Disabled", "X", "Y", "Z", "Rz"]
     readonly property var buttonOutputChoices: backend.buttonOutputChoices
     readonly property var profileTriggerChoices: backend.profileTriggerChoices
@@ -76,11 +80,22 @@ ApplicationWindow {
     function capacityState() {
         if (!backend.vjoyReady) return "VJOY OFFLINE"
         if (!backend.vjoyCapacitySufficient) return "CAPACITY INSUFFICIENT"
-        return backend.vjoyButtonCount >= backend.vjoyRecommendedButtonCount ? "READY" : "READY · 32 RECOMMENDED"
+        return backend.vjoyButtonCount >= backend.vjoyRecommendedButtonCount ? "READY" : "CONFIGURATION LIMITED"
     }
     function capacityColor() {
-        if (!backend.vjoyReady || !backend.vjoyCapacitySufficient) return "#d49b62"
-        return "#9fc9bb"
+        if (backend.vjoyStatusSeverity === "error") return "#ca9090"
+        if (backend.vjoyStatusSeverity === "warning") return "#d4ad69"
+        return "#8fd5c9"
+    }
+    function vjoyCardColor() {
+        if (backend.vjoyStatusSeverity === "ready") return "#e51a352f"
+        if (backend.vjoyStatusSeverity === "warning") return "#e52d2419"
+        return "#e52f171b"
+    }
+    function vjoyCardBorder() {
+        if (backend.vjoyStatusSeverity === "ready") return "#3c9ca8a0"
+        if (backend.vjoyStatusSeverity === "warning") return "#c28b624f"
+        return "#b75e674f"
     }
 
     component Panel: AviationPanel {}
@@ -533,7 +548,7 @@ ApplicationWindow {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: info && info.profileControlEnabled ? 252 : 180
+        Layout.preferredHeight: 258
         color: info && (info.pressed || info.profileControlActive) ? "#ec263e48" : "#ed182128"
         border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.pressed ? "#93a3cfda" : "#43546770")
         function triggerChoiceIndex(targetId) {
@@ -573,6 +588,8 @@ ApplicationWindow {
                         if (!backend.setButtonMapping(buttonCard.info.index, currentIndex, false)) {
                             root.conflictingButton = buttonCard.info.index
                             root.conflictingVirtualButton = currentIndex
+                            root.conflictingPovHat = 0
+                            root.conflictingPovDirection = -1
                             currentIndex = buttonCard.info.target
                             buttonConflictDialog.open()
                         }
@@ -613,19 +630,47 @@ ApplicationWindow {
                         color: buttonCard.info.profileControlTargetAvailable ? "#b8d8dc" : "#d49b62"
                         font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 150 }
                 }
-                RowLayout { Layout.fillWidth: true
-                    Text { text: "BEHAVIOR"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                    ComboBox {
-                        id: profileControlMode
-                        Layout.preferredWidth: 112; Layout.preferredHeight: 28
-                        model: root.profileTriggerBehaviorChoices
-                        currentIndex: buttonCard.info.profileControlMode === "Toggle" ? 1 : 0
-                        onActivated: backend.setProfileTrigger(buttonCard.info.index,
-                            buttonCard.info.profileControlTargetId, currentText)
-                        background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
-                        contentItem: Text { leftPadding: 8; text: profileControlMode.displayText; color: "#dce4e4"
-                            verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "MODE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    id: profileControlMode
+                    Layout.preferredWidth: 150; Layout.preferredHeight: 28
+                    radius: 5
+                    color: "#0c1013"
+                    border.color: buttonCard.info.profileControlEnabled ? "#435660" : "#263137"
+                    opacity: buttonCard.info.profileControlEnabled ? 1.0 : 0.55
+                    Row {
+                        anchors.fill: parent
+                        Repeater {
+                            model: ["Hold", "Toggle"]
+                            delegate: Rectangle {
+                                width: profileControlMode.width / 2
+                                height: profileControlMode.height
+                                radius: 4
+                                color: buttonCard.info.profileControlEnabled
+                                    && buttonCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
+                                border.color: buttonCard.info.profileControlEnabled
+                                    && buttonCard.info.profileControlMode === modelData ? "#78aab9" : "transparent"
+                                Text { anchors.centerIn: parent; text: modelData.toUpperCase()
+                                    color: buttonCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"
+                                    font.pixelSize: 9; font.bold: true }
+                                MouseArea {
+                                    id: modeMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    enabled: buttonCard.info.profileControlEnabled
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: backend.setProfileTrigger(buttonCard.info.index,
+                                        buttonCard.info.profileControlTargetId, modelData)
+                                }
+                                ToolTip.visible: modeMouse.containsMouse
+                                ToolTip.text: modelData === "Hold"
+                                    ? "Target profile is active only while this button is held."
+                                    : "Press once to activate; press again to release."
+                            }
+                        }
                     }
                 }
             }
@@ -634,6 +679,61 @@ ApplicationWindow {
                     + buttonCard.info.profileControlMode.toUpperCase() : "Profile control consumes this button."
                 color: buttonCard.info.profileControlActive ? "#a8d9b4" : "#819297"
                 font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.profileControlActive }
+        }
+    }
+
+    component PovCard: Panel {
+        id: povCard
+        property var info: null
+        Layout.fillWidth: true
+        Layout.preferredHeight: 142
+        color: info && info.active ? "#ec263e48" : "#ed182128"
+        border.color: info && info.active ? "#93a3cfda" : "#43546770"
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 13
+            spacing: 7
+            RowLayout { Layout.fillWidth: true
+                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase()
+                    color: "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Item { Layout.fillWidth: true }
+                Row { spacing: 5
+                    StatusDot { tone: povCard.info.active ? "#a8d9e6" : "#68747a" }
+                    Text { text: povCard.info.active ? "ACTIVE" : "IDLE"
+                        color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
+                }
+            }
+            Text { text: povCard.info.active ? "PHYSICAL   ACTIVE" : "PHYSICAL   INACTIVE"
+                color: povCard.info.active ? "#c4e4e9" : "#849398"; font.pixelSize: 9
+                font.family: "Consolas"; font.bold: povCard.info.active }
+            FineLine { Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Item { Layout.fillWidth: true }
+                ComboBox {
+                    id: povDestination
+                    Layout.preferredWidth: 126; Layout.preferredHeight: 29
+                    model: root.buttonOutputChoices
+                    currentIndex: povCard.info.target
+                    onActivated: {
+                        if (!backend.setPovMapping(povCard.info.hat, povCard.info.direction, currentIndex, false)) {
+                            root.conflictingButton = -1
+                            root.conflictingVirtualButton = currentIndex
+                            root.conflictingPovHat = povCard.info.hat
+                            root.conflictingPovDirection = povCard.info.direction
+                            currentIndex = povCard.info.target
+                            buttonConflictDialog.open()
+                        }
+                    }
+                    background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
+                    contentItem: Text { leftPadding: 8; text: povDestination.displayText; color: "#dce4e4"
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+                }
+            }
+            Text { text: povCard.info.target > 0
+                    ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
+                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"
+                font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
         }
     }
 
@@ -1080,7 +1180,7 @@ ApplicationWindow {
  Layout.fillWidth: true }
                     }
                 }
-                Text { text: allButtons.length > 0 ? "PHYSICAL BUTTON MATRIX" : "NO DIRECTINPUT BUTTONS AVAILABLE"
+                Text { text: allButtons.length > 0 ? "PHYSICAL BUTTONS" : "NO DIRECTINPUT BUTTONS AVAILABLE"
  color: "#94a1a6"
  font.pixelSize: 10
  font.bold: true }
@@ -1090,6 +1190,15 @@ ApplicationWindow {
  rowSpacing: 12
                     Repeater { model: root.allButtons
  delegate: ButtonCard { info: modelData } }
+                }
+                Text { visible: root.allPovInputs.length > 0; text: "POV / HAT"
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                GridLayout { visible: root.allPovInputs.length > 0; width: parent.width
+                    columns: width >= 1160 ? 4 : (width >= 760 ? 2 : 1)
+                    columnSpacing: 12
+                    rowSpacing: 12
+                    Repeater { model: root.allPovInputs
+                        delegate: PovCard { info: modelData } }
                 }
             }
         }
@@ -1316,6 +1425,49 @@ ApplicationWindow {
                         }
                     }
                 }
+                Text { visible: root.allPovs.length > 0; text: "POV / HAT INPUTS"
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                GridLayout { visible: root.allPovs.length > 0; width: parent.width
+                    columns: width >= 1100 ? 4 : (width >= 760 ? 2 : 1)
+                    columnSpacing: 10
+                    rowSpacing: 10
+                    Repeater { model: root.allPovs
+                        delegate: Panel {
+                            id: diagnosticPovCard
+                            property var info: modelData
+                            property var directions: [
+                                { label: "UP-L", direction: "Up-Left" }, { label: "UP", direction: "Up" }, { label: "UP-R", direction: "Up-Right" },
+                                { label: "LEFT", direction: "Left" }, { label: "·", direction: "" }, { label: "RIGHT", direction: "Right" },
+                                { label: "DOWN-L", direction: "Down-Left" }, { label: "DOWN", direction: "Down" }, { label: "DOWN-R", direction: "Down-Right" }
+                            ]
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 186
+                            color: diagnosticPovCard.info.centered ? "#ed182128" : "#ec263e48"
+                            border.color: diagnosticPovCard.info.centered ? "#43546770" : "#93a3cfda"
+                            Column { anchors.fill: parent; anchors.margins: 12; spacing: 5
+                                Text { text: "POV " + diagnosticPovCard.info.index + " / HAT"
+                                    color: "#aebcc0"; font.pixelSize: 9; font.bold: true }
+                                Text { text: "STATE     " + diagnosticPovCard.info.direction.toUpperCase()
+                                    color: diagnosticPovCard.info.centered ? "#9ba8ac" : "#d6f0f4"
+                                    font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
+                                Text { visible: !diagnosticPovCard.info.centered
+                                    text: "ANGLE     " + diagnosticPovCard.info.angle + "°"
+                                    color: "#a9cad2"; font.pixelSize: 10; font.family: "Consolas" }
+                                Text { text: "RAW       " + (diagnosticPovCard.info.centered ? "—" : diagnosticPovCard.info.raw)
+                                    color: "#7c97a1"; font.pixelSize: 10; font.family: "Consolas" }
+                                Grid { columns: 3; columnSpacing: 9; rowSpacing: 3
+                                    Repeater { model: diagnosticPovCard.directions
+                                        delegate: Text { width: 50; horizontalAlignment: Text.AlignHCenter
+                                            text: modelData.label
+                                            color: modelData.direction !== "" && modelData.direction === diagnosticPovCard.info.direction
+                                                ? "#9fcfbd" : "#607177"
+                                            font.pixelSize: 8; font.bold: true; font.family: "Consolas" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Text { text: "BUTTON ROUTES · " + backend.buttonCount + " PHYSICAL / " + backend.vjoyButtonCount + " VIRTUAL"
  color: "#94a1a6"
  font.pixelSize: 10
@@ -1342,19 +1494,37 @@ ApplicationWindow {
                     }
                 }
                 Panel { width: parent.width
- height: 122
+                    height: Math.max(256, Math.min(330, diagnosticsPage.height * 0.42))
                     Column { anchors.fill: parent
- anchors.margins: 14
- spacing: 5
+                        anchors.margins: 14
+                        spacing: 5
                         Text { text: "EVENT LOG"
  color: "#7f8d94"
  font.pixelSize: 9
  font.bold: true }
-                        Repeater { model: backend.eventLog
- delegate: Text { text: modelData
- color: index === 0 ? "#cbdadd" : "#839197"
- font.pixelSize: 10
- font.family: "Consolas" } }
+                        ListView {
+                            id: eventLogView
+                            width: parent.width
+                            height: parent.height - 24
+                            clip: true
+                            model: backend.eventLog
+                            spacing: 3
+                            property bool followTail: true
+                            onMovementEnded: followTail = atYEnd
+                            onCountChanged: Qt.callLater(function() {
+                                if (eventLogView.followTail) eventLogView.positionViewAtEnd()
+                            })
+                            Component.onCompleted: positionViewAtEnd()
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                            delegate: Text {
+                                width: eventLogView.width - 16
+                                text: modelData
+                                color: index === eventLogView.count - 1 ? "#cbdadd" : "#839197"
+                                font.pixelSize: 10
+                                font.family: "Consolas"
+                                wrapMode: Text.Wrap
+                            }
+                        }
                     }
                 }
             }
@@ -1541,22 +1711,25 @@ ApplicationWindow {
                 }
                 Panel { width: parent.width
  height: 136
-                    color: backend.vjoyReady && !backend.vjoyCapacitySufficient ? "#e52d2419" : "#ed182128"
-                    border.color: backend.vjoyReady && !backend.vjoyCapacitySufficient ? "#c28b624f" : "#41546770"
+                    color: root.vjoyCardColor()
+                    border.color: root.vjoyCardBorder()
                     RowLayout { anchors.fill: parent
  anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "VJOY DEVICE"
- color: "#e8eeee"
- font.pixelSize: 12
- font.bold: true }
-                            Text { text: "Device " + backend.vjoyDeviceId + "   ·   " + (backend.vjoyReady ? "READY" : "OFFLINE")
-                                color: backend.vjoyReady ? "#b7d8df" : "#d49b62"; font.pixelSize: 13; font.bold: true }
-                            Text { text: "Axes       X   Y   Z   Rz"
+                            Row { spacing: 7
+                                Text { text: "VJOY DEVICE"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                                StatusDot { tone: root.capacityColor() }
+                                Text { text: backend.vjoyStatusSeverity.toUpperCase()
+                                    color: root.capacityColor(); font.pixelSize: 10; font.bold: true }
+                            }
+                            Text { text: "Device " + backend.vjoyDeviceId
+                                color: backend.vjoyReady ? "#d9ebe7" : root.capacityColor(); font.pixelSize: 13; font.bold: true }
+                            Text { text: "X / Y / Z / Rz"
                                 color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
-                            Text { text: "Buttons    " + backend.vjoyButtonCount + "     Required " + backend.vjoyRequiredButtonCount + "     Recommended " + backend.vjoyRecommendedButtonCount
+                            Text { text: backend.vjoyButtonCount + " buttons   ·   Required " + backend.vjoyRequiredButtonCount
                                 color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
-                            Text { text: backend.vjoyReady ? root.capacityState() : backend.vjoyStatus
+                            Text { text: backend.vjoyReady ? (backend.vjoyStatusSeverity === "ready"
+                                ? "Virtual output is ready." : root.capacityState()) : backend.vjoyStatus
                                 color: root.capacityColor(); font.pixelSize: 10; font.bold: true }
                         }
                         Column { spacing: 7
@@ -1744,7 +1917,13 @@ ApplicationWindow {
  font.pixelSize: 12 }
             CommandButton { width: parent.width
  label: "REPLACE ROUTE"
- onTriggered: { backend.setButtonMapping(root.conflictingButton, root.conflictingVirtualButton, true)
+ onTriggered: {
+     if (root.conflictingPovHat > 0) {
+         backend.setPovMapping(root.conflictingPovHat, root.conflictingPovDirection,
+                               root.conflictingVirtualButton, true)
+     } else {
+         backend.setButtonMapping(root.conflictingButton, root.conflictingVirtualButton, true)
+     }
  buttonConflictDialog.close() } }
         }
         background: Panel { color: "#1b2126"

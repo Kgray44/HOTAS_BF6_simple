@@ -461,7 +461,7 @@ BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *
         }
         ++objects->buttonCount;
     } else if ((objectType & DIDFT_POV) != 0) {
-        ++objects->povCount;
+        objects->povCount = std::min(objects->povCount + 1, kMaximumPhysicalPovs);
     }
     return DIENUM_CONTINUE;
 }
@@ -520,6 +520,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.virtualButtonPressed[index] = false;
         m_runtime.buttonAvailable[index] = false;
     }
+    for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
     for (std::atomic_uint64_t &sample : m_runtime.latencySamples) sample = 0;
     const auto compileStarted = std::chrono::steady_clock::now();
     m_preparedProfileCache = std::make_shared<RuntimeProfileCache>(
@@ -730,7 +731,10 @@ void MappingWorker::run()
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
     PhysicalButtonStates latestPhysicalButtons{};
+    PhysicalPovValues latestPovValues{};
+    latestPovValues.fill(-1);
     RuntimeButtonTargets runtimeButtonTargets{};
+    RuntimePovTargets runtimePovTargets{};
     VirtualButtonStates lastVirtualButtonStates{};
     int vjoyButtonCapacity = 0;
     bool buttonDefaultsPending = false;
@@ -765,6 +769,7 @@ void MappingWorker::run()
     const auto rebuildButtonTargets = [&] {
         runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity,
             activeProfileCache->profileTriggers);
+        runtimePovTargets = buildRuntimePovTargets(activeMapping->povs, vjoyButtonCapacity);
     };
 
     const auto selectEffectiveProfile = [&](const EffectiveProfileSelection &selection,
@@ -831,7 +836,8 @@ void MappingWorker::run()
         m_runtime.axisCount = 0;
         m_runtime.buttonCount = 0;
         m_runtime.povCount = 0;
-        m_runtime.povValue = -1;
+        latestPovValues.fill(-1);
+        for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
         setDeviceSnapshot({});
     };
 
@@ -881,7 +887,7 @@ void MappingWorker::run()
         m_runtime.axisCount = objects.axisCount;
         m_runtime.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
         m_runtime.povCount = objects.povCount;
-        m_runtime.povValue = -1;
+        for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
         m_runtime.physicalConnected = true;
         setDeviceSnapshot({selected->name, guidToString(selected->guid)});
         emit workerEvent(QString(u"Controller connected: %1 · %2 axes · %3 buttons"_qs)
@@ -1040,8 +1046,11 @@ void MappingWorker::run()
             physicalReport.buttons[source] = availableButtons[source]
                 && (state.rgbButtons[source] & 0x80U) != 0;
         }
-        physicalReport.pov = (m_runtime.povCount.load() > 0 && state.rgdwPOV[0] != 0xFFFFFFFFUL)
-            ? static_cast<int>(state.rgdwPOV[0]) : -1;
+        for (int hat = 0; hat < m_runtime.povCount.load() && hat < kMaximumPhysicalPovs; ++hat) {
+            const DWORD raw = state.rgdwPOV[static_cast<size_t>(hat)];
+            physicalReport.povs[static_cast<size_t>(hat)] = raw != 0xFFFFFFFFUL && raw < 36000UL
+                ? static_cast<int>(raw) : -1;
+        }
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
 
@@ -1106,7 +1115,10 @@ void MappingWorker::run()
             m_runtime.lastPhysicalButtonTarget = runtimeButtonTargets[
                 static_cast<size_t>(physicalSnapshot.lastChangedButton - 1)];
         }
-        m_runtime.povValue = physicalSnapshot.pov;
+        for (int hat = 0; hat < kMaximumPhysicalPovs; ++hat) {
+            latestPovValues[static_cast<size_t>(hat)] = physicalSnapshot.povs[static_cast<size_t>(hat)];
+            m_runtime.povValues[static_cast<size_t>(hat)] = physicalSnapshot.povs[static_cast<size_t>(hat)];
+        }
 
         const bool mappingRequested = mappingRequestedNow;
         if (mappingRequested && !m_runtime.mappingActive.load()
@@ -1142,8 +1154,10 @@ void MappingWorker::run()
                 }
             }
 
-            const VirtualButtonStates desiredButtons = mapButtonStates(
+            VirtualButtonStates desiredButtons = mapButtonStates(
                 latestPhysicalButtons, runtimeButtonTargets, vjoyButtonCapacity);
+            mapPovStates(desiredButtons, latestPovValues, m_runtime.povCount.load(),
+                         runtimePovTargets, vjoyButtonCapacity);
             for (int target = 1; target <= kMaximumVirtualButtons; ++target) {
                 const bool desired = target <= vjoyButtonCapacity && desiredButtons[target];
                 if (desired == lastVirtualButtonStates[target]) continue;

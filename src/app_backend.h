@@ -1,5 +1,6 @@
 #pragma once
 
+#include "event_log.h"
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
@@ -31,6 +32,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList povs READ povs NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
@@ -54,6 +57,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool mappingRequested READ mappingRequested NOTIFY stateChanged)
     Q_PROPERTY(bool vjoyReady READ vjoyReady NOTIFY stateChanged)
     Q_PROPERTY(QString vjoyStatus READ vjoyStatus NOTIFY stateChanged)
+    Q_PROPERTY(QString vjoyStatusSeverity READ vjoyStatusSeverity NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideAvailable READ hidhideAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloakStateKnown READ hidhideCloakStateKnown NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
@@ -99,6 +103,8 @@ public:
     QVariantList curvePreviewChoices() const;
     QVariantList curveCopyChoices() const;
     QVariantList buttons() const;
+    QVariantList povs() const;
+    QVariantList povInputs() const;
     QVariantList profiles() const;
     QString activeProfileId() const;
     QString activeProfileName() const;
@@ -122,6 +128,7 @@ public:
     bool mappingRequested() const;
     bool vjoyReady() const;
     QString vjoyStatus() const;
+    QString vjoyStatusSeverity() const;
     bool hidhideAvailable() const;
     bool hidhideCloakStateKnown() const;
     bool hidhideCloaked() const;
@@ -143,7 +150,7 @@ public:
     QStringList buttonOutputChoices() const;
     QVariantList profileTriggerChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
-    QStringList eventLog() const { return m_events; }
+    QStringList eventLog() const { return m_events.entries(); }
 
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
@@ -182,6 +189,8 @@ public:
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
+    Q_INVOKABLE bool setPovMapping(int povHat, int direction, int virtualButton,
+                                   bool explicitOverride = false);
     Q_INVOKABLE bool setProfileTrigger(int physicalButton, const QString &targetProfileId,
                                        const QString &behavior);
     Q_INVOKABLE void resetButtonMappings();
@@ -249,7 +258,7 @@ private:
     QString m_curvePreviewId;
     QString m_curvePreviewLabel;
     CurveDefinition m_curvePreviewDefinition;
-    QStringList m_events;
+    EventLog m_events;
 };
 
 } // namespace hotas

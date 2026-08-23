@@ -133,6 +133,100 @@ bool hasButtonMappingConflict(const ButtonBindings &bindings, int sourceIndex,
     return false;
 }
 
+bool hasButtonMappingConflict(const ButtonBindings &buttons, const PovBindings &povs,
+                              int sourceIndex, int candidateVirtualButton,
+                              int vjoyButtonCapacity)
+{
+    if (hasButtonMappingConflict(buttons, sourceIndex, candidateVirtualButton,
+                                 vjoyButtonCapacity)) {
+        return true;
+    }
+    if (candidateVirtualButton <= 0 || candidateVirtualButton > vjoyButtonCapacity) return false;
+    for (const PovDirectionBindings &hat : povs) {
+        for (const ButtonBinding &binding : hat) {
+            if (binding.type == ButtonActionType::VirtualButton
+                && binding.target == candidateVirtualButton) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool hasPovMappingConflict(const ButtonBindings &buttons, const PovBindings &povs,
+                           int povIndex, int directionIndex, int candidateVirtualButton,
+                           int vjoyButtonCapacity)
+{
+    if (candidateVirtualButton <= 0 || candidateVirtualButton > vjoyButtonCapacity) return false;
+    for (const ButtonBinding &binding : buttons) {
+        if (binding.type == ButtonActionType::VirtualButton
+            && binding.target == candidateVirtualButton) {
+            return true;
+        }
+    }
+    for (int hatIndex = 0; hatIndex < static_cast<int>(povs.size()); ++hatIndex) {
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            if (hatIndex == povIndex && direction == directionIndex) continue;
+            const ButtonBinding &binding = povs[static_cast<size_t>(hatIndex)][static_cast<size_t>(direction)];
+            if (binding.type == ButtonActionType::VirtualButton
+                && binding.target == candidateVirtualButton) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool normalizePovMappings(PovBindings &povs, const ButtonBindings &buttons,
+                          int vjoyButtonCapacity)
+{
+    bool valid = true;
+    if (povs.size() > kMaximumPhysicalPovs) {
+        povs.resize(kMaximumPhysicalPovs);
+        valid = false;
+    }
+    std::array<bool, kMaximumVirtualButtons + 1> used{};
+    for (const ButtonBinding &binding : buttons) {
+        if (isButtonBindingValid(binding, vjoyButtonCapacity)
+            && binding.type == ButtonActionType::VirtualButton) {
+            used[static_cast<size_t>(binding.target)] = true;
+        }
+    }
+    for (PovDirectionBindings &hat : povs) {
+        for (ButtonBinding &binding : hat) {
+            if (!isButtonBindingValid(binding, vjoyButtonCapacity)) {
+                if (binding.type != ButtonActionType::Disabled || binding.target != 0) valid = false;
+                disable(binding);
+                continue;
+            }
+            if (binding.type == ButtonActionType::Disabled) continue;
+            if (used[static_cast<size_t>(binding.target)]) {
+                valid = false;
+                disable(binding);
+                continue;
+            }
+            used[static_cast<size_t>(binding.target)] = true;
+        }
+    }
+    return valid;
+}
+
+int requiredVirtualButtonCount(const ButtonBindings &buttons, const PovBindings &povs,
+                               int physicalButtonCount)
+{
+    int required = boundedCount(physicalButtonCount, kMaximumVirtualButtons);
+    const auto inspect = [&required](const ButtonBinding &binding) {
+        if (binding.type == ButtonActionType::VirtualButton) {
+            required = std::max(required, std::clamp(binding.target, 0, kMaximumVirtualButtons));
+        }
+    };
+    for (const ButtonBinding &binding : buttons) inspect(binding);
+    for (const PovDirectionBindings &hat : povs) {
+        for (const ButtonBinding &binding : hat) inspect(binding);
+    }
+    return required;
+}
+
 RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
                                                int vjoyButtonCapacity)
 {
@@ -177,6 +271,34 @@ VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
         }
     }
     return virtualStates;
+}
+
+RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity)
+{
+    RuntimePovTargets targets{};
+    const int hats = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalPovs);
+    for (int hat = 0; hat < hats; ++hat) {
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            const ButtonBinding &binding = bindings[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
+            if (isButtonBindingValid(binding, vjoyButtonCapacity)) {
+                targets[static_cast<size_t>(hat)][static_cast<size_t>(direction)] = binding.target;
+            }
+        }
+    }
+    return targets;
+}
+
+void mapPovStates(VirtualButtonStates &virtualStates, const PhysicalPovValues &rawValues,
+                  int povCount, const RuntimePovTargets &targets, int vjoyButtonCapacity)
+{
+    const int hats = std::clamp(povCount, 0, kMaximumPhysicalPovs);
+    const int capacity = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    for (int hat = 0; hat < hats; ++hat) {
+        const int direction = povDirectionIndex(povDirectionFromRaw(rawValues[static_cast<size_t>(hat)]));
+        if (direction < 0) continue;
+        const int target = targets[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
+        if (target >= 1 && target <= capacity) virtualStates[static_cast<size_t>(target)] = true;
+    }
 }
 
 } // namespace hotas

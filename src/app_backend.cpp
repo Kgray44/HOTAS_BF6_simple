@@ -367,6 +367,57 @@ QVariantList AppBackend::buttons() const
     return result;
 }
 
+QVariantList AppBackend::povs() const
+{
+    QVariantList result;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const int count = std::clamp(povCount(), 0, kMaximumPhysicalPovs);
+    for (int hat = 0; hat < count; ++hat) {
+        const int raw = runtime.povValues[static_cast<size_t>(hat)].load();
+        const PovDirection direction = povDirectionFromRaw(raw);
+        QVariantMap item;
+        item.insert(u"index"_qs, hat + 1);
+        item.insert(u"raw"_qs, raw);
+        item.insert(u"centered"_qs, direction == PovDirection::Centered);
+        item.insert(u"direction"_qs, povDirectionLabel(direction));
+        item.insert(u"angle"_qs, direction == PovDirection::Centered ? -1 : raw / 100);
+        result.append(item);
+    }
+    return result;
+}
+
+QVariantList AppBackend::povInputs() const
+{
+    QVariantList result;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const PovBindings &bindings = currentProfile().povs;
+    const int capacity = vjoyButtonCount();
+    const int hats = std::clamp(povCount(), 0, kMaximumPhysicalPovs);
+    for (int hat = 0; hat < hats; ++hat) {
+        const PovDirection active = povDirectionFromRaw(
+            runtime.povValues[static_cast<size_t>(hat)].load());
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            const ButtonBinding binding = hat < static_cast<int>(bindings.size())
+                ? bindings[static_cast<size_t>(hat)][static_cast<size_t>(direction)] : ButtonBinding{};
+            const int target = binding.type == ButtonActionType::VirtualButton
+                && isButtonBindingValid(binding, capacity) ? binding.target : 0;
+            const PovDirection logicalDirection = static_cast<PovDirection>(direction + 1);
+            QVariantMap item;
+            item.insert(u"hat"_qs, hat + 1);
+            item.insert(u"direction"_qs, direction);
+            item.insert(u"label"_qs, povDirectionLabel(logicalDirection));
+            item.insert(u"active"_qs, active == logicalDirection);
+            item.insert(u"target"_qs, target);
+            item.insert(u"targetLabel"_qs, target > 0
+                ? QString(u"vJoy Button %1"_qs).arg(target) : u"Disabled"_qs);
+            item.insert(u"virtualPressed"_qs, target > 0
+                && runtime.virtualButtonPressed[static_cast<size_t>(target - 1)].load());
+            result.append(item);
+        }
+    }
+    return result;
+}
+
 QVariantList AppBackend::profiles() const
 {
     QVariantList result;
@@ -438,12 +489,15 @@ bool AppBackend::physicalConnected() const { return m_worker.runtime().physicalC
 int AppBackend::axisCount() const { return m_worker.runtime().axisCount.load(); }
 int AppBackend::buttonCount() const { return m_worker.runtime().buttonCount.load(); }
 int AppBackend::povCount() const { return m_worker.runtime().povCount.load(); }
-int AppBackend::povValue() const { return m_worker.runtime().povValue.load(); }
+int AppBackend::povValue() const { return m_worker.runtime().povValues[0].load(); }
 int AppBackend::vjoyButtonCount() const { return m_worker.runtime().vjoyButtonCount.load(); }
-int AppBackend::vjoyRequiredButtonCount() const { return buttonCount(); }
+int AppBackend::vjoyRequiredButtonCount() const
+{
+    return requiredVirtualButtonCount(currentProfile().buttons, currentProfile().povs, buttonCount());
+}
 bool AppBackend::vjoyCapacitySufficient() const
 {
-    return assessButtonCapacity(buttonCount(), vjoyButtonCount()).sufficient;
+    return vjoyButtonCount() >= vjoyRequiredButtonCount();
 }
 int AppBackend::lastPhysicalButton() const { return m_worker.runtime().lastPhysicalButton.load(); }
 int AppBackend::lastPhysicalButtonTarget() const { return m_worker.runtime().lastPhysicalButtonTarget.load(); }
@@ -451,6 +505,14 @@ bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive
 bool AppBackend::mappingRequested() const { return m_worker.mappingRequested(); }
 bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
+QString AppBackend::vjoyStatusSeverity() const
+{
+    if (!vjoyReady()) return u"error"_qs;
+    if (!vjoyCapacitySufficient() || vjoyButtonCount() < vjoyRecommendedButtonCount()) {
+        return u"warning"_qs;
+    }
+    return u"ready"_qs;
+}
 bool AppBackend::hidhideAvailable() const { return m_worker.runtime().hidhideAvailable.load(); }
 bool AppBackend::hidhideCloakStateKnown() const
 {
@@ -1013,7 +1075,8 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
     if (bindings.size() <= static_cast<size_t>(source)) {
         bindings.resize(static_cast<size_t>(source + 1));
     }
-    if (hasButtonMappingConflict(bindings, source, virtualButton, vjoyButtonCount())) {
+    if (hasButtonMappingConflict(bindings, currentProfile().povs, source, virtualButton,
+                                 vjoyButtonCount())) {
         if (!explicitOverride) return false;
         for (int index = 0; index < static_cast<int>(bindings.size()); ++index) {
             ButtonBinding &binding = bindings[static_cast<size_t>(index)];
@@ -1025,6 +1088,15 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
                 binding.explicitlyConfigured = true;
             }
         }
+        for (PovDirectionBindings &hat : currentProfile().povs) {
+            for (ButtonBinding &binding : hat) {
+                if (binding.type == ButtonActionType::VirtualButton
+                    && binding.target == virtualButton) {
+                    binding = {};
+                    binding.explicitlyConfigured = true;
+                }
+            }
+        }
     }
     bindings[static_cast<size_t>(source)] = virtualButton > 0
         ? ButtonBinding{ButtonActionType::VirtualButton, virtualButton} : ButtonBinding{};
@@ -1032,6 +1104,47 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
     persistAndApply();
     appendEvent(QString(u"Button %1 → %2"_qs).arg(physicalButton).arg(
         virtualButton > 0 ? QString(u"vJoy %1"_qs).arg(virtualButton) : u"Disabled"_qs));
+    return true;
+}
+
+bool AppBackend::setPovMapping(int povHat, int direction, int virtualButton, bool explicitOverride)
+{
+    const int hat = povHat - 1;
+    if (hat < 0 || hat >= povCount() || hat >= kMaximumPhysicalPovs
+        || direction < 0 || direction >= kPovDirectionCount || virtualButton < 0
+        || virtualButton > vjoyButtonCount()) {
+        return false;
+    }
+    PovBindings &povs = currentProfile().povs;
+    if (povs.size() <= static_cast<size_t>(hat)) povs.resize(static_cast<size_t>(hat + 1));
+    if (hasPovMappingConflict(currentProfile().buttons, povs, hat, direction, virtualButton,
+                              vjoyButtonCount())) {
+        if (!explicitOverride) return false;
+        for (ButtonBinding &binding : currentProfile().buttons) {
+            if (binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton) {
+                binding = {};
+                binding.explicitlyConfigured = true;
+            }
+        }
+        for (int otherHat = 0; otherHat < static_cast<int>(povs.size()); ++otherHat) {
+            for (int otherDirection = 0; otherDirection < kPovDirectionCount; ++otherDirection) {
+                if (otherHat == hat && otherDirection == direction) continue;
+                ButtonBinding &binding = povs[static_cast<size_t>(otherHat)][static_cast<size_t>(otherDirection)];
+                if (binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton) {
+                    binding = {};
+                    binding.explicitlyConfigured = true;
+                }
+            }
+        }
+    }
+    ButtonBinding &binding = povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
+    binding = virtualButton > 0 ? ButtonBinding{ButtonActionType::VirtualButton, virtualButton}
+                                : ButtonBinding{};
+    binding.explicitlyConfigured = true;
+    persistAndApply();
+    appendEvent(QString(u"POV %1 %2 → %3"_qs).arg(povHat)
+        .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)))
+        .arg(virtualButton > 0 ? QString(u"vJoy %1"_qs).arg(virtualButton) : u"Disabled"_qs));
     return true;
 }
 
@@ -1295,8 +1408,7 @@ void AppBackend::refreshUiSnapshot()
 void AppBackend::appendEvent(const QString &event)
 {
     const QString timestamp = QDateTime::currentDateTime().toString(u"HH:mm:ss"_qs);
-    m_events.prepend(timestamp + u"  "_qs + event);
-    while (m_events.size() > 8) m_events.removeLast();
+    m_events.append(timestamp + u"  "_qs + event);
     emit eventLogChanged();
 }
 

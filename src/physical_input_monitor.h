@@ -13,13 +13,13 @@ namespace hotas {
 struct PhysicalInputReport {
     std::array<float, kPhysicalAxisCount> axes{};
     PhysicalButtonStates buttons{};
-    int pov = -1; // DirectInput hundredths of degrees; -1 means centered.
+    PhysicalPovValues povs{[] { PhysicalPovValues values{}; values.fill(-1); return values; }()};
 };
 
 struct PhysicalInputSnapshot {
     std::array<float, kPhysicalAxisCount> axes{};
     PhysicalButtonStates buttons{};
-    int pov = -1;
+    PhysicalPovValues povs{[] { PhysicalPovValues values{}; values.fill(-1); return values; }()};
     int lastChangedButton = 0; // One-based source button, including release.
     std::uint64_t reportCount = 0;
 };

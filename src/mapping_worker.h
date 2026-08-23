@@ -41,8 +41,9 @@ struct AtomicRuntimeState {
     std::atomic_int axisCount{0};
     std::atomic_int buttonCount{0};
     std::atomic_int povCount{0};
-    // DirectInput reports POV in hundredths of a degree; -1 is centered.
-    std::atomic_int povValue{-1};
+    // DirectInput reports up to four POVs in hundredths of a degree; -1 is
+    // centered. The UI reads this fixed snapshot without entering the worker.
+    std::array<std::atomic_int, kMaximumPhysicalPovs> povValues{};
     std::atomic_int vjoyButtonCount{0};
     std::atomic_int lastPhysicalButton{0};
     std::atomic_int lastPhysicalButtonTarget{0};

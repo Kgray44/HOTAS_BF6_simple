@@ -10,9 +10,9 @@ void PhysicalInputMonitor::configure(const std::array<bool, kPhysicalAxisCount> 
 {
     m_availableAxes = axes;
     m_availableButtons = buttons;
-    m_povCount = std::max(0, povCount);
+    m_povCount = std::clamp(povCount, 0, kMaximumPhysicalPovs);
     m_snapshot = {};
-    m_snapshot.pov = -1;
+    m_snapshot.povs.fill(-1);
 }
 
 void PhysicalInputMonitor::accept(const PhysicalInputReport &report)
@@ -29,7 +29,10 @@ void PhysicalInputMonitor::accept(const PhysicalInputReport &report)
         }
         m_snapshot.buttons[index] = report.buttons[index];
     }
-    m_snapshot.pov = m_povCount > 0 ? report.pov : -1;
+    for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+        m_snapshot.povs[static_cast<size_t>(index)] = index < m_povCount
+            ? report.povs[static_cast<size_t>(index)] : -1;
+    }
     ++m_snapshot.reportCount;
 }
 
@@ -39,7 +42,7 @@ void PhysicalInputMonitor::disconnect()
     m_availableButtons.fill(false);
     m_povCount = 0;
     m_snapshot = {};
-    m_snapshot.pov = -1;
+    m_snapshot.povs.fill(-1);
 }
 
 } // namespace hotas
