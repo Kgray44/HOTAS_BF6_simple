@@ -135,8 +135,8 @@ jobs:
           $version = (Get-Content HOTAS_VERSION -Raw).Trim()
           $installer = "$PWD\release\HOTAS-BF6-Setup-v$version.exe"
           $target = Join-Path $env:RUNNER_TEMP 'hotas-bf6-installer-smoke'
-          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$target"
-          if ($LASTEXITCODE -ne 0) { throw "Installer smoke install failed: $LASTEXITCODE" }
+          $install = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$target`"") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer smoke install failed: $($install.ExitCode)" }
           foreach ($file in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'VERSION')) {
             if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
               throw "Installer smoke test is missing $file"
@@ -144,8 +144,8 @@ jobs:
           }
           $uninstaller = Join-Path $target 'unins000.exe'
           if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Installer smoke test is missing uninstaller.' }
-          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-          if ($LASTEXITCODE -ne 0) { throw "Installer smoke uninstall failed: $LASTEXITCODE" }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Installer smoke uninstall failed: $($uninstall.ExitCode)" }
 
       - name: Generate release manifest and checksums
         shell: pwsh
