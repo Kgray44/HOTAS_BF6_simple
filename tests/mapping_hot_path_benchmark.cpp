@@ -1,4 +1,5 @@
 #include "axis_transform.h"
+#include "automation_engine.h"
 #include "button_mapping.h"
 #include "mapping_worker.h"
 #include "physical_input_monitor.h"
@@ -511,6 +512,128 @@ void runProfileControlBenchmarks()
         [](auto &process, auto &buttons, auto &povValues) { povValues[0] = 0; process(buttons); }));
 }
 
+hotas::MapperConfiguration automationConfiguration(int ruleCount)
+{
+    hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
+    for (int index = 0; index < ruleCount; ++index) {
+        hotas::AutomationDefinition rule;
+        rule.id = QStringLiteral("bench-%1").arg(index);
+        rule.name = QStringLiteral("Benchmark %1").arg(index);
+        rule.matchMode = index % 3 == 0 ? hotas::AutomationMatchMode::Any : hotas::AutomationMatchMode::All;
+        hotas::AutomationConditionDefinition condition;
+        switch (index % 4) {
+        case 0:
+            condition.type = hotas::AutomationConditionType::AxisAbove;
+            condition.axis = static_cast<int>(hotas::PhysicalAxis::Z);
+            condition.minimum = 0.15F;
+            condition.hysteresis = 0.03F;
+            break;
+        case 1:
+            condition.type = hotas::AutomationConditionType::ButtonHeld;
+            condition.button = index % 15 + 1;
+            break;
+        case 2:
+            condition.type = hotas::AutomationConditionType::PovActive;
+            condition.povHat = 1;
+            condition.povDirection = hotas::PovDirection::Right;
+            break;
+        default:
+            condition.type = hotas::AutomationConditionType::Always;
+            break;
+        }
+        rule.conditions.push_back(condition);
+        hotas::AutomationActionDefinition action;
+        switch (index % 5) {
+        case 0:
+            action.type = hotas::AutomationActionType::VJoyButtonHold;
+            action.virtualButton = index % 32 + 1;
+            break;
+        case 1:
+            action.type = hotas::AutomationActionType::AxisScale;
+            action.targetAxis = static_cast<int>(hotas::PhysicalAxis::Y);
+            action.value = 0.75F;
+            break;
+        case 2:
+            action.type = hotas::AutomationActionType::AxisMix;
+            action.sourceAxis = static_cast<int>(hotas::PhysicalAxis::X);
+            action.targetAxis = static_cast<int>(hotas::PhysicalAxis::Rz);
+            action.sourceStage = hotas::AutomationAxisSourceStage::Physical;
+            action.value = 0.12F;
+            break;
+        case 3:
+            action.type = hotas::AutomationActionType::AxisOffset;
+            action.targetAxis = static_cast<int>(hotas::PhysicalAxis::Y);
+            action.value = 0.03F;
+            break;
+        default:
+            action.type = hotas::AutomationActionType::AxisClamp;
+            action.targetAxis = static_cast<int>(hotas::PhysicalAxis::X);
+            action.minimum = -0.92F;
+            action.maximum = 0.92F;
+            break;
+        }
+        rule.actions.push_back(action);
+        configuration.automations.push_back(std::move(rule));
+    }
+    return configuration;
+}
+
+void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &reports)
+{
+    const hotas::RuntimeProfileCache cache = hotas::compileRuntimeProfileCache(
+        automationConfiguration(ruleCount));
+    hotas::AutomationRuntime runtime;
+    runtime.setCompiled(cache.automation.get());
+    const auto runOne = [&](const SyntheticReport &report, volatile float &sink) {
+        hotas::AutomationInputSnapshot input;
+        input.physicalAxes = report.axes;
+        input.axisAvailable.fill(true);
+        input.buttons = report.buttons;
+        input.povs.fill(-1);
+        input.povs[0] = report.pov;
+        input.povCount = 1;
+        input.buttonCount = 15;
+        input.baseProfileIndex = cache.baseProfileIndex;
+        input.preAutomationEffectiveProfileIndex = cache.baseProfileIndex;
+        const hotas::AutomationEvaluationResult &effects = runtime.evaluate(input);
+        std::array<float, hotas::kPhysicalAxisCount> processed = report.axes;
+        runtime.applyAxisActions(input, processed);
+        sink += processed[0] + processed[1] + (effects.heldButtons[1] ? 1.0F : 0.0F);
+    };
+    volatile float sink = 0.0F;
+    for (int index = 0; index < kWarmupReports; ++index) runOne(reports[static_cast<size_t>(index) % reports.size()], sink);
+    std::vector<std::uint64_t> samples;
+    samples.reserve(kMeasuredReports);
+    gHotPathAllocations = 0;
+    gTrackHotPathAllocations = true;
+    const auto throughputStarted = Clock::now();
+    for (int index = 0; index < kMeasuredReports; ++index) {
+        const auto started = Clock::now();
+        runOne(reports[static_cast<size_t>(index) % reports.size()], sink);
+        const auto finished = Clock::now();
+        samples.push_back(static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count()));
+    }
+    const auto throughputFinished = Clock::now();
+    gTrackHotPathAllocations = false;
+    const Percentiles timing = summarize(samples);
+    const double seconds = std::chrono::duration<double>(throughputFinished - throughputStarted).count();
+    std::cout << std::fixed << std::setprecision(3)
+              << "automation rules=" << ruleCount
+              << " typical_us=" << timing.typicalUs
+              << " p95_us=" << timing.p95Us
+              << " p99_us=" << timing.p99Us
+              << " worst_us=" << timing.worstUs
+              << " reports/s=" << static_cast<double>(kMeasuredReports) / seconds
+              << " hot_path_allocations=" << gHotPathAllocations << '\n';
+    if (sink == std::numeric_limits<float>::infinity()) std::cerr << "unexpected sink\n";
+}
+
+void runAutomationBenchmarks(const std::vector<SyntheticReport> &reports)
+{
+    for (const int ruleCount : {0, 8, 32, 64}) runAutomationBenchmark(ruleCount, reports);
+}
+
 void runUiModelStress(std::atomic_bool &stop)
 {
     // This is intentionally harsher than normal browsing: it continuously
@@ -563,6 +686,7 @@ int runMappingHotPathBenchmark(int argc, char *argv[])
     const bool uiModelStress = argc > 1 && std::string_view(argv[1]) == "--ui-stress";
     runSuite(uiModelStress ? "ui-model-stress" : "idle", reports, uiModelStress);
     runProfileControlBenchmarks();
+    runAutomationBenchmarks(reports);
     return 0;
 }
 

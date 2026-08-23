@@ -1041,7 +1041,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 346
+        height: 382
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1088,9 +1088,9 @@ Page {
             Repeater {
                 model: [
                     { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
-                    { label: "PROFILES", page: 5, future: false }, { label: "CALIBRATION", page: 2, future: false }, { label: "DIAGNOSTICS", page: 3, future: false },
-                    { label: "SETTINGS", page: 4, future: false }, { label: "", page: -1, future: false },
-                    { label: "CURVE EDITOR", page: 6, future: false }
+                    { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
                     width: parent.width
@@ -1530,7 +1530,11 @@ Page {
                         { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: "#b9d1d8",
                           note: backend.profileSourceLabel.toUpperCase() },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",
-                          note: backend.profileSwitchCount + " LIVE SWITCHES" }
+                          note: backend.profileSwitchCount + " LIVE SWITCHES" },
+                        { c: "AUTOMATION", v: backend.automationEngineEnabled ? "ENABLED" : "DISABLED", t: backend.automationEngineEnabled ? "#8fd5c9" : "#d4ad69",
+                          note: backend.automationRuleCount + " RULES / " + backend.automationActiveRuleCount + " ACTIVE" },
+                        { c: "AUTO EVAL", v: backend.automationEvaluationUs + " US", t: "#c9d6d9",
+                          note: "WORKER-SIDE RULE EVALUATION" }
                     ]
                         delegate: Panel { Layout.fillWidth: true
  Layout.preferredHeight: 86
@@ -2031,6 +2035,7 @@ Page {
             }
         }
         LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
+        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; topGun: false }
     }
 
     Dialog {

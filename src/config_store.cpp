@@ -12,12 +12,15 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <utility>
 
 namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 10;
+constexpr int kProfileSchemaVersion = 11;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -105,6 +108,176 @@ void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configurat
     configuration.startMappingOnLaunch = json.value(u"startMappingOnLaunch"_qs).toBool(false);
     configuration.selectedAxisIndex = std::clamp(json.value(u"selectedAxisIndex"_qs)
         .toInt(static_cast<int>(PhysicalAxis::X)), 0, kPhysicalAxisCount - 1);
+    configuration.automationEnabled = json.value(u"automationEnabled"_qs).toBool(true);
+}
+
+QString automationMatchModeToString(AutomationMatchMode mode)
+{
+    return mode == AutomationMatchMode::Any ? u"any"_qs : u"all"_qs;
+}
+
+bool automationMatchModeFromString(const QString &value, AutomationMatchMode *mode)
+{
+    if (!mode) return false;
+    const QString normalized = value.trimmed().toCaseFolded();
+    if (normalized == u"all"_qs) { *mode = AutomationMatchMode::All; return true; }
+    if (normalized == u"any"_qs) { *mode = AutomationMatchMode::Any; return true; }
+    return false;
+}
+
+QString automationConditionTypeToString(AutomationConditionType type)
+{
+    switch (type) {
+    case AutomationConditionType::Always: return u"always"_qs;
+    case AutomationConditionType::AxisAbove: return u"axisAbove"_qs;
+    case AutomationConditionType::AxisBelow: return u"axisBelow"_qs;
+    case AutomationConditionType::AxisBetween: return u"axisBetween"_qs;
+    case AutomationConditionType::AxisOutsideRange: return u"axisOutsideRange"_qs;
+    case AutomationConditionType::ButtonHeld: return u"buttonHeld"_qs;
+    case AutomationConditionType::ButtonReleased: return u"buttonReleased"_qs;
+    case AutomationConditionType::PovActive: return u"povActive"_qs;
+    case AutomationConditionType::PovInactive: return u"povInactive"_qs;
+    case AutomationConditionType::BaseProfileIs: return u"baseProfileIs"_qs;
+    case AutomationConditionType::EffectiveProfileIs: return u"effectiveProfileIs"_qs;
+    }
+    return {};
+}
+
+bool automationConditionTypeFromString(const QString &value, AutomationConditionType *type)
+{
+    if (!type) return false;
+    const QString normalized = value.trimmed();
+    const std::array<std::pair<QString, AutomationConditionType>, 11> choices{{
+        {u"always"_qs, AutomationConditionType::Always}, {u"axisAbove"_qs, AutomationConditionType::AxisAbove},
+        {u"axisBelow"_qs, AutomationConditionType::AxisBelow}, {u"axisBetween"_qs, AutomationConditionType::AxisBetween},
+        {u"axisOutsideRange"_qs, AutomationConditionType::AxisOutsideRange}, {u"buttonHeld"_qs, AutomationConditionType::ButtonHeld},
+        {u"buttonReleased"_qs, AutomationConditionType::ButtonReleased}, {u"povActive"_qs, AutomationConditionType::PovActive},
+        {u"povInactive"_qs, AutomationConditionType::PovInactive}, {u"baseProfileIs"_qs, AutomationConditionType::BaseProfileIs},
+        {u"effectiveProfileIs"_qs, AutomationConditionType::EffectiveProfileIs},
+    }};
+    for (const auto &[key, candidate] : choices) if (normalized == key) { *type = candidate; return true; }
+    return false;
+}
+
+QString automationActionTypeToString(AutomationActionType type)
+{
+    switch (type) {
+    case AutomationActionType::VJoyButtonHold: return u"vJoyButtonHold"_qs;
+    case AutomationActionType::VJoyButtonToggle: return u"vJoyButtonToggle"_qs;
+    case AutomationActionType::ProfileHold: return u"profileHold"_qs;
+    case AutomationActionType::ProfileToggle: return u"profileToggle"_qs;
+    case AutomationActionType::AxisScale: return u"axisScale"_qs;
+    case AutomationActionType::AxisOffset: return u"axisOffset"_qs;
+    case AutomationActionType::AxisClamp: return u"axisClamp"_qs;
+    case AutomationActionType::AxisOverride: return u"axisOverride"_qs;
+    case AutomationActionType::AxisMix: return u"axisMix"_qs;
+    case AutomationActionType::AxisFollow: return u"axisFollow"_qs;
+    }
+    return {};
+}
+
+bool automationActionTypeFromString(const QString &value, AutomationActionType *type)
+{
+    if (!type) return false;
+    const QString normalized = value.trimmed();
+    const std::array<std::pair<QString, AutomationActionType>, 10> choices{{
+        {u"vJoyButtonHold"_qs, AutomationActionType::VJoyButtonHold}, {u"vJoyButtonToggle"_qs, AutomationActionType::VJoyButtonToggle},
+        {u"profileHold"_qs, AutomationActionType::ProfileHold}, {u"profileToggle"_qs, AutomationActionType::ProfileToggle},
+        {u"axisScale"_qs, AutomationActionType::AxisScale}, {u"axisOffset"_qs, AutomationActionType::AxisOffset},
+        {u"axisClamp"_qs, AutomationActionType::AxisClamp}, {u"axisOverride"_qs, AutomationActionType::AxisOverride},
+        {u"axisMix"_qs, AutomationActionType::AxisMix}, {u"axisFollow"_qs, AutomationActionType::AxisFollow},
+    }};
+    for (const auto &[key, candidate] : choices) if (normalized == key) { *type = candidate; return true; }
+    return false;
+}
+
+QJsonObject automationConditionToJson(const AutomationConditionDefinition &condition)
+{
+    return {{u"type"_qs, automationConditionTypeToString(condition.type)}, {u"axis"_qs, condition.axis},
+            {u"minimum"_qs, condition.minimum}, {u"maximum"_qs, condition.maximum},
+            {u"hysteresis"_qs, condition.hysteresis}, {u"button"_qs, condition.button},
+            {u"povHat"_qs, condition.povHat}, {u"povDirection"_qs, static_cast<int>(condition.povDirection)},
+            {u"profileId"_qs, condition.profileId}};
+}
+
+bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDefinition *condition)
+{
+    if (!condition || !automationConditionTypeFromString(json.value(u"type"_qs).toString(), &condition->type)) return false;
+    condition->axis = json.value(u"axis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
+    condition->minimum = static_cast<float>(json.value(u"minimum"_qs).toDouble());
+    condition->maximum = static_cast<float>(json.value(u"maximum"_qs).toDouble());
+    condition->hysteresis = static_cast<float>(json.value(u"hysteresis"_qs).toDouble());
+    condition->button = json.value(u"button"_qs).toInt(1);
+    condition->povHat = json.value(u"povHat"_qs).toInt(1);
+    condition->povDirection = static_cast<PovDirection>(json.value(u"povDirection"_qs).toInt(static_cast<int>(PovDirection::Up)));
+    condition->profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
+    return std::isfinite(condition->minimum) && std::isfinite(condition->maximum)
+        && std::isfinite(condition->hysteresis);
+}
+
+QJsonObject automationActionToJson(const AutomationActionDefinition &action)
+{
+    return {{u"type"_qs, automationActionTypeToString(action.type)}, {u"virtualButton"_qs, action.virtualButton},
+            {u"profileId"_qs, action.profileId}, {u"targetAxis"_qs, action.targetAxis},
+            {u"sourceAxis"_qs, action.sourceAxis}, {u"sourceStage"_qs, static_cast<int>(action.sourceStage)},
+            {u"value"_qs, action.value}, {u"offset"_qs, action.offset},
+            {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum}};
+}
+
+bool automationActionFromJson(const QJsonObject &json, AutomationActionDefinition *action)
+{
+    if (!action || !automationActionTypeFromString(json.value(u"type"_qs).toString(), &action->type)) return false;
+    action->virtualButton = json.value(u"virtualButton"_qs).toInt(1);
+    action->profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
+    action->targetAxis = json.value(u"targetAxis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
+    action->sourceAxis = json.value(u"sourceAxis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
+    action->sourceStage = static_cast<AutomationAxisSourceStage>(json.value(u"sourceStage"_qs)
+        .toInt(static_cast<int>(AutomationAxisSourceStage::Processed)));
+    action->value = static_cast<float>(json.value(u"value"_qs).toDouble());
+    action->offset = static_cast<float>(json.value(u"offset"_qs).toDouble());
+    action->minimum = static_cast<float>(json.value(u"minimum"_qs).toDouble(-1.0));
+    action->maximum = static_cast<float>(json.value(u"maximum"_qs).toDouble(1.0));
+    return std::isfinite(action->value) && std::isfinite(action->offset)
+        && std::isfinite(action->minimum) && std::isfinite(action->maximum);
+}
+
+QJsonObject automationToJson(const AutomationDefinition &automation)
+{
+    QJsonArray conditions;
+    for (const AutomationConditionDefinition &condition : automation.conditions) conditions.append(automationConditionToJson(condition));
+    QJsonArray actions;
+    for (const AutomationActionDefinition &action : automation.actions) actions.append(automationActionToJson(action));
+    return {{u"id"_qs, automation.id}, {u"name"_qs, automation.name}, {u"enabled"_qs, automation.enabled},
+            {u"matchMode"_qs, automationMatchModeToString(automation.matchMode)},
+            {u"priority"_qs, automation.priority}, {u"conditions"_qs, conditions}, {u"actions"_qs, actions}};
+}
+
+bool automationFromJson(const QJsonObject &json, AutomationDefinition *automation)
+{
+    if (!automation) return false;
+    AutomationDefinition restored;
+    restored.id = json.value(u"id"_qs).toString().trimmed();
+    restored.name = json.value(u"name"_qs).toString().trimmed();
+    restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    restored.priority = std::clamp(json.value(u"priority"_qs).toInt(50), 0, 100);
+    if (restored.id.isEmpty() || restored.id.size() > 96 || restored.name.size() > 64
+        || !automationMatchModeFromString(json.value(u"matchMode"_qs).toString(), &restored.matchMode)) return false;
+    const QJsonArray conditions = json.value(u"conditions"_qs).toArray();
+    const QJsonArray actions = json.value(u"actions"_qs).toArray();
+    if (conditions.empty() || conditions.size() > kMaximumAutomationConditions
+        || actions.empty() || actions.size() > kMaximumAutomationActions) return false;
+    for (const QJsonValue &value : conditions) {
+        AutomationConditionDefinition condition;
+        if (!automationConditionFromJson(value.toObject(), &condition)) return false;
+        restored.conditions.push_back(std::move(condition));
+    }
+    for (const QJsonValue &value : actions) {
+        AutomationActionDefinition action;
+        if (!automationActionFromJson(value.toObject(), &action)) return false;
+        restored.actions.push_back(std::move(action));
+    }
+    *automation = std::move(restored);
+    return true;
 }
 
 QJsonArray buttonBindingsToJson(const ButtonBindings &bindings)
@@ -413,6 +586,12 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     for (const PersonalCurvePreset &preset : configuration.personalCurvePresets) {
         personalCurvePresets.append(personalCurvePresetToJson(preset));
     }
+    QJsonArray automations;
+    const int automationCount = std::min(static_cast<int>(configuration.automations.size()),
+                                         kMaximumAutomationRules);
+    for (int index = 0; index < automationCount; ++index) {
+        automations.append(automationToJson(configuration.automations[static_cast<size_t>(index)]));
+    }
 
     return {
         {u"version"_qs, kProfileSchemaVersion},
@@ -426,6 +605,8 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
         {u"nativePovBindings"_qs, nativePovBindingsToJson(configuration.nativePovBindings)},
+        {u"automationEnabled"_qs, configuration.automationEnabled},
+        {u"automations"_qs, automations},
         {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
@@ -435,7 +616,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
-        && version != 9 && version != kProfileSchemaVersion) {
+        && version != 9 && version != 10 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -520,6 +701,29 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version >= 10) {
         configuration.povProfileTriggers = povProfileTriggersFromJson(json.value(u"povProfileTriggers"_qs));
         configuration.nativePovBindings = nativePovBindingsFromJson(json.value(u"nativePovBindings"_qs));
+    }
+    // v1.8 adds global Automation with an ON/empty migration. Definitions
+    // may intentionally reference a deleted profile or unavailable device;
+    // the compiler preserves and marks those rules for repair.
+    if (version >= 11) {
+        const QJsonArray automations = json.value(u"automations"_qs).toArray();
+        if (automations.size() > kMaximumAutomationRules) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        QSet<QString> automationIds;
+        for (const QJsonValue &value : automations) {
+            AutomationDefinition automation;
+            if (!automationFromJson(value.toObject(), &automation) || automationIds.contains(automation.id)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            automationIds.insert(automation.id);
+            configuration.automations.push_back(std::move(automation));
+        }
+    } else {
+        configuration.automationEnabled = true;
+        configuration.automations.clear();
     }
 
     // Normal is the durable, protected recovery profile. A malformed/manual

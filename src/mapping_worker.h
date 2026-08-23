@@ -73,6 +73,13 @@ struct AtomicRuntimeState {
     std::atomic_int profileOverridePovDirection{-1};
     std::atomic_int profileOverrideMode{static_cast<int>(ProfileTriggerMode::Disabled)};
     std::atomic_uint64_t lastCurveCompileUs{0};
+    std::atomic_bool automationEngineEnabled{true};
+    std::atomic_int automationRuleCount{0};
+    std::atomic_int automationActiveRuleCount{0};
+    std::atomic_uint64_t automationEvaluationUs{0};
+    std::array<std::atomic_bool, kMaximumAutomationRules> automationRuleActive{};
+    std::atomic_int profileOverrideAutomationRule{-1};
+    std::atomic_int profileOverrideAutomationAction{-1};
 };
 
 struct DeviceSnapshot {
@@ -100,6 +107,7 @@ public:
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
     MappingLatencyPercentiles latencyPercentiles() const;
+    std::shared_ptr<const RuntimeProfileCache> runtimeProfileCache() const;
 
 signals:
     void workerEvent(const QString &message);

@@ -49,4 +49,16 @@ Rectangle {
             y: index % 2 === 0 ? 6 : parent.height - 10
         }
     }
+    Image {
+        visible: theme && theme.topGun
+        anchors.right: parent.right
+        anchors.rightMargin: 18
+        anchors.top: parent.top
+        anchors.topMargin: 10
+        width: Math.min(116, parent.width * 0.24)
+        height: 22
+        source: "qrc:/assets/themes/topgun/slash-stripes.svg"
+        fillMode: Image.PreserveAspectFit
+        opacity: 0.28
+    }
 }

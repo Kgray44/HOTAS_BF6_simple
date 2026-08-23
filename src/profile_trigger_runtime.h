@@ -1,5 +1,6 @@
 #pragma once
 
+#include "automation_engine.h"
 #include "button_mapping.h"
 
 #include <array>
@@ -20,6 +21,8 @@ struct EffectiveProfileSelection {
     int sourcePovHat = 0; // One-based physical POV hat; 0 means not a POV source.
     int sourcePovDirection = -1;
     ProfileTriggerMode sourceMode = ProfileTriggerMode::Disabled;
+    int sourceAutomationRule = -1;
+    int sourceAutomationAction = -1;
 };
 
 class ProfileTriggerRuntime final {
@@ -43,6 +46,10 @@ public:
                                             const PhysicalButtonStates &buttons,
                                             const PhysicalPovValues &povs, int povCount);
     EffectiveProfileSelection effectiveProfile(const RuntimeProfileCache &cache) const;
+    void updateAutomationContributions(
+        const std::array<AutomationProfileContribution, kMaximumAutomationProfileContributors> &contributions,
+        int contributionCount, int profileCount);
+    void clearAutomationContributions();
 
 private:
     struct TriggerSignature {
@@ -60,6 +67,8 @@ private:
                                    const PhysicalPovValues &povs, int povCount);
     static EffectiveProfileSelection selectionFor(int profileIndex, int source,
                                                   ProfileTriggerMode mode);
+    static EffectiveProfileSelection automationSelectionFor(int profileIndex, int source,
+                                                            ProfileTriggerMode mode);
     bool valid(const RuntimeProfileCache &cache, int source, ProfileTriggerMode expectedMode) const;
     void captureSignatures(const RuntimeProfileCache &cache);
 
@@ -67,6 +76,15 @@ private:
     std::array<std::uint64_t, kProfileTriggerSourceCount> m_holdOrder{};
     std::array<std::uint64_t, kProfileTriggerSourceCount> m_toggleOrder{};
     std::array<TriggerSignature, kProfileTriggerSourceCount> m_signatures{};
+    struct AutomationSignature {
+        int targetProfileIndex = -1;
+        ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
+
+        bool operator==(const AutomationSignature &) const = default;
+    };
+    std::array<std::uint64_t, kMaximumAutomationProfileContributors> m_automationHoldOrder{};
+    std::array<std::uint64_t, kMaximumAutomationProfileContributors> m_automationToggleOrder{};
+    std::array<AutomationSignature, kMaximumAutomationProfileContributors> m_automationSignatures{};
     std::uint64_t m_activationSequence = 0;
 };
 

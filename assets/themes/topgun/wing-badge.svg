@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120">
+  <g fill="#a7241a"><path d="M0 22h118l66 24H42z"/><path d="M0 48h156l35 15H24z"/><path d="M0 74h194l-21 15H0z"/><path d="M420 22H302l-66 24h142z"/><path d="M420 48H264l-35 15h167z"/><path d="M420 74H226l21 15h173z"/></g>
+  <g fill="#d8b77a"><path d="M6 16h117l61 21H44z"/><path d="M414 16H297l-61 21h140z"/></g>
+  <text x="210" y="60" text-anchor="middle" font-family="Arial Narrow,Arial,sans-serif" font-size="46" font-weight="900" fill="#e8d5a6">HOTAS BF6</text>
+  <text x="210" y="80" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#c49a5d">FLIGHT CONTROL INTERFACE</text>
+  <path fill="#e8d5a6" d="M210 84l5 10 11 1-8 8 2 11-10-6-10 6 2-11-8-8 11-1z"/>
+</svg>

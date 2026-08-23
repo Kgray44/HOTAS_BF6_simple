@@ -17,6 +17,11 @@ constexpr int kPhysicalAxisCount = 8;
 // controller count is always enumerated at runtime; this is only storage.
 constexpr int kMaximumPhysicalButtons = 128;
 constexpr int kMaximumVirtualButtons = 128;
+constexpr int kMaximumAutomationRules = 64;
+constexpr int kMaximumAutomationConditions = 4;
+constexpr int kMaximumAutomationActions = 4;
+constexpr int kMaximumAutomationProfileContributors =
+    kMaximumAutomationRules * kMaximumAutomationActions;
 // DIJOYSTATE2 exposes four POV values. Keep the physical report fixed-size so
 // the input thread can retain every reported hat without allocating.
 constexpr int kMaximumPhysicalPovs = 4;
@@ -221,6 +226,89 @@ struct ProfileTriggerBinding {
     ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
 };
 
+// Automation definitions are durable, UI-facing data only. They are resolved
+// into compact numeric records by AutomationCompiler before the mapping
+// worker observes them. The fixed limits are deliberately part of the
+// configuration contract: no configuration can make a report take unbounded
+// work.
+enum class AutomationMatchMode : int {
+    All = 0,
+    Any,
+};
+
+enum class AutomationConditionType : int {
+    Always = 0,
+    AxisAbove,
+    AxisBelow,
+    AxisBetween,
+    AxisOutsideRange,
+    ButtonHeld,
+    ButtonReleased,
+    PovActive,
+    PovInactive,
+    BaseProfileIs,
+    EffectiveProfileIs,
+};
+
+enum class AutomationActionType : int {
+    VJoyButtonHold = 0,
+    VJoyButtonToggle,
+    ProfileHold,
+    ProfileToggle,
+    AxisScale,
+    AxisOffset,
+    AxisClamp,
+    AxisOverride,
+    AxisMix,
+    AxisFollow,
+};
+
+enum class AutomationAxisSourceStage : int {
+    Physical = 0,
+    Processed,
+};
+
+enum class AutomationHealth : int {
+    Valid = 0,
+    Warning,
+    Invalid,
+};
+
+struct AutomationConditionDefinition {
+    AutomationConditionType type = AutomationConditionType::Always;
+    int axis = static_cast<int>(PhysicalAxis::X);
+    float minimum = 0.0F;
+    float maximum = 0.0F;
+    float hysteresis = 0.0F;
+    int button = 1; // One-based physical button.
+    int povHat = 1; // One-based physical POV hat.
+    PovDirection povDirection = PovDirection::Up;
+    QString profileId;
+};
+
+struct AutomationActionDefinition {
+    AutomationActionType type = AutomationActionType::VJoyButtonHold;
+    int virtualButton = 1; // One-based vJoy button.
+    QString profileId;
+    int targetAxis = static_cast<int>(PhysicalAxis::X);
+    int sourceAxis = static_cast<int>(PhysicalAxis::X);
+    AutomationAxisSourceStage sourceStage = AutomationAxisSourceStage::Processed;
+    float value = 0.0F;   // Scale, offset, override, or mix gain.
+    float offset = 0.0F;  // Axis Follow offset.
+    float minimum = -1.0F;
+    float maximum = 1.0F;
+};
+
+struct AutomationDefinition {
+    QString id;
+    QString name;
+    bool enabled = true;
+    AutomationMatchMode matchMode = AutomationMatchMode::All;
+    int priority = 50;
+    std::vector<AutomationConditionDefinition> conditions;
+    std::vector<AutomationActionDefinition> actions;
+};
+
 using ProfileTriggerBindings = std::vector<ProfileTriggerBinding>;
 using PovProfileTriggerBindings = std::vector<std::array<ProfileTriggerBinding,
                                                           kPovDirectionCount>>;
@@ -253,6 +341,10 @@ struct MapperConfiguration {
     // Native vJoy POV passthrough is global to the selected physical device,
     // rather than profile-specific, and defaults safely off on migration.
     NativePovBindings nativePovBindings;
+    // Automation is global to the selected controller configuration. An
+    // absent field migrates to this ON/empty state, preserving v1.7 behavior.
+    bool automationEnabled = true;
+    std::vector<AutomationDefinition> automations;
     QString activeProfileId;
 };
 
@@ -281,6 +373,7 @@ struct RuntimeProfileCache {
     std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> profileTriggers{};
     RuntimePovProfileTriggers povProfileTriggers{};
     std::array<NativePovBinding, kMaximumPhysicalPovs> nativePovBindings{};
+    std::shared_ptr<const struct CompiledAutomationSet> automation;
     int baseProfileIndex = 0;
 };
 
