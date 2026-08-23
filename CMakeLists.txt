@@ -69,6 +69,7 @@ qt_add_qml_module(HOTASMapper
         qml/Legacy.qml
         qml/Theme.qml
         qml/Main.qml
+        qml/Standard.qml
         qml/CurveEditor.qml
 )
 
