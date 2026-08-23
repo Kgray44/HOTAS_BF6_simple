@@ -134,6 +134,7 @@ ApplicationWindow {
     }
     component FlightComboBox: ComboBox {
         id: flightCombo
+        property int popupMaximumHeight: 264
         implicitHeight: 31
         leftPadding: 9
         rightPadding: 28
@@ -159,12 +160,15 @@ ApplicationWindow {
             font.pixelSize: 15
         }
         delegate: ItemDelegate {
+            id: choiceDelegate
+            readonly property bool currentSelection: flightCombo.currentIndex === index
             width: flightCombo.width
-            height: 31
+            implicitHeight: Math.max(31, choiceText.implicitHeight + 12)
             highlighted: flightCombo.highlightedIndex === index
             contentItem: Text {
-                text: modelData && modelData.label !== undefined ? modelData.label : modelData
-                color: highlighted ? "#eff8f7" : "#d0dcdd"
+                id: choiceText
+                text: flightCombo.textAt(index)
+                color: choiceDelegate.highlighted ? "#eff8f7" : "#d0dcdd"
                 verticalAlignment: Text.AlignVCenter
                 leftPadding: 10
                 rightPadding: 10
@@ -173,20 +177,28 @@ ApplicationWindow {
             }
             background: Rectangle {
                 radius: 3
-                color: highlighted ? "#315a66" : (hovered ? "#1d333b" : "transparent")
-                border.color: highlighted ? "#6f9fac" : "transparent"
+                color: choiceDelegate.highlighted ? "#315a66" : (choiceDelegate.currentSelection ? "#244650" : (choiceDelegate.hovered ? "#1d333b" : "transparent"))
+                border.color: choiceDelegate.highlighted ? "#6f9fac" : (choiceDelegate.currentSelection ? "#527d88" : "transparent")
             }
         }
         popup: Popup {
+            id: selectorPopup
             y: flightCombo.height + 4
             width: flightCombo.width
-            implicitHeight: Math.min(contentItem.implicitHeight + 12, 264)
-            padding: 6
+            implicitHeight: Math.min(flightCombo.popupMaximumHeight,
+                                     popupList.contentHeight + topPadding + bottomPadding)
+            height: implicitHeight
+            topPadding: 6
+            bottomPadding: 6
+            leftPadding: 6
+            rightPadding: 6
             contentItem: ListView {
+                id: popupList
                 clip: true
                 implicitHeight: contentHeight
                 model: flightCombo.popup.visible ? flightCombo.delegateModel : null
                 currentIndex: flightCombo.highlightedIndex
+                boundsBehavior: Flickable.StopAtBounds
                 ScrollIndicator.vertical: ScrollIndicator { }
             }
             background: Rectangle {
@@ -957,15 +969,26 @@ ApplicationWindow {
  horizontalAlignment: Text.AlignHCenter
  verticalAlignment: Text.AlignVCenter }
             }
-            ColumnLayout { spacing: 0
-                Text { text: "HOTAS BF6"
- color: "#f1f3f1"
- font.pixelSize: 15
- font.bold: true }
-                Text { text: "FLIGHT CONTROL INTERFACE"
- color: "#8d989d"
- font.pixelSize: 9
- font.bold: true }
+            RowLayout { spacing: 8
+                Image {
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    source: "qrc:/assets/icons/png/hotas-bf6-256.png"
+                    sourceSize.width: 68
+                    sourceSize.height: 68
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                }
+                ColumnLayout { spacing: 0
+                    Text { text: "HOTAS BF6"
+     color: "#f1f3f1"
+     font.pixelSize: 15
+     font.bold: true }
+                    Text { text: "FLIGHT CONTROL INTERFACE"
+     color: "#8d989d"
+     font.pixelSize: 9
+     font.bold: true }
+                }
             }
             FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 24 }
@@ -1024,7 +1047,7 @@ ApplicationWindow {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 330
+        height: 346
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1040,6 +1063,34 @@ ApplicationWindow {
             anchors.fill: parent
  anchors.margins: 8
  spacing: 2
+            Row {
+                x: 7
+                width: parent.width - 14
+                height: 48
+                spacing: 9
+                Image {
+                    width: 44
+                    height: 44
+                    anchors.verticalCenter: parent.verticalCenter
+                    source: "qrc:/assets/icons/png/hotas-bf6-256.png"
+                    sourceSize.width: 88
+                    sourceSize.height: 88
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 1
+                    Text { text: "HOTAS BF6"; color: "#edf5f4"; font.pixelSize: 13; font.bold: true }
+                    Text { text: "v" + Qt.application.version; color: "#8fa6ad"; font.pixelSize: 9; font.bold: true }
+                }
+            }
+            Rectangle {
+                x: 7
+                width: parent.width - 14
+                height: 1
+                color: "#214d5964"
+            }
             Repeater {
                 model: [
                     { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
