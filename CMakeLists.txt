@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 
-# VERSION is the single release version authority.  Packaging and CI read the
-# same file rather than maintaining independent application/installer values.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HOTAS_BF6_VERSION_RAW)
+# HOTAS_VERSION is the single release version authority.  Its non-generic name
+# avoids shadowing the C++20 <version> header on case-insensitive Windows paths.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/HOTAS_VERSION" HOTAS_BF6_VERSION_RAW)
 string(STRIP "${HOTAS_BF6_VERSION_RAW}" HOTAS_BF6_VERSION)
 if (NOT HOTAS_BF6_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "VERSION must be a semantic major.minor.patch value")
+    message(FATAL_ERROR "HOTAS_VERSION must be a semantic major.minor.patch value")
 endif()
 string(REPLACE "." "," HOTAS_BF6_VERSION_COMMAS "${HOTAS_BF6_VERSION}")
 

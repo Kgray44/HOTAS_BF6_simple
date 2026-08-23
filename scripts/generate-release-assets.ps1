@@ -7,9 +7,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must be major.minor.patch.' }
-if ($ReleaseTag -ne "v$version") { throw "Release tag $ReleaseTag does not match VERSION $version." }
+$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'HOTAS_VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'HOTAS_VERSION must be major.minor.patch.' }
+if ($ReleaseTag -ne "v$version") { throw "Release tag $ReleaseTag does not match HOTAS_VERSION $version." }
 
 $installer = Get-Item -LiteralPath $InstallerPath -ErrorAction Stop
 $expectedName = "HOTAS-BF6-Setup-v$version.exe"

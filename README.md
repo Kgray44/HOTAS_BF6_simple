@@ -33,7 +33,7 @@ for diagnostics and mapping.
 
 ## v1.6 packaging and update features
 
-- One authoritative `VERSION` file drives the Qt application, launcher metadata, installer, release manifest, and tag validation
+- One authoritative `HOTAS_VERSION` file drives the Qt application, launcher metadata, installer, release manifest, and tag validation. The specific name avoids shadowing C++20's standard `<version>` header on Windows' case-insensitive paths.
 - Small console-free native Win32 launcher using WinHTTP and Windows CNG SHA-256, separate from the mapper and Qt runtime
 - Stable-release-only updates from `https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json`
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
@@ -90,7 +90,7 @@ Qt Creator run target.
 
 ## Maintainer release process
 
-1. Finish and test code, then update the root `VERSION` file.
+1. Finish and test code, then update the root `HOTAS_VERSION` file.
 2. Commit and merge the version to `main`.
 3. Perform the manual installer, launcher, and HOTAS/vJoy acceptance checks.
 4. Create and push the matching annotated tag, for example:
@@ -100,7 +100,7 @@ Qt Creator run target.
    git push origin v1.6.0
    ```
 
-The Windows release workflow verifies `VERSION` equals the tag, builds and tests the mapper/launcher, runs `windeployqt`, compiles and smoke-tests the Inno installer on CI, creates `update-manifest.json` and `SHA256SUMS.txt`, and publishes the GitHub Release. A `workflow_dispatch` run is dry-run only and uploads the same artifacts without publishing a release.
+The Windows release workflow verifies `HOTAS_VERSION` equals the tag, builds and tests the mapper/launcher, runs `windeployqt`, compiles and smoke-tests the Inno installer on CI, creates `update-manifest.json` and `SHA256SUMS.txt`, and publishes the GitHub Release. A `workflow_dispatch` run is dry-run only and uploads the same artifacts without publishing a release.
 
 ## Default axis routing
 

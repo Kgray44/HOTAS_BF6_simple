@@ -31,11 +31,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content VERSION -Raw).Trim()
-          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must be major.minor.patch.' }
+          $version = (Get-Content HOTAS_VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'HOTAS_VERSION must be major.minor.patch.' }
           if ($env:GITHUB_EVENT_NAME -eq 'push') {
             if ($env:GITHUB_REF_NAME -ne "v$version") {
-              throw "Tag $env:GITHUB_REF_NAME does not match VERSION $version."
+              throw "Tag $env:GITHUB_REF_NAME does not match HOTAS_VERSION $version."
             }
             $tag = $env:GITHUB_REF_NAME
           } else {
@@ -117,7 +117,7 @@ jobs:
           $certificate = Join-Path $env:RUNNER_TEMP 'hotas-bf6-signing.pfx'
           [System.IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
           try {
-            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content VERSION -Raw).Trim()).exe"
+            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content HOTAS_VERSION -Raw).Trim()).exe"
             if ($LASTEXITCODE -ne 0) { throw 'Signing installer failed.' }
           } finally {
             Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
@@ -127,7 +127,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content VERSION -Raw).Trim()
+          $version = (Get-Content HOTAS_VERSION -Raw).Trim()
           $installer = "$PWD\release\HOTAS-BF6-Setup-v$version.exe"
           $target = Join-Path $env:RUNNER_TEMP 'hotas-bf6-installer-smoke'
           & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$target"
@@ -144,7 +144,7 @@ jobs:
 
       - name: Generate release manifest and checksums
         shell: pwsh
-        run: .\scripts\generate-release-assets.ps1 -InstallerPath "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content VERSION -Raw).Trim()).exe" -OutputDir "$PWD\release" -ReleaseTag $env:RELEASE_TAG
+        run: .\scripts\generate-release-assets.ps1 -InstallerPath "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content HOTAS_VERSION -Raw).Trim()).exe" -OutputDir "$PWD\release" -ReleaseTag $env:RELEASE_TAG
 
       - name: Upload dry-run or diagnostic artifacts
         uses: actions/upload-artifact@v4

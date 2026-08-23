@@ -1,5 +1,5 @@
 ; Built only by packaging/build-installer.ps1, which reads the repository's
-; authoritative VERSION file and supplies the preprocessor values below.
+; authoritative HOTAS_VERSION file and supplies the preprocessor values below.
 #ifndef MyAppVersion
   #error MyAppVersion must be supplied by packaging/build-installer.ps1
 #endif

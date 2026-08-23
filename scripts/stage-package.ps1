@@ -7,8 +7,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must be major.minor.patch.' }
+$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'HOTAS_VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'HOTAS_VERSION must be major.minor.patch.' }
 
 $build = (Resolve-Path -LiteralPath $BuildDir).Path
 $deploy = (Resolve-Path -LiteralPath $WindeployQt).Path
@@ -23,7 +23,7 @@ if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -F
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -LiteralPath $mapper -Destination (Join-Path $stage 'HOTAS BF6.exe')
 Copy-Item -LiteralPath $launcher -Destination (Join-Path $stage 'HOTAS BF6 Launcher.exe')
-Copy-Item -LiteralPath (Join-Path $repoRoot 'VERSION') -Destination (Join-Path $stage 'VERSION')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'HOTAS_VERSION') -Destination (Join-Path $stage 'VERSION')
 
 & $deploy --release --compiler-runtime --qmldir (Join-Path $repoRoot 'qml') (Join-Path $stage 'HOTAS BF6.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE." }
