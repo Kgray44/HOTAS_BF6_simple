@@ -63,6 +63,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong latencyP95Us READ latencyP95Us NOTIFY stateChanged)
+    Q_PROPERTY(qulonglong latencyP99Us READ latencyP99Us NOTIFY stateChanged)
     Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
@@ -123,6 +125,8 @@ public:
     qulonglong latencyCurrentUs() const;
     qulonglong latencyAverageUs() const;
     qulonglong latencyPeakUs() const;
+    qulonglong latencyP95Us() const { return m_latencyP95Us; }
+    qulonglong latencyP99Us() const { return m_latencyP99Us; }
     qulonglong profileSwitchCount() const;
     qulonglong lastProfileSwapUs() const;
     qulonglong lastCurveCompileUs() const;
@@ -210,12 +214,15 @@ private:
     QTimer m_snapshotTimer;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
+    QElapsedTimer m_latencyPercentileClock;
     quint64 m_previousInputReports = 0;
     quint64 m_previousVjoyWrites = 0;
     double m_inputReportsPerSecond = 0.0;
     qint64 m_lastPhysicalUpdateAgeMs = -1;
     bool m_havePhysicalReport = false;
     double m_vjoyWritesPerSecond = 0.0;
+    qulonglong m_latencyP95Us = 0;
+    qulonglong m_latencyP99Us = 0;
     QVariantList m_selectedAxisCurve;
     QVariantList m_curveEditorResponseCurve;
     QVariantList m_curveGainSamples;

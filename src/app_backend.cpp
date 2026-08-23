@@ -32,6 +32,7 @@ AppBackend::AppBackend(QObject *parent)
     m_snapshotTimer.start();
     m_rateClock.start();
     m_physicalUpdateClock.start();
+    m_latencyPercentileClock.start();
     rebuildSelectedAxisCurve();
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
@@ -1168,6 +1169,14 @@ void AppBackend::resetApplicationConfiguration()
 
 void AppBackend::refreshUiSnapshot()
 {
+    // Percentiles are diagnostic telemetry; four updates per second avoids
+    // turning their presentation into a source of GUI-side CPU pressure.
+    if (m_latencyPercentileClock.elapsed() >= 250) {
+        const MappingLatencyPercentiles percentiles = m_worker.latencyPercentiles();
+        m_latencyP95Us = percentiles.p95Us;
+        m_latencyP99Us = percentiles.p99Us;
+        m_latencyPercentileClock.restart();
+    }
     const qint64 elapsed = m_rateClock.restart();
     if (elapsed > 0) {
         const quint64 reports = m_worker.runtime().inputReports.load();

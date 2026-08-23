@@ -7,10 +7,19 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <utility>
 
 namespace hotas {
+
+constexpr size_t kLatencyTelemetrySamples = 2048;
+
+struct MappingLatencyPercentiles {
+    std::uint64_t sampleCount = 0;
+    std::uint64_t p95Us = 0;
+    std::uint64_t p99Us = 0;
+};
 
 struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> raw{};
@@ -47,6 +56,10 @@ struct AtomicRuntimeState {
     std::atomic_uint64_t latencyCurrentUs{0};
     std::atomic_uint64_t latencyAverageUs{0};
     std::atomic_uint64_t latencyPeakUs{0};
+    // The worker writes one bounded sample per report. Percentile sorting is
+    // deliberately performed by the UI-side snapshot timer, never here.
+    std::array<std::atomic_uint64_t, kLatencyTelemetrySamples> latencySamples{};
+    std::atomic_uint64_t latencySampleCount{0};
     std::atomic_uint64_t profileSwitchCount{0};
     std::atomic_uint64_t lastProfileSwapUs{0};
     std::atomic_uint64_t lastCurveCompileUs{0};
@@ -76,6 +89,7 @@ public:
     const AtomicRuntimeState &runtime() const { return m_runtime; }
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
+    MappingLatencyPercentiles latencyPercentiles() const;
 
 signals:
     void workerEvent(const QString &message);

@@ -1,5 +1,6 @@
 #include "axis_transform.h"
 #include "button_mapping.h"
+#include "mapping_worker.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
 #include "response_curve.h"
@@ -79,6 +80,12 @@ struct HotPathState {
     hotas::RuntimeButtonTargets buttonTargets{};
     hotas::VirtualButtonStates lastVirtualButtons{};
     RuntimePublication publication;
+    // Match the production worker's fixed-size latency telemetry write. The
+    // GUI-side percentile sort intentionally remains outside this benchmarked
+    // report path.
+    std::array<std::atomic<std::uint64_t>, hotas::kLatencyTelemetrySamples> latencySamples{};
+    std::atomic<std::uint64_t> latencySampleCount{0};
+    std::uint64_t latencySampleSequence = 0;
     std::uint64_t outputWriteDecisions = 0;
 
     explicit HotPathState(const hotas::RuntimeMappingConfiguration &mapping)
@@ -211,6 +218,13 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
                                                                                   std::memory_order_relaxed);
         ++state.outputWriteDecisions;
     }
+    const size_t latencySlot = static_cast<size_t>(state.latencySampleSequence
+        % hotas::kLatencyTelemetrySamples);
+    state.latencySamples[latencySlot].store(state.latencySampleSequence,
+        std::memory_order_release);
+    ++state.latencySampleSequence;
+    state.latencySampleCount.store(std::min<std::uint64_t>(
+        state.latencySampleSequence, hotas::kLatencyTelemetrySamples), std::memory_order_release);
     sink += output[1] + output[2] + output[3] + output[4];
 }
 

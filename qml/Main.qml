@@ -1174,6 +1174,8 @@ ApplicationWindow {
                         { c: "PHYSICAL RATE", v: backend.inputReportsPerSecond.toFixed(0) + " HZ", t: backend.inputReportsPerSecond > 0 ? "#b9d1d8" : "#a5afb3" },
                         { c: "UPDATE AGE", v: backend.lastPhysicalUpdateAgeMs >= 0 ? backend.lastPhysicalUpdateAgeMs + " MS" : "—", t: backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? "#b9d1d8" : "#a5afb3" },
                         { c: "MAP LATENCY", v: backend.latencyCurrentUs + " US", t: "#c9d6d9" },
+                        { c: "MAP p95 / p99", v: backend.latencyP95Us + " / " + backend.latencyP99Us + " US", t: "#c9d6d9",
+                          note: "ROLLING LAST 2,048 PHYSICAL REPORTS" },
                         { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
                         { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : "STOPPED", t: backend.mappingActive ? "#a8cfba" : "#a5afb3",

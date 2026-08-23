@@ -460,6 +460,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.virtualButtonPressed[index] = false;
         m_runtime.buttonAvailable[index] = false;
     }
+    for (std::atomic_uint64_t &sample : m_runtime.latencySamples) sample = 0;
     const auto compileStarted = std::chrono::steady_clock::now();
     m_preparedMapping = std::make_shared<RuntimeMappingConfiguration>(
         compileActiveProfile(m_configuration));
@@ -563,6 +564,32 @@ QString MappingWorker::vjoyStatus() const
     return m_vjoyStatus;
 }
 
+MappingLatencyPercentiles MappingWorker::latencyPercentiles() const
+{
+    MappingLatencyPercentiles result;
+    const size_t count = static_cast<size_t>(std::min<std::uint64_t>(
+        m_runtime.latencySampleCount.load(std::memory_order_acquire), kLatencyTelemetrySamples));
+    if (count == 0) return result;
+
+    // This runs on the GUI-side 60 Hz snapshot timer. It observes a rolling
+    // atomic copy of the last 2048 reports and performs no work on the
+    // real-time mapping thread beyond that thread's single sample store.
+    std::array<std::uint64_t, kLatencyTelemetrySamples> values{};
+    for (size_t index = 0; index < count; ++index) {
+        values[index] = m_runtime.latencySamples[index].load(std::memory_order_acquire);
+    }
+    std::sort(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(count));
+    const auto percentile = [&values, count](double fraction) {
+        const size_t index = std::min(count - 1, static_cast<size_t>(std::ceil(
+            fraction * static_cast<double>(count))) - 1);
+        return values[index];
+    };
+    result.sampleCount = count;
+    result.p95Us = percentile(0.95);
+    result.p99Us = percentile(0.99);
+    return result;
+}
+
 MapperConfiguration MappingWorker::configurationCopy()
 {
     QMutexLocker locker(&m_configurationMutex);
@@ -633,6 +660,7 @@ void MappingWorker::run()
     bool buttonDefaultsPending = false;
     std::uint64_t processedReports = 0;
     std::uint64_t latencyTotal = 0;
+    std::uint64_t latencySampleSequence = 0;
     auto nextDiscovery = std::chrono::steady_clock::now();
     auto nextVjoyCheck = std::chrono::steady_clock::now();
     auto nextVjoyAcquire = std::chrono::steady_clock::now();
@@ -982,6 +1010,12 @@ void MappingWorker::run()
         m_runtime.inputReports = processedReports;
         m_runtime.latencyCurrentUs = latency;
         m_runtime.latencyAverageUs = latencyTotal / processedReports;
+        const size_t latencySlot = static_cast<size_t>(latencySampleSequence
+            % kLatencyTelemetrySamples);
+        m_runtime.latencySamples[latencySlot].store(latency, std::memory_order_release);
+        ++latencySampleSequence;
+        m_runtime.latencySampleCount.store(std::min<std::uint64_t>(
+            latencySampleSequence, kLatencyTelemetrySamples), std::memory_order_release);
         std::uint64_t peak = m_runtime.latencyPeakUs.load();
         while (latency > peak && !m_runtime.latencyPeakUs.compare_exchange_weak(peak, latency)) {}
     }
