@@ -4,8 +4,10 @@ import QtQuick.Layouts 6.5
 
 Item {
     id: editor
+    // Retain the original curve-editor body and bind it to the concrete
+    // v1.6.3 panel surface rather than the themed panel used elsewhere.
+    component AviationPanel: LegacyAviationPanel {}
     property var backendObject
-    property var theme
     property var editorState: backendObject ? backendObject.curveEditorState : ({})
     property var analysis: backendObject ? backendObject.curveAnalysis : ({})
     property var comparison: backendObject ? backendObject.curveComparisonState : ({})
@@ -35,18 +37,18 @@ Item {
         font.pixelSize: 12
         font.bold: true
         contentItem: Text {
-            text: control.text; color: control.enabled ? theme.textStrong : theme.textFaint
+            text: control.text; color: control.enabled ? "#edf6f6" : "#86989d"
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight; font: control.font
         }
         background: Rectangle {
-            radius: theme.controlRadius; border.width: 1
-            border.color: !control.enabled ? theme.border : control.down ? theme.borderStrong
-                : control.hovered ? (control.role === "destructive" ? theme.danger : theme.orange)
-                : (control.role === "primary" ? theme.orange : control.role === "destructive" ? theme.danger : theme.border)
-            color: !control.enabled ? theme.controlDisabled : control.down ? theme.controlPressed
-                : control.hovered ? (control.role === "primary" ? theme.buttonHover : control.role === "destructive" ? theme.destructive : theme.buttonSecondaryHover)
-                : (control.role === "primary" ? theme.buttonSurface : control.role === "destructive" ? theme.destructive : theme.buttonSecondary)
+            radius: 4; border.width: 1
+            border.color: !control.enabled ? "#304249" : control.down ? "#8bc5cf"
+                : control.hovered ? (control.role === "destructive" ? "#b98778" : "#78b7c2")
+                : (control.role === "primary" ? "#78aeb9" : control.role === "destructive" ? "#805b56" : "#536e78")
+            color: !control.enabled ? "#151b1e" : control.down ? "#244955"
+                : control.hovered ? (control.role === "primary" ? "#365f6a" : control.role === "destructive" ? "#432c2b" : "#263c43")
+                : (control.role === "primary" ? "#31545f" : control.role === "destructive" ? "#2c2223" : "#1b2a30")
         }
         ToolTip.visible: hovered && ToolTip.text.length > 0
     }
@@ -57,24 +59,24 @@ Item {
         font.pixelSize: 12
         contentItem: Text {
             leftPadding: 11; rightPadding: 28; text: control.displayText
-            color: control.enabled ? theme.text : theme.textFaint; font: control.font
+            color: control.enabled ? "#e8f0f1" : "#89999e"; font: control.font
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
         }
         indicator: Text { x: control.width - width - 9; y: (control.height - height) / 2
-            text: "⌄"; color: control.enabled ? theme.textMuted : theme.textFaint; font.pixelSize: 16 }
-        background: Rectangle { radius: theme.controlRadius; border.width: 1
-            border.color: control.activeFocus ? theme.orange : control.hovered ? theme.borderStrong : theme.border
-            color: control.enabled ? theme.control : theme.controlDisabled }
+            text: "⌄"; color: control.enabled ? "#9cccd2" : "#6b7f85"; font.pixelSize: 16 }
+        background: Rectangle { radius: 4; border.width: 1
+            border.color: control.activeFocus ? "#76bac5" : control.hovered ? "#587f89" : "#435e67"
+            color: control.enabled ? "#121f24" : "#11181b" }
         delegate: ItemDelegate { width: control.width; height: 34; highlighted: control.highlightedIndex === index
-            contentItem: Text { text: modelData[control.textRole] || modelData; color: theme.text
+            contentItem: Text { text: modelData[control.textRole] || modelData; color: "#dbe8e9"
                 verticalAlignment: Text.AlignVCenter; leftPadding: 11; font.pixelSize: 12; elide: Text.ElideRight }
-            background: Rectangle { color: highlighted ? theme.selection : theme.control }
+            background: Rectangle { color: highlighted ? "#1b3a43" : "#111c21" }
         }
         popup: Popup { y: control.height - 1; width: control.width; padding: 1
             implicitHeight: Math.min(contentItem.implicitHeight, 260)
             contentItem: ListView { clip: true; implicitHeight: contentHeight; model: control.popup.visible ? control.delegateModel : null
                 currentIndex: control.highlightedIndex; ScrollIndicator.vertical: ScrollIndicator {} }
-            background: Rectangle { color: theme.tooltip; border.color: theme.borderStrong; radius: theme.controlRadius }
+            background: Rectangle { color: "#10191e"; border.color: "#4e7881"; radius: 3 }
         }
     }
 
@@ -83,39 +85,39 @@ Item {
         implicitWidth: 88; implicitHeight: 34
         contentItem: TextInput {
             z: 2; text: control.textFromValue(control.value, control.locale); font: control.font
-            color: control.enabled ? theme.text : theme.textFaint; selectionColor: theme.selection; selectedTextColor: theme.textStrong
+            color: control.enabled ? "#dce9ea" : "#62757a"; selectionColor: "#3f7b86"; selectedTextColor: "#ffffff"
             horizontalAlignment: Qt.AlignHCenter; verticalAlignment: Qt.AlignVCenter; readOnly: !control.editable
             validator: control.validator; inputMethodHints: Qt.ImhFormattedNumbersOnly
         }
-        background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: control.activeFocus ? theme.orange : theme.border }
-        up.indicator: Rectangle { x: control.width - width; height: control.height / 2; width: 16; color: control.up.pressed ? theme.controlPressed : "transparent"
-            Text { anchors.centerIn: parent; text: "▲"; color: theme.cyan; font.pixelSize: 7 } }
-        down.indicator: Rectangle { x: control.width - width; y: control.height / 2; height: control.height / 2; width: 16; color: control.down.pressed ? theme.controlPressed : "transparent"
-            Text { anchors.centerIn: parent; text: "▼"; color: theme.cyan; font.pixelSize: 7 } }
+        background: Rectangle { radius: 4; color: "#0f1a1f"; border.color: control.activeFocus ? "#76bac5" : "#435e67" }
+        up.indicator: Rectangle { x: control.width - width; height: control.height / 2; width: 16; color: control.up.pressed ? "#29454e" : "transparent"
+            Text { anchors.centerIn: parent; text: "▲"; color: "#8fc3c9"; font.pixelSize: 7 } }
+        down.indicator: Rectangle { x: control.width - width; y: control.height / 2; height: control.height / 2; width: 16; color: control.down.pressed ? "#29454e" : "transparent"
+            Text { anchors.centerIn: parent; text: "▼"; color: "#8fc3c9"; font.pixelSize: 7 } }
     }
 
     component AviationMenuItem: MenuItem {
         id: control
         implicitHeight: 29
-        contentItem: Text { text: control.text; color: control.enabled ? theme.text : theme.textFaint; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
-        background: Rectangle { color: control.highlighted ? theme.selection : theme.tooltip }
+        contentItem: Text { text: control.text; color: control.enabled ? "#dce9ea" : "#63757a"; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+        background: Rectangle { color: control.highlighted ? "#1d3d47" : "#101b20" }
     }
 
     component AviationTextField: TextField {
         id: control
         implicitHeight: 36
         font.pixelSize: 12
-        color: theme.text
-        placeholderTextColor: theme.textFaint
-        selectionColor: theme.selection
-        selectedTextColor: theme.textStrong
+        color: "#e8f0f1"
+        placeholderTextColor: "#83979c"
+        selectionColor: "#3f7b86"
+        selectedTextColor: "#ffffff"
         leftPadding: 11
         rightPadding: 11
         background: Rectangle {
-            radius: theme.controlRadius
-            color: theme.control
+            radius: 4
+            color: "#121f24"
             border.width: 1
-            border.color: control.activeFocus ? theme.orange : control.hovered ? theme.borderStrong : theme.border
+            border.color: control.activeFocus ? "#76bac5" : control.hovered ? "#587f89" : "#435e67"
         }
     }
 
@@ -129,15 +131,15 @@ Item {
             x: control.leftPadding
             y: control.topPadding + (control.availableHeight - height) / 2
             radius: 10
-            color: control.checked ? theme.orange : theme.control
-            border.color: control.checked ? theme.borderStrong : theme.border
+            color: control.checked ? "#244b54" : "#202b30"
+            border.color: control.checked ? "#70b3bd" : "#536b73"
             Rectangle {
                 width: 14
                 height: 14
                 radius: 7
                 x: control.checked ? parent.width - width - 3 : 3
                 anchors.verticalCenter: parent.verticalCenter
-                color: control.checked ? theme.ivory : theme.textMuted
+                color: control.checked ? "#b6e1e3" : "#9caaae"
             }
         }
     }
@@ -153,13 +155,13 @@ Item {
             x: control.leftPadding
             y: control.topPadding + (control.availableHeight - height) / 2
             radius: 3
-            color: !control.enabled ? theme.controlDisabled : control.checked ? theme.selection : theme.control
-            border.color: !control.enabled ? theme.border : control.hovered ? theme.borderStrong : control.checked ? theme.orange : theme.border
+            color: !control.enabled ? "#182126" : control.checked ? "#1d4750" : "#172228"
+            border.color: !control.enabled ? "#3d4d52" : control.hovered ? "#83c1c9" : control.checked ? "#6eb1bb" : "#58717a"
             Text {
                 anchors.centerIn: parent
                 text: "✓"
                 visible: control.checked
-                color: control.enabled ? theme.ivory : theme.textFaint
+                color: control.enabled ? "#b9e8e8" : "#819499"
                 font.pixelSize: 13
                 font.bold: true
             }
@@ -167,7 +169,7 @@ Item {
         contentItem: Text {
             leftPadding: control.indicator.implicitWidth + control.spacing
             text: control.text
-            color: control.enabled ? theme.text : theme.textFaint
+            color: control.enabled ? "#d7e5e7" : "#849499"
             verticalAlignment: Text.AlignVCenter
             font.pixelSize: 12
             font.bold: true
@@ -176,18 +178,18 @@ Item {
     }
 
     component CardHeading: Text {
-        color: theme.topGun ? theme.ivory : "#edf6f6"
+        color: "#edf6f6"
         font.pixelSize: 15
         font.bold: true
     }
 
     component FieldCaption: Text {
-        color: theme.textMuted
+        color: "#9eb3b9"
         font.pixelSize: 12
         font.bold: true
     }
 
-    function tone(ok) { return ok ? theme.ready : theme.warning }
+    function tone(ok) { return ok ? "#9fc9bb" : "#d49b62" }
     function percent(value) {
         const n = Number(value)
         if (editorState.unipolar) return (n * 100).toFixed(1) + "%"
@@ -282,7 +284,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: theme.background
+        color: "#0d1013"
     }
     Flickable {
         id: editorScroll
@@ -302,8 +304,8 @@ Item {
         AviationPanel {
             Layout.fillWidth: true
             Layout.preferredHeight: editor.width >= 1080 ? 198 : 270
-            color: theme.topGun ? "#d80b1b20" : "#e61a282e"
-            border.color: theme.topGun ? theme.borderStrong : "#4b70818a"
+            color: "#e61a282e"
+            border.color: "#4b70818a"
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
@@ -312,11 +314,11 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: "CURVE EDITOR"; color: theme.topGun ? theme.ivory : "#f1f7f7"; font.pixelSize: 23; font.bold: true; font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable" }
+                        Text { text: "CURVE EDITOR"; color: "#f1f7f7"; font.pixelSize: 23; font.bold: true }
                         Text {
                             text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
-                            color: theme.topGun ? theme.orange : "#a8d3d9"
+                            color: "#a8d3d9"
                             font.pixelSize: 13
                             font.bold: true
                         }
@@ -325,10 +327,10 @@ Item {
                     Row {
                         spacing: 7
                         Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter
-                            color: backendObject && backendObject.mappingActive ? theme.ready : theme.warning }
+                            color: backendObject && backendObject.mappingActive ? "#9fc9bb" : "#d5b66f" }
                         Text {
                             text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"
-                            color: backendObject && backendObject.mappingActive ? theme.ready : theme.warning
+                            color: backendObject && backendObject.mappingActive ? "#b9dfc6" : "#dfc883"
                             font.pixelSize: 12
                             font.bold: true
                         }
@@ -375,7 +377,7 @@ Item {
                         Layout.fillWidth: true
                         FieldCaption { text: "RESPONSE STRENGTH" }
                         Item { Layout.fillWidth: true }
-                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? theme.cyan : theme.textMuted; font.family: theme.telemetryFont; font.pixelSize: 16; font.bold: true }
+                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? "#b8e0e2" : "#9aa8ac"; font.family: "Consolas"; font.pixelSize: 16; font.bold: true }
                     }
                     Slider {
                         id: responseStrength
@@ -386,11 +388,9 @@ Item {
                         value: Number(editorState.strength || 0)
                         ToolTip.text: enabled ? "Blends the selected response into the compiled curve." : "Linear uses a fixed 0% response strength."
                         onMoved: backendObject.setCurveStrength(value)
-                        background: Rectangle { x: responseStrength.leftPadding; y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: responseStrength.availableWidth; height: theme.topGun ? 3 : 6; radius: 3; color: theme.panelInset; border.color: theme.border
-                            Rectangle { width: responseStrength.visualPosition * parent.width; height: parent.height; radius: 3; color: responseStrength.enabled ? (theme.topGun ? theme.orange : theme.cyan) : theme.textFaint }
-                            Repeater { visible: theme.topGun; model: 20; delegate: Rectangle { x: index * parent.width / 19; width: 1; height: 7; y: -2; color: theme.borderStrong } }
-                        }
-                        handle: Rectangle { x: responseStrength.leftPadding + responseStrength.visualPosition * (responseStrength.availableWidth - width); y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: theme.topGun ? 20 : 16; height: theme.topGun ? 20 : 16; radius: width / 2; color: responseStrength.enabled ? theme.ivory : theme.textMuted; border.color: theme.borderStrong }
+                        background: Rectangle { x: responseStrength.leftPadding; y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: responseStrength.availableWidth; height: 6; radius: 3; color: "#17292f"; border.color: "#405d65"
+                            Rectangle { width: responseStrength.visualPosition * parent.width; height: parent.height; radius: 3; color: responseStrength.enabled ? "#68bac5" : "#53686d" } }
+                        handle: Rectangle { x: responseStrength.leftPadding + responseStrength.visualPosition * (responseStrength.availableWidth - width); y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: 16; height: 16; radius: 8; color: responseStrength.enabled ? "#c3e8e8" : "#91a3a6"; border.color: "#356f79" }
                     }
                     RowLayout { Layout.fillWidth: true
                         Repeater { model: ["0%", "25%", "50%", "75%", "100%"]
@@ -409,13 +409,13 @@ Item {
                 anchors.margins: 12
                 spacing: 10
                 FieldCaption { text: "VIEW" }
-                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: theme.text; font.pixelSize: 13; font.bold: true }
+                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: "#d6e5e7"; font.pixelSize: 13; font.bold: true }
                 AviationToggle { checked: !responseView; onToggled: responseView = !checked; ToolTip.text: "Switch between response output and local gain." }
-                Text { text: responseView ? "Input + active output" : "Local dy/dx"; color: theme.textMuted; font.pixelSize: 12 }
+                Text { text: responseView ? "Input + active output" : "Local dy/dx"; color: "#a6bbc0"; font.pixelSize: 12 }
                 Item { Layout.preferredWidth: 16 }
                 AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: showEffective = checked; ToolTip.text: "Overlay the effective axis response after the full signal path." }
                 Item { Layout.fillWidth: true }
-                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: theme.textMuted; font.pixelSize: 12; font.family: theme.telemetryFont; font.bold: true }
+                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: "#91adb4"; font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
             }
         }
 
@@ -423,14 +423,14 @@ Item {
             id: graphPanel
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(350, Math.min(480, editor.height * 0.58))
-            color: theme.topGun ? "#0b181d" : "#101a1f"
-            border.color: theme.topGun ? theme.graphFrame : "#486873"
+            color: "#101a1f"
+            border.color: "#486873"
             gradient: Gradient {
-                GradientStop { position: 0; color: theme.topGun ? "#20352f" : "#27383e" }
-                GradientStop { position: 0.08; color: theme.topGun ? "#132126" : "#17262b" }
-                GradientStop { position: 1; color: theme.topGun ? "#061116" : "#0b1114" }
+                GradientStop { position: 0; color: "#27383e" }
+                GradientStop { position: 0.08; color: "#17262b" }
+                GradientStop { position: 1; color: "#0b1114" }
             }
-            Rectangle { anchors.fill: parent; anchors.margins: 8; radius: theme.controlRadius; color: theme.graphBackground; border.color: theme.graphFrame }
+            Rectangle { anchors.fill: parent; anchors.margins: 8; radius: 3; color: "#060b0e"; border.color: "#203b44" }
 
             Canvas {
                 id: graph
@@ -505,31 +505,28 @@ Item {
                 onComparisonSamplesChanged: requestPaint(); onPreviewSamplesChanged: requestPaint()
                 onEffectiveSamplesChanged: requestPaint(); onPointsChanged: requestPaint()
                 onWidthChanged: requestPaint(); onHeightChanged: requestPaint()
-                // Make the initial curve view deterministic when its backend
-                // snapshot precedes Canvas sizing.
-                Component.onCompleted: requestPaint()
                 onPaint: {
                     const ctx = getContext("2d"), pw = plotWidth(), ph = plotHeight()
                     ctx.clearRect(0, 0, width, height)
-                    ctx.fillStyle = theme.graphBackground; ctx.fillRect(plotLeft, plotTop, pw, ph)
-                    ctx.strokeStyle = theme.graphGrid; ctx.lineWidth = 1
+                    ctx.fillStyle = "#071014"; ctx.fillRect(plotLeft, plotTop, pw, ph)
+                    ctx.strokeStyle = "#254550"; ctx.lineWidth = 1
                     for (let i = 0; i <= 4; ++i) {
                         const x = plotLeft + pw * i / 4, y = plotTop + ph * i / 4
                         ctx.beginPath(); ctx.moveTo(x, plotTop); ctx.lineTo(x, plotTop + ph); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(plotLeft, y); ctx.lineTo(plotLeft + pw, y); ctx.stroke()
                     }
                     if (responseView) {
-                        ctx.strokeStyle = theme.graphZero; ctx.lineWidth = 1
+                        ctx.strokeStyle = "#557984"; ctx.lineWidth = 1
                         if (domainMin < 0 && xMin <= 0 && xMax >= 0) {
                             ctx.beginPath(); ctx.moveTo(xFor(0), plotTop); ctx.lineTo(xFor(0), plotTop + ph); ctx.stroke()
                             ctx.beginPath(); ctx.moveTo(plotLeft, yFor(0)); ctx.lineTo(plotLeft + pw, yFor(0)); ctx.stroke()
                         }
-                        trace(ctx, responseSamples, theme.graphOutput, 2.3, "output", false)
+                        trace(ctx, responseSamples, "#6ec3cf", 2.3, "output", false)
                         const identity = []
                         for (let i = 0; i < 2; ++i) identity.push({ input: i === 0 ? domainMin : 1, output: i === 0 ? domainMin : 1 })
-                        trace(ctx, identity, theme.graphInput, 1.15, "output", false)
-                        trace(ctx, comparisonSamples, theme.textMuted, 1.2, "output", true)
-                        trace(ctx, previewSamples, theme.graphPreview, 1.3, "output", true)
+                        trace(ctx, identity, "#bac7ca", 1.15, "output", false)
+                        trace(ctx, comparisonSamples, "#8a9ba1", 1.2, "output", true)
+                        trace(ctx, previewSamples, "#d4b36e", 1.3, "output", true)
                         if (showEffective && effectiveSamples && effectiveSamples.length) {
                             const effective = []
                             for (let i = 0; i < effectiveSamples.length; ++i) {
@@ -537,25 +534,25 @@ Item {
                                 effective.push({ input: editorState.unipolar ? (Number(p.input) + 1) * .5 : Number(p.input),
                                                  output: editorState.unipolar ? (Number(p.output) + 1) * .5 : Number(p.output) })
                             }
-                            trace(ctx, effective, theme.cyan, 1.0, "output", true)
+                            trace(ctx, effective, "#3b7584", 1.0, "output", true)
                         }
                         if (editorState.pointEditing) {
                             for (let i = 0; i < points.length; ++i) {
                                 let px = xFor(Number(points[i].input)), py = yFor(Number(points[i].output))
                                 if (draggingPoint && i === selectedPoint) { px = xFor(dragInput); py = yFor(dragOutput) }
-                                ctx.fillStyle = points[i].locked ? theme.textFaint : (i === selectedPoint ? theme.orangeBright : theme.ivory)
-                                ctx.strokeStyle = theme.graphFrame; ctx.lineWidth = 2
+                                ctx.fillStyle = points[i].locked ? "#7f8c90" : (i === selectedPoint ? "#f3d98d" : "#d7f1f0")
+                                ctx.strokeStyle = "#15333c"; ctx.lineWidth = 2
                                 ctx.beginPath(); ctx.arc(px, py, points[i].locked ? 5 : 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
                             }
                         }
                     } else {
-                        trace(ctx, gainSamples, theme.orange, 2.2, "gain", false)
-                        ctx.strokeStyle = theme.graphZero; ctx.setLineDash([3, 3])
+                        trace(ctx, gainSamples, "#d5b76c", 2.2, "gain", false)
+                        ctx.strokeStyle = "#5a7881"; ctx.setLineDash([3, 3])
                         ctx.beginPath(); ctx.moveTo(plotLeft, gainY(1)); ctx.lineTo(plotLeft + pw, gainY(1)); ctx.stroke(); ctx.setLineDash([])
                     }
                     if (cursorVisible) {
                         const cx = xFor(cursorInput), cy = responseView ? yFor(cursorOutput) : gainY(cursorGain)
-                        ctx.strokeStyle = theme.graphFrame; ctx.setLineDash([3, 3])
+                        ctx.strokeStyle = "#7ca1aa80"; ctx.setLineDash([3, 3])
                         ctx.beginPath(); ctx.moveTo(cx, plotTop); ctx.lineTo(cx, plotTop + ph); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(plotLeft, cy); ctx.lineTo(plotLeft + pw, cy); ctx.stroke(); ctx.setLineDash([])
                     }
@@ -565,17 +562,16 @@ Item {
                         const markerX = xFor(editorState.unipolar ? (raw + 1) * .5 : raw)
                         const inputY = yFor(editorState.unipolar ? (raw + 1) * .5 : raw)
                         const outputY = yFor(editorState.unipolar ? (finalValue + 1) * .5 : finalValue)
-                        ctx.fillStyle = theme.graphInput; ctx.strokeStyle = theme.graphFrame; ctx.lineWidth = 2
+                        ctx.fillStyle = "#e1eeee"; ctx.strokeStyle = "#587682"; ctx.lineWidth = 2
                         ctx.beginPath(); ctx.arc(markerX, inputY, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-                        ctx.fillStyle = theme.graphOutput; ctx.strokeStyle = theme.ivory
+                        ctx.fillStyle = "#8fcfc0"; ctx.strokeStyle = "#e6f5ef"
                         ctx.beginPath(); ctx.arc(markerX, outputY, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
                     }
-                    ctx.fillStyle = theme.graphLabel; ctx.font = "10px " + theme.telemetryFont
+                    ctx.fillStyle = "#78949c"; ctx.font = "10px Consolas"
                     const labels = editorState.unipolar ? ["0", "25", "50", "75", "100"] : ["-100", "-50", "0", "+50", "+100"]
                     for (let i = 0; i <= 4; ++i) ctx.fillText(labels[i], plotLeft + pw * i / 4 - 9, height - 7)
                 }
             }
-            Connections { target: themeManager; function onThemeChanged() { graph.requestPaint() } }
             MouseArea {
                 anchors.fill: graph; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                 onPressed: function(mouse) {

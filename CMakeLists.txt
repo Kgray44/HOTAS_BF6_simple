@@ -44,6 +44,8 @@ set(HOTAS_MAPPER_SOURCES
     src/profile_trigger_runtime.cpp
     src/config_store.h
     src/config_store.cpp
+    src/theme_manager.h
+    src/theme_manager.cpp
     src/event_log.h
     src/mapping_worker.h
     src/mapping_worker.cpp
@@ -62,7 +64,12 @@ qt_add_qml_module(HOTASMapper
     VERSION 1.0
     QML_FILES
         qml/AviationPanel.qml
+        qml/LegacyAviationPanel.qml
+        qml/LegacyCurveEditor.qml
+        qml/Legacy.qml
+        qml/Theme.qml
         qml/Main.qml
+        qml/Standard.qml
         qml/CurveEditor.qml
 )
 
@@ -164,6 +171,19 @@ endif()
     endif()
     add_test(NAME launcher_core_tests COMMAND launcher_core_tests)
 
+    qt_add_executable(theme_manager_tests
+        tests/theme_manager_tests.cpp
+        src/theme_manager.h
+        src/theme_manager.cpp
+    )
+    target_link_libraries(theme_manager_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(theme_manager_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME theme_manager_tests COMMAND theme_manager_tests)
+    if (WIN32)
+        set_tests_properties(theme_manager_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
 option(HOTAS_BUILD_PERFORMANCE_BENCHMARK "Build the synthetic mapping hot-path benchmark" OFF)
 if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
     qt_add_executable(mapping_hot_path_benchmark
@@ -184,6 +204,9 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
     )
     target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
     target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # This is a report-producing CI/local diagnostic, not a GUI executable.
+    # Keep stdout attached so its latency and throughput evidence is visible.
+    set_target_properties(mapping_hot_path_benchmark PROPERTIES WIN32_EXECUTABLE FALSE)
     add_test(NAME mapping_hot_path_benchmark COMMAND mapping_hot_path_benchmark)
     if (WIN32)
         set_tests_properties(mapping_hot_path_benchmark PROPERTIES
