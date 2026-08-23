@@ -12,8 +12,9 @@ ApplicationWindow {
     minimumHeight: 650
     visible: true
     title: "HOTAS BF6"
-    color: themeManager.topGun ? "#071217" : "#0d1013"
-    font.family: themeManager.topGun ? "Arial Narrow" : "Segoe UI Variable"
+    Theme { id: shellTheme }
+    color: shellTheme.background
+    font.family: shellTheme.displayFont
 
     Component { id: legacySurface; Legacy { } }
     Component { id: standardSurface; Standard { } }
