@@ -73,7 +73,16 @@ jobs:
           # Main.qml intentionally receives the application's backend as a
           # context property. Keep its established advisory warnings visible,
           # while failing the gate for actual QML parsing/tool errors.
-          $output = & $lint "$PWD\qml\Main.qml" 2>&1 | Out-String
+          # Qt 6.5 returns a non-zero native exit code for advisory warnings.
+          # Prevent PowerShell 7 from promoting that exit code to a terminating
+          # exception before the diagnostic text can be assessed below.
+          $nativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          try {
+            $output = & $lint "$PWD\qml\Main.qml" 2>&1 | Out-String
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $nativeErrorPreference
+          }
           Write-Host $output
           if ($output -match '(?im)\berror:|syntax error|parse error') {
             throw 'qmllint reported a QML error.'
