@@ -1,5 +1,6 @@
 #include "app_backend.h"
 #include "hotas_build_version.h"
+#include "theme_manager.h"
 
 #include <QGuiApplication>
 #include <QIcon>
@@ -27,8 +28,10 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     hotas::AppBackend backend;
+    hotas::ThemeManager themeManager;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
     QObject::connect(&engine, &QQmlEngine::warnings, &application,
         [](const QList<QQmlError> &warnings) {
             for (const QQmlError &warning : warnings) {

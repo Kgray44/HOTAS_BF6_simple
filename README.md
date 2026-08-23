@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.6
+# HOTAS BF6 Simple v1.7
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -24,7 +24,7 @@ The installer upgrades program files only. Existing QSettings data—including p
   a continuous or discrete POV if native hat passthrough is wanted
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
-vJoy is required for virtual output. The v1.6.2 installer can offer the pinned
+vJoy is required for virtual output. The v1.7.0 installer can offer the pinned
 official vJoy and HidHide installers only when they are missing; it never
 updates, downgrades, enables, or otherwise reconfigures an already-present
 component. Each selected payload is SHA-256 and Authenticode verified before
@@ -45,7 +45,24 @@ for diagnostics and mapping.
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
 
-## v1.6.2 POV, profile-control, and UI features
+## v1.7.0 theme system
+
+- **Legacy** is the concrete v1.6.3 visual system and is the default for
+  upgrades with no saved theme. **Standard** preserves the current v1.7
+  presentation, while **Top Gun** is the aviation visual treatment. All three
+  are persistent, instant-switching choices in **Settings → Appearance →
+  Theme**.
+- Theme state is stored separately from mapper configuration. Switching themes
+  never changes the selected axis/profile, curve, calibration, controller
+  acquisition, mapping state, or the DirectInput-to-vJoy worker.
+- Top Gun applies a dark naval-instrument surface, warm brass structure,
+  aviation-orange actions, ivory reference traces, cyan live-output traces,
+  compact technical controls, themed menus, and an Axes flight-deck treatment.
+- The theme ships as local QML presentation resources; it adds no runtime web
+  dependency, external artwork, input processing behavior, automation, or
+  profile semantics.
+
+## v1.6.3 POV, profile-control, and UI features
 
 - Global **native vJoy POV passthrough** sends a selected DirectInput hat to a
   unique continuous or discrete POV target reported by the active vJoy device.

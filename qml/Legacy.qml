@@ -2,20 +2,12 @@ import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 
-ApplicationWindow {
+Item {
     id: root
-    width: 1320
-    height: 840
-    minimumWidth: 900
-    minimumHeight: 650
-    visible: true
-    title: "HOTAS BF6"
-    color: theme.background
-    font.family: theme.displayFont
-
-    // Presentation state only: ThemeManager never reaches AppBackend or the
-    // DirectInput-to-vJoy worker.
-    Theme { id: theme }
+    anchors.fill: parent
+    // The hosting ApplicationWindow supplies this inherited font; retaining
+    // the property keeps the v1.6.3 component expressions byte-for-byte.
+    property var font: ({ family: "Segoe UI Variable" })
 
     property int currentPage: 0
     property bool menuOpen: false
@@ -62,8 +54,8 @@ ApplicationWindow {
         return backend.lastPhysicalUpdateAgeMs < 100 ? "LIVE" : "STALE"
     }
     function physicalStatusColor() {
-        if (!backend.physicalConnected) return theme.danger
-        return backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? theme.ready : theme.textMuted
+        if (!backend.physicalConnected) return "#b77b86"
+        return backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? "#9fc4bb" : "#a7afb4"
     }
     function povText() {
         if (backend.povCount === 0) return "NOT PRESENT"
@@ -88,24 +80,28 @@ ApplicationWindow {
         return backend.vjoyButtonCount >= backend.vjoyRecommendedButtonCount ? "READY" : "CONFIGURATION LIMITED"
     }
     function capacityColor() {
-        return theme.statusColor(backend.vjoyStatusSeverity)
+        if (backend.vjoyStatusSeverity === "error") return "#ca9090"
+        if (backend.vjoyStatusSeverity === "warning") return "#d4ad69"
+        return "#8fd5c9"
     }
     function vjoyCardColor() {
-        if (backend.vjoyStatusSeverity === "ready") return Qt.rgba(theme.ready.r, theme.ready.g, theme.ready.b, 0.14)
-        if (backend.vjoyStatusSeverity === "warning") return Qt.rgba(theme.warning.r, theme.warning.g, theme.warning.b, 0.12)
-        return Qt.rgba(theme.danger.r, theme.danger.g, theme.danger.b, 0.12)
+        if (backend.vjoyStatusSeverity === "ready") return "#e51a352f"
+        if (backend.vjoyStatusSeverity === "warning") return "#e52d2419"
+        return "#e52f171b"
     }
     function vjoyCardBorder() {
-        return theme.statusColor(backend.vjoyStatusSeverity)
+        if (backend.vjoyStatusSeverity === "ready") return "#3c9ca8a0"
+        if (backend.vjoyStatusSeverity === "warning") return "#c28b624f"
+        return "#b75e674f"
     }
 
-    component Panel: AviationPanel { theme: root.theme }
-    component FineLine: Rectangle { height: 1; color: theme.divider }
+    component Panel: LegacyAviationPanel {}
+    component FineLine: Rectangle { height: 1; color: "#33526870" }
     component StatusDot: Rectangle {
-        property color tone: theme.textMuted
+        property color tone: "#a5b9c0"
         width: 6
  height: 6
- radius: theme.topGun ? 1 : 3
+ radius: 3
         color: tone
     }
     component CommandButton: Rectangle {
@@ -115,22 +111,16 @@ ApplicationWindow {
         signal triggered()
         implicitWidth: Math.max(110, labelText.implicitWidth + 30)
         implicitHeight: 36
-        radius: theme.controlRadius
-        color: !commandEnabled ? theme.controlDisabled : commandMouse.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (subdued ? theme.buttonSecondary : theme.buttonSurface)
-        border.color: !commandEnabled ? theme.border : (subdued ? theme.border : theme.orange)
+        radius: 3
+        color: !commandEnabled ? "#151a1e" : commandMouse.containsMouse ? (subdued ? "#303d44" : "#456c78") : (subdued ? "#222c32" : "#324f5a")
+        border.color: !commandEnabled ? "#182f3539" : (subdued ? "#536975" : "#78aab9")
         opacity: commandEnabled ? 1.0 : 0.45
         Text { id: labelText
  anchors.centerIn: parent
  text: parent.label
- color: parent.commandEnabled ? theme.textStrong : theme.textFaint
+ color: parent.commandEnabled ? "#f0f4f5" : "#879196"
  font.pixelSize: 11
- font.bold: true
- font.family: theme.topGun ? theme.displayFont : root.font.family }
-        Rectangle { visible: theme.topGun && !parent.subdued && parent.commandEnabled
-            anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.rightMargin: 4; anchors.bottomMargin: 3
-            width: 24; height: 3; color: theme.orangeBright
-            Repeater { model: 3; delegate: Rectangle { x: index * 8; width: 3; height: 3; color: theme.background } }
-        }
+ font.bold: true }
         MouseArea { id: commandMouse
  anchors.fill: parent
  hoverEnabled: true
@@ -145,25 +135,24 @@ ApplicationWindow {
         leftPadding: 9
         rightPadding: 28
         background: Rectangle {
-            radius: theme.controlRadius
-            color: flightCombo.enabled ? (flightCombo.hovered ? theme.controlHover : theme.control) : theme.controlDisabled
-            border.color: flightCombo.activeFocus ? theme.orange : flightCombo.hovered ? theme.borderStrong : theme.border
+            radius: 4
+            color: flightCombo.enabled ? (flightCombo.hovered ? "#142128" : "#10171b") : "#0c1013"
+            border.color: flightCombo.activeFocus ? "#78aab9" : flightCombo.hovered ? "#527482" : "#435660"
         }
         contentItem: Text {
             leftPadding: flightCombo.leftPadding
             rightPadding: flightCombo.rightPadding
             text: flightCombo.displayText
-            color: flightCombo.enabled ? theme.text : theme.textFaint
+            color: flightCombo.enabled ? "#dce7e8" : "#748187"
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.pixelSize: 10
-            font.family: theme.topGun ? theme.displayFont : root.font.family
         }
         indicator: Text {
             x: flightCombo.width - width - 9
             y: (flightCombo.height - height) / 2
             text: "⌄"
-            color: flightCombo.enabled ? theme.textMuted : theme.textFaint
+            color: flightCombo.enabled ? "#94adb5" : "#64747a"
             font.pixelSize: 15
         }
         delegate: ItemDelegate {
@@ -175,18 +164,17 @@ ApplicationWindow {
             contentItem: Text {
                 id: choiceText
                 text: flightCombo.textAt(index)
-                color: choiceDelegate.highlighted ? theme.textStrong : theme.text
+                color: choiceDelegate.highlighted ? "#eff8f7" : "#d0dcdd"
                 verticalAlignment: Text.AlignVCenter
                 leftPadding: 10
                 rightPadding: 10
                 elide: Text.ElideRight
                 font.pixelSize: 10
-                font.family: theme.topGun ? theme.displayFont : root.font.family
             }
             background: Rectangle {
-                radius: theme.controlRadius
-                color: choiceDelegate.highlighted ? theme.selection : (choiceDelegate.currentSelection ? theme.selectionCurrent : (choiceDelegate.hovered ? theme.controlHover : "transparent"))
-                border.color: choiceDelegate.highlighted ? theme.orange : (choiceDelegate.currentSelection ? theme.borderStrong : "transparent")
+                radius: 3
+                color: choiceDelegate.highlighted ? "#315a66" : (choiceDelegate.currentSelection ? "#244650" : (choiceDelegate.hovered ? "#1d333b" : "transparent"))
+                border.color: choiceDelegate.highlighted ? "#6f9fac" : (choiceDelegate.currentSelection ? "#527d88" : "transparent")
             }
         }
         popup: Popup {
@@ -210,9 +198,9 @@ ApplicationWindow {
                 ScrollIndicator.vertical: ScrollIndicator { }
             }
             background: Rectangle {
-                color: theme.tooltip
-                border.color: theme.borderStrong
-                radius: theme.controlRadius
+                color: "#151e23"
+                border.color: "#52717c"
+                radius: 5
             }
         }
     }
@@ -226,29 +214,29 @@ ApplicationWindow {
         implicitHeight: 30
         Rectangle {
             anchors.fill: parent
-            color: theme.control
-            border.color: theme.border
-            radius: theme.controlRadius
+            color: "#11191d"
+            border.color: "#435c66"
+            radius: 4
         }
         Row {
             anchors.fill: parent
             Rectangle {
                 width: 33; height: parent.height
-                color: minusMouse.containsMouse && flightStepper.value > flightStepper.from ? theme.controlPressed : "transparent"
-                Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? theme.ivory : theme.textFaint; font.pixelSize: 17 }
+                color: minusMouse.containsMouse && flightStepper.value > flightStepper.from ? "#244550" : "transparent"
+                Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? "#a8c8cf" : "#56656a"; font.pixelSize: 17 }
                 MouseArea { id: minusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value > flightStepper.from
                     onClicked: flightStepper.valueEdited(flightStepper.value - 1) }
             }
-            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: theme.divider }
+            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: "#304954" }
             Text { width: parent.width - 68; height: parent.height; text: flightStepper.value + " %"
-                color: theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                font.pixelSize: 11; font.bold: true; font.family: theme.telemetryFont }
-            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: theme.divider }
+                color: "#e3eeee"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                font.pixelSize: 11; font.bold: true; font.family: "Consolas" }
+            Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: "#304954" }
             Rectangle {
                 width: 33; height: parent.height
-                color: plusMouse.containsMouse && flightStepper.value < flightStepper.to ? theme.controlPressed : "transparent"
-                Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? theme.ivory : theme.textFaint; font.pixelSize: 15 }
+                color: plusMouse.containsMouse && flightStepper.value < flightStepper.to ? "#244550" : "transparent"
+                Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? "#a8c8cf" : "#56656a"; font.pixelSize: 15 }
                 MouseArea { id: plusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value < flightStepper.to
                     onClicked: flightStepper.valueEdited(flightStepper.value + 1) }
@@ -259,15 +247,15 @@ ApplicationWindow {
         property real value: 0
         property bool offline: false
         property bool valid: true
-        property color tone: theme.textMuted
+        property color tone: "#a8c2ca"
         implicitHeight: 22
  implicitWidth: 160
         Rectangle { anchors.verticalCenter: parent.verticalCenter
  width: parent.width
  height: 6
  radius: 1
- color: theme.panelInset
- border.color: theme.border }
+ color: "#080c0f"
+ border.color: "#354b5665" }
         Rectangle { visible: parent.valid; anchors.verticalCenter: parent.verticalCenter
             x: 2; width: Math.max(0, Math.min(parent.width - 4, ((parent.value + 1) * 0.5) * (parent.width - 4)))
             height: 2; color: Qt.rgba(parent.tone.r, parent.tone.g, parent.tone.b, 0.42) }
@@ -275,7 +263,7 @@ ApplicationWindow {
  x: parent.width / 2
  width: 1
  height: 14
- color: theme.graphZero }
+ color: "#6a9db0bb" }
         Rectangle { visible: !parent.offline && parent.valid
  width: 10
  height: 10
@@ -283,11 +271,11 @@ ApplicationWindow {
  x: Math.max(0, Math.min(parent.width - width, ((parent.value + 1) * 0.5) * (parent.width - width)))
  anchors.verticalCenter: parent.verticalCenter
  color: parent.tone
- border.color: theme.ivory }
+ border.color: "#d0edf2" }
         Text { anchors.centerIn: parent
  visible: parent.offline || !parent.valid
  text: parent.offline ? "OFFLINE" : "STANDBY"
- color: theme.textMuted
+ color: "#9d8580"
  font.pixelSize: 9
  font.bold: true }
     }
@@ -295,21 +283,21 @@ ApplicationWindow {
         id: telemetryItem
         property string caption: "CAPTION"
         property string value: "—"
-        property color tone: theme.text
+        property color tone: "#dce5e8"
         implicitWidth: 150
         implicitHeight: 46
         Column { anchors.verticalCenter: parent.verticalCenter
  width: telemetryItem.width
  spacing: 3
             Text { text: telemetryItem.caption
- color: theme.textMuted
+ color: "#8099a4"
  font.pixelSize: 10
  font.bold: true }
             Text { text: telemetryItem.value
  color: telemetryItem.tone
  font.pixelSize: 15
  font.bold: true
- font.family: theme.telemetryFont
+ font.family: "Consolas"
  elide: Text.ElideRight
  width: telemetryItem.width }
         }
@@ -323,14 +311,12 @@ ApplicationWindow {
         Column { anchors.verticalCenter: parent.verticalCenter
  spacing: 4
             Text { text: pageTitle.heading
- color: theme.textStrong
+ color: "#f3f7f7"
  font.pixelSize: 26
- font.bold: true
- font.family: theme.topGun ? theme.displayFont : root.font.family }
+ font.bold: true }
             Text { text: pageTitle.detail
- color: theme.textMuted
- font.pixelSize: 12
- font.family: theme.topGun ? theme.displayFont : root.font.family }
+ color: "#9aa3a7"
+ font.pixelSize: 12 }
         }
     }
     component OfflineMapper: Item {
@@ -564,22 +550,22 @@ ApplicationWindow {
         property var samples: backend.selectedAxisCurve
         Layout.fillWidth: true
         Layout.preferredHeight: 356
-        color: theme.topGun ? "#d80a171b" : "#eb11171b"
-        border.color: theme.topGun ? theme.graphFrame : "#3b66747d"
+        color: "#eb11171b"
+        border.color: "#3b66747d"
         Column {
             anchors.fill: parent
             anchors.margins: 14
             spacing: 6
             RowLayout { width: parent.width
-                Text { text: "LIVE TRANSFER"; color: theme.topGun ? theme.ivory : "#dce9eb"; font.pixelSize: 11; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "LIVE TRANSFER"; color: "#dce9eb"; font.pixelSize: 11; font.bold: true }
                 Text { text: curveViewer.info && curveViewer.info.unipolar ? "0–100% THROTTLE DOMAIN" : "−100% TO +100% NORMALIZED DOMAIN"
-                    color: theme.textMuted; font.pixelSize: 9; font.bold: true }
+                    color: "#758f99"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 Row { spacing: 12
-                    Text { text: "— INPUT"; color: theme.graphInput; font.pixelSize: 9; font.bold: true }
-                    Text { text: "— OUTPUT"; color: theme.graphOutput; font.pixelSize: 9; font.bold: true }
-                    Text { text: "○ PHYSICAL"; color: theme.ivory; font.pixelSize: 9; font.bold: true }
-                    Text { text: "● TRANSFORMED"; color: theme.cyan; font.pixelSize: 9; font.bold: true }
+                    Text { text: "— INPUT"; color: "#c5d0d3"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "— OUTPUT"; color: "#88bec8"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "○ PHYSICAL"; color: "#d7e5e7"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "● TRANSFORMED"; color: "#91c8c0"; font.pixelSize: 9; font.bold: true }
                 }
             }
             Canvas {
@@ -598,19 +584,15 @@ ApplicationWindow {
                 onTransformedOutputChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
-                // The initial backend snapshot can arrive before this Canvas has
-                // a size. Paint once the item has completed so an idle axis still
-                // shows its instrument grid and reference trace.
-                Component.onCompleted: requestPaint()
                 onPaint: {
                     const ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
                     const left = 38, right = 12, top = 10, bottom = 25
                     const plotWidth = Math.max(1, width - left - right)
                     const plotHeight = Math.max(1, height - top - bottom)
-                    ctx.fillStyle = theme.graphBackground
+                    ctx.fillStyle = "#0a0f12"
                     ctx.fillRect(left, top, plotWidth, plotHeight)
-                    ctx.strokeStyle = theme.graphGrid
+                    ctx.strokeStyle = "#25465357"
                     ctx.lineWidth = 1
                     for (let tick = 0; tick <= 4; ++tick) {
                         const x = left + plotWidth * tick / 4
@@ -618,7 +600,7 @@ ApplicationWindow {
                         ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotHeight); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotWidth, y); ctx.stroke()
                     }
-                    ctx.strokeStyle = theme.graphZero
+                    ctx.strokeStyle = "#5677848c"
                     ctx.beginPath()
                     ctx.moveTo(left, yFor(0, top, plotHeight))
                     ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
@@ -640,27 +622,27 @@ ApplicationWindow {
                         }
                         ctx.stroke()
                     }
-                    trace("input", theme.graphInput, 1.25)
-                    trace("output", theme.graphOutput, 2.0)
+                    trace("input", "#bac8cb", 1.25)
+                    trace("output", "#69aeb8", 2.0)
                     if (curveViewer.info && Number(curveViewer.info.hysteresis) > 0) {
                         const halfBand = Number(curveViewer.info.hysteresis)
                         const x0 = xFor(Math.max(-1, physicalInput - halfBand), left, plotWidth)
                         const x1 = xFor(Math.min(1, physicalInput + halfBand), left, plotWidth)
-                        ctx.fillStyle = theme.graphPreview
+                        ctx.fillStyle = "#377da38c"
                         ctx.fillRect(x0, top, Math.max(1, x1 - x0), plotHeight)
                     }
                     const inputX = xFor(physicalInput, left, plotWidth)
                     const inputY = yFor(physicalInput, top, plotHeight)
                     const outputY = yFor(transformedOutput, top, plotHeight)
-                    ctx.fillStyle = theme.graphInput
-                    ctx.strokeStyle = theme.graphFrame
+                    ctx.fillStyle = "#dbe7e8"
+                    ctx.strokeStyle = "#6d8790"
                     ctx.lineWidth = 2
                     ctx.beginPath(); ctx.arc(inputX, inputY, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-                    ctx.fillStyle = theme.graphOutput
-                    ctx.strokeStyle = theme.ivory
+                    ctx.fillStyle = "#8fc8c0"
+                    ctx.strokeStyle = "#e2f0ee"
                     ctx.beginPath(); ctx.arc(inputX, outputY, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-                    ctx.fillStyle = theme.graphLabel
-                    ctx.font = "10px " + theme.telemetryFont
+                    ctx.fillStyle = "#76909a"
+                    ctx.font = "10px Consolas"
                     const labels = curveViewer.info && curveViewer.info.unipolar ? ["0", "25", "50", "75", "100"] : ["-100", "-50", "0", "+50", "+100"]
                     for (let labelIndex = 0; labelIndex < labels.length; ++labelIndex) {
                         ctx.fillText(labels[labelIndex], left + plotWidth * labelIndex / 4 - 10, height - 7)
@@ -671,10 +653,6 @@ ApplicationWindow {
                     target: backend
                     function onStateChanged() { curveCanvas.requestPaint() }
                 }
-                Connections {
-                    target: themeManager
-                    function onThemeChanged() { curveCanvas.requestPaint() }
-                }
             }
         }
     }
@@ -683,8 +661,8 @@ ApplicationWindow {
         property var info: null
         Layout.fillWidth: true
         Layout.preferredHeight: 258
-        color: info && (info.pressed || info.profileControlActive) ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.profileControlActive ? theme.ready : (info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border)
+        color: info && (info.pressed || info.profileControlActive) ? "#ec263e48" : "#ed182128"
+        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.pressed ? "#93a3cfda" : "#43546770")
         function triggerChoiceIndex(targetId) {
             for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
                 if (root.profileTriggerChoices[index].id === targetId) return index
@@ -697,20 +675,20 @@ ApplicationWindow {
             spacing: 7
             RowLayout { Layout.fillWidth: true
                 Text { text: "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
-                    color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: theme.topGun ? 16 : 13; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                    color: "#edf7f7"; font.pixelSize: 13; font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Row { spacing: 5
-                    StatusDot { tone: buttonCard.info.pressed ? theme.cyan : theme.textFaint }
+                    StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
-                        color: buttonCard.info.pressed ? theme.cyan : theme.textMuted; font.pixelSize: 9; font.bold: true }
+                        color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
                 }
             }
             Text { text: "PHYSICAL   " + (buttonCard.info.pressed ? "DOWN" : "UP")
-                color: buttonCard.info.pressed ? theme.ivory : theme.textFaint; font.pixelSize: 10
-                font.family: theme.telemetryFont; font.bold: buttonCard.info.pressed }
+                color: buttonCard.info.pressed ? "#c4e4e9" : "#849398"; font.pixelSize: 10
+                font.family: "Consolas"; font.bold: buttonCard.info.pressed }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox {
                     id: buttonDestination
@@ -728,21 +706,21 @@ ApplicationWindow {
                             buttonConflictDialog.open()
                         }
                     }
-                    background: Rectangle { radius: theme.controlRadius
-                        color: theme.control; border.color: theme.border }
+                    background: Rectangle { radius: 5
+                        color: "#0c1013"; border.color: "#435660" }
                     contentItem: Text { leftPadding: 8
-                        text: buttonDestination.displayText; color: theme.text
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                        text: buttonDestination.displayText; color: "#dce4e4"
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
                 }
             }
             Text { text: buttonCard.info.target > 0
                     ? "VIRTUAL    " + (buttonCard.info.virtualPressed ? "DOWN" : "UP")
                     : "VIRTUAL    UNROUTED"
-                color: buttonCard.info.virtualPressed ? theme.ready : theme.textFaint
-                font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: buttonCard.info.virtualPressed }
+                color: buttonCard.info.virtualPressed ? "#b9dcc2" : "#819297"
+                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.virtualPressed }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox {
                     id: profileControlTarget
@@ -751,9 +729,9 @@ ApplicationWindow {
                     currentIndex: buttonCard.triggerChoiceIndex(buttonCard.info.profileControlTargetId)
                     onActivated: backend.setProfileTrigger(buttonCard.info.index, currentValue,
                         buttonCard.info.profileControlEnabled ? buttonCard.info.profileControlMode : "Hold")
-                    background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.border }
-                    contentItem: Text { leftPadding: 8; text: profileControlTarget.displayText; color: theme.text
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                    background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
+                    contentItem: Text { leftPadding: 8; text: profileControlTarget.displayText; color: "#dce4e4"
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
                 }
             }
             ColumnLayout { Layout.fillWidth: true; visible: buttonCard.info.profileControlEnabled; spacing: 6
@@ -772,8 +750,8 @@ ApplicationWindow {
                     id: profileControlMode
                     Layout.preferredWidth: 150; Layout.preferredHeight: 28
                     radius: 5
-                    color: theme.control
-                    border.color: buttonCard.info.profileControlEnabled ? theme.border : theme.textFaint
+                    color: "#0c1013"
+                    border.color: buttonCard.info.profileControlEnabled ? "#435660" : "#263137"
                     opacity: buttonCard.info.profileControlEnabled ? 1.0 : 0.55
                     Row {
                         anchors.fill: parent
@@ -784,11 +762,11 @@ ApplicationWindow {
                                 height: profileControlMode.height
                                 radius: 4
                                 color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? theme.selection : "transparent"
+                                    && buttonCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
                                 border.color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? theme.orange : "transparent"
+                                    && buttonCard.info.profileControlMode === modelData ? "#78aab9" : "transparent"
                                 Text { anchors.centerIn: parent; text: modelData.toUpperCase()
-                                    color: buttonCard.info.profileControlEnabled ? theme.text : theme.textFaint
+                                    color: buttonCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"
                                     font.pixelSize: 9; font.bold: true }
                                 MouseArea {
                                     id: modeMouse
@@ -811,8 +789,8 @@ ApplicationWindow {
             Text { visible: buttonCard.info.profileControlEnabled
                 text: buttonCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · "
                     + buttonCard.info.profileControlMode.toUpperCase() : "Profile control consumes this button."
-                color: buttonCard.info.profileControlActive ? theme.ready : theme.textFaint
-                font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: buttonCard.info.profileControlActive }
+                color: buttonCard.info.profileControlActive ? "#a8d9b4" : "#819297"
+                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.profileControlActive }
         }
     }
 
@@ -821,8 +799,8 @@ ApplicationWindow {
         property var info: null
         Layout.fillWidth: true
         Layout.preferredHeight: 143
-        color: info && info.nativeEnabled ? Qt.rgba(theme.ready.r, theme.ready.g, theme.ready.b, 0.14) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.nativeEnabled ? theme.ready : theme.border
+        color: info && info.nativeEnabled ? "#e51a352f" : "#ed182128"
+        border.color: info && info.nativeEnabled ? "#5f9a9f" : "#43546770"
         function targetIndex(key) {
             for (let index = 0; index < root.nativePovTargetChoices.length; ++index) {
                 if (root.nativePovTargetChoices[index].key === key) return index
@@ -832,20 +810,20 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 6
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: "#edf7f7"; font.pixelSize: 12; font.bold: true }
                 Item { Layout.fillWidth: true }
-                Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? theme.ready : theme.warning; font.pixelSize: 9; font.bold: true }
+                Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? "#98d1bd" : "#d4ad69"; font.pixelSize: 9; font.bold: true }
             }
             Text { text: nativeCard.info.centered ? "LIVE STATE   CENTERED" : "LIVE STATE   " + nativeCard.info.direction.toUpperCase() + " · " + nativeCard.info.angle + "°"
-                color: nativeCard.info.centered ? theme.textFaint : theme.ivory; font.pixelSize: 10; font.family: theme.telemetryFont }
+                color: nativeCard.info.centered ? "#89969b" : "#c4e4e9"; font.pixelSize: 10; font.family: "Consolas" }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
                 Text { text: "NATIVE vJOY OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 Rectangle { id: nativeToggle; Layout.preferredWidth: 43; Layout.preferredHeight: 21; radius: 11
-                    color: nativeCard.info.nativeEnabled ? theme.orange : theme.control; border.color: nativeCard.info.nativeEnabled ? theme.borderStrong : theme.border
+                    color: nativeCard.info.nativeEnabled ? "#466e78" : "#273136"; border.color: nativeCard.info.nativeEnabled ? "#8fc3c7" : "#4a5a60"
                     Rectangle { width: 15; height: 15; radius: 8; anchors.verticalCenter: parent.verticalCenter
-                        x: nativeCard.info.nativeEnabled ? parent.width - width - 3 : 3; color: theme.ivory }
+                        x: nativeCard.info.nativeEnabled ? parent.width - width - 3 : 3; color: "#e3eeee" }
                     MouseArea { anchors.fill: parent; hoverEnabled: true
                         enabled: nativeCard.info.nativeEnabled || root.nativePovTargetChoices.length > 0
                         onClicked: backend.setNativePovOutput(nativeCard.info.index, !nativeCard.info.nativeEnabled,
@@ -868,8 +846,8 @@ ApplicationWindow {
         property var info: null
         Layout.fillWidth: true
         Layout.preferredHeight: 246
-        color: info && (info.active || info.profileControlActive) ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.profileControlActive ? theme.ready : (info && info.active ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border)
+        color: info && (info.active || info.profileControlActive) ? "#ec263e48" : "#ed182128"
+        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.active ? "#93a3cfda" : "#43546770")
         function triggerChoiceIndex(targetId) {
             for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
                 if (root.profileTriggerChoices[index].id === targetId) return index
@@ -879,12 +857,12 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 7
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
-                Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? theme.cyan : theme.textMuted; font.pixelSize: 9; font.bold: true }
+                Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
             }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox { id: povDestination; Layout.preferredWidth: 142
                     model: root.buttonOutputChoices; currentIndex: povCard.info.target
@@ -898,10 +876,10 @@ ApplicationWindow {
                 }
             }
             Text { text: povCard.info.target > 0 ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
-                color: povCard.info.virtualPressed ? theme.ready : theme.textFaint; font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: povCard.info.virtualPressed }
+                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox { id: povProfileTarget; Layout.preferredWidth: 150
                     model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
@@ -911,15 +889,15 @@ ApplicationWindow {
             }
             RowLayout { Layout.fillWidth: true
                 Text { text: povCard.info.profileControlEnabled ? povCard.info.profileControlTargetName.toUpperCase() : "NONE"
-                    color: povCard.info.profileControlTargetAvailable || !povCard.info.profileControlEnabled ? theme.text : theme.warning
+                    color: povCard.info.profileControlTargetAvailable || !povCard.info.profileControlEnabled ? "#b8d8dc" : "#d49b62"
                     font.pixelSize: 9; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                 Rectangle { id: povProfileMode; Layout.preferredWidth: 126; Layout.preferredHeight: 26; radius: 4
-                    color: theme.control; border.color: povCard.info.profileControlEnabled ? theme.border : theme.textFaint; opacity: povCard.info.profileControlEnabled ? 1 : 0.55
+                    color: "#0c1013"; border.color: povCard.info.profileControlEnabled ? "#435660" : "#263137"; opacity: povCard.info.profileControlEnabled ? 1 : 0.55
                     Row { anchors.fill: parent
                         Repeater { model: ["Hold", "Toggle"]
                             delegate: Rectangle { width: povProfileMode.width / 2; height: povProfileMode.height; radius: 3
-                                color: povCard.info.profileControlEnabled && povCard.info.profileControlMode === modelData ? theme.selection : "transparent"
-                                Text { anchors.centerIn: parent; text: modelData.toUpperCase(); color: povCard.info.profileControlEnabled ? theme.text : theme.textFaint; font.pixelSize: 8; font.bold: true }
+                                color: povCard.info.profileControlEnabled && povCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
+                                Text { anchors.centerIn: parent; text: modelData.toUpperCase(); color: povCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"; font.pixelSize: 8; font.bold: true }
                                 MouseArea { anchors.fill: parent; enabled: povCard.info.profileControlEnabled
                                     onClicked: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, povCard.info.profileControlTargetId, modelData) }
                             }
@@ -929,65 +907,65 @@ ApplicationWindow {
             }
             Text { visible: povCard.info.profileControlEnabled
                 text: povCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · " + povCard.info.profileControlMode.toUpperCase() : "Profile control consumes this direction route."
-                color: povCard.info.profileControlActive ? theme.ready : theme.textFaint; font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: povCard.info.profileControlActive }
+                color: povCard.info.profileControlActive ? "#a8d9b4" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.profileControlActive }
         }
     }
 
     background: Rectangle {
-        color: theme.background
+        color: "#0d1013"
         gradient: Gradient { GradientStop { position: 0.0
- color: theme.topGun ? "#102127" : "#151a1e" }
+ color: "#151a1e" }
  GradientStop { position: 0.55
- color: theme.background }
+ color: "#0d1013" }
  GradientStop { position: 1.0
- color: theme.topGun ? "#050d11" : "#0b0e10" } }
+ color: "#0b0e10" } }
         Rectangle { width: parent.width
  height: 1
- color: theme.border
+ color: "#556a7479"
  anchors.top: parent.top }
         Rectangle { width: parent.width * 0.58
  height: 260
  x: -100
  y: parent.height - 100
  radius: 180
- color: theme.topGun ? "#4c33221e" : "#071e2930" }
+ color: "#071e2930" }
         Repeater { model: 18
             delegate: Rectangle { width: 1; height: parent.height; x: (index + 1) * parent.width / 19
-                color: theme.topGun ? "#55422430" : "#163f5261" }
+                color: "#163f5261" }
         }
         Repeater { model: 12
             delegate: Rectangle { height: 1; width: parent.width; y: (index + 1) * parent.height / 13
-                color: theme.topGun ? "#55422424" : "#123f5261" }
+                color: "#123f5261" }
         }
     }
 
     header: Rectangle {
         id: headerBar
-        height: theme.topGun ? 78 : 58
-        color: theme.header
-        border.color: theme.border
+        height: 58
+        color: "#f114191d"
+        border.color: "#1e3a444b"
         border.width: 1
         RowLayout {
             anchors.fill: parent
- anchors.leftMargin: theme.topGun ? 26 : 18
+ anchors.leftMargin: 18
  anchors.rightMargin: 20
  spacing: 12
             ToolButton {
                 id: menuButton
-                Layout.preferredWidth: theme.topGun ? 34 : 30
- Layout.preferredHeight: theme.topGun ? 34 : 30
+                Layout.preferredWidth: 30
+ Layout.preferredHeight: 30
                 text: root.menuOpen ? "×" : "☰"
                 font.pixelSize: 19
                 onClicked: root.menuOpen = !root.menuOpen
-                background: Rectangle { radius: theme.controlRadius
- color: menuButton.hovered || root.menuOpen ? theme.controlHover : theme.control
- border.color: theme.border }
+                background: Rectangle { radius: 5
+ color: menuButton.hovered || root.menuOpen ? "#303b40" : "#20282d"
+ border.color: "#334752" }
                 contentItem: Text { text: menuButton.text
- color: theme.text
+ color: "#d8e1e0"
  horizontalAlignment: Text.AlignHCenter
  verticalAlignment: Text.AlignVCenter }
             }
-            RowLayout { visible: !theme.topGun; spacing: 8
+            RowLayout { spacing: 8
                 Image {
                     Layout.preferredWidth: 34
                     Layout.preferredHeight: 34
@@ -999,32 +977,13 @@ ApplicationWindow {
                 }
                 ColumnLayout { spacing: 0
                     Text { text: "HOTAS BF6"
-     color: theme.textStrong
+     color: "#f1f3f1"
      font.pixelSize: 15
      font.bold: true }
                     Text { text: "FLIGHT CONTROL INTERFACE"
-     color: theme.textMuted
+     color: "#8d989d"
      font.pixelSize: 9
      font.bold: true }
-                }
-            }
-            Item {
-                visible: theme.topGun
-                Layout.preferredWidth: 226
-                Layout.preferredHeight: 58
-                Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
-                    Item {
-                        width: 68; height: 40
-                        Repeater { model: 3; delegate: Rectangle { width: 28 + index * 8; height: 4; y: 5 + index * 8; x: 0; color: index === 1 ? theme.orange : theme.ivory } }
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; text: "★"; color: theme.ivory; font.pixelSize: 17 }
-                    }
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter; spacing: -2
-                        Text { text: "HOTAS BF6"; color: theme.ivory; font.family: theme.displayFont; font.pixelSize: 22; font.bold: true }
-                        Text { text: "FLIGHT CONTROL INTERFACE"; color: theme.textMuted; font.family: theme.displayFont; font.pixelSize: 9; font.bold: true }
-                    }
                 }
             }
             FineLine { Layout.preferredWidth: 1
@@ -1032,7 +991,7 @@ ApplicationWindow {
             Row { spacing: 7
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
- color: theme.text
+ color: "#c3cecf"
  font.pixelSize: 10
  font.bold: true
  elide: Text.ElideRight
@@ -1045,38 +1004,31 @@ ApplicationWindow {
             FineLine { visible: root.width >= 1100; Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
             Row { visible: root.width >= 1100; spacing: 7
-                    StatusDot { tone: backend.vjoyReady ? root.capacityColor() : theme.textMuted }
+                StatusDot { tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3" }
                 Text { text: "VJOY " + backend.vjoyDeviceId
-                    color: theme.text; font.pixelSize: 10; font.bold: true }
+                    color: "#c3d2d5"; font.pixelSize: 10; font.bold: true }
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
-                    color: backend.vjoyReady ? root.capacityColor() : theme.textMuted; font.pixelSize: 10; font.bold: true }
+                    color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
             FineLine { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
             Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
                 Text { text: "PROFILE"
-                    color: theme.textMuted; font.pixelSize: 9; font.bold: true }
+                    color: "#78919a"; font.pixelSize: 9; font.bold: true }
                 Text { text: backend.effectiveProfileName.toUpperCase()
-                    color: theme.text; font.pixelSize: 10; font.bold: true
+                    color: "#c3d8d9"; font.pixelSize: 10; font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
                     text: "· " + backend.profileSourceLabel.toUpperCase()
-                    color: theme.ready; font.pixelSize: 9; font.bold: true }
+                    color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
             Item { Layout.fillWidth: true }
             Row { spacing: 7
-                StatusDot { tone: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : (backend.vjoyReady ? theme.cyan : theme.textMuted)) }
+                StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
                 Text { text: backend.mappingActive ? "MAPPING ACTIVE" : (backend.mappingRequested ? "MAPPING PAUSED · RECONNECTING" : (backend.vjoyReady ? "OUTPUT READY" : "MAPPING STOPPED"))
- color: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted)
+ color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1")
  font.pixelSize: 10
- font.bold: true
- font.family: theme.topGun ? theme.displayFont : root.font.family
-                }
-                Rectangle { visible: theme.topGun; width: 36; height: 4; anchors.verticalCenter: parent.verticalCenter; color: theme.orange
-                    Repeater { model: 4; delegate: Rectangle { x: index * 10; width: 4; height: parent.height; color: theme.background } } }
-            }
-            Item { visible: theme.topGun; Layout.preferredWidth: 26; Layout.preferredHeight: 44
-                Text { anchors.centerIn: parent; text: "✦"; color: theme.ivory; font.pixelSize: 28 }
+ font.bold: true }
             }
         }
     }
@@ -1095,8 +1047,8 @@ ApplicationWindow {
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
-        color: theme.tooltip
-        border.color: theme.borderStrong
+        color: "#fb1a2025"
+        border.color: "#48515d65"
         Behavior on opacity { NumberAnimation { duration: 130
  easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: 130
@@ -1125,15 +1077,15 @@ ApplicationWindow {
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 1
-                    Text { text: theme.topGun ? "HOTAS BF6  //  FLIGHT DECK" : "HOTAS BF6"; color: theme.textStrong; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                    Text { text: "v" + Qt.application.version + (theme.topGun ? "  ·  TOP GUN" : ""); color: theme.textMuted; font.pixelSize: 9; font.bold: true }
+                    Text { text: "HOTAS BF6"; color: "#edf5f4"; font.pixelSize: 13; font.bold: true }
+                    Text { text: "v" + Qt.application.version; color: "#8fa6ad"; font.pixelSize: 9; font.bold: true }
                 }
             }
             Rectangle {
                 x: 7
                 width: parent.width - 14
                 height: 1
-                color: theme.divider
+                color: "#214d5964"
             }
             Repeater {
                 model: [
@@ -1150,12 +1102,11 @@ ApplicationWindow {
  width: parent.width - 14
  x: 7
  height: 1
- color: theme.divider }
+ color: "#18ffffff" }
                     Rectangle { visible: modelData.page >= 0
  anchors.fill: parent
- radius: theme.controlRadius
- color: root.currentPage === modelData.page ? theme.selection : navHit.containsMouse ? theme.controlHover : "transparent"
- border.color: root.currentPage === modelData.page ? theme.orange : "transparent" }
+ radius: 5
+ color: root.currentPage === modelData.page ? "#3a4b565c" : navHit.containsMouse ? "#17313a40" : "transparent" }
                     Row { visible: modelData.page >= 0
  anchors.verticalCenter: parent.verticalCenter
  anchors.left: parent.left
@@ -1163,14 +1114,13 @@ ApplicationWindow {
  spacing: 8
                         Rectangle { width: 4
  height: 4
- radius: theme.topGun ? 0 : 2
+ radius: 2
  anchors.verticalCenter: parent.verticalCenter
- color: root.currentPage === modelData.page ? theme.orangeBright : theme.textFaint }
+ color: root.currentPage === modelData.page ? "#cfdbda" : "#718087" }
                         Text { text: modelData.label
- color: modelData.future ? theme.textFaint : (root.currentPage === modelData.page ? theme.textStrong : theme.text)
+ color: modelData.future ? "#7f8a8e" : (root.currentPage === modelData.page ? "#f0f3f1" : "#bdc7c8")
  font.pixelSize: 11
- font.bold: root.currentPage === modelData.page
- font.family: theme.topGun ? theme.displayFont : root.font.family }
+ font.bold: root.currentPage === modelData.page }
                         Text { visible: modelData.future
  text: "FUTURE"
  color: "#7d878b"
@@ -1214,17 +1164,9 @@ ApplicationWindow {
                         onTriggered: backend.toggleMapping() }
                 }
                 Panel { width: parent.width; height: 90
-                    color: theme.topGun ? "#e4191714" : "#e51a2328"; border.color: theme.topGun ? theme.orange : "#46657980"
+                    color: "#e51a2328"; border.color: "#46657980"
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
-                        Rectangle { visible: theme.topGun; Layout.preferredWidth: 142; Layout.fillHeight: true; color: "#4d211b"; border.color: theme.orange
-                            clip: true
-                            Repeater { model: 9; delegate: Rectangle { width: 42; height: 2; x: index * 18 - 35; y: parent.height - 6; rotation: -28; color: "#9c3a20" } }
-                            Column { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 12; spacing: 3
-                                Text { text: "SELECT AXIS"; color: theme.orangeBright; font.family: theme.displayFont; font.pixelSize: 12; font.bold: true }
-                                Text { text: root.hasPhysicalInput ? backend.axisCount + " DETECTED" : "WAITING"; color: theme.ivory; font.family: theme.displayFont; font.pixelSize: 9; font.bold: true }
-                            }
-                        }
-                        Column { visible: !theme.topGun; spacing: 4; Layout.preferredWidth: 96
+                        Column { spacing: 4; Layout.preferredWidth: 96
                             Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
                             Text { text: root.hasPhysicalInput ? backend.axisCount + " DETECTED" : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
                         }
@@ -1243,9 +1185,9 @@ ApplicationWindow {
                                 return 0
                             }
                             onActivated: backend.setSelectedAxis(currentValue)
-                            background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : "#546d78" }
+                            background: Rectangle { radius: 3; color: "#0d1216"; border.color: "#546d78" }
                             contentItem: Text { leftPadding: 12; text: axisSelector.displayText
-                                color: theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                color: "#dde9e9"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12; font.bold: true }
                         }
                     }
                 }
@@ -1266,12 +1208,12 @@ ApplicationWindow {
                             spacing: 14
                             Panel { id: axisIdentityPanel; Layout.fillWidth: true; Layout.preferredHeight: 144
                                 property var info: root.selectedAxisInfo
-                                color: theme.topGun ? "#de0b1a1f" : "#e61a282e"; border.color: theme.topGun ? theme.borderStrong : "#4b70818a"
+                                color: "#e61a282e"; border.color: "#4b70818a"
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
                                     RowLayout { Layout.fillWidth: true
                                         Column { spacing: 2
-                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : "#edf6f6"; font.pixelSize: theme.topGun ? 24 : 17; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                                            Text { text: axisIdentityPanel.info.detail.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: "#edf6f6"; font.pixelSize: 17; font.bold: true }
+                                            Text { text: axisIdentityPanel.info.detail.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
                                         }
                                         Item { Layout.fillWidth: true }
                                         Row { spacing: 6
@@ -1281,9 +1223,9 @@ ApplicationWindow {
                                     }
                                     FineLine { Layout.fillWidth: true }
                                     RowLayout { Layout.fillWidth: true
-                                        TelemetryItem { caption: "PROFILE"; value: backend.activeProfileName.toUpperCase(); tone: theme.ivory; Layout.fillWidth: true }
-                                        TelemetryItem { caption: "ROUTE"; value: axisIdentityPanel.info.target.toUpperCase(); tone: axisIdentityPanel.info.target === "Disabled" ? theme.textMuted : theme.orangeBright; Layout.fillWidth: true }
-                                        TelemetryItem { caption: "STATUS"; value: backend.mappingActive ? "● LIVE" : "STANDBY"; tone: backend.mappingActive ? theme.ready : theme.textMuted; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "PROFILE"; value: backend.activeProfileName.toUpperCase(); tone: "#c6dce0"; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "ROUTE"; value: axisIdentityPanel.info.target.toUpperCase(); tone: axisIdentityPanel.info.target === "Disabled" ? "#939da1" : "#9bcbd1"; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "STATUS"; value: backend.mappingActive ? "● LIVE" : "STANDBY"; tone: backend.mappingActive ? "#a1cbbb" : "#a5afb3"; Layout.fillWidth: true }
                                     }
                                 }
                             }
@@ -1291,15 +1233,15 @@ ApplicationWindow {
                                 property var info: root.selectedAxisInfo
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "PHYSICAL INPUT"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.raw); color: theme.topGun ? theme.ivory : "#dce8ea"; font.pixelSize: 31; font.family: theme.telemetryFont; font.bold: true }
-                                        Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: theme.textFaint; font.pixelSize: 9; font.bold: true }
+                                        Text { text: "PHYSICAL INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.raw); color: "#dce8ea"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
+                                        Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: "#718a93"; font.pixelSize: 9; font.bold: true }
                                     }
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "VIRTUAL OUTPUT"; color: theme.topGun ? theme.cyan : "#85aaa8"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.transformed); color: theme.cyan; font.pixelSize: 31; font.family: theme.telemetryFont; font.bold: true }
-                                        Text { text: backend.mappingActive ? "LIVE PROCESSED COMMAND" : "LIVE COMMAND PREVIEW"; color: theme.textFaint; font.pixelSize: 9; font.bold: true }
+                                        Text { text: "VIRTUAL OUTPUT"; color: "#85aaa8"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.transformed); color: "#9ad0c5"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
+                                        Text { text: backend.mappingActive ? "LIVE PROCESSED COMMAND" : "LIVE COMMAND PREVIEW"; color: "#718f8b"; font.pixelSize: 9; font.bold: true }
                                     }
                                 }
                             }
@@ -1313,13 +1255,13 @@ ApplicationWindow {
                             // Processing controls grow with their content so the
                             // Curve description and action remain inside the panel.
                             Layout.preferredHeight: processingContent.implicitHeight + 32
-                            color: theme.topGun ? "#dc0a171c" : "#ed151d22"
+                            color: "#ed151d22"
                             ColumnLayout { id: processingContent; anchors.fill: parent; anchors.margins: 16; spacing: 12
-                                Text { text: (theme.topGun ? "✦  " : "") + "AXIS PROCESSING"; color: theme.topGun ? theme.ivory : "#e1eded"; font.pixelSize: theme.topGun ? 18 : 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                                Text { text: "Profile-specific settings compile into the worker between reports."; color: theme.textMuted; font.pixelSize: 9; font.bold: true }
+                                Text { text: "AXIS PROCESSING"; color: "#e1eded"; font.pixelSize: 12; font.bold: true }
+                                Text { text: "Profile-specific settings compile into the worker between reports."; color: "#8199a1"; font.pixelSize: 9; font.bold: true }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "ROUTE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightComboBox {
                                         id: selectedAxisDestination
                                         Layout.fillWidth: true; Layout.preferredHeight: 31
@@ -1333,8 +1275,8 @@ ApplicationWindow {
                                                 axisConflictDialog.open()
                                             }
                                         }
-                                        background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : "#455d67" }
-                                        contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                        background: Rectangle { radius: 3; color: "#0d1215"; border.color: "#455d67" }
+                                        contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: "#dce7e8"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
                                     }
                                 }
                                 RowLayout { Layout.fillWidth: true
@@ -1344,44 +1286,34 @@ ApplicationWindow {
                                         checked: processingPanel.info.inverted
                                         onToggled: backend.setAxisInverted(processingPanel.info.index, checked)
                                         indicator: Rectangle { implicitWidth: 36; implicitHeight: 18; radius: 9
-                                            color: selectedAxisInvert.checked ? theme.orange : theme.control; border.color: theme.borderStrong
+                                            color: selectedAxisInvert.checked ? "#526e77" : "#343d42"; border.color: "#435963"
                                             Rectangle { width: 14; height: 14; radius: 7; x: selectedAxisInvert.checked ? 19 : 3
-                                                anchors.verticalCenter: parent.verticalCenter; color: theme.ivory }
+                                                anchors.verticalCenter: parent.verticalCenter; color: "#e5ecec" }
                                         }
                                     }
-                                    Text { text: processingPanel.info.inverted ? "ON" : "OFF"; color: processingPanel.info.inverted ? theme.orangeBright : theme.textMuted; font.pixelSize: 10; font.bold: true }
+                                    Text { text: processingPanel.info.inverted ? "ON" : "OFF"; color: "#99b6bb"; font.pixelSize: 10; font.bold: true }
                                     Item { Layout.fillWidth: true }
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "DEADZONE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "DEADZONE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: theme.topGun ? theme.ivory : "#c8dce0"; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
                                     }
                                     Slider { id: selectedAxisDeadzone; Layout.fillWidth: true; from: 0; to: 0.25; value: Number(processingPanel.info.deadzone)
-                                        onMoved: backend.setAxisDeadzone(processingPanel.info.index, value)
-                                        background: Rectangle { x: selectedAxisDeadzone.leftPadding; y: selectedAxisDeadzone.topPadding + selectedAxisDeadzone.availableHeight / 2 - height / 2; width: selectedAxisDeadzone.availableWidth; height: theme.topGun ? 3 : 5; color: theme.panelInset; border.color: theme.border
-                                            Rectangle { width: selectedAxisDeadzone.visualPosition * parent.width; height: parent.height; color: theme.topGun ? theme.orange : theme.cyan }
-                                            Repeater { visible: theme.topGun; model: 20; delegate: Rectangle { x: index * parent.width / 19; width: 1; height: 7; y: -2; color: theme.borderStrong } }
-                                        }
-                                        handle: Rectangle { x: selectedAxisDeadzone.leftPadding + selectedAxisDeadzone.visualPosition * (selectedAxisDeadzone.availableWidth - width); y: selectedAxisDeadzone.topPadding + selectedAxisDeadzone.availableHeight / 2 - height / 2; width: theme.topGun ? 22 : 14; height: theme.topGun ? 22 : 14; radius: width / 2; color: theme.ivory; border.color: theme.borderStrong } }
-                                    Text { text: "Rescaled around center before hysteresis."; color: theme.textFaint; font.pixelSize: 9 }
+                                        onMoved: backend.setAxisDeadzone(processingPanel.info.index, value) }
+                                    Text { text: "Rescaled around center before hysteresis."; color: "#718a93"; font.pixelSize: 9 }
                                 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "HYSTERESIS"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "HYSTERESIS"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: theme.topGun ? theme.ivory : "#c8dce0"; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
                                     }
                                     Slider { id: selectedAxisHysteresis; Layout.fillWidth: true; from: 0; to: 0.05; value: Number(processingPanel.info.hysteresis)
-                                        onMoved: backend.setAxisHysteresis(processingPanel.info.index, value)
-                                        background: Rectangle { x: selectedAxisHysteresis.leftPadding; y: selectedAxisHysteresis.topPadding + selectedAxisHysteresis.availableHeight / 2 - height / 2; width: selectedAxisHysteresis.availableWidth; height: theme.topGun ? 3 : 5; color: theme.panelInset; border.color: theme.border
-                                            Rectangle { width: selectedAxisHysteresis.visualPosition * parent.width; height: parent.height; color: theme.topGun ? theme.orange : theme.cyan }
-                                            Repeater { visible: theme.topGun; model: 20; delegate: Rectangle { x: index * parent.width / 19; width: 1; height: 7; y: -2; color: theme.borderStrong } }
-                                        }
-                                        handle: Rectangle { x: selectedAxisHysteresis.leftPadding + selectedAxisHysteresis.visualPosition * (selectedAxisHysteresis.availableWidth - width); y: selectedAxisHysteresis.topPadding + selectedAxisHysteresis.availableHeight / 2 - height / 2; width: theme.topGun ? 22 : 14; height: theme.topGun ? 22 : 14; radius: width / 2; color: theme.ivory; border.color: theme.borderStrong } }
-                                    Text { text: "Suppresses sub-threshold report noise; no smoothing delay."; color: theme.textFaint; font.pixelSize: 9 }
+                                        onMoved: backend.setAxisHysteresis(processingPanel.info.index, value) }
+                                    Text { text: "Suppresses sub-threshold report noise; no smoothing delay."; color: "#718a93"; font.pixelSize: 9 }
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
@@ -1409,21 +1341,6 @@ ApplicationWindow {
                                 }
                             }
                         }
-                    }
-                }
-                Panel { visible: theme.topGun; width: parent.width; height: 58
-                    color: "#d80a171b"; border.color: theme.borderStrong
-                    RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 14
-                        Item { Layout.preferredWidth: 190; Layout.fillHeight: true
-                            Row { anchors.verticalCenter: parent.verticalCenter; spacing: 4
-                                Repeater { model: 3; delegate: Rectangle { width: 24 + index * 7; height: 4; color: index === 1 ? theme.orange : theme.ivory } }
-                            }
-                            Text { anchors.bottom: parent.bottom; anchors.bottomMargin: 2; text: "TOP GUN"; color: theme.ivory; font.family: theme.displayFont; font.pixelSize: 21; font.bold: true }
-                        }
-                        Text { text: "FLIGHT CONTROL  •  MAPPING REMAINS ACTIVE"; color: theme.orange; font.family: theme.displayFont; font.pixelSize: 13; font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        Text { text: "✈"; color: theme.ivory; font.pixelSize: 34 }
-                        Text { text: backend.mappingActive ? "READY" : "STANDBY"; color: backend.mappingActive ? theme.ready : theme.warning; font.family: theme.displayFont; font.pixelSize: 16; font.bold: true }
                     }
                 }
             }
@@ -1533,7 +1450,7 @@ ApplicationWindow {
  onTriggered: backend.resetCalibration() }
                 }
                 Text { text: "AXIS RANGE STATUS"
- color: theme.textMuted
+ color: "#94a1a6"
  font.pixelSize: 10
  font.bold: true }
                 GridLayout { width: parent.width
@@ -1547,31 +1464,30 @@ ApplicationWindow {
                             visible: info && info.available
                             Layout.fillWidth: true
                             Layout.preferredHeight: 118
-                            color: backend.calibrationActive ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, 0.14) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-                            border.color: backend.calibrationActive ? theme.orange : theme.border
+                            color: backend.calibrationActive ? "#ea1a2930" : "#ed182128"
+                            border.color: backend.calibrationActive ? "#5a7e9aa8" : "#41546770"
                             RowLayout { anchors.fill: parent
  anchors.margins: 15
                                 ColumnLayout { Layout.preferredWidth: 130
                                     Text { text: calibrationAxisCard.info.label.toUpperCase()
- color: theme.topGun ? theme.ivory : "#eaf0f1"
- font.pixelSize: theme.topGun ? 15 : 12
- font.bold: true
- font.family: theme.topGun ? theme.displayFont : root.font.family }
+ color: "#eaf0f1"
+ font.pixelSize: 12
+ font.bold: true }
                                     Text { text: backend.calibrationActive ? "CAPTURING LIVE" : (calibrationAxisCard.info.calibrationEnabled ? "SAVED RANGE" : "RAW DEFAULT")
- color: backend.calibrationActive ? theme.orangeBright : (calibrationAxisCard.info.calibrationEnabled ? theme.ready : theme.textFaint)
+ color: backend.calibrationActive ? "#abd7e2" : (calibrationAxisCard.info.calibrationEnabled ? "#9fc7b1" : "#89979d")
  font.pixelSize: 9 }
                                 }
                                 Repeater { model: [{ n: "MIN", v: calibrationAxisCard.info.calibrationMinimum }, { n: "CURRENT", v: calibrationAxisCard.info.raw }, { n: "MAX", v: calibrationAxisCard.info.calibrationMaximum }]
                                     delegate: Column { Layout.fillWidth: true
  spacing: 5
                                         Text { text: modelData.n
- color: theme.textMuted
+ color: "#7f8d94"
  font.pixelSize: 9
  font.bold: true }
                                         Text { text: Number(modelData.v).toFixed(3)
- color: theme.ivory
+ color: "#c9d6d9"
  font.pixelSize: 13
- font.family: theme.telemetryFont }
+ font.family: "Consolas" }
                                     }
                                 }
                             }
@@ -1600,22 +1516,22 @@ ApplicationWindow {
  columnSpacing: 10
  rowSpacing: 10
                     Repeater { model: [
-                        { c: "PHYSICAL RATE", v: backend.inputReportsPerSecond.toFixed(0) + " HZ", t: backend.inputReportsPerSecond > 0 ? theme.cyan : theme.textMuted },
-                        { c: "UPDATE AGE", v: backend.lastPhysicalUpdateAgeMs >= 0 ? backend.lastPhysicalUpdateAgeMs + " MS" : "—", t: backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? theme.cyan : theme.textMuted },
-                        { c: "MAP LATENCY", v: backend.latencyCurrentUs + " US", t: theme.ivory },
-                        { c: "MAP p95 / p99", v: backend.latencyP95Us + " / " + backend.latencyP99Us + " US", t: theme.ivory,
+                        { c: "PHYSICAL RATE", v: backend.inputReportsPerSecond.toFixed(0) + " HZ", t: backend.inputReportsPerSecond > 0 ? "#b9d1d8" : "#a5afb3" },
+                        { c: "UPDATE AGE", v: backend.lastPhysicalUpdateAgeMs >= 0 ? backend.lastPhysicalUpdateAgeMs + " MS" : "—", t: backend.lastPhysicalUpdateAgeMs >= 0 && backend.lastPhysicalUpdateAgeMs < 100 ? "#b9d1d8" : "#a5afb3" },
+                        { c: "MAP LATENCY", v: backend.latencyCurrentUs + " US", t: "#c9d6d9" },
+                        { c: "MAP p95 / p99", v: backend.latencyP95Us + " / " + backend.latencyP99Us + " US", t: "#c9d6d9",
                           note: "ROLLING LAST 2,048 PHYSICAL REPORTS" },
-                        { c: "MAP AVG / PEAK", v: backend.latencyAverageUs + " / " + backend.latencyPeakUs + " US", t: theme.ivory,
+                        { c: "MAP AVG / PEAK", v: backend.latencyAverageUs + " / " + backend.latencyPeakUs + " US", t: "#c9d6d9",
                           note: "LIFETIME SINCE MAPPING START" },
-                        { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? theme.cyan : theme.textFaint,
+                        { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? "#b9d1d8" : "#89979d",
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
-                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted),
+                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? "#a8cfba" : (backend.mappingRequested ? "#e1c887" : "#a5afb3"),
                           note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT WILL REACQUIRE AUTOMATICALLY" : "PHYSICAL MONITORING CONTINUES") },
-                        { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: theme.ivory,
+                        { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
                           note: "PERSISTENT MANUAL SELECTION" },
-                        { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: theme.ivory,
+                        { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: "#b9d1d8",
                           note: backend.profileSourceLabel.toUpperCase() },
-                        { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: theme.ivory,
+                        { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",
                           note: backend.profileSwitchCount + " LIVE SWITCHES" }
                     ]
                         delegate: Panel { Layout.fillWidth: true
@@ -1624,16 +1540,16 @@ ApplicationWindow {
  anchors.margins: 13
  spacing: 4
                                 Text { text: modelData.c
- color: theme.textMuted
+ color: "#7f8d94"
  font.pixelSize: 9
  font.bold: true }
                                 Text { text: modelData.v
  color: modelData.t
  font.pixelSize: 16
  font.bold: true
- font.family: theme.telemetryFont }
+ font.family: "Consolas" }
                                 Text { visible: modelData.note !== undefined; text: modelData.note || ""
-                                    color: theme.textFaint; font.pixelSize: 8; font.bold: true }
+                                    color: "#7895a0"; font.pixelSize: 8; font.bold: true }
                             }
                         }
                     }
@@ -1858,51 +1774,50 @@ ApplicationWindow {
                         onTriggered: newProfileDialog.open() }
                 }
                 Text { text: "BASE PROFILE"
-                    color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
                 Panel { width: parent.width; height: 102
-                    color: theme.topGun ? "#db1b1815" : "#e51a352f"; border.color: theme.topGun ? theme.orange : "#4a91a8a0"
+                    color: "#e51a352f"; border.color: "#4a91a8a0"
                     RowLayout { anchors.fill: parent; anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
                             Text { text: backend.activeProfileName.toUpperCase()
-                                color: theme.topGun ? theme.ivory : "#e8f3f2"; font.pixelSize: theme.topGun ? 21 : 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                color: "#e8f3f2"; font.pixelSize: 16; font.bold: true }
                             Text { text: backend.effectiveProfileName === backend.activeProfileName
                                 ? "Current controller configuration · Axes and Buttons edit this profile"
                                 : "Effective: " + backend.effectiveProfileName + " · " + backend.profileSourceLabel
-                                color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight
+                                color: "#9db8bd"; font.pixelSize: 10; elide: Text.ElideRight
                                 Layout.fillWidth: true }
                         }
                         Row { spacing: 7
-                            StatusDot { tone: theme.ready }
-                            Text { text: "BASE"; color: theme.ready; font.pixelSize: 10; font.bold: true }
+                            StatusDot { tone: "#98d1bd" }
+                            Text { text: "BASE"; color: "#add8c5"; font.pixelSize: 10; font.bold: true }
                         }
                     }
                 }
                 Text { text: "AVAILABLE PROFILES"
-                    color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
                 GridLayout { width: parent.width
                     columns: width >= 1080 ? 3 : (width >= 700 ? 2 : 1)
                     columnSpacing: 12; rowSpacing: 12
                     Repeater { model: backend.profiles
                         delegate: Panel { Layout.fillWidth: true; Layout.preferredHeight: 164
-                            color: modelData.active ? (theme.topGun ? "#db1b1815" : "#e51a352f") : (theme.topGun ? "#d80b1b20" : "#ed182128")
-                            border.color: modelData.active ? (theme.topGun ? theme.orange : "#4a91a8a0") : theme.border
+                            color: modelData.active ? "#e51a352f" : "#ed182128"
+                            border.color: modelData.active ? "#4a91a8a0" : "#41546770"
                             ColumnLayout { anchors.fill: parent; anchors.margins: 14; spacing: 7
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: modelData.name.toUpperCase()
-                                        color: theme.topGun ? theme.ivory : "#e8eeee"; font.pixelSize: theme.topGun ? 17 : 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family
+                                        color: "#e8eeee"; font.pixelSize: 13; font.bold: true
                                         elide: Text.ElideRight; Layout.fillWidth: true }
                                     Row { visible: modelData.effective; spacing: 5
-                                        StatusDot { tone: theme.ready }
-                                        Text { text: modelData.effectiveSource.toUpperCase(); color: theme.ready; font.pixelSize: 9; font.bold: true }
+                                        StatusDot { tone: "#98d1bd" }
+                                        Text { text: modelData.effectiveSource.toUpperCase(); color: "#add8c5"; font.pixelSize: 9; font.bold: true }
                                     }
                                     ToolButton { text: "⋯"; font.pixelSize: 17
-                                        contentItem: Text { text: parent.text; color: theme.textMuted
+                                        contentItem: Text { text: parent.text; color: "#a9bbc0"
                                             font.pixelSize: parent.font.pixelSize
                                             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                        background: Rectangle { radius: theme.controlRadius; color: parent.hovered ? theme.controlHover : "transparent"; border.color: parent.hovered ? theme.borderStrong : "transparent" }
+                                        background: Rectangle { radius: 3; color: parent.hovered ? "#2b393f" : "transparent" }
                                         onClicked: profileActionMenu.open()
                                         Menu { id: profileActionMenu
-                                            background: Panel { color: theme.tooltip; border.color: theme.borderStrong }
                                             MenuItem { text: "Rename"; enabled: !modelData.protected
                                                 onTriggered: { renameProfileDialog.profileId = modelData.id
                                                     renameProfileDialog.profileName = modelData.name
@@ -1917,9 +1832,9 @@ ApplicationWindow {
                                     }
                                 }
                                 Text { text: modelData.mappedAxes + " mapped axes"
-                                    color: theme.textMuted; font.pixelSize: 10; font.family: theme.telemetryFont }
+                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
                                 Text { text: modelData.mappedButtons + " mapped buttons"
-                                    color: theme.textMuted; font.pixelSize: 10; font.family: theme.telemetryFont }
+                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
                                 Item { Layout.fillHeight: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { visible: modelData.protected; text: "PROTECTED FALLBACK"
@@ -1951,26 +1866,20 @@ ApplicationWindow {
  spacing: 14
                 PageTitle { heading: "Settings"
  detail: "Persistent device selection and safe mapping defaults" }
-                Panel { width: parent.width; height: 96
-                    color: theme.topGun ? "#d80b1b20" : "#e9161d23"
-                    border.color: theme.topGun ? theme.borderStrong : theme.border
-                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
+                Panel { width: parent.width; height: 84
+                    RowLayout { anchors.fill: parent; anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "APPEARANCE"; color: theme.topGun ? theme.ivory : theme.text; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                            Text { text: "Theme"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
-                            Text { text: "Switches instantly and persists independently of mapper configuration."; color: theme.textFaint; font.pixelSize: 9 }
+                            Text { text: "APPEARANCE"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Choose Legacy, Standard, or Top Gun without changing mapper configuration."
+                                color: "#9dafb4"; font.pixelSize: 10 }
                         }
-                        Rectangle { Layout.preferredWidth: 74; Layout.preferredHeight: 42; radius: theme.controlRadius
-                            color: theme.topGun ? "#0a171c" : theme.panelRaised; border.color: theme.topGun ? theme.orange : theme.border
-                            Column { anchors.centerIn: parent; spacing: 1
-                                Text { anchors.horizontalCenter: parent.horizontalCenter; text: theme.topGun ? "TOP GUN" : "STANDARD"; color: theme.topGun ? theme.orangeBright : theme.text; font.pixelSize: 9; font.bold: true }
-                                Rectangle { width: 46; height: 2; color: theme.topGun ? theme.cyan : theme.borderStrong }
-                            }
-                        }
-                        FlightComboBox { id: themeSelector; Layout.preferredWidth: 150; Layout.preferredHeight: 34
+                        FlightComboBox {
+                            id: legacyThemeSelection
+                            width: 188
                             model: themeManager.themeChoices
                             currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme))
-                            onActivated: themeManager.setCurrentTheme(currentText) }
+                            onActivated: themeManager.setCurrentTheme(currentText)
+                        }
                     }
                 }
                 Panel { width: parent.width
@@ -2028,14 +1937,14 @@ ApplicationWindow {
                             indicator: Rectangle { implicitWidth: 36
  implicitHeight: 18
  radius: 9
- color: startMappingToggle.checked ? theme.orange : theme.control
- border.color: theme.borderStrong
+ color: startMappingToggle.checked ? "#476d78" : "#30383d"
+ border.color: "#33dce5e8"
                                 Rectangle { width: 14
  height: 14
  radius: 7
  x: startMappingToggle.checked ? 19 : 3
  anchors.verticalCenter: parent.verticalCenter
- color: theme.ivory }
+ color: "#e4ecee" }
                             }
                         }
                     }
@@ -2067,12 +1976,7 @@ ApplicationWindow {
                             SpinBox { from: 1
                                 to: 16
                                 value: backend.vjoyDeviceId
-                                onValueModified: backend.setVjoyDeviceId(value)
-                                contentItem: TextInput { text: parent.textFromValue(parent.value, parent.locale); color: theme.text; font.family: theme.telemetryFont; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; readOnly: true }
-                                background: Rectangle { color: theme.control; border.color: theme.border; radius: theme.controlRadius }
-                                up.indicator: Text { text: "+"; color: theme.ivory; font.pixelSize: 12; x: parent.width - width - 7; y: 3 }
-                                down.indicator: Text { text: "−"; color: theme.ivory; font.pixelSize: 12; x: parent.width - width - 7; y: parent.height / 2 + 1 }
-                            }
+                                onValueModified: backend.setVjoyDeviceId(value) }
                             CommandButton { label: "CONFIGURE VJOY"
                                 subdued: true
                                 onTriggered: backend.openVjoyConfiguration() }
@@ -2128,7 +2032,7 @@ ApplicationWindow {
                 }
             }
         }
-        CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.theme }
+        LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
     }
 
     Dialog {
@@ -2287,20 +2191,5 @@ ApplicationWindow {
         }
         background: Panel { color: "#241b1b"
  border.color: "#44bd7777" }
-    }
-    Component {
-        id: legacySurfaceComponent
-        Legacy { }
-    }
-    // Legacy is an opaque v1.6.3 surface hosted in the same application
-    // window. Theme changes remain presentation-only and keep AppBackend and
-    // the mapping worker alive.
-    Loader {
-        id: legacySurface
-        anchors.fill: parent
-        z: 1000
-        active: themeManager.currentTheme === "Legacy"
-        visible: active
-        sourceComponent: legacySurfaceComponent
     }
 }
