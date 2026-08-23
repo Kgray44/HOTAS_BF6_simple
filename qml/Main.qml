@@ -1473,6 +1473,25 @@ ApplicationWindow {
                 PageTitle { heading: "Settings"
  detail: "Persistent device selection and safe mapping defaults" }
                 Panel { width: parent.width
+  height: 76
+                    RowLayout { anchors.fill: parent
+  anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true
+                            Text { text: "HOTAS BF6  ·  VERSION " + Qt.application.version
+  color: "#e8eeee"
+  font.pixelSize: 12
+  font.bold: true }
+                            Text { text: "Stable updates are checked automatically before launch."
+  color: "#9dafb4"
+  font.pixelSize: 10 }
+                        }
+                        Text { text: "CHANNEL  STABLE"
+  color: "#8fd5c9"
+  font.pixelSize: 10
+  font.bold: true }
+                    }
+                }
+                Panel { width: parent.width
  height: 84
                     RowLayout { anchors.fill: parent
  anchors.margins: 16

@@ -1,0 +1,3 @@
+#pragma once
+
+#define HOTAS_BF6_VERSION "@HOTAS_BF6_VERSION@"

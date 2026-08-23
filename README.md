@@ -1,7 +1,17 @@
-# HOTAS BF6 Simple v1.5
+# HOTAS BF6 Simple v1.6
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
+
+## Installation and automatic updates
+
+1. Download `HOTAS-BF6-Setup-vX.Y.Z.exe` from the latest [GitHub Release](https://github.com/Kgray44/HOTAS_BF6_simple/releases).
+2. Run the installer. It installs per-user to `%LOCALAPPDATA%\Programs\HOTAS BF6` and creates Start Menu and Desktop shortcuts named **HOTAS BF6**.
+3. Launch through either shortcut. Both target **HOTAS BF6 Launcher.exe**, not the mapper directly.
+
+At every launch, the native launcher checks the official stable GitHub Release manifest with short timeouts. If a newer stable release is available, it downloads the installer to a temporary staging directory, verifies its SHA-256 digest, silently applies it through a temporary helper, and starts the new launcher. Network, manifest, download, checksum, and installer failures always fall back to the currently installed mapper; no updater remains active while mapping.
+
+The installer upgrades program files only. Existing QSettings data—including profiles, Personal curves, calibration, and button/profile controls—stays in the established user data location. Uninstalling does not remove that data unless you remove it yourself.
 
 ## Requirements
 
@@ -12,13 +22,25 @@ to the vJoy inputs Battlefield 6 recognizes.
   components
 - [vJoy](https://sourceforge.net/projects/vjoystick/) 2.2.2.0 installed and
   configured with Device 1 exposing X, Y, Z, Rz, and 32 virtual buttons
+- [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
+
+vJoy is required for virtual output. HidHide is never bundled, installed, updated, enabled, or modified by HOTAS BF6; it remains an independent system component.
 
 The app dynamically loads the installed x64 `vJoyInterface.dll`; no vJoy SDK
 headers or binaries are copied into this repository. A T.Flight HOTAS One is
 the supported initial device, though any DirectInput game controller is visible
 for diagnostics and mapping.
 
-## v1.5 features
+## v1.6 packaging and update features
+
+- One authoritative `VERSION` file drives the Qt application, launcher metadata, installer, release manifest, and tag validation
+- Small console-free native Win32 launcher using WinHTTP and Windows CNG SHA-256, separate from the mapper and Qt runtime
+- Stable-release-only updates from `https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json`
+- Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
+- GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
+- Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.5 mapping features
 
 - Independent 250 Hz-bounded DirectInput worker with a 60 Hz UI snapshot
 - Roll, pitch, throttle, and yaw routes to vJoy X, Y, Z, and Rz
@@ -58,13 +80,27 @@ From an x64 Native Tools Command Prompt with Qt's CMake package directory on
 cmake -S . -B build-release -DCMAKE_PREFIX_PATH=C:\Qt\6.5.3\msvc2019_64
 cmake --build build-release --config Release
 ctest --test-dir build-release --output-on-failure -C Release
-.\build-release\HOTASMapper.exe
+.\build-release\HOTAS BF6.exe
 ```
 
 With a Visual Studio generator, the executable is normally
-`build\Release\HOTASMapper.exe`. Qt deployment is required when launching
+`build\Release\HOTAS BF6.exe`. Qt deployment is required when launching
 outside a Qt development shell; run `windeployqt` on the executable or use the
 Qt Creator run target.
+
+## Maintainer release process
+
+1. Finish and test code, then update the root `VERSION` file.
+2. Commit and merge the version to `main`.
+3. Perform the manual installer, launcher, and HOTAS/vJoy acceptance checks.
+4. Create and push the matching annotated tag, for example:
+
+   ```powershell
+   git tag -a v1.6.0 -m "HOTAS BF6 v1.6.0"
+   git push origin v1.6.0
+   ```
+
+The Windows release workflow verifies `VERSION` equals the tag, builds and tests the mapper/launcher, runs `windeployqt`, compiles and smoke-tests the Inno installer on CI, creates `update-manifest.json` and `SHA256SUMS.txt`, and publishes the GitHub Release. A `workflow_dispatch` run is dry-run only and uploads the same artifacts without publishing a release.
 
 ## Default axis routing
 

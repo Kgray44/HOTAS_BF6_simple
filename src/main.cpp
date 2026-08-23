@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "hotas_build_version.h"
 
 #include <QGuiApplication>
 #include <QQmlError>
@@ -13,10 +14,12 @@ using namespace Qt::StringLiterals;
 int main(int argc, char *argv[])
 {
     QGuiApplication application(argc, argv);
+    // Keep the established QSettings identity so an installer upgrade retains
+    // the existing profiles, curves, calibration, and button configuration.
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
-    application.setApplicationVersion(QStringLiteral("1.5.0"));
+    application.setApplicationVersion(QString::fromLatin1(HOTAS_BF6_VERSION));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     hotas::AppBackend backend;

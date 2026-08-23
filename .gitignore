@@ -7,3 +7,6 @@
 *.user
 *.user.*
 *.qmlc
+release/
+build/
+build-*/

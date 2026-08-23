@@ -1,0 +1,168 @@
+name: Release HOTAS BF6
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, test, package, and upload artifacts without publishing a GitHub Release
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-2022
+    env:
+      SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+      SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release source and select release tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must be major.minor.patch.' }
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            if ($env:GITHUB_REF_NAME -ne "v$version") {
+              throw "Tag $env:GITHUB_REF_NAME does not match VERSION $version."
+            }
+            $tag = $env:GITHUB_REF_NAME
+          } else {
+            if ('${{ inputs.dry_run }}' -ne 'true') {
+              throw 'workflow_dispatch is dry-run only; stable publication requires a matching pushed vX.Y.Z tag.'
+            }
+            $tag = "v$version"
+          }
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Qt 6.5.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: 'win64_msvc2019_64'
+
+      - name: Locate Qt deployment tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-ChildItem -LiteralPath $env:QT_ROOT_DIR -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          if (-not $config) { throw 'Qt6Config.cmake was not found after Qt installation.' }
+          $prefix = $config.Directory.Parent.Parent.Parent.FullName
+          $deploy = Join-Path $prefix 'bin\windeployqt.exe'
+          if (-not (Test-Path -LiteralPath $deploy)) { throw 'windeployqt.exe was not found.' }
+          "QT_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WINDEPLOYQT=$deploy" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure Release build
+        shell: pwsh
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_PREFIX" -DHOTAS_BUILD_PERFORMANCE_BENCHMARK=ON
+
+      - name: Build mapper, launcher, and tests
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Run headless tests and synthetic benchmark
+        shell: pwsh
+        run: ctest --test-dir build --output-on-failure -C Release
+
+      - name: Stage deployable Qt application
+        shell: pwsh
+        run: .\scripts\stage-package.ps1 -BuildDir "$PWD\build" -StageDir "$PWD\release\stage" -WindeployQt $env:WINDEPLOYQT
+
+      - name: Report unsigned build status
+        if: env.SIGNING_PFX_BASE64 == '' || env.SIGNING_PFX_PASSWORD == ''
+        shell: pwsh
+        run: Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Signing credentials are not configured; this build is unsigned.'
+
+      - name: Sign staged binaries when credentials are configured
+        if: env.SIGNING_PFX_BASE64 != '' && env.SIGNING_PFX_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificate = Join-Path $env:RUNNER_TEMP 'hotas-bf6-signing.pfx'
+          [System.IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          try {
+            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\stage\HOTAS BF6.exe"
+            if ($LASTEXITCODE -ne 0) { throw 'Signing HOTAS BF6.exe failed.' }
+            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\stage\HOTAS BF6 Launcher.exe"
+            if ($LASTEXITCODE -ne 0) { throw 'Signing HOTAS BF6 Launcher.exe failed.' }
+          } finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Install pinned Inno Setup on CI
+        shell: pwsh
+        run: choco install innosetup --version=6.4.2 --yes --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: .\scripts\build-installer.ps1 -StageDir "$PWD\release\stage" -OutputDir "$PWD\release" -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+
+      - name: Sign installer when credentials are configured
+        if: env.SIGNING_PFX_BASE64 != '' && env.SIGNING_PFX_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificate = Join-Path $env:RUNNER_TEMP 'hotas-bf6-signing.pfx'
+          [System.IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          try {
+            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content VERSION -Raw).Trim()).exe"
+            if ($LASTEXITCODE -ne 0) { throw 'Signing installer failed.' }
+          } finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Smoke-test installer layout on CI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $installer = "$PWD\release\HOTAS-BF6-Setup-v$version.exe"
+          $target = Join-Path $env:RUNNER_TEMP 'hotas-bf6-installer-smoke'
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$target"
+          if ($LASTEXITCODE -ne 0) { throw "Installer smoke install failed: $LASTEXITCODE" }
+          foreach ($file in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'VERSION')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
+              throw "Installer smoke test is missing $file"
+            }
+          }
+          $uninstaller = Join-Path $target 'unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Installer smoke test is missing uninstaller.' }
+          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          if ($LASTEXITCODE -ne 0) { throw "Installer smoke uninstall failed: $LASTEXITCODE" }
+
+      - name: Generate release manifest and checksums
+        shell: pwsh
+        run: .\scripts\generate-release-assets.ps1 -InstallerPath "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content VERSION -Raw).Trim()).exe" -OutputDir "$PWD\release" -ReleaseTag $env:RELEASE_TAG
+
+      - name: Upload dry-run or diagnostic artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HOTAS-BF6-${{ env.RELEASE_TAG }}
+          path: |
+            release/HOTAS-BF6-Setup-v*.exe
+            release/update-manifest.json
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish stable GitHub Release from matching tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          files: |
+            release/HOTAS-BF6-Setup-v*.exe
+            release/update-manifest.json
+            release/SHA256SUMS.txt
