@@ -148,6 +148,7 @@ QVariantMap AppBackend::curveEditorState() const
     state.insert(u"sourcePresetId"_qs, mapping->curve.sourcePresetId);
     state.insert(u"summary"_qs, curveDefinitionSummary(mapping->curve));
     state.insert(u"baseLabel"_qs, mapping->curve.baseLabel);
+    state.insert(u"strength"_qs, mapping->curve.family == CurveFamily::Linear ? 0.0 : mapping->curve.strength);
     state.insert(u"pointEditing"_qs, mapping->curve.pointEditing);
     state.insert(u"symmetry"_qs, mapping->curve.symmetry);
     state.insert(u"interpolation"_qs, curveInterpolationLabel(mapping->curve.interpolation));
@@ -166,9 +167,13 @@ QVariantMap AppBackend::curveEditorState() const
     state.insert(u"runtimeLutSamples"_qs, kResponseCurveLutSamples);
     state.insert(u"lastCurveCompileUs"_qs, static_cast<qulonglong>(m_worker.runtime().lastCurveCompileUs.load()));
     state.insert(u"previewLabel"_qs, m_curvePreviewLabel);
+    const CurveAnalysis health = analyzeCurveDefinition(mapping->curve, unipolar);
+    state.insert(u"neutralOffset"_qs, health.neutralOffset);
+    state.insert(u"neutralMapsToNeutral"_qs, health.neutralMapsToNeutral);
     if (const AdvancedCurvePresetInfo *advanced = mapping->curve.family == CurveFamily::Advanced
             ? advancedCurvePreset(mapping->curve.presetId) : nullptr) {
         state.insert(u"advancedBestFor"_qs, advanced->bestFor);
+        state.insert(u"advancedCategory"_qs, advanced->category);
         state.insert(u"advancedBehavior"_qs, advanced->behavior);
         state.insert(u"advancedSourceBasis"_qs, advanced->provenance);
     }
@@ -225,14 +230,16 @@ QVariantList AppBackend::curveAdvancedPresets() const
             return u"Strong"_qs;
         };
         result.append(QVariantMap{{u"id"_qs, preset.id}, {u"name"_qs, preset.name},
-            {u"bestFor"_qs, preset.bestFor}, {u"behavior"_qs, preset.behavior},
+            {u"category"_qs, preset.category}, {u"bestFor"_qs, preset.bestFor}, {u"behavior"_qs, preset.behavior},
             {u"sourceBasis"_qs, preset.provenance},
             {u"centerResponse"_qs, responseBand(analysis.centerGain)},
             {u"midrangeResponse"_qs, responseBand(analysis.halfGain)},
             {u"edgeResponse"_qs, responseBand(edgeGain)},
-            {u"centerGain"_qs, analysis.centerGain}, {u"midrangeGain"_qs, analysis.halfGain},
+            {u"centerGain"_qs, analysis.centerGain}, {u"quarterGain"_qs, analysis.quarterGain},
+            {u"midrangeGain"_qs, analysis.halfGain}, {u"threeQuarterGain"_qs, analysis.threeQuarterGain},
             {u"peakGain"_qs, analysis.peakGain}, {u"symmetric"_qs, true},
-            {u"fullAuthority"_qs, analysis.fullAuthority}});
+            {u"fullAuthority"_qs, analysis.fullAuthority},
+            {u"strengthBehavior"_qs, u"0% Linear · 100% full researched response"_qs}});
     }
     return result;
 }
@@ -270,12 +277,6 @@ QVariantList AppBackend::curveComparisonChoices() const
                     + physicalAxisLabel(static_cast<PhysicalAxis>(axis))}});
         }
     }
-    for (const CurvePresetInfo &preset : standardCurvePresets()) {
-        result.append(QVariantMap{{u"id"_qs, u"standard:j:"_qs + preset.id},
-            {u"label"_qs, u"J-Curve · "_qs + preset.name}});
-        result.append(QVariantMap{{u"id"_qs, u"standard:s:"_qs + preset.id},
-            {u"label"_qs, u"S-Curve · "_qs + preset.name}});
-    }
     for (const AdvancedCurvePresetInfo &preset : advancedCurvePresets()) {
         result.append(QVariantMap{{u"id"_qs, u"advanced:"_qs + preset.id},
             {u"label"_qs, u"Advanced · "_qs + preset.name}});
@@ -291,12 +292,6 @@ QVariantList AppBackend::curveComparisonChoices() const
 QVariantList AppBackend::curvePreviewChoices() const
 {
     QVariantList result;
-    for (const CurvePresetInfo &preset : standardCurvePresets()) {
-        result.append(QVariantMap{{u"id"_qs, u"standard:j:"_qs + preset.id},
-            {u"label"_qs, u"J-Curve · "_qs + preset.name}});
-        result.append(QVariantMap{{u"id"_qs, u"standard:s:"_qs + preset.id},
-            {u"label"_qs, u"S-Curve · "_qs + preset.name}});
-    }
     for (const AdvancedCurvePresetInfo &preset : advancedCurvePresets()) {
         result.append(QVariantMap{{u"id"_qs, u"advanced:"_qs + preset.id},
             {u"label"_qs, u"Advanced · "_qs + preset.name}});
@@ -516,14 +511,45 @@ void AppBackend::setCurveFamily(const QString &family)
     if (normalized == u"linear"_qs) {
         mapping->curve = linearCurveDefinition();
     } else if (normalized == u"j-curve"_qs || normalized == u"j"_qs) {
-        mapping->curve = standardCurveDefinition(CurveFamily::JCurve, u"medium"_qs);
+        mapping->curve = standardCurveDefinition(CurveFamily::JCurve, 0.50F);
     } else if (normalized == u"s-curve"_qs || normalized == u"s"_qs) {
-        mapping->curve = standardCurveDefinition(CurveFamily::SCurve, u"medium"_qs);
+        mapping->curve = standardCurveDefinition(CurveFamily::SCurve, 0.50F);
     } else if (normalized == u"advanced"_qs) {
         mapping->curve = advancedCurveDefinition(advancedCurvePresets().front().id);
+    } else if (normalized == u"custom"_qs) {
+        mapping->curve = materializeCurveDefinition(
+            mapping->curve, isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)));
+    } else if (normalized == u"personal"_qs) {
+        const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+        const auto preset = std::find_if(m_configuration.personalCurvePresets.cbegin(),
+            m_configuration.personalCurvePresets.cend(), [unipolar](const PersonalCurvePreset &entry) {
+                return entry.unipolar == unipolar;
+            });
+        if (preset != m_configuration.personalCurvePresets.cend()) {
+            applyPersonalCurvePreset(preset->id);
+            return;
+        }
+        CurveDefinition personal = materializeCurveDefinition(mapping->curve, unipolar);
+        personal.family = CurveFamily::Personal;
+        personal.sourceFamily = CurveFamily::Personal;
+        personal.presetId.clear();
+        personal.sourcePresetId.clear();
+        personal.baseLabel = u"Unsaved Personal Response"_qs;
+        personal.pointEditing = false;
+        mapping->curve = std::move(personal);
     } else {
         return;
     }
+    persistAndApply();
+}
+
+void AppBackend::setCurveStrength(double strength)
+{
+    AxisMapping *mapping = selectedAxisMapping();
+    if (!mapping || mapping->curve.family == CurveFamily::Linear) return;
+    const float bounded = std::clamp(static_cast<float>(strength), 0.0F, 1.0F);
+    if (std::abs(mapping->curve.strength - bounded) < 0.0001F) return;
+    mapping->curve.strength = bounded;
     persistAndApply();
 }
 
@@ -1323,18 +1349,11 @@ CurveDefinition AppBackend::comparisonCurveDefinition() const
 
 bool AppBackend::fallBackToAvailableAxis()
 {
-    const AtomicRuntimeState &runtime = m_worker.runtime();
-    if (!runtime.physicalConnected.load()
-        || runtime.axisAvailable[m_configuration.selectedAxisIndex].load()) {
-        return false;
-    }
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        if (!runtime.axisAvailable[index].load()) continue;
-        m_configuration.selectedAxisIndex = index;
-        ConfigStore::save(m_configuration);
-        rebuildSelectedAxisCurve();
-        return true;
-    }
+    // Curve selection is a durable editor context, not a live-device routing
+    // decision. Earlier code silently jumped back to the first discovered
+    // axis when a selected DirectInput object was absent, making Rotation and
+    // slider editing appear broken. All eight logical axes remain selectable;
+    // availability is shown by the axes UI without rewriting this selection.
     return false;
 }
 

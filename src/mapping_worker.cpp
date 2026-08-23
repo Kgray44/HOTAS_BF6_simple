@@ -460,6 +460,12 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.virtualButtonPressed[index] = false;
         m_runtime.buttonAvailable[index] = false;
     }
+    const auto compileStarted = std::chrono::steady_clock::now();
+    m_preparedMapping = std::make_shared<RuntimeMappingConfiguration>(
+        compileActiveProfile(m_configuration));
+    m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - compileStarted).count());
 }
 
 MappingWorker::~MappingWorker()
@@ -480,9 +486,19 @@ void MappingWorker::refreshHidHideState()
 
 void MappingWorker::updateConfiguration(const MapperConfiguration &configuration)
 {
+    // Curve construction, point normalization, and LUT allocation are
+    // deliberately complete before the worker can observe this update. A
+    // point drag must never put spline construction in the report loop.
+    const auto compileStarted = std::chrono::steady_clock::now();
+    auto compiled = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(configuration));
+    const auto compileUs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - compileStarted).count());
     QMutexLocker locker(&m_configurationMutex);
     m_configuration = configuration;
+    m_preparedMapping = std::move(compiled);
     ++m_configurationVersion;
+    m_runtime.lastCurveCompileUs = compileUs;
 }
 
 void MappingWorker::setMappingEnabled(bool enabled)
@@ -553,6 +569,13 @@ MapperConfiguration MappingWorker::configurationCopy()
     return m_configuration;
 }
 
+std::pair<MapperConfiguration, std::shared_ptr<const RuntimeMappingConfiguration>>
+MappingWorker::preparedConfigurationCopy()
+{
+    QMutexLocker locker(&m_configurationMutex);
+    return {m_configuration, m_preparedMapping};
+}
+
 void MappingWorker::setDeviceSnapshot(const DeviceSnapshot &snapshot)
 {
     bool changed = false;
@@ -593,13 +616,10 @@ void MappingWorker::run()
     std::array<bool, kPhysicalAxisCount> availableAxes{};
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
-    MapperConfiguration configuration = configurationCopy();
-    const auto initialCompileStarted = std::chrono::steady_clock::now();
+    auto preparedConfiguration = preparedConfigurationCopy();
+    MapperConfiguration configuration = std::move(preparedConfiguration.first);
     std::shared_ptr<const RuntimeMappingConfiguration> activeMapping
-        = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(configuration));
-    m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - initialCompileStarted).count());
+        = std::move(preparedConfiguration.second);
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, 5> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -761,16 +781,11 @@ void MappingWorker::run()
         const auto switchStarted = std::chrono::steady_clock::now();
         const int previousVjoyDeviceId = configuration.vjoyDeviceId;
         const QString previousProfileId = configuration.activeProfileId;
-        MapperConfiguration updated = configurationCopy();
-        const auto curveCompileStarted = std::chrono::steady_clock::now();
-        auto compiled = std::make_shared<RuntimeMappingConfiguration>(compileActiveProfile(updated));
-        m_runtime.lastCurveCompileUs = static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - curveCompileStarted).count());
-        configuration = std::move(updated);
-        // The mapping loop owns this reference. It observes a fully compiled
-        // profile table or the previous one, never piecemeal field edits.
-        activeMapping = std::move(compiled);
+        auto prepared = preparedConfigurationCopy();
+        configuration = std::move(prepared.first);
+        // The mapping loop only swaps a table that was fully built before the
+        // configuration version changed; it never builds a spline or LUT.
+        activeMapping = std::move(prepared.second);
         // Settings/profile updates receive a fully compiled table and begin a
         // new hysteresis acceptance window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};

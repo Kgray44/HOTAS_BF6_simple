@@ -17,7 +17,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 6;
+constexpr int kProfileSchemaVersion = 7;
 
 QString settingsFilePath()
 {
@@ -264,7 +264,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
-    if (version != 3 && version != 4 && version != 5 && version != kProfileSchemaVersion) {
+    if (version != 3 && version != 4 && version != 5 && version != 6 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -318,6 +318,25 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         presetIds.insert(preset.id);
         presetNames.insert(preset.name.toCaseFolded());
         configuration.personalCurvePresets.push_back(std::move(preset));
+    }
+
+    if (version < kProfileSchemaVersion) {
+        // v1.4 before the universal-strength amendment evaluated Advanced,
+        // Personal, and point curves at their full definition regardless of
+        // the stored (default-zero) strength field. Preserve that effective
+        // response when migrating to the explicit blend model.
+        const auto migrateCurveStrength = [](CurveDefinition &curve) {
+            if (curve.family == CurveFamily::Advanced || curve.family == CurveFamily::Personal
+                || curve.family == CurveFamily::Custom || curve.pointEditing) {
+                curve.strength = 1.0F;
+            }
+        };
+        for (ControllerProfile &profile : configuration.profiles) {
+            for (AxisMapping &axis : profile.axes) migrateCurveStrength(axis.curve);
+        }
+        for (PersonalCurvePreset &preset : configuration.personalCurvePresets) {
+            migrateCurveStrength(preset.definition);
+        }
     }
 
     // Normal is the durable, protected recovery profile. A malformed/manual

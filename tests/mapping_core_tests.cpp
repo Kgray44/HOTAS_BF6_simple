@@ -75,6 +75,8 @@ private slots:
     void outputLimitsSupportAsymmetryAndInversion();
     void staticPreviewSharesTheTransferEvaluator();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
+    void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
+    void strengthAndAxisSelectionPersistPerProfile();
     void advancedPresetsAreDistinctAndQuantified();
     void curvePointEditingSupportsNonuniformPointsLocksAndResampling();
     void curveGainUsesAuthoritativeEvaluation();
@@ -233,7 +235,7 @@ void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
     const CurveDefinition sCurve = standardCurveDefinition(CurveFamily::SCurve, QStringLiteral("medium"));
     QVERIFY(evaluateCurveDefinition(0.35F, jCurve, false) < 0.35F);
     QVERIFY(evaluateCurveDefinition(0.25F, sCurve, false) < 0.25F);
-    QVERIFY(evaluateCurveDefinition(0.75F, sCurve, false) > 0.75F);
+    QVERIFY(evaluateCurveDefinition(0.75F, sCurve, false) < 0.75F);
     QVERIFY(nearlyEqual(evaluateCurveDefinition(-1.0F, jCurve, false), -1.0F));
     QVERIFY(nearlyEqual(evaluateCurveDefinition(1.0F, sCurve, false), 1.0F));
 
@@ -258,7 +260,9 @@ void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
 
 void MappingCoreTests::advancedPresetsAreDistinctAndQuantified()
 {
-    QCOMPARE(static_cast<int>(advancedCurvePresets().size()), 10);
+    QCOMPARE(static_cast<int>(advancedCurvePresets().size()), 15);
+    QCOMPARE(static_cast<int>(std::count_if(advancedCurvePresets().cbegin(), advancedCurvePresets().cend(),
+        [](const AdvancedCurvePresetInfo &preset) { return preset.category == QStringLiteral("Shooter / Flight Derived"); })), 5);
     std::vector<float> signatures;
     for (const AdvancedCurvePresetInfo &preset : advancedCurvePresets()) {
         const CurveDefinition definition = advancedCurveDefinition(preset.id);
@@ -278,6 +282,71 @@ void MappingCoreTests::advancedPresetsAreDistinctAndQuantified()
     const CurveDefinition precision = advancedCurveDefinition(QStringLiteral("precision-tracking"));
     const CurveDefinition acquisition = advancedCurveDefinition(QStringLiteral("fast-acquisition"));
     QVERIFY(evaluateCurveGain(0.0F, precision, false) < evaluateCurveGain(0.0F, acquisition, false));
+}
+
+void MappingCoreTests::universalStrengthUsesIdentityAtZeroAndFullResponseAtOne()
+{
+    const CurveDefinition jZero = standardCurveDefinition(CurveFamily::JCurve, 0.0F);
+    const CurveDefinition jHigh = standardCurveDefinition(CurveFamily::JCurve, 1.0F);
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(-0.45F, jZero, false), -0.45F));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.55F, jZero, true), 0.55F));
+    QVERIFY(evaluateCurveDefinition(0.55F, jHigh, true) < 0.55F);
+    QVERIFY(!nearlyEqual(evaluateCurveDefinition(0.0F, jHigh, false), 0.0F));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(-1.0F, jHigh, false), -1.0F));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(1.0F, jHigh, false), 1.0F));
+
+    const CurveDefinition sZero = standardCurveDefinition(CurveFamily::SCurve, 0.0F);
+    const CurveDefinition sHigh = standardCurveDefinition(CurveFamily::SCurve, 1.0F);
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.37F, sZero, false), 0.37F));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.38F, sHigh, false),
+                         -evaluateCurveDefinition(-0.38F, sHigh, false)));
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.5F, sHigh, true), 0.5F));
+    QVERIFY(analyzeCurveDefinition(sHigh, false).valid);
+    QVERIFY(analyzeCurveDefinition(sHigh, true).valid);
+
+    CurveDefinition advanced = advancedCurveDefinition(QStringLiteral("precision-tracking"));
+    const float advancedFull = evaluateCurveDefinition(0.42F, advanced, false);
+    advanced.strength = 0.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, advanced, false), 0.42F));
+    advanced.strength = 0.5F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, advanced, false), (0.42F + advancedFull) * 0.5F));
+    advanced.strength = 1.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, advanced, false), advancedFull));
+
+    CurveDefinition custom = materializeCurveDefinition(advanced, false, 13);
+    const float customFull = evaluateCurveDefinition(0.42F, custom, false);
+    custom.strength = 0.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, custom, false), 0.42F));
+    custom.strength = 1.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, custom, false), customFull));
+    custom.family = CurveFamily::Personal;
+    custom.strength = 0.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, custom, false), 0.42F));
+    custom.strength = 1.0F;
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.42F, custom, false), customFull));
+}
+
+void MappingCoreTests::strengthAndAxisSelectionPersistPerProfile()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.selectedAxisIndex = static_cast<int>(PhysicalAxis::Ry);
+    activeProfile(configuration).axes[static_cast<int>(PhysicalAxis::Ry)].curve =
+        advancedCurveDefinition(QStringLiteral("precision-tracking"));
+    activeProfile(configuration).axes[static_cast<int>(PhysicalAxis::Ry)].curve.strength = 0.27F;
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(precision);
+    precision->axes[static_cast<int>(PhysicalAxis::Ry)].curve = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("aircraft-gun-tracking")), false, 13);
+    precision->axes[static_cast<int>(PhysicalAxis::Ry)].curve.strength = 0.73F;
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.selectedAxisIndex, static_cast<int>(PhysicalAxis::Ry));
+    QVERIFY(nearlyEqual(activeProfile(restored).axes[static_cast<int>(PhysicalAxis::Ry)].curve.strength, 0.27F));
+    const ControllerProfile *restoredPrecision = findProfile(restored, precisionProfileId());
+    QVERIFY(restoredPrecision);
+    QVERIFY(nearlyEqual(restoredPrecision->axes[static_cast<int>(PhysicalAxis::Ry)].curve.strength, 0.73F));
 }
 
 void MappingCoreTests::curvePointEditingSupportsNonuniformPointsLocksAndResampling()
@@ -803,6 +872,17 @@ void MappingCoreTests::malformedProfileConfigurationFallsBackSafely()
     QVERIFY(findProfile(restored, precisionProfileId()));
 }
 
-QTEST_APPLESS_MAIN(MappingCoreTests)
+#define HOTAS_MAPPING_BENCHMARK_EMBEDDED
+#include "mapping_hot_path_benchmark.cpp"
+#undef HOTAS_MAPPING_BENCHMARK_EMBEDDED
+
+int main(int argc, char *argv[])
+{
+    if (argc > 1 && QByteArray(argv[1]) == "--hot-path-benchmark") {
+        return runMappingHotPathBenchmark(argc - 1, argv + 1);
+    }
+    MappingCoreTests tests;
+    return QTest::qExec(&tests, argc, argv);
+}
 
 #include "mapping_core_tests.moc"

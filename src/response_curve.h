@@ -21,6 +21,7 @@ struct CurvePresetInfo {
 struct AdvancedCurvePresetInfo {
     QString id;
     QString name;
+    QString category;
     QString bestFor;
     QString behavior;
     QString provenance;
@@ -39,6 +40,8 @@ struct CurveAnalysis {
     float threeQuarterGain = 1.0F;
     float peakGain = 1.0F;
     float largestGainTransition = 0.0F;
+    float neutralOffset = 0.0F;
+    bool neutralMapsToNeutral = true;
 };
 
 // The immutable form consumed by the mapping worker. It is intentionally a
@@ -60,6 +63,7 @@ QString curveDefinitionSourceSummary(const CurveDefinition &definition);
 
 CurveDefinition linearCurveDefinition();
 CurveDefinition standardCurveDefinition(CurveFamily family, const QString &presetId);
+CurveDefinition standardCurveDefinition(CurveFamily family, float strength);
 CurveDefinition advancedCurveDefinition(const QString &presetId);
 
 // Clamp and repair a persisted curve. It is safe to call after deserialization

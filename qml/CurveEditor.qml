@@ -20,8 +20,79 @@ Item {
     property real snapIncrement: 0.01
     property real dragInput: 0
     property real dragOutput: 0
+    property real graphContextInput: 0
+    property real graphContextOutput: 0
+    property int contextPoint: -1
 
     focus: true
+
+    component AviationButton: Button {
+        id: control
+        implicitHeight: 28
+        implicitWidth: Math.max(88, contentItem.implicitWidth + 22)
+        font.pixelSize: 9
+        font.bold: true
+        contentItem: Text {
+            text: control.text; color: control.enabled ? "#d9e7e8" : "#62747a"
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight; font: control.font
+        }
+        background: Rectangle {
+            radius: 3; border.width: 1
+            border.color: control.down ? "#6dabb3" : control.hovered ? "#4b7781" : "#314c55"
+            color: control.down ? "#193641" : control.hovered ? "#182a30" : "#111c21"
+        }
+    }
+
+    component AviationCombo: ComboBox {
+        id: control
+        implicitHeight: 28
+        font.pixelSize: 10
+        contentItem: Text {
+            leftPadding: 9; rightPadding: 24; text: control.displayText
+            color: control.enabled ? "#e0eaeb" : "#63767a"; font: control.font
+            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+        }
+        indicator: Text { x: control.width - width - 9; y: (control.height - height) / 2
+            text: "⌄"; color: control.enabled ? "#83bdc5" : "#607176"; font.pixelSize: 14 }
+        background: Rectangle { radius: 3; border.width: 1
+            border.color: control.activeFocus ? "#5e9da7" : control.hovered ? "#466c74" : "#304a52"
+            color: "#111d22" }
+        delegate: ItemDelegate { width: control.width; height: 29; highlighted: control.highlightedIndex === index
+            contentItem: Text { text: modelData[control.textRole] || modelData; color: "#dbe8e9"
+                verticalAlignment: Text.AlignVCenter; leftPadding: 9; font.pixelSize: 10; elide: Text.ElideRight }
+            background: Rectangle { color: highlighted ? "#1b3a43" : "#111c21" }
+        }
+        popup: Popup { y: control.height - 1; width: control.width; padding: 1
+            implicitHeight: Math.min(contentItem.implicitHeight, 260)
+            contentItem: ListView { clip: true; implicitHeight: contentHeight; model: control.popup.visible ? control.delegateModel : null
+                currentIndex: control.highlightedIndex; ScrollIndicator.vertical: ScrollIndicator {} }
+            background: Rectangle { color: "#10191e"; border.color: "#4e7881"; radius: 3 }
+        }
+    }
+
+    component AviationSpinBox: SpinBox {
+        id: control
+        implicitWidth: 78; implicitHeight: 27
+        contentItem: TextInput {
+            z: 2; text: control.textFromValue(control.value, control.locale); font: control.font
+            color: control.enabled ? "#dce9ea" : "#62757a"; selectionColor: "#3f7b86"; selectedTextColor: "#ffffff"
+            horizontalAlignment: Qt.AlignHCenter; verticalAlignment: Qt.AlignVCenter; readOnly: !control.editable
+            validator: control.validator; inputMethodHints: Qt.ImhFormattedNumbersOnly
+        }
+        background: Rectangle { radius: 3; color: "#0f1a1f"; border.color: control.activeFocus ? "#5e9da7" : "#314b54" }
+        up.indicator: Rectangle { x: control.width - width; height: control.height / 2; width: 16; color: control.up.pressed ? "#29454e" : "transparent"
+            Text { anchors.centerIn: parent; text: "▲"; color: "#8fc3c9"; font.pixelSize: 7 } }
+        down.indicator: Rectangle { x: control.width - width; y: control.height / 2; height: control.height / 2; width: 16; color: control.down.pressed ? "#29454e" : "transparent"
+            Text { anchors.centerIn: parent; text: "▼"; color: "#8fc3c9"; font.pixelSize: 7 } }
+    }
+
+    component AviationMenuItem: MenuItem {
+        id: control
+        implicitHeight: 29
+        contentItem: Text { text: control.text; color: control.enabled ? "#dce9ea" : "#63757a"; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+        background: Rectangle { color: control.highlighted ? "#1d3d47" : "#101b20" }
+    }
 
     function tone(ok) { return ok ? "#9fc9bb" : "#d49b62" }
     function percent(value) {
@@ -76,6 +147,11 @@ Item {
         recordHistory()
         backendObject.setCurvePoint(selectedPoint, x, y)
     }
+    function resetDisplay() {
+        addingPoint = false; selectedPoint = -1; showEffective = false; responseView = true
+        if (backendObject) { backendObject.setCurveComparison(""); backendObject.clearCurvePreview() }
+        graph.cursorVisible = false; graph.resetView()
+    }
 
     Keys.onPressed: function(event) {
         if (!editorState.pointEditing) return
@@ -119,66 +195,41 @@ Item {
         anchors.fill: parent
         spacing: 8
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            Text { text: "CURVE EDITOR"; color: "#f0f6f6"; font.pixelSize: 23; font.bold: true }
-            Text { text: editorState.summary || "Linear"; color: "#80b9c2"; font.pixelSize: 11; font.bold: true }
-            Item { Layout.fillWidth: true }
-            Rectangle { width: 8; height: 8; radius: 4; color: backendObject && backendObject.mappingActive ? "#9fc9bb" : "#8e989c" }
-            Text { text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"; color: "#a9c9c3"; font.pixelSize: 10; font.bold: true }
-        }
-
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 58
-            color: "#151d22"
-            border.color: "#3c5660"
-            RowLayout {
-                anchors.fill: parent; anchors.margins: 9; spacing: 9
-                ColumnLayout { spacing: 2
-                    Text { text: "PROFILE"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
-                    ComboBox { id: profileSelector; Layout.preferredWidth: 145; model: backendObject ? backendObject.profiles : []
-                        textRole: "name"; valueRole: "id"; currentIndex: backendObject ? backendObject.activeProfileIndex : 0
-                        onActivated: backendObject.activateProfile(currentValue) }
-                }
-                ColumnLayout { spacing: 2
-                    Text { text: "AXIS"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
-                    ComboBox { id: axisSelector; Layout.preferredWidth: 164; model: backendObject ? backendObject.axes : []
-                        textRole: "label"; valueRole: "index"; currentIndex: backendObject ? backendObject.selectedAxisIndex : 0
-                        onActivated: backendObject.setSelectedAxis(currentValue) }
-                }
-                ColumnLayout { spacing: 2
-                    Text { text: "FAMILY"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
-                    ComboBox { id: familySelector; Layout.preferredWidth: 118; model: ["Linear", "J-Curve", "S-Curve", "Advanced", "Personal"]
-                        currentIndex: {
-                            const labels = ["Linear", "J-Curve", "S-Curve", "Advanced", "Personal"]
-                            return Math.max(0, labels.indexOf(editorState.family === "Custom" ? "Linear" : editorState.family))
-                        }
-                        onActivated: {
-                            if (currentText === "Personal") return
-                            recordHistory(); backendObject.setCurveFamily(currentText)
-                        }
+            Layout.fillWidth: true; Layout.preferredHeight: 110; radius: 4
+            color: "#121d22"; border.color: "#314a53"
+            ColumnLayout { anchors.fill: parent; anchors.margins: 11; spacing: 7
+                RowLayout { Layout.fillWidth: true
+                    ColumnLayout { spacing: 1
+                        Text { text: "CURVE EDITOR"; color: "#edf5f5"; font.pixelSize: 20; font.bold: true }
+                        Text { text: (backendObject ? backendObject.activeProfileName : "Normal") + " / " + (axisSelector.currentText || "Roll") + "  ·  " + (editorState.summary || "Linear · 0%")
+                            color: "#83bdc5"; font.pixelSize: 10; font.bold: true }
                     }
+                    Item { Layout.fillWidth: true }
+                    Rectangle { width: 7; height: 7; radius: 4; color: backendObject && backendObject.mappingActive ? "#9fc9bb" : "#718187" }
+                    Text { text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"; color: "#a9c9c3"; font.pixelSize: 9; font.bold: true }
                 }
-                ColumnLayout { Layout.fillWidth: true; spacing: 2
-                    Text { text: editorState.family === "Advanced" ? "ADVANCED PRESET" : editorState.family === "Personal" ? "PERSONAL PRESET" : "PRESET"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
-                    ComboBox { id: presetSelector; Layout.fillWidth: true
-                        model: editorState.family === "Advanced" ? (backendObject ? backendObject.curveAdvancedPresets : [])
-                               : editorState.family === "Personal" ? (backendObject ? backendObject.personalCurvePresets : [])
-                               : (backendObject ? backendObject.curveStandardPresets : [])
-                        textRole: "name"; valueRole: "id"
-                        currentIndex: {
-                            for (let i = 0; i < model.length; ++i) if (model[i].id === editorState.presetId) return i
-                            return 0
-                        }
-                        onActivated: {
-                            recordHistory()
-                            if (editorState.family === "Advanced") backendObject.applyAdvancedCurvePreset(currentValue)
-                            else if (editorState.family === "Personal") backendObject.applyPersonalCurvePreset(currentValue)
-                            else backendObject.setCurveStandardPreset(currentValue)
-                        }
-                    }
+                RowLayout { Layout.fillWidth: true; spacing: 8
+                    ColumnLayout { spacing: 2; Text { text: "PROFILE"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
+                        AviationCombo { id: profileSelector; Layout.preferredWidth: 144; model: backendObject ? backendObject.profiles : []; textRole: "name"; valueRole: "id"; currentIndex: backendObject ? backendObject.activeProfileIndex : 0; onActivated: backendObject.activateProfile(currentValue) } }
+                    ColumnLayout { spacing: 2; Text { text: "AXIS"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
+                        AviationCombo { id: axisSelector; Layout.preferredWidth: 160; model: backendObject ? backendObject.axes : []; textRole: "label"; valueRole: "index"; currentIndex: backendObject ? backendObject.selectedAxisIndex : 0; onActivated: backendObject.setSelectedAxis(Number(currentValue)) } }
+                    ColumnLayout { spacing: 2; Text { text: "FAMILY"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
+                        AviationCombo { id: familySelector; Layout.preferredWidth: 125; model: ["Linear", "J-Curve", "S-Curve", "Advanced", "Personal", "Custom"]
+                            currentIndex: Math.max(0, model.indexOf(editorState.family || "Linear")); onActivated: { recordHistory(); backendObject.setCurveFamily(currentText) } } }
+                    ColumnLayout { Layout.fillWidth: true; spacing: 2; visible: editorState.family === "Advanced" || editorState.family === "Personal"
+                        Text { text: editorState.family === "Advanced" ? "ADVANCED PRESET" : "PERSONAL PRESET"; color: "#819aa3"; font.pixelSize: 8; font.bold: true }
+                        AviationCombo { id: presetSelector; Layout.fillWidth: true; model: editorState.family === "Advanced" ? (backendObject ? backendObject.curveAdvancedPresets : []) : (backendObject ? backendObject.personalCurvePresets : []); textRole: "name"; valueRole: "id"
+                            currentIndex: { for (let i = 0; i < model.length; ++i) if (model[i].id === editorState.presetId) return i; return -1 }
+                            onActivated: { recordHistory(); if (editorState.family === "Advanced") backendObject.applyAdvancedCurvePreset(currentValue); else backendObject.applyPersonalCurvePreset(currentValue) } }
+                        Text { visible: editorState.family === "Advanced"; text: editorState.advancedBestFor || ""; color: "#7f999f"; font.pixelSize: 8; elide: Text.ElideRight; Layout.fillWidth: true } }
+                    ColumnLayout { Layout.preferredWidth: 210; spacing: 2
+                        Text { text: "RESPONSE STRENGTH  " + Math.round(Number(editorState.strength || 0) * 100) + "%"; color: "#9bb9bf"; font.pixelSize: 8; font.bold: true }
+                        Slider { id: responseStrength; from: 0; to: 1; stepSize: 0.01; enabled: editorState.family !== "Linear"; value: Number(editorState.strength || 0)
+                            onMoved: backendObject.setCurveStrength(value)
+                            background: Rectangle { x: responseStrength.leftPadding; y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: responseStrength.availableWidth; height: 4; radius: 2; color: "#263941"
+                                Rectangle { width: responseStrength.visualPosition * parent.width; height: parent.height; radius: 2; color: "#68aebb" } }
+                            handle: Rectangle { x: responseStrength.leftPadding + responseStrength.visualPosition * (responseStrength.availableWidth - width); y: responseStrength.topPadding + responseStrength.availableHeight / 2 - height / 2; width: 14; height: 14; radius: 7; color: "#c6e3e4"; border.color: "#316b76" } } }
                 }
             }
         }
@@ -198,12 +249,19 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 300
-            color: "#090e11"
-            border.color: "#426370"
+            radius: 5
+            color: "#101a1f"
+            border.color: "#486873"
+            gradient: Gradient {
+                GradientStop { position: 0; color: "#27383e" }
+                GradientStop { position: 0.08; color: "#17262b" }
+                GradientStop { position: 1; color: "#0b1114" }
+            }
+            Rectangle { anchors.fill: parent; anchors.margins: 8; radius: 3; color: "#060b0e"; border.color: "#203b44" }
 
             Canvas {
                 id: graph
-                anchors.fill: parent; anchors.margins: 8
+                anchors.fill: parent; anchors.margins: 13
                 antialiasing: true; renderTarget: Canvas.Image
                 property var responseSamples: backendObject ? backendObject.curveEditorResponseCurve : []
                 property var gainSamples: backendObject ? backendObject.curveGainSamples : []
@@ -226,19 +284,19 @@ Item {
                 property real panStartY: 0
                 property real panOriginX: 0
                 property real panOriginY: 0
-                readonly property real left: 42
-                readonly property real right: 14
-                readonly property real top: 14
-                readonly property real bottom: 28
-                function plotWidth() { return Math.max(1, width - left - right) }
-                function plotHeight() { return Math.max(1, height - top - bottom) }
-                function xFor(value) { return left + (value - xMin) / (xMax - xMin) * plotWidth() }
-                function yFor(value) { return top + (1 - (value - yMin) / (yMax - yMin)) * plotHeight() }
-                function inputFor(x) { return Math.max(domainMin, Math.min(1, xMin + (x - left) / plotWidth() * (xMax - xMin))) }
-                function outputFor(y) { return Math.max(domainMin, Math.min(1, yMin + (1 - (y - top) / plotHeight()) * (yMax - yMin))) }
+                readonly property real plotLeft: 42
+                readonly property real plotRight: 14
+                readonly property real plotTop: 14
+                readonly property real plotBottom: 28
+                function plotWidth() { return Math.max(1, width - plotLeft - plotRight) }
+                function plotHeight() { return Math.max(1, height - plotTop - plotBottom) }
+                function xFor(value) { return plotLeft + (value - xMin) / (xMax - xMin) * plotWidth() }
+                function yFor(value) { return plotTop + (1 - (value - yMin) / (yMax - yMin)) * plotHeight() }
+                function inputFor(x) { return Math.max(domainMin, Math.min(1, xMin + (x - plotLeft) / plotWidth() * (xMax - xMin))) }
+                function outputFor(y) { return Math.max(domainMin, Math.min(1, yMin + (1 - (y - plotTop) / plotHeight()) * (yMax - yMin))) }
                 function gainY(value) {
                     const peak = Math.max(1.25, Number(analysis.peakGain || 1) * 1.12)
-                    return top + (1 - Math.max(0, Math.min(peak, value)) / peak) * plotHeight()
+                    return plotTop + (1 - Math.max(0, Math.min(peak, value)) / peak) * plotHeight()
                 }
                 function resetView() { xMin = domainMin; xMax = 1; yMin = domainMin; yMax = 1; requestPaint() }
                 function cursorAt(x, y) {
@@ -246,7 +304,7 @@ Item {
                     const inspected = backendObject.inspectCurve(cursorInput)
                     cursorOutput = Number(inspected.output || 0)
                     cursorGain = Number(inspected.gain || 0)
-                    cursorVisible = x >= left && x <= width - right && y >= top && y <= height - bottom
+                    cursorVisible = x >= plotLeft && x <= width - plotRight && y >= plotTop && y <= height - plotBottom
                     requestPaint()
                 }
                 function nearestPoint(x, y) {
@@ -277,18 +335,18 @@ Item {
                 onPaint: {
                     const ctx = getContext("2d"), pw = plotWidth(), ph = plotHeight()
                     ctx.clearRect(0, 0, width, height)
-                    ctx.fillStyle = "#071014"; ctx.fillRect(left, top, pw, ph)
+                    ctx.fillStyle = "#071014"; ctx.fillRect(plotLeft, plotTop, pw, ph)
                     ctx.strokeStyle = "#254550"; ctx.lineWidth = 1
                     for (let i = 0; i <= 4; ++i) {
-                        const x = left + pw * i / 4, y = top + ph * i / 4
-                        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + ph); ctx.stroke()
-                        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + pw, y); ctx.stroke()
+                        const x = plotLeft + pw * i / 4, y = plotTop + ph * i / 4
+                        ctx.beginPath(); ctx.moveTo(x, plotTop); ctx.lineTo(x, plotTop + ph); ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(plotLeft, y); ctx.lineTo(plotLeft + pw, y); ctx.stroke()
                     }
                     if (responseView) {
                         ctx.strokeStyle = "#557984"; ctx.lineWidth = 1
                         if (domainMin < 0 && xMin <= 0 && xMax >= 0) {
-                            ctx.beginPath(); ctx.moveTo(xFor(0), top); ctx.lineTo(xFor(0), top + ph); ctx.stroke()
-                            ctx.beginPath(); ctx.moveTo(left, yFor(0)); ctx.lineTo(left + pw, yFor(0)); ctx.stroke()
+                            ctx.beginPath(); ctx.moveTo(xFor(0), plotTop); ctx.lineTo(xFor(0), plotTop + ph); ctx.stroke()
+                            ctx.beginPath(); ctx.moveTo(plotLeft, yFor(0)); ctx.lineTo(plotLeft + pw, yFor(0)); ctx.stroke()
                         }
                         trace(ctx, responseSamples, "#6ec3cf", 2.3, "output", false)
                         const identity = []
@@ -317,13 +375,13 @@ Item {
                     } else {
                         trace(ctx, gainSamples, "#d5b76c", 2.2, "gain", false)
                         ctx.strokeStyle = "#5a7881"; ctx.setLineDash([3, 3])
-                        ctx.beginPath(); ctx.moveTo(left, gainY(1)); ctx.lineTo(left + pw, gainY(1)); ctx.stroke(); ctx.setLineDash([])
+                        ctx.beginPath(); ctx.moveTo(plotLeft, gainY(1)); ctx.lineTo(plotLeft + pw, gainY(1)); ctx.stroke(); ctx.setLineDash([])
                     }
                     if (cursorVisible) {
                         const cx = xFor(cursorInput), cy = responseView ? yFor(cursorOutput) : gainY(cursorGain)
                         ctx.strokeStyle = "#7ca1aa80"; ctx.setLineDash([3, 3])
-                        ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, top + ph); ctx.stroke()
-                        ctx.beginPath(); ctx.moveTo(left, cy); ctx.lineTo(left + pw, cy); ctx.stroke(); ctx.setLineDash([])
+                        ctx.beginPath(); ctx.moveTo(cx, plotTop); ctx.lineTo(cx, plotTop + ph); ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(plotLeft, cy); ctx.lineTo(plotLeft + pw, cy); ctx.stroke(); ctx.setLineDash([])
                     }
                     if (responseView) {
                         const raw = Number(editorState.physicalInput || 0)
@@ -338,13 +396,19 @@ Item {
                     }
                     ctx.fillStyle = "#78949c"; ctx.font = "10px Consolas"
                     const labels = editorState.unipolar ? ["0", "25", "50", "75", "100"] : ["-100", "-50", "0", "+50", "+100"]
-                    for (let i = 0; i <= 4; ++i) ctx.fillText(labels[i], left + pw * i / 4 - 9, height - 7)
+                    for (let i = 0; i <= 4; ++i) ctx.fillText(labels[i], plotLeft + pw * i / 4 - 9, height - 7)
                 }
             }
             MouseArea {
-                anchors.fill: graph; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                anchors.fill: graph; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                 onPressed: function(mouse) {
                     graph.cursorAt(mouse.x, mouse.y)
+                    if (mouse.button === Qt.RightButton) {
+                        contextPoint = editorState.pointEditing ? graph.nearestPoint(mouse.x, mouse.y) : -1
+                        graphContextInput = graph.inputFor(mouse.x); graphContextOutput = graph.outputFor(mouse.y)
+                        if (contextPoint >= 0) pointContextMenu.open(); else graphContextMenu.open()
+                        return
+                    }
                     if (mouse.button === Qt.MiddleButton) {
                         graph.panning = true; graph.panStartX = mouse.x; graph.panStartY = mouse.y
                         graph.panOriginX = graph.xMin; graph.panOriginY = graph.yMin; return
@@ -352,8 +416,12 @@ Item {
                     if (addingPoint && editorState.pointEditing) {
                         recordHistory(); selectedPoint = backendObject.addCurvePoint(graph.inputFor(mouse.x), graph.outputFor(mouse.y)); addingPoint = false; return
                     }
-                    if (!editorState.pointEditing) return
-                    selectedPoint = graph.nearestPoint(mouse.x, mouse.y)
+                    const nearby = graph.nearestPoint(mouse.x, mouse.y)
+                    if (!editorState.pointEditing || nearby < 0) {
+                        graph.panning = true; graph.panStartX = mouse.x; graph.panStartY = mouse.y
+                        graph.panOriginX = graph.xMin; graph.panOriginY = graph.yMin; return
+                    }
+                    selectedPoint = nearby
                     const point = pointAt(selectedPoint)
                     if (point && !point.locked) {
                         recordHistory(); graph.draggingPoint = true; dragInput = Number(point.input); dragOutput = Number(point.output); dragCompile.start()
@@ -412,94 +480,133 @@ Item {
             }
         }
 
-        RowLayout { Layout.fillWidth: true; spacing: 8
-            CheckBox { text: "POINT EDITING"; checked: editorState.pointEditing
-                onToggled: { recordHistory(); backendObject.setCurvePointEditing(checked) }
-                font.pixelSize: 10 }
-            CheckBox { visible: !editorState.unipolar; text: "SYMMETRY"; checked: editorState.symmetry; enabled: editorState.pointEditing
-                onToggled: { recordHistory(); backendObject.setCurveSymmetry(checked) }
-                font.pixelSize: 10 }
-            ComboBox { visible: editorState.pointEditing; Layout.preferredWidth: 103; model: ["Smooth", "Linear"]
-                currentIndex: editorState.interpolation === "Linear" ? 1 : 0
-                onActivated: { recordHistory(); backendObject.setCurveInterpolation(currentText) } }
-            ComboBox { visible: editorState.pointEditing; Layout.preferredWidth: 84; model: [5, 7, 9, 13, 17, 25]
-                currentIndex: Math.max(0, model.indexOf(editorState.pointDensity))
-                onActivated: { recordHistory(); backendObject.setCurvePointDensity(currentValue) } }
-            ComboBox { visible: editorState.pointEditing; id: snapSelector; Layout.preferredWidth: 90; model: ["Snap Off", "5%", "2%", "1%", "0.5%", "0.1%"]
-                onActivated: { const values = [0, .05, .02, .01, .005, .001]; snapIncrement = values[currentIndex] } }
-            Button { visible: editorState.pointEditing; text: addingPoint ? "CLICK GRAPH" : "+ ADD POINT"; onClicked: addingPoint = !addingPoint }
-            Button { visible: editorState.pointEditing; text: "REMOVE"; enabled: selectedPoint > 0; onClicked: { recordHistory(); backendObject.removeCurvePoint(selectedPoint); selectedPoint = -1 } }
-            Button { visible: editorState.pointEditing; text: pointAt(selectedPoint) && pointAt(selectedPoint).locked ? "UNLOCK" : "LOCK"; enabled: selectedPoint > 0
-                onClicked: { const point = pointAt(selectedPoint); if (point) { recordHistory(); backendObject.setCurvePointLocked(selectedPoint, !point.locked) } } }
-            Item { Layout.fillWidth: true }
-            Button { text: "FIT CURVE"; onClicked: graph.resetView() }
-            Button { text: "UNDO"; enabled: undoStack.length > 0; onClicked: undo() }
-            Button { text: "REDO"; enabled: redoStack.length > 0; onClicked: redo() }
-            Button { text: "RESET LINEAR"; onClicked: { recordHistory(); backendObject.resetCurveLinear() } }
-            Button { text: "RESET SOURCE"; onClicked: { recordHistory(); backendObject.resetCurveToSource() } }
-        }
-
-        RowLayout { Layout.fillWidth: true; spacing: 8; visible: editorState.pointEditing && selectedPoint >= 0
-            Text { text: "SELECTED POINT"; color: "#819ba3"; font.pixelSize: 9; font.bold: true }
-            SpinBox { id: pointInput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1
-                value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).input) * 1000) : 0
-                onValueModified: { const p = pointAt(selectedPoint); if (p) { recordHistory(); backendObject.setCurvePoint(selectedPoint, value / 1000, Number(p.output)) } } }
-            Text { text: "INPUT %"; color: "#92aab0"; font.pixelSize: 9 }
-            SpinBox { id: pointOutput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1
-                value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).output) * 1000) : 0
-                onValueModified: { const p = pointAt(selectedPoint); if (p) { recordHistory(); backendObject.setCurvePoint(selectedPoint, Number(p.input), value / 1000) } } }
-            Text { text: "OUTPUT %  ·  arrows 1%  ·  shift-arrows 0.1%"; color: "#92aab0"; font.pixelSize: 9 }
-        }
-
-        RowLayout { Layout.fillWidth: true; spacing: 8
-            ComboBox { id: copySelector; Layout.preferredWidth: 210; model: backendObject ? backendObject.curveCopyChoices : []; textRole: "label"; valueRole: "id" }
-            Button { text: "COPY FROM"; enabled: copySelector.count > 0; onClicked: { recordHistory(); backendObject.copyCurveFromSelection(copySelector.currentValue) } }
-            ComboBox { id: comparisonSelector; Layout.preferredWidth: 244; model: backendObject ? backendObject.curveComparisonChoices : []; textRole: "label"; valueRole: "id"
-                onActivated: backendObject.setCurveComparison(currentValue) }
-            Text { visible: comparison.label; text: "CURRENT " + percent(comparison.currentOutput) + "  ·  REF " + percent(comparison.referenceOutput) + "  ·  Δ " + percent(comparison.difference)
-                color: "#9fb6ba"; font.family: "Consolas"; font.pixelSize: 10 }
-            Item { Layout.fillWidth: true }
-            ComboBox { id: previewSelector; Layout.preferredWidth: 218; model: backendObject ? backendObject.curvePreviewChoices : []; textRole: "label"; valueRole: "id"
-                onActivated: backendObject.previewCurvePreset(currentValue) }
-            Button { text: "APPLY PREVIEW"; enabled: !!editorState.previewLabel; onClicked: { recordHistory(); backendObject.applyCurvePreview() } }
-            Button { text: "CLEAR PREVIEW"; enabled: !!editorState.previewLabel; onClicked: backendObject.clearCurvePreview() }
-            Button { text: "SAVE PERSONAL"; onClicked: personalDialog.open() }
-            Button { text: "MANAGE"; onClicked: personalManageDialog.open() }
-        }
-
-        RowLayout { Layout.fillWidth: true; spacing: 8
-            Button { text: characteristicsVisible ? "RESPONSE CHARACTERISTICS ▾" : "RESPONSE CHARACTERISTICS ▸"; onClicked: characteristicsVisible = !characteristicsVisible }
-            Item { Layout.fillWidth: true }
-            Text { text: "Curve health  " + (analysis.valid ? "VALID" : "INVALID") + " · " + (analysis.peakGain > 3 ? "AGGRESSIVE " + Number(analysis.peakGain).toFixed(2) + "×" : "MONOTONIC / NO OVERSHOOT")
-                color: analysis.valid ? "#9fc9bb" : "#d49b62"; font.pixelSize: 10; font.bold: true }
-        }
-        Rectangle { visible: characteristicsVisible; Layout.fillWidth: true; Layout.preferredHeight: 43; color: "#121a1e"; border.color: "#324a53"
-            RowLayout { anchors.fill: parent; anchors.margins: 8; spacing: 18
-                Text { text: "CENTER " + Number(analysis.centerGain || 0).toFixed(2) + "×"; color: "#d2e0e1"; font.family: "Consolas"; font.pixelSize: 10 }
-                Text { text: "25% " + Number(analysis.quarterGain || 0).toFixed(2) + "×"; color: "#d2e0e1"; font.family: "Consolas"; font.pixelSize: 10 }
-                Text { text: "50% " + Number(analysis.halfGain || 0).toFixed(2) + "×"; color: "#d2e0e1"; font.family: "Consolas"; font.pixelSize: 10 }
-                Text { text: "75% " + Number(analysis.threeQuarterGain || 0).toFixed(2) + "×"; color: "#d2e0e1"; font.family: "Consolas"; font.pixelSize: 10 }
-                Text { text: "PEAK " + Number(analysis.peakGain || 0).toFixed(2) + "×"; color: "#e2bf78"; font.family: "Consolas"; font.pixelSize: 10 }
-                Item { Layout.fillWidth: true }
-                Text { text: "" + editorState.pointCount + " editable points · " + editorState.runtimeLutSamples + " LUT samples"; color: "#839ca3"; font.pixelSize: 9 }
+        RowLayout { Layout.fillWidth: true; Layout.preferredHeight: editorState.pointEditing ? 132 : 82; spacing: 8
+            Rectangle { Layout.preferredWidth: 500; Layout.fillHeight: true; radius: 3; color: "#111c21"; border.color: "#314b54"
+                ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 5
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "POINT EDITING"; color: "#dce9ea"; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        CheckBox { text: editorState.pointEditing ? "ON" : "OFF"; checked: editorState.pointEditing
+                            onToggled: { recordHistory(); backendObject.setCurvePointEditing(checked) }
+                            font.pixelSize: 9 }
+                    }
+                    Text { visible: !editorState.pointEditing; text: "Enable manual control-point editing. Empty graph drag pans; point drag edits."; color: "#839ba1"; font.pixelSize: 9 }
+                    RowLayout { visible: editorState.pointEditing; Layout.fillWidth: true; spacing: 7
+                        Text { text: selectedPoint >= 0 ? "POINT " + (selectedPoint + 1) : "SELECT A POINT"; color: "#8ec5cc"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 94 }
+                        Text { text: "INPUT"; color: "#809aa1"; font.pixelSize: 8 }
+                        AviationSpinBox { id: pointInput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1; enabled: selectedPoint >= 0 && pointAt(selectedPoint) && !pointAt(selectedPoint).locked
+                            value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).input) * 1000) : 0
+                            onValueModified: { const p = pointAt(selectedPoint); if (p) { recordHistory(); backendObject.setCurvePoint(selectedPoint, value / 1000, Number(p.output)) } } }
+                        Text { text: "OUTPUT"; color: "#809aa1"; font.pixelSize: 8 }
+                        AviationSpinBox { id: pointOutput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1; enabled: pointInput.enabled
+                            value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).output) * 1000) : 0
+                            onValueModified: { const p = pointAt(selectedPoint); if (p) { recordHistory(); backendObject.setCurvePoint(selectedPoint, Number(p.input), value / 1000) } } }
+                        AviationButton { text: pointAt(selectedPoint) && pointAt(selectedPoint).locked ? "UNLOCK" : "LOCK"; enabled: selectedPoint > 0 && selectedPoint < editorState.pointCount - 1; onClicked: { const p = pointAt(selectedPoint); if (p) { recordHistory(); backendObject.setCurvePointLocked(selectedPoint, !p.locked) } } }
+                    }
+                    RowLayout { visible: editorState.pointEditing; Layout.fillWidth: true; spacing: 6
+                        CheckBox { visible: !editorState.unipolar; text: "SYMMETRY"; checked: editorState.symmetry
+                            onToggled: { recordHistory(); backendObject.setCurveSymmetry(checked) }
+                            font.pixelSize: 8 }
+                        AviationCombo { Layout.preferredWidth: 88; model: ["Smooth", "Linear"]; currentIndex: editorState.interpolation === "Linear" ? 1 : 0; onActivated: { recordHistory(); backendObject.setCurveInterpolation(currentText) } }
+                        AviationCombo { Layout.preferredWidth: 68; model: [5, 7, 9, 13, 17, 25]; currentIndex: Math.max(0, model.indexOf(editorState.pointDensity)); onActivated: { recordHistory(); backendObject.setCurvePointDensity(currentValue) } }
+                        AviationCombo { id: snapSelector; Layout.preferredWidth: 86; model: ["Snap Off", "5%", "2%", "1%", "0.5%", "0.1%"]; onActivated: { const values = [0, .05, .02, .01, .005, .001]; snapIncrement = values[currentIndex] } }
+                        AviationButton { text: addingPoint ? "CLICK GRAPH" : "+ ADD POINT"; onClicked: addingPoint = !addingPoint }
+                        AviationButton { text: "REMOVE POINT"; enabled: selectedPoint > 0 && selectedPoint < editorState.pointCount - 1; onClicked: { recordHistory(); backendObject.removeCurvePoint(selectedPoint); selectedPoint = -1 } }
+                    }
+                }
             }
-        }
-        RowLayout { Layout.fillWidth: true; spacing: 8
-            Button { text: signalPathVisible ? "SIGNAL PATH ▾" : "SIGNAL PATH ▸"; onClicked: signalPathVisible = !signalPathVisible }
-            Item { Layout.fillWidth: true }
-            Text { text: "HYSTERESIS IS LIVE-STATE ONLY"; color: "#79949a"; font.pixelSize: 9; font.bold: true }
-        }
-        Rectangle { visible: signalPathVisible; Layout.fillWidth: true; Layout.preferredHeight: 52; color: "#121a1e"; border.color: "#324a53"
-            RowLayout { anchors.fill: parent; anchors.margins: 8; spacing: 12
-                Repeater { model: [
-                    { n: "RAW", v: editorState.physicalInput }, { n: "NORMAL", v: editorState.normalized }, { n: "DEADZONE", v: editorState.afterDeadzone },
-                    { n: "HYSTERESIS", v: editorState.afterHysteresis }, { n: "INVERT", v: editorState.afterInversion }, { n: "CURVE", v: editorState.curveResponse }, { n: "LIMITS", v: editorState.finalOutput }
-                ]
-                    delegate: Column { spacing: 2; Text { text: modelData.n; color: "#7f99a0"; font.pixelSize: 8; font.bold: true }
-                        Text { text: rawPercent(modelData.v); color: "#cae0e1"; font.pixelSize: 10; font.family: "Consolas" } }
+            Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; radius: 3; color: "#111c21"; border.color: "#314b54"
+                ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 5
+                    Text { text: "VIEW / HISTORY"; color: "#dce9ea"; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true; spacing: 6
+                        AviationButton { text: "FRAME CURVE"; onClicked: graph.resetView() }
+                        AviationButton { text: "RESET DISPLAY"; onClicked: editor.resetDisplay() }
+                        AviationButton { text: "↶ UNDO"; enabled: undoStack.length > 0; onClicked: undo() }
+                        AviationButton { text: "↷ REDO"; enabled: redoStack.length > 0; onClicked: redo() }
+                    }
+                    RowLayout { Layout.fillWidth: true; spacing: 6
+                        AviationCombo { id: comparisonSelector; Layout.preferredWidth: 185; model: backendObject ? backendObject.curveComparisonChoices : []; textRole: "label"; valueRole: "id"; onActivated: backendObject.setCurveComparison(currentValue) }
+                        AviationCombo { id: copySelector; Layout.preferredWidth: 175; model: backendObject ? backendObject.curveCopyChoices : []; textRole: "label"; valueRole: "id" }
+                        AviationButton { text: "COPY"; enabled: copySelector.count > 0; onClicked: { recordHistory(); backendObject.copyCurveFromSelection(copySelector.currentValue) } }
+                        Item { Layout.fillWidth: true }
+                        Text { visible: !!comparison.label; text: "Δ " + percent(comparison.difference); color: "#9fb6ba"; font.family: "Consolas"; font.pixelSize: 10 }
+                    }
                 }
             }
         }
+
+        RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 86; spacing: 8
+            Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; radius: 3; color: "#111c21"; border.color: "#314b54"
+                ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 4
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "RESPONSE CHARACTERISTICS"; color: "#dce9ea"; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        Text { text: analysis.valid ? "✓ MONOTONIC · NO OVERSHOOT" : "! CHECK CURVE"; color: analysis.valid ? "#9fc9bb" : "#d49b62"; font.pixelSize: 8; font.bold: true }
+                    }
+                    RowLayout { Layout.fillWidth: true; spacing: 12
+                        Repeater { model: [{n:"CENTER",v:analysis.centerGain},{n:"25%",v:analysis.quarterGain},{n:"50%",v:analysis.halfGain},{n:"75%",v:analysis.threeQuarterGain},{n:"PEAK",v:analysis.peakGain}]
+                            delegate: Column { spacing: 1
+                                Text { text: modelData.n; color: "#809aa1"; font.pixelSize: 8 }
+                                Text { text: Number(modelData.v || 0).toFixed(2) + "×"; color: "#d2e0e1"; font.family: "Consolas"; font.pixelSize: 10 }
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Text { visible: !editorState.neutralMapsToNeutral; text: "! ONE-SIDED J: physical neutral maps to " + percent(editorState.neutralOffset); color: "#d7bd78"; font.pixelSize: 8; font.bold: true }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; radius: 3; color: "#111c21"; border.color: "#314b54"
+                ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 4
+                    Text { text: "SIGNAL PATH"; color: "#dce9ea"; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true; spacing: 9
+                        Repeater { model: [{n:"RAW",v:editorState.physicalInput},{n:"NORMAL",v:editorState.normalized},{n:"DEADZONE",v:editorState.afterDeadzone},{n:"HYSTERESIS",v:editorState.afterHysteresis},{n:"INVERT",v:editorState.afterInversion},{n:"CURVE",v:editorState.curveResponse},{n:"LIMITS",v:editorState.finalOutput},{n:"VJOY",v:editorState.finalOutput}]
+                            delegate: Column { spacing: 1
+                                Text { text: modelData.n; color: "#809aa1"; font.pixelSize: 8 }
+                                Text { text: rawPercent(modelData.v); color: "#cae0e1"; font.family: "Consolas"; font.pixelSize: 9 }
+                            }
+                        }
+                    }
+                    Text { text: "LIVE VALUES · " + editorState.runtimeLutSamples + "-SAMPLE LUT"; color: "#718d94"; font.pixelSize: 8 }
+                }
+            }
+        }
+
+        RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 30; spacing: 7
+            Text { text: "PRESET OVERLAY"; color: "#8faab0"; font.pixelSize: 8; font.bold: true }
+            AviationCombo { id: previewSelector; Layout.preferredWidth: 248; model: backendObject ? backendObject.curvePreviewChoices : []; textRole: "label"; valueRole: "id"; onActivated: backendObject.previewCurvePreset(currentValue) }
+            AviationButton { text: "APPLY PRESET"; enabled: !!editorState.previewLabel; onClicked: { recordHistory(); backendObject.applyCurvePreview() } }
+            AviationButton { text: "CLEAR PREVIEW"; enabled: !!editorState.previewLabel; onClicked: backendObject.clearCurvePreview() }
+            AviationButton { text: "SAVE AS PERSONAL"; onClicked: personalDialog.open() }
+            AviationButton { text: "MANAGE PERSONAL"; onClicked: personalManageDialog.open() }
+            Item { Layout.fillWidth: true }
+        }
+    }
+
+    Menu {
+        id: pointContextMenu
+        background: Rectangle { color: "#101b20"; border.color: "#4c7881"; radius: 3 }
+        AviationMenuItem { text: pointAt(contextPoint) && pointAt(contextPoint).locked ? "UNLOCK POINT" : "LOCK POINT"; enabled: contextPoint > 0 && contextPoint < editorState.pointCount - 1
+            onTriggered: { const p = pointAt(contextPoint); if (p) { recordHistory(); backendObject.setCurvePointLocked(contextPoint, !p.locked) } } }
+        MenuSeparator {}
+        AviationMenuItem { text: "REMOVE POINT"; enabled: contextPoint > 0 && contextPoint < editorState.pointCount - 1 && pointAt(contextPoint) && !pointAt(contextPoint).locked
+            onTriggered: { recordHistory(); backendObject.removeCurvePoint(contextPoint); selectedPoint = -1 } }
+        MenuSeparator {}
+        AviationMenuItem { text: "SNAP TO GRID"; enabled: contextPoint > 0 && pointAt(contextPoint) && !pointAt(contextPoint).locked
+            onTriggered: { const p = pointAt(contextPoint); if (p) { recordHistory(); backendObject.setCurvePoint(contextPoint, Math.round(Number(p.input) / snapIncrement) * snapIncrement, Math.round(Number(p.output) / snapIncrement) * snapIncrement) } } }
+        AviationMenuItem { text: "RESET POINT"; enabled: contextPoint > 0 && contextPoint < editorState.pointCount - 1 && pointAt(contextPoint) && !pointAt(contextPoint).locked
+            onTriggered: { const p = pointAt(contextPoint); if (p) { recordHistory(); backendObject.setCurvePoint(contextPoint, Number(p.input), Number(p.input)) } } }
+    }
+
+    Menu {
+        id: graphContextMenu
+        background: Rectangle { color: "#101b20"; border.color: "#4c7881"; radius: 3 }
+        AviationMenuItem { text: "ADD POINT HERE"; enabled: editorState.pointEditing
+            onTriggered: { recordHistory(); selectedPoint = backendObject.addCurvePoint(graphContextInput, graphContextOutput) } }
+        MenuSeparator {}
+        AviationMenuItem { text: "FRAME CURVE"; onTriggered: graph.resetView() }
+        AviationMenuItem { text: "RESET DISPLAY"; onTriggered: editor.resetDisplay() }
+        MenuSeparator {}
+        AviationMenuItem { text: editorState.pointEditing ? "POINT EDITING OFF" : "POINT EDITING ON"; onTriggered: { recordHistory(); backendObject.setCurvePointEditing(!editorState.pointEditing) } }
     }
 
     Dialog {

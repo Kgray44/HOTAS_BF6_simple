@@ -84,6 +84,26 @@ if (WIN32)
     set_tests_properties(mapping_core_tests PROPERTIES
         ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
 endif()
+
+option(HOTAS_BUILD_PERFORMANCE_BENCHMARK "Build the synthetic mapping hot-path benchmark" OFF)
+if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
+    qt_add_executable(mapping_hot_path_benchmark
+        tests/mapping_hot_path_benchmark.cpp
+        src/mapping_types.h
+        src/axis_transform.h
+        src/axis_transform.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/button_mapping.h
+        src/button_mapping.cpp
+        src/physical_input_monitor.h
+        src/physical_input_monitor.cpp
+        src/profile_model.h
+        src/profile_model.cpp
+    )
+    target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
+    target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 endif()
 
 install(TARGETS HOTASMapper

@@ -50,66 +50,101 @@ const std::vector<CurvePresetInfo> kStandardPresets{
 };
 
 const std::vector<AdvancedCurvePresetInfo> kAdvancedPresets{
-    {u"precision-tracking"_qs, u"Precision Tracking"_qs,
+    {u"precision-tracking"_qs, u"Precision Tracking"_qs, u"General"_qs,
      u"Fine tracking of small moving targets"_qs,
      u"Soft center, measured midrange, full edge authority"_qs,
      u"Derived: cubic aim-response practice and HOTAS precision use"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.20F, 0.055F}, {0.50F, 0.26F},
                       {0.80F, 0.68F}, {1.0F, 1.0F}})},
-    {u"fine-gun-aim"_qs, u"Fine Gun Aim"_qs,
+    {u"fine-gun-aim"_qs, u"Fine Gun Aim"_qs, u"General"_qs,
      u"Small corrections while tracking a firing solution"_qs,
      u"Very soft center with a controlled upper ramp"_qs,
      u"Derived: FPS aim precision and Fitts-law-oriented fine motion"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.15F, 0.025F}, {0.35F, 0.12F},
                       {0.65F, 0.48F}, {0.85F, 0.78F}, {1.0F, 1.0F}})},
-    {u"stable-strafe"_qs, u"Stable Strafe"_qs,
+    {u"stable-strafe"_qs, u"Stable Strafe"_qs, u"General"_qs,
      u"Deliberate lateral corrections and formation work"_qs,
      u"Broad calm center, then a steady progressive climb"_qs,
      u"Derived: controller deadzone normalization and steady-state control"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.28F, 0.10F}, {0.52F, 0.31F},
                       {0.76F, 0.64F}, {0.93F, 0.90F}, {1.0F, 1.0F}})},
-    {u"high-rate-maneuver"_qs, u"High-Rate Maneuver"_qs,
+    {u"high-rate-maneuver"_qs, u"High-Rate Maneuver"_qs, u"General"_qs,
      u"Rapid turn-rate changes without losing full command"_qs,
      u"Near-linear center, assertive middle and edge"_qs,
      u"Derived: flight-control progressive authority conventions"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.20F, 0.18F}, {0.50F, 0.56F},
                       {0.80F, 0.90F}, {1.0F, 1.0F}})},
-    {u"hover-control"_qs, u"Hover Control"_qs,
+    {u"hover-control"_qs, u"Hover Control"_qs, u"General"_qs,
      u"Helicopter hover and minute attitude corrections"_qs,
      u"Large fine-control region and gentle edge recovery"_qs,
      u"Derived: simulator control-curve practice; evidence-informed"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.30F, 0.08F}, {0.65F, 0.45F},
                       {0.90F, 0.84F}, {1.0F, 1.0F}})},
-    {u"fast-acquisition"_qs, u"Fast Acquisition"_qs,
+    {u"fast-acquisition"_qs, u"Fast Acquisition"_qs, u"General"_qs,
      u"Quickly acquiring a new target or heading"_qs,
      u"Responsive center followed by an aggressive midrange"_qs,
      u"Derived: aim-acquisition gain trade-off; evidence-informed"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.10F, 0.08F}, {0.30F, 0.32F},
                       {0.55F, 0.66F}, {0.80F, 0.90F}, {1.0F, 1.0F}})},
-    {u"center-stabilizer"_qs, u"Center Stabilizer"_qs,
+    {u"center-stabilizer"_qs, u"Center Stabilizer"_qs, u"General"_qs,
      u"Reducing over-correction around a neutral command"_qs,
      u"Central plateau-like region with continuous authority recovery"_qs,
      u"Derived: deadzone/hysteresis stability principles without a hard step"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.25F, 0.06F}, {0.50F, 0.30F},
                       {0.75F, 0.65F}, {0.90F, 0.86F}, {1.0F, 1.0F}})},
-    {u"progressive-authority"_qs, u"Progressive Authority"_qs,
+    {u"progressive-authority"_qs, u"Progressive Authority"_qs, u"General"_qs,
      u"Measured transitions into strong end-of-travel command"_qs,
      u"Soft start, deliberately progressive edge authority"_qs,
      u"Derived: HOTAS response-curve convention; evidence-informed"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.20F, 0.13F}, {0.50F, 0.39F},
                       {0.75F, 0.70F}, {0.90F, 0.90F}, {1.0F, 1.0F}})},
-    {u"hybrid-precision"_qs, u"Hybrid Precision"_qs,
+    {u"hybrid-precision"_qs, u"Hybrid Precision"_qs, u"General"_qs,
      u"Precision approach followed by agile correction"_qs,
      u"Soft central window with a brisk but continuous upper ramp"_qs,
      u"Derived: blended pointing-gain and flight-control response"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.20F, 0.075F}, {0.50F, 0.42F},
                       {0.70F, 0.72F}, {0.90F, 0.95F}, {1.0F, 1.0F}})},
-    {u"edge-softened"_qs, u"Edge Softened"_qs,
+    {u"edge-softened"_qs, u"Edge Softened"_qs, u"General"_qs,
      u"Avoiding abrupt maximum-rate command near full travel"_qs,
      u"Responsive middle that eases into the final authority"_qs,
      u"Derived: bounded response-gain control; evidence-informed"_qs,
      symmetricPoints({{0.0F, 0.0F}, {0.20F, 0.22F}, {0.50F, 0.61F},
                       {0.75F, 0.83F}, {0.90F, 0.94F}, {1.0F, 1.0F}})},
+    {u"shooter-dynamic-inspired"_qs, u"Shooter Dynamic-Inspired"_qs,
+     u"Shooter / Flight Derived"_qs,
+     u"Adaptive-feeling target acquisition without claiming a proprietary clone"_qs,
+     u"Soft initial aim, brisk controlled midrange, bounded edge authority"_qs,
+     u"Derived from publicly documented dynamic-response concepts; not a game-exact curve"_qs,
+     symmetricPoints({{0.0F, 0.0F}, {0.12F, 0.045F}, {0.34F, 0.25F},
+                      {0.62F, 0.70F}, {0.84F, 0.94F}, {1.0F, 1.0F}})},
+    {u"ads-precision-inspired"_qs, u"ADS Precision-Inspired"_qs,
+     u"Shooter / Flight Derived"_qs,
+     u"Deliberate fine aim while tracking a sight picture"_qs,
+     u"Extended low-gain center with a measured recovery toward full travel"_qs,
+     u"Derived from aim-assist/ADS sensitivity documentation and pointing-control practice"_qs,
+     symmetricPoints({{0.0F, 0.0F}, {0.18F, 0.035F}, {0.42F, 0.20F},
+                      {0.68F, 0.58F}, {0.88F, 0.90F}, {1.0F, 1.0F}})},
+    {u"dual-zone-turn-inspired"_qs, u"Dual-Zone Turn-Inspired"_qs,
+     u"Shooter / Flight Derived"_qs,
+     u"Quick large turns while retaining a controlled fine-input region"_qs,
+     u"Near-linear start, assertive mid-travel, smoothly bounded maximum rate"_qs,
+     u"Derived from documented two-zone/turn-rate control concepts; continuous approximation"_qs,
+     symmetricPoints({{0.0F, 0.0F}, {0.15F, 0.12F}, {0.38F, 0.42F},
+                      {0.62F, 0.78F}, {0.84F, 0.96F}, {1.0F, 1.0F}})},
+    {u"aircraft-gun-tracking"_qs, u"Aircraft Gun Tracking"_qs,
+     u"Shooter / Flight Derived"_qs,
+     u"Stable pursuit and small lead corrections in aircraft gunnery"_qs,
+     u"Fine center, progressive midrange, full command near the stop"_qs,
+     u"Derived from simulator response-curve guidance and aircraft aiming practice"_qs,
+     symmetricPoints({{0.0F, 0.0F}, {0.22F, 0.055F}, {0.48F, 0.30F},
+                      {0.74F, 0.70F}, {0.91F, 0.93F}, {1.0F, 1.0F}})},
+    {u"aircraft-maneuver-progressive"_qs, u"Aircraft Maneuver Progressive"_qs,
+     u"Shooter / Flight Derived"_qs,
+     u"Increasing control authority through sustained maneuvering"_qs,
+     u"Predictable center with progressively stronger high-deflection response"_qs,
+     u"Derived from public simulator control-curve and HOTAS tuning guidance"_qs,
+     symmetricPoints({{0.0F, 0.0F}, {0.18F, 0.12F}, {0.46F, 0.40F},
+                      {0.72F, 0.74F}, {0.91F, 0.96F}, {1.0F, 1.0F}})},
 };
 
 const CurvePresetInfo *standardPreset(const QString &id)
@@ -138,14 +173,30 @@ float evaluateGenerated(float domainInput, const CurveDefinition &definition, bo
     const float strength = std::clamp(definition.strength, 0.0F, 1.0F);
     if (definition.family == CurveFamily::JCurve) {
         const float exponent = 1.0F + 1.80F * strength;
-        return unipolar ? std::pow(input, exponent) : signedPower(input, exponent);
+        // J is intentionally one-sided. Centered controls are remapped to a
+        // unipolar parameter and back; a non-zero strength therefore moves
+        // physical neutral below virtual neutral, which is surfaced by Curve
+        // Health rather than silently changing the family into S.
+        if (unipolar) return std::pow(input, exponent);
+        const float parameter = (input + 1.0F) * 0.5F;
+        return std::pow(parameter, exponent) * 2.0F - 1.0F;
     }
     if (definition.family == CurveFamily::SCurve) {
-        if (unipolar) return (1.0F - strength) * input + strength * smoothStep(input);
-        const float magnitude = std::abs(input);
-        return std::copysign((1.0F - strength) * magnitude + strength * smoothStep(magnitude), input);
+        // The centered S is the mirror of a progressive J half. On unipolar
+        // controls a strength-blended smoothstep retains the endpoint and
+        // midpoint invariants while providing the expected single-domain S.
+        if (!unipolar) {
+            const float exponent = 1.0F + 1.80F * strength;
+            return signedPower(input, exponent);
+        }
+        return (1.0F - strength) * input + strength * smoothStep(input);
     }
     return input;
+}
+
+float blendFromLinear(float input, float fullResponse, float strength)
+{
+    return input + (fullResponse - input) * std::clamp(strength, 0.0F, 1.0F);
 }
 
 float evaluateMonotonePoints(float input, const std::vector<CurvePoint> &points,
@@ -344,7 +395,13 @@ QString curveDefinitionSummary(const CurveDefinition &definition)
         return definition.baseLabel.isEmpty() ? u"Custom"_qs
             : u"Custom · Based on "_qs + definition.baseLabel;
     }
-    if (definition.family == CurveFamily::Linear) return u"Linear"_qs;
+    if (definition.family == CurveFamily::Linear) return u"Linear · 0%"_qs;
+    if (definition.family == CurveFamily::JCurve || definition.family == CurveFamily::SCurve
+        || definition.family == CurveFamily::Advanced || definition.family == CurveFamily::Personal) {
+        return curveFamilyLabel(definition.family) + u" · "_qs
+            + QString::number(std::lround(std::clamp(definition.strength, 0.0F, 1.0F) * 100.0F))
+            + u"%"_qs;
+    }
     if (!definition.presetId.isEmpty()) return curveFamilyLabel(definition.family)
         + u" · "_qs + definition.baseLabel;
     return curveFamilyLabel(definition.family);
@@ -375,6 +432,19 @@ CurveDefinition standardCurveDefinition(CurveFamily family, const QString &prese
     return definition;
 }
 
+CurveDefinition standardCurveDefinition(CurveFamily family, float strength)
+{
+    if (family != CurveFamily::JCurve && family != CurveFamily::SCurve) return linearCurveDefinition();
+    CurveDefinition definition;
+    definition.family = family;
+    definition.sourceFamily = family;
+    definition.strength = std::clamp(strength, 0.0F, 1.0F);
+    definition.presetId = u"continuous"_qs;
+    definition.baseLabel = curveFamilyLabel(family);
+    definition.sourcePresetId = u"continuous"_qs;
+    return definition;
+}
+
 CurveDefinition advancedCurveDefinition(const QString &presetId)
 {
     const AdvancedCurvePresetInfo *preset = advancedCurvePreset(presetId);
@@ -382,6 +452,7 @@ CurveDefinition advancedCurveDefinition(const QString &presetId)
     CurveDefinition definition;
     definition.family = CurveFamily::Advanced;
     definition.sourceFamily = CurveFamily::Advanced;
+    definition.strength = 1.0F;
     definition.presetId = preset->id;
     definition.baseLabel = preset->name;
     definition.sourcePresetId = preset->id;
@@ -401,10 +472,6 @@ void normalizeCurveDefinition(CurveDefinition &definition, bool unipolar)
     definition.strength = std::clamp(definition.strength, 0.0F, 1.0F);
     if (!supportedCurvePointDensity(definition.pointDensity)) definition.pointDensity = 9;
     if (unipolar) definition.symmetry = false;
-    if ((definition.family == CurveFamily::JCurve || definition.family == CurveFamily::SCurve)
-        && !standardPreset(definition.presetId)) {
-        definition = standardCurveDefinition(definition.family, u"medium"_qs);
-    }
     if (definition.family == CurveFamily::Advanced && !advancedCurvePreset(definition.presetId)) {
         definition = advancedCurveDefinition(kAdvancedPresets.front().id);
     }
@@ -443,14 +510,16 @@ float evaluateCurveDefinition(float domainInput, const CurveDefinition &definiti
     if (definition.family == CurveFamily::Advanced) {
         const AdvancedCurvePresetInfo *preset = advancedCurvePreset(definition.presetId);
         if (!preset) return input;
-        if (!unipolar) return evaluateMonotonePoints(input, preset->centeredPoints, CurveInterpolation::Smooth);
-        const float centeredInput = input * 2.0F - 1.0F;
-        return (evaluateMonotonePoints(centeredInput, preset->centeredPoints,
-                                       CurveInterpolation::Smooth) + 1.0F) * 0.5F;
+        const float fullResponse = !unipolar
+            ? evaluateMonotonePoints(input, preset->centeredPoints, CurveInterpolation::Smooth)
+            : (evaluateMonotonePoints(input * 2.0F - 1.0F, preset->centeredPoints,
+                                      CurveInterpolation::Smooth) + 1.0F) * 0.5F;
+        return blendFromLinear(input, fullResponse, definition.strength);
     }
     if (definition.pointEditing || definition.family == CurveFamily::Custom
         || definition.family == CurveFamily::Personal) {
-        return evaluateMonotonePoints(input, definition.points, definition.interpolation);
+        const float fullResponse = evaluateMonotonePoints(input, definition.points, definition.interpolation);
+        return blendFromLinear(input, fullResponse, definition.strength);
     }
     return evaluateGenerated(input, definition, unipolar);
 }
@@ -466,6 +535,10 @@ CurveDefinition materializeCurveDefinition(const CurveDefinition &definition, bo
         ? definition.sourceFamily : definition.family;
     editable.family = CurveFamily::Custom;
     editable.presetId = u"custom"_qs;
+    // The materialized points represent the current effective response. New
+    // Custom editing begins at that exact shape; subsequent strength changes
+    // blend that custom shape from Linear in the usual universal way.
+    editable.strength = 1.0F;
     editable.pointEditing = true;
     editable.symmetry = !unipolar && definition.symmetry;
     editable.pointDensity = requestedDensity;
@@ -610,11 +683,17 @@ float evaluateCurveGain(float domainInput, const CurveDefinition &definition, bo
     if (definition.family == CurveFamily::Linear) return 1.0F;
     if (definition.family == CurveFamily::JCurve) {
         const float exponent = 1.0F + 1.80F * strength;
-        const float magnitude = std::abs(input);
-        if (magnitude < 0.000001F && exponent > 1.0F) return 0.0F;
-        return exponent * std::pow(magnitude, exponent - 1.0F);
+        const float parameter = unipolar ? input : (input + 1.0F) * 0.5F;
+        if (parameter < 0.000001F && exponent > 1.0F) return 0.0F;
+        return exponent * std::pow(parameter, exponent - 1.0F);
     }
     if (definition.family == CurveFamily::SCurve) {
+        if (!unipolar) {
+            const float exponent = 1.0F + 1.80F * strength;
+            const float magnitude = std::abs(input);
+            if (magnitude < 0.000001F && exponent > 1.0F) return 0.0F;
+            return exponent * std::pow(magnitude, exponent - 1.0F);
+        }
         const float magnitude = unipolar ? input : std::abs(input);
         return (1.0F - strength) + strength * 6.0F * magnitude * (1.0F - magnitude);
     }
@@ -643,6 +722,8 @@ CurveAnalysis analyzeCurveDefinition(const CurveDefinition &definition, bool uni
     const float start = evaluateCurveDefinition(minimum, definition, unipolar);
     const float end = evaluateCurveDefinition(1.0F, definition, unipolar);
     analysis.fullAuthority = std::abs(start - minimum) < 0.002F && std::abs(end - 1.0F) < 0.002F;
+    analysis.neutralOffset = unipolar ? 0.0F : evaluateCurveDefinition(0.0F, definition, false);
+    analysis.neutralMapsToNeutral = std::abs(analysis.neutralOffset) < 0.002F;
     const float center = unipolar ? 0.0F : 0.0F;
     analysis.centerGain = evaluateCurveGain(center, definition, unipolar);
     analysis.quarterGain = evaluateCurveGain(unipolar ? 0.25F : 0.25F, definition, unipolar);
@@ -660,6 +741,13 @@ CurveAnalysis analyzeCurveDefinition(const CurveDefinition &definition, bool uni
         if (!std::isfinite(output) || output < minimum - 0.0001F || output > 1.0001F) {
             analysis.valid = false;
             analysis.noOvershoot = false;
+        }
+        if (index > 0) {
+            const float previousInput = minimum + (1.0F - minimum) * static_cast<float>(index - 1) / 128.0F;
+            if (output + 0.0001F < evaluateCurveDefinition(previousInput, definition, unipolar)) {
+                analysis.monotonic = false;
+                analysis.valid = false;
+            }
         }
     }
     return analysis;

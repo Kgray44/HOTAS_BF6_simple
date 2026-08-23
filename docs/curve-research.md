@@ -1,103 +1,107 @@
-# v1.4 response-curve research and design notes
+# v1.4 Curve Studio: research, equations, and preset record
 
-This is a bounded design record, not a claim that Battlefield exposes its
-proprietary response functions. The Advanced presets are **derived,
-evidence-informed transfer functions**. They are intentionally named for
-control goals rather than presented as game-exact curves.
+This is a bounded engineering record. None of the presets claims to reproduce a proprietary game curve. They are deterministic, evidence-informed response definitions with a stated control purpose. Every statistic shown in the app and in this document is derived from the authoritative evaluator, rather than entered as presentation metadata.
 
-## Design evidence
+## Evidence basis
 
-- Microsoft’s controller tutorial uses a cubic stick response after a deadzone
-  for camera rotation, a clear public example of reducing small-input response
-  while retaining full travel: <https://learn.microsoft.com/en-us/windows/uwp/gaming/tutorial--adding-controls>.
-- Microsoft documents normalized gamepad stick inputs in the `[-1, +1]` range
-  and explains why deadzones are needed for physical stick variation:
-  <https://learn.microsoft.com/en-us/windows/uwp/gaming/gamepad-and-vibration>.
-- XInput’s guidance likewise describes clipping and renormalizing stick motion
-  outside the deadzone: <https://learn.microsoft.com/en-us/windows/win32/xinput/getting-started-with-xinput>.
-- Unity’s Axis Deadzone processor documents bounded clamping and
-  renormalization, reinforcing separation of input conditioning from response
-  shaping: <https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/manual/Processors.html>.
-- Unity documents the difference between individual-axis and radial stick
-  deadzones: <https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.Controls.StickControl.html>.
-- BeamNG’s input guidance acknowledges a configurable response-correction
-  curve in simulator hardware workflows: <https://documentation.beamng.com/support/hardware/steering_wheel_common_problems/Input_troubleshooting_guide.pdf>.
-- Fritsch and Carlson derive conditions for a monotone piecewise cubic
-  interpolant: <https://doi.org/10.1137/0717021>.
-- The SciPy PCHIP reference concisely describes a monotonic, C1,
-  non-overshooting piecewise-cubic implementation and its slope construction:
-  <https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.PchipInterpolator.html>.
-- Fritsch and Butland describe a local monotone piecewise-cubic construction:
-  <https://doi.org/10.1137/0905021>.
+- [Microsoft XInput guidance](https://learn.microsoft.com/en-us/windows/win32/xinput/getting-started-with-xinput) explicitly discusses normalizing after a deadzone and using a cubic response to gain lower-range precision while retaining fast full-travel response.
+- [Microsoft controller input tutorial](https://learn.microsoft.com/en-us/windows/uwp/gaming/tutorial--adding-controls) gives a public cubic stick-response example.
+- [Unity AxisDeadzoneProcessor](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.Processors.AxisDeadzoneProcessor.html) documents clamp-and-renormalize conditioning as a separate input stage.
+- [Unity Input System processors](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/manual/Processors.html) documents configurable processing stages and axis/stick deadzones.
+- [War Thunder’s official controls guide](https://wiki.warthunder.com/controls/4785-setting-up-control-axis-and-sensitivity) describes nonlinearity as lower center sensitivity with recovered edge authority, specifically for joystick/aircraft aiming.
+- [DCS Axis Tune documentation](https://forum.dcs.world/applications/core/interface/file/attachment.php?id=124317) shows a public flight-simulator axis curve/curvature control.
+- [DCS controller guide](https://forum.dcs.world/applications/core/interface/file/attachment.php?id=33751) explains softening reactions around neutral through an axis response curve.
+- [Fritsch and Carlson](https://doi.org/10.1137/0717021) and [SciPy’s PCHIP reference](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.PchipInterpolator.html) support the monotone, no-overshoot interpolation constraints used for editable and preset point curves.
 
-## Family equations
+These sources motivate categories and constraints, not game-exact copies. In particular, “Dynamic-Inspired”, “ADS Precision-Inspired”, and “Dual-Zone Turn-Inspired” are continuous approximations of public response concepts—not Call of Duty, Battlefield, or any other proprietary transfer function.
 
-All equations use a normalized display-domain input `x`: `[-1, 1]` for a
-centered axis and `[0, 1]` for a unipolar axis. The worker compiles the result
-to a 4097-sample immutable LUT; this is separate from the number of editable
-points.
+## Runtime architecture
 
-### Linear
+The persisted curve is configuration. A configuration edit builds a 4097-sample immutable response LUT before the worker accepts the configuration. The real-time path is:
 
-`f(x) = x`. It is the identity baseline with endpoint preservation and unit
-local gain.
+```text
+DirectInput -> calibration -> deadzone -> hysteresis -> invert -> LUT -> limits -> vJoy
+```
 
-### J-Curve
+The worker does not construct splines, sort points, blend strength, inspect presets, read QSettings, access QML, calculate gain, or generate graph data per physical report. All families reduce to the same LUT lookup at runtime.
 
-Centered axes use `sign(x) × |x|^(1 + 1.80s)`; unipolar axes use
-`x^(1 + 1.80s)`, where `s` is the named strength in `[0, 1]`. This is
-continuous and monotonic, reaches both endpoints exactly, and makes the center
-less sensitive as strength increases.
+## Domains and families
 
-### S-Curve
+The display/input domain is `[-1, 1]` for centered axes and `[0, 1]` for a unipolar axis such as throttle. Linear is always `L(x)=x`.
 
-For `a = |x|` on a centered axis (or `a = x` on a unipolar axis), the curve is
-`sign(x) × ((1-s)a + s(3a² - 2a³))`; the unipolar form omits `sign`. The
-smoothstep term is low-gain near the center and edge, with stronger midrange
-response. It is monotonic over the supported parameter range and preserves
-endpoints.
+### Continuous J-Curve
 
-### Standard strengths
+Let `s` be Response Strength in `[0,1]` and `p(s)=1+1.80s`.
 
-| Name | strength `s` |
-| --- | ---: |
-| Very Light | 0.12 |
-| Light | 0.22 |
-| Medium-Light | 0.34 |
-| Medium | 0.48 |
-| Medium-Strong | 0.64 |
-| Strong | 0.78 |
-| Very Strong | 0.90 |
-| Maximum | 1.00 |
+For unipolar controls:
 
-## Advanced presets
+```text
+J(u,s) = u^p(s)
+```
 
-Each definition is a deterministic, symmetric monotonic point response that
-is evaluated through the same PCHIP/LUT compiler as every other curve. The UI
-calculates center, midrange, edge, and peak gain from that authoritative
-definition; those values are not hand-authored labels.
+This is monotonic, bounded, preserves `J(0)=0` and `J(1)=1`, and is exactly linear at `s=0`. For a centered axis, the deliberate one-sided adaptation is:
 
-| Preset | Intended use | Behavior | Source basis |
+```text
+u = (x+1)/2
+Jcenter(x,s) = 2u^p(s)-1
+```
+
+It remains continuous, monotonic, and endpoint preserving. At non-zero strength it intentionally maps physical neutral away from virtual neutral; Curve Health and Signal Path identify that offset rather than hiding it by substituting an S-Curve.
+
+### Correct centered S-Curve
+
+For a centered axis, S is the mirror of the progressive J half:
+
+```text
+S(x,s) = sign(x) |x|^p(s)
+```
+
+Thus `S(0,s)=0`, endpoints are exact, and both sides have low center gain and increasing authority toward their respective extrema. This replaces the prior smoothstep-centered definition.
+
+For a unipolar control, the valid monotonic S adaptation is:
+
+```text
+Sunipolar(u,s) = (1-s)u + s(3u^2 - 2u^3)
+```
+
+It is linear at `s=0`, preserves `0`, `0.5`, and `1`, has no overshoot, and increases S-shaped deviation as strength rises.
+
+### Universal Response Strength
+
+J/S use `s` directly in their analytical equations. Advanced, Personal, and Custom have a full response `A(x)` and use:
+
+```text
+F(x,s) = (1-s)x + sA(x)
+```
+
+Consequently `0%` is Linear, `100%` is the full definition, and every intermediate value is deterministic, bounded, and monotonic when `A` is. Strength is per profile and axis, persists with that configuration, and is compiled into the LUT—not computed in the report loop.
+
+## Advanced presets (15 total)
+
+All rows below use symmetric monotonic point definitions on a centered domain. For a unipolar axis the same definition is normalized from `[0,1]` into the centered evaluator and back. The application calculates Center, 25%, 50%, 75%, and Peak Gain from those definitions on demand; the GUI exposes those authoritative values plus `0% Linear / 100% full researched response`.
+
+| Preset | Category | Best for | Shape / provenance basis |
 | --- | --- | --- | --- |
-| Precision Tracking | fine moving-target tracking | soft center, measured middle, full edges | derived from cubic aim response and precision HOTAS practice |
-| Fine Gun Aim | firing-solution corrections | very soft center, controlled upper ramp | derived from pointing-gain trade-offs |
-| Stable Strafe | lateral/formation corrections | broad calm center, steady ramp | deadzone-normalized steady control |
-| High-Rate Maneuver | rapid rate changes | near-linear center, assertive middle | progressive flight-control authority |
-| Hover Control | helicopter attitude work | large fine-control zone, gentle edge recovery | simulator curve practice |
-| Fast Acquisition | new target/heading acquisition | responsive center, aggressive middle | derived aim-acquisition gain trade-off |
-| Center Stabilizer | reduce over-correction | continuous plateau-like center | deadzone/hysteresis stability principles, without a hard step |
-| Progressive Authority | measured edge command | soft start and progressive edge authority | HOTAS response-curve convention |
-| Hybrid Precision | precision-to-agility blend | soft center, brisk upper ramp | blended pointing and flight-control response |
-| Edge Softened | avoid abrupt maximum rate | responsive middle, eased final travel | bounded response-gain control |
+| Precision Tracking | General | small moving targets | soft center, measured middle; cubic aim/HOTAS practice |
+| Fine Gun Aim | General | firing-solution corrections | very soft center; pointing-gain trade-off |
+| Stable Strafe | General | lateral or formation corrections | broad calm center; steady-control practice |
+| High-Rate Maneuver | General | rapid turn-rate changes | near-linear center; progressive flight authority |
+| Hover Control | General | helicopter attitude control | large fine-control region; simulator curve practice |
+| Fast Acquisition | General | a new target or heading | responsive center; assertive middle |
+| Center Stabilizer | General | reducing over-correction | continuous plateau-like center; no hard step |
+| Progressive Authority | General | measured edge command | soft start; progressive edge authority |
+| Hybrid Precision | General | precision-to-agility transitions | soft center; brisk upper ramp |
+| Edge Softened | General | easing final maximum-rate command | responsive middle; softened extreme |
+| Shooter Dynamic-Inspired | Shooter / Flight Derived | adaptive-feeling acquisition | public dynamic-response concept; not proprietary exact |
+| ADS Precision-Inspired | Shooter / Flight Derived | deliberate sight-picture tracking | documented ADS/pointing sensitivity concepts |
+| Dual-Zone Turn-Inspired | Shooter / Flight Derived | quick large turns | public two-zone/turn-rate concepts, continuous approximation |
+| Aircraft Gun Tracking | Shooter / Flight Derived | pursuit and lead correction | War Thunder/DCS-style aircraft response guidance |
+| Aircraft Maneuver Progressive | Shooter / Flight Derived | progressive high-deflection authority | public simulator/HOTAS curve guidance |
 
-## Safety and interpolation
+The first ten are preserved from the original v1.4 record. The final five are a distinct Shooter / Flight Derived subcategory with different purposes, not five strength variants. Names deliberately signal inspiration rather than an unverifiable exact clone.
 
-Point editing accepts only ordered X values, monotonic outputs, bounded ranges,
-and protected endpoints. Centered symmetric edits mirror `(x, y)` to
-`(-x, -y)`. The Linear option is piecewise-linear. Smooth uses a local,
-shape-preserving monotone cubic Hermite/PCHIP-style interpolant and clamps each
-interval to its endpoint output range so it cannot overshoot.
+## Editing and health guarantees
 
-Hysteresis remains live state in the worker. It is intentionally not included
-in the static response/effective-transfer overlays; the live final marker and
-Signal Path show its actual current effect.
+Custom and Personal definitions accept ordered inputs, monotonic outputs, bounded domains, protected endpoints, optional centered symmetry, locks, and 0.1–5% grid snapping. Smooth interpolation is a shape-preserving PCHIP-style curve clamped to each adjacent output range; Linear interpolation remains available. The health evaluator reports monotonicity, continuity, full authority, no overshoot, local gains, and the centered-J neutral offset.
+
+Hysteresis is intentionally live state, so static graph/analysis transfer views do not pretend to include it. The permanent Signal Path card displays the actual latest RAW, normalized, deadzone, hysteresis, inversion, curve, limits, and vJoy values instead.

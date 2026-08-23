@@ -7,6 +7,8 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
+#include <utility>
 
 namespace hotas {
 
@@ -85,6 +87,8 @@ protected:
 
 private:
     MapperConfiguration configurationCopy();
+    std::pair<MapperConfiguration, std::shared_ptr<const RuntimeMappingConfiguration>>
+    preparedConfigurationCopy();
     void setDeviceSnapshot(const DeviceSnapshot &snapshot);
     void setVjoyStatus(const QString &status);
 
@@ -95,6 +99,9 @@ private:
     std::atomic_uint64_t m_configurationVersion{0};
     mutable QMutex m_configurationMutex;
     MapperConfiguration m_configuration;
+    // Built by the caller before it acquires the configuration mutex. The
+    // worker only swaps this fully prepared immutable table between reports.
+    std::shared_ptr<const RuntimeMappingConfiguration> m_preparedMapping;
     mutable QMutex m_deviceMutex;
     DeviceSnapshot m_device;
     mutable QMutex m_statusMutex;

@@ -138,6 +138,7 @@ public:
     Q_INVOKABLE void setAxisHysteresis(int physicalAxis, double hysteresis);
     Q_INVOKABLE bool setAxisOutputLimits(int physicalAxis, double minimum, double maximum);
     Q_INVOKABLE void setCurveFamily(const QString &family);
+    Q_INVOKABLE void setCurveStrength(double strength);
     Q_INVOKABLE void setCurveStandardPreset(const QString &presetId);
     Q_INVOKABLE void applyAdvancedCurvePreset(const QString &presetId);
     Q_INVOKABLE bool applyPersonalCurvePreset(const QString &presetId);
