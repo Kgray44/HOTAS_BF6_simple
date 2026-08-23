@@ -155,7 +155,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$PWD\build\mapping_core_tests.exe" -v2
+          & "$PWD\build\mapping_core_tests.exe" -v2 -o -,txt
           if ($LASTEXITCODE -ne 0) { throw "mapping_core_tests failed with exit code $LASTEXITCODE." }
           ctest --test-dir build --output-on-failure --verbose -E '^mapping_core_tests$' -C Release
 
