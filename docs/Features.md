@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v1.8.5**
+**Current release: v1.9.0**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -21,9 +21,10 @@ This document is the authoritative sectioned catalog of user-visible and enginee
 11. User Interface and Themes
 12. vJoy Integration
 13. HidHide and Dependency Bootstrap
-14. Launcher, Installer, and Updates
-15. Configuration and Migration
-16. Build, Test, and Release Engineering
+14. Controller Readiness and Safe Setup
+15. Launcher, Installer, and Updates
+16. Configuration and Migration
+17. Build, Test, and Release Engineering
 
 ## Real-Time Mapping Runtime
 
@@ -168,18 +169,34 @@ vJoy is dynamically loaded and queried so the application adapts to the virtual 
 - Dynamic x64 vJoyInterface.dll loading with no vendored SDK binary dependency.
 - Runtime axis, button, continuous POV, and discrete POV capability discovery.
 - Safe handling of insufficient button capacity and unavailable axis targets.
-- Open Configure vJoy action for user-controlled device setup.
-- No automatic rewriting of an already configured vJoy device.
+- Controller Setup uses the installed supported vJoyConfig console utility only after an explicit preview and Windows elevation prompt.
+- Open Configure vJoy action for advanced/manual device setup.
+- No automatic rewriting of an already-sufficient vJoy device.
 
 ## HidHide and Dependency Bootstrap
 
-The application helps establish the surrounding controller stack while leaving privileged configuration under user control.
+The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
 
 - Detection of vJoy and HidHide presence.
 - Pinned official dependency installers may be offered only when a dependency is missing.
 - Dependency payload SHA-256 and Authenticode verification before vendor installers are opened.
 - No silent update, downgrade, enable, cloak, or reconfiguration of an already-installed dependency.
+- HidHideCLI integration adds the mapper allowlist entry before hiding only the exact selected HID instance or enabling cloaking.
+- Existing HidHide allowlist entries, inverse behavior, and unrelated hidden devices are preserved.
 - Direct action to open the HidHide Configuration Client.
+
+## Controller Readiness and Safe Setup
+
+A first-run and Settings-accessible Controller Setup wizard turns the Windows input stack into a short detect, explain, fix, verify flow without moving setup work into real-time mapping.
+
+- Inspects the selected DirectInput controller, axes, buttons, POVs, vJoy Device 1 capability, HidHide state, and current mapper output requirements.
+- Computes required vJoy axes, buttons, and native POV capacity from current profiles and Automation rather than cloning the physical device.
+- Leaves an already-sufficient vJoy configuration unchanged and refuses automatic changes while Device 1 is busy.
+- Uses the installed vJoyConfig console utility for a single-device configuration snapshot, minimal change, re-query, verification, and rollback.
+- Uses the installed HidHideCLI for additive mapper allowlisting, exact HID-instance hiding, cloaking verification, and narrow rollback.
+- Stops Mapping, neutralizes outputs, and releases vJoy before any driver transaction; Mapping remains Off on success or failure.
+- Shows clear controller, vJoy, HidHide, and BF6-binding readiness states plus a safe Undo Automatic Setup action for the current session.
+- Shared readiness UI works through the existing Legacy, Standard, and Top Gun tokens.
 
 ## Launcher, Installer, and Updates
 
@@ -209,7 +226,8 @@ The repository contains a reproducible Windows build and release pipeline intend
 
 - Single HOTAS_VERSION authority used by the app, launcher, installer, manifest, and tag validation.
 - CMake/C++20 build with Qt 6.5+.
-- Headless mapping, automation, launcher, and configuration tests.
+- Normal pull-request/main CI plus the tag-only stable release workflow.
+- Headless mapping, automation, launcher, configuration, and Controller Setup planner/transaction tests with process-runner mocks.
 - Synthetic mapping hot-path benchmark in release validation.
 - QML linting and resource/icon checks.
 - Dependency metadata validation.
@@ -219,4 +237,3 @@ The repository contains a reproducible Windows build and release pipeline intend
 ## Maintenance
 
 This file is generated from `docs/catalog/features.json`. Update that catalog when a feature is added, removed, renamed, or materially changed; the documentation workflow regenerates this file automatically.
-

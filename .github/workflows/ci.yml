@@ -1,0 +1,94 @@
+name: HOTAS BF6 CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify generated documentation is synchronized
+        shell: pwsh
+        run: .\scripts\sync-documentation.ps1 -Check
+
+      - name: Install Qt 6.5.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: 'win64_msvc2019_64'
+
+      - name: Locate Qt tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-ChildItem -LiteralPath $env:QT_ROOT_DIR -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          if (-not $config) { throw 'Qt6Config.cmake was not found after Qt installation.' }
+          $prefix = $config.Directory.Parent.Parent.Parent.FullName
+          $lint = Join-Path $prefix 'bin\qmllint.exe'
+          if (-not (Test-Path -LiteralPath $lint -PathType Leaf)) { throw 'qmllint.exe was not found.' }
+          "QT_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QMLLINT=$lint" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Lint QML syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          try {
+            $output = Get-ChildItem -LiteralPath "$PWD\qml" -Filter '*.qml' | ForEach-Object {
+              & $env:QMLLINT $_.FullName 2>&1 | Out-String
+            } | Out-String
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $nativeErrorPreference
+          }
+          Write-Host $output
+          if ($output -match '(?im)\berror:|syntax error|parse error') {
+            throw 'qmllint reported a QML syntax or tool error.'
+          }
+          exit 0 # Qt 6.5 uses a non-zero exit code for advisory warnings.
+
+      - name: Enable matching MSVC x64 toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Validate required resources and dependency bootstrap metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($asset in @(
+            'assets\icons\HOTAS-BF6-App.ico',
+            'assets\icons\HOTAS-BF6-Launcher.ico',
+            'assets\icons\HOTAS-BF6-Setup.ico',
+            'assets\icons\png\hotas-bf6-256.png',
+            'resources\app.rc',
+            'resources\launcher.rc',
+            'LICENSE',
+            'THIRD_PARTY_NOTICES.md'
+          )) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Required resource is missing: $asset" }
+          }
+          .\scripts\validate-dependencies.ps1
+
+      - name: Configure Release build
+        shell: pwsh
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_PREFIX" -DHOTAS_BUILD_PERFORMANCE_BENCHMARK=ON
+
+      - name: Compile mapper launcher and all tests
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Run mapping Automation launcher readiness and benchmark tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure

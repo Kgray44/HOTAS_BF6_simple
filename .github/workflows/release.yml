@@ -27,6 +27,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify generated documentation is synchronized
+        shell: pwsh
+        run: .\scripts\sync-documentation.ps1 -Check
+
       - name: Validate release source and select release tag
         shell: pwsh
         run: |

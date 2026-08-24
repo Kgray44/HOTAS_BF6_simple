@@ -200,5 +200,18 @@
       "Direct decimal Output Min/Max entry with 0.1% step controls.",
       "Disabled/unsupported outputs are parked without stale commands while the fixed-array hot path is preserved."
     ]
+  },
+  {
+    "version": "1.9.0",
+    "title": "Public readiness and automatic controller setup",
+    "summary": "Makes first-run controller setup substantially clearer through an explicit, transactional vJoy/HidHide readiness workflow while preserving the mapper's deterministic real-time architecture.",
+    "highlights": [
+      "First-run Controller Setup wizard and persistent Settings entry for Detect → Explain → Fix → Verify → Ready.",
+      "Pure capability planner computes virtual axes, buttons, and native POV requirements from profiles and Automation, with deterministic CI tests and mocked process transactions.",
+      "Supported vJoyConfig integration snapshots Device 1, preserves known FFB state, changes only an insufficient target after explicit approval, verifies the result, and rolls back on failure.",
+      "Supported HidHideCLI integration allowlists HOTAS BF6 before hiding only the exact selected HID instance, preserves unrelated rules, verifies cloaking, and supports narrow session undo.",
+      "Mapping is explicitly Off, neutralized, and released before setup changes; setup never runs in the DirectInput-to-vJoy report path.",
+      "Adds normal development CI, MIT licensing, third-party notices, structured hardware compatibility documentation, and conservative BF6/anticheat guidance."
+    ]
   }
 ]

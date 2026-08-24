@@ -27,6 +27,12 @@ Page {
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
+    Component.onCompleted: {
+        if (backend.controllerSetupSuggested) {
+            Qt.callLater(function() { controllerSetupDialog.open() })
+        }
+    }
+
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
     function axisSelectorModel() {
@@ -1946,6 +1952,18 @@ Page {
  spacing: 14
                 PageTitle { heading: "Settings"
  detail: "Persistent device selection and safe mapping defaults" }
+                Panel { width: parent.width; height: 94
+                    color: "#182a30"; border.color: "#536975"
+                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: "CONTROLLER SETUP"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Detect readiness, explain gaps, and apply only approved vJoy/HidHide changes."
+                                color: "#9dafb4"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: backend.controllerReadinessStatus; color: "#8fd5c9"; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                        }
+                        CommandButton { label: "CONTROLLER SETUP"; onTriggered: controllerSetupDialog.open() }
+                    }
+                }
                 Panel { width: parent.width; height: 84
                     RowLayout { anchors.fill: parent; anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
@@ -2142,6 +2160,20 @@ Page {
         }
         LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
         AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
+    }
+
+    Dialog {
+        id: controllerSetupDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(740, root.width - 36)
+        title: ""
+        standardButtons: Dialog.Close
+        padding: 18
+        onOpened: backend.inspectControllerReadiness()
+        onClosed: backend.acknowledgeControllerSetup()
+        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; legacy: true }
     }
 
     Dialog {

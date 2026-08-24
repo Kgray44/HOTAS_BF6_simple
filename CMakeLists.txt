@@ -46,6 +46,8 @@ set(HOTAS_MAPPER_SOURCES
     src/automation_engine.cpp
     src/config_store.h
     src/config_store.cpp
+    src/controller_readiness.h
+    src/controller_readiness.cpp
     src/theme_manager.h
     src/theme_manager.cpp
     src/event_log.h
@@ -74,6 +76,7 @@ qt_add_qml_module(HOTASMapper
         qml/Main.qml
         qml/Standard.qml
         qml/CurveEditor.qml
+        qml/ControllerReadinessPanel.qml
 )
 
 qt_add_resources(HOTASMapper hotas_icon_resources
@@ -101,7 +104,7 @@ set_target_properties(HOTASMapper PROPERTIES
 )
 
 if (WIN32)
-    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32)
+    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 else()
     message(FATAL_ERROR "HOTAS Mapper v1.5 targets Windows (DirectInput and vJoy).")
@@ -220,6 +223,20 @@ if (BUILD_TESTING)
             ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
     add_test(NAME launcher_core_tests COMMAND launcher_core_tests)
+
+    qt_add_executable(controller_readiness_tests
+        tests/controller_readiness_tests.cpp
+        src/controller_readiness.h
+        src/controller_readiness.cpp
+        src/mapping_types.h
+    )
+    target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Test shell32 advapi32)
+    target_include_directories(controller_readiness_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME controller_readiness_tests COMMAND controller_readiness_tests)
+    if (WIN32)
+        set_tests_properties(controller_readiness_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
 
     qt_add_executable(theme_manager_tests
         tests/theme_manager_tests.cpp
