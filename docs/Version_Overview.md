@@ -38,7 +38,7 @@ Reworked Automation around user-facing intent instead of engine terminology.
 
 - WHEN SHOULD THIS HAPPEN? and WHAT SHOULD IT DO? builders.
 - Plain-language requirement/effect summaries and readable profile names.
-- All the time is a user-level rule choice, with legacy Always normalization hidden underneath.
+- All the time as a user-level rule choice, with legacy Always normalization hidden underneath.
 - Consistent AND/OR connectors for multi-requirement rules.
 - Live RULE SUMMARY and Advanced-only priority controls.
 
