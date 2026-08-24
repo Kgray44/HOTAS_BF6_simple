@@ -1,0 +1,8 @@
+# Keep generated documentation and its source catalogs deterministic across Windows and CI.
+README.md text eol=lf
+docs/Features.md text eol=lf
+docs/Version_Overview.md text eol=lf
+docs/catalog/*.json text eol=lf
+scripts/sync-documentation.ps1 text eol=lf
+.github/workflows/*.yml text eol=lf
+HOTAS_VERSION text eol=lf
