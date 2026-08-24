@@ -1,0 +1,24 @@
+name: Documentation Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify generated documentation is synchronized
+        shell: pwsh
+        run: .\scripts\sync-documentation.ps1 -Check

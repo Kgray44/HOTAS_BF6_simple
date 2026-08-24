@@ -1,0 +1,209 @@
+[
+  {
+    "name": "Real-Time Mapping Runtime",
+    "description": "A dedicated DirectInput-to-vJoy worker owns report processing so controller output is not scheduled by the UI.",
+    "subfeatures": [
+      "Independent mapping worker with a bounded target report rate and UI snapshots published separately.",
+      "Precompiled mapping state swapped between reports rather than rebuilt inside the hot path.",
+      "Change-driven vJoy writes for stationary inputs and stable idle behavior.",
+      "Safe reset/quiesce behavior on Mapping Off, controller disconnect, or output invalidation.",
+      "Fresh physical snapshot seeding after reconnect to avoid synthetic button edges."
+    ]
+  },
+  {
+    "name": "Axis Routing and Processing",
+    "description": "Physical DirectInput axes can be routed to available vJoy axes with profile-owned transforms and labels.",
+    "subfeatures": [
+      "Runtime discovery of vJoy X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 targets.",
+      "Per-profile axis routing with conflict prevention and unsupported-target handling.",
+      "Calibration and normalization before profile transforms.",
+      "Rescaled deadzone, hysteresis, inversion, response curve, and output-limit processing.",
+      "Centered or One-Sided axis domain selectable per profile and per axis.",
+      "Direct decimal Output Min/Max entry with 0.1% step adjustment.",
+      "Per-profile custom physical-axis names and game-facing virtual-axis aliases.",
+      "Global Disabled Axis Value from -100.0% to +100.0% for parked unclaimed outputs."
+    ]
+  },
+  {
+    "name": "Mapping Safety Controls",
+    "description": "Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.",
+    "subfeatures": [
+      "Global Mapping On, Mapping Off, and Toggle Mapping physical-button controls.",
+      "Equivalent Mapping On/Off/Toggle actions available to Automation.",
+      "Press-edge handling prevents a held button from repeatedly toggling mapping.",
+      "Mapping Off centers exposed virtual axes, releases virtual buttons, and centers continuous/discrete POVs.",
+      "UI status distinguishes active mapping, mapping off, and missing-device suspension."
+    ]
+  },
+  {
+    "name": "Button Mapping",
+    "description": "Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit ownership.",
+    "subfeatures": [
+      "One-to-one default passthrough for newly discovered buttons while virtual capacity is available.",
+      "Explicit Disabled state that remains persistent and is not overwritten by later auto-initialization.",
+      "Destination uniqueness avoids ambiguous releases from multiple physical sources.",
+      "Press-to-identify and live physical/output state in the UI.",
+      "Per-profile custom physical-button names.",
+      "Profile-control or mapping-control buttons are consumed from normal vJoy routing while their saved routes remain intact."
+    ]
+  },
+  {
+    "name": "POV / Hat Support",
+    "description": "DirectInput POV hats can act as discrete logical directions, profile controls, or native vJoy POV outputs.",
+    "subfeatures": [
+      "Diagnostics support for up to four physical hats with raw angle and logical direction reporting.",
+      "Eight logical directions per hat for button-style routing.",
+      "Direct native vJoy continuous POV passthrough preserving raw angle.",
+      "Discrete vJoy POV output with documented cardinal fallback for diagonals.",
+      "POV directions can trigger global Profile Hold or Profile Toggle controls.",
+      "Native POV targets are kept separate from direction-as-button routing to avoid accidental overlap."
+    ]
+  },
+  {
+    "name": "Profiles",
+    "description": "Profiles package axis and button behavior into instant-switching configurations without reacquiring DirectInput or vJoy.",
+    "subfeatures": [
+      "Persistent base profiles with create, clone/start-from, rename, delete, and live activation.",
+      "New profiles are deep copies with no live parent link.",
+      "Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, and custom names.",
+      "Global physical-button and POV Profile Hold/Toggle controls.",
+      "Deterministic precedence: newest active Hold, then newest active Toggle, then manual base profile.",
+      "Manual profile selection clears Toggle overrides while currently held Hold controls remain until release.",
+      "Stop Mapping and disconnect clear runtime-only profile overrides."
+    ]
+  },
+  {
+    "name": "Response Curves",
+    "description": "Each profile/axis can use compiled response curves with both preset-based and point-based editing.",
+    "subfeatures": [
+      "Linear, J-Curve, and S-Curve families.",
+      "Eight standard strengths plus ten evidence-informed Advanced Presets.",
+      "Reusable Personal Presets with save/manage workflows.",
+      "Optional point editing with Smooth PCHIP-style or Linear interpolation.",
+      "5, 7, 9, 13, 17, and 25-point materialization with nonuniform placement support.",
+      "Point add/remove, locks, snapping, keyboard nudges, and local undo/redo.",
+      "Large live dual-curve viewer with physical/final markers, reference/output traces, gain view, comparison/audition overlays, zoom/pan, cursor inspection, and signal-path visibility.",
+      "Immutable 4097-sample response LUTs compiled when configuration changes so editable point count does not affect runtime lookup resolution."
+    ]
+  },
+  {
+    "name": "Automation Engine",
+    "description": "A deterministic, fixed-capacity Automation subsystem evaluates rules inside the mapper using data compiled before report processing.",
+    "subfeatures": [
+      "Up to 64 rules with up to four requirements and four effects per rule.",
+      "Physical axis, button, POV, profile, and Always requirements.",
+      "AND/OR matching with plain-language summaries instead of exposing engine enum terminology to normal users.",
+      "Axis threshold hysteresis and crosses-above/crosses-below events.",
+      "Button pressed, released, long-press, and two-to-five press sequence triggers.",
+      "Momentary, rule-toggle, and timed rule behavior.",
+      "vJoy Button Hold, Toggle, and bounded Tap actions.",
+      "Profile Hold and Toggle actions.",
+      "Axis Scale, Offset, Clamp, Override, Mix, and Follow actions.",
+      "Mapping On, Mapping Off, and Toggle Mapping actions.",
+      "Per-rule timing for sequence gap, long press, brief active duration, and tap duration.",
+      "Runtime latch/timer state is bounded, nonpersistent, and cleared on mapping stop, disconnect, configuration replacement, or Automation master disable.",
+      "Global persisted Automation master kill switch, invalid-rule health, and evaluation diagnostics."
+    ]
+  },
+  {
+    "name": "Automation Editor UX",
+    "description": "Automation is edited as readable full-page rules rather than raw condition/action arrays.",
+    "subfeatures": [
+      "Dedicated full-page editor for each automation.",
+      "New rules are blank, disabled drafts that cannot affect output until valid and saved.",
+      "WHEN SHOULD THIS HAPPEN? and WHAT SHOULD IT DO? builders use ordinary HOTAS language.",
+      "All the time is represented as a rule-level user choice while legacy Always terms are normalized behind the scenes.",
+      "Live RULE SUMMARY explains the draft before save.",
+      "Priority and timing controls are placed under Advanced when appropriate.",
+      "Overview cards show readable WHEN/DO summaries and Momentary/Toggle/Timed behavior labels.",
+      "Unsaved-change handling and delete confirmation."
+    ]
+  },
+  {
+    "name": "Diagnostics and Observability",
+    "description": "The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.",
+    "subfeatures": [
+      "Live axis, button, POV, and virtual-output visualization.",
+      "Scrollable bounded event log.",
+      "Physical update age and live/stale state.",
+      "vJoy readiness, button capacity, axis availability, and POV capability reporting.",
+      "HidHide installation/cloaking status when the supported CLI can answer.",
+      "Automation rule count, active count, invalid health, and evaluation timing.",
+      "Actual parked disabled-axis output reported separately from raw physical input.",
+      "Configuration warnings for capability mismatch or unavailable targets."
+    ]
+  },
+  {
+    "name": "User Interface and Themes",
+    "description": "The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.",
+    "subfeatures": [
+      "Legacy theme preserving the v1.6.3 presentation.",
+      "Standard theme as the modern general-purpose interface.",
+      "Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.",
+      "Instant theme switching with theme state stored separately from mapper configuration.",
+      "Dedicated pages for Home, Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation.",
+      "Shared themed selectors, numeric inputs, dialogs, cards, and status controls.",
+      "Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces."
+    ]
+  },
+  {
+    "name": "vJoy Integration",
+    "description": "vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.",
+    "subfeatures": [
+      "Dynamic x64 vJoyInterface.dll loading with no vendored SDK binary dependency.",
+      "Runtime axis, button, continuous POV, and discrete POV capability discovery.",
+      "Safe handling of insufficient button capacity and unavailable axis targets.",
+      "Open Configure vJoy action for user-controlled device setup.",
+      "No automatic rewriting of an already configured vJoy device."
+    ]
+  },
+  {
+    "name": "HidHide and Dependency Bootstrap",
+    "description": "The application helps establish the surrounding controller stack while leaving privileged configuration under user control.",
+    "subfeatures": [
+      "Detection of vJoy and HidHide presence.",
+      "Pinned official dependency installers may be offered only when a dependency is missing.",
+      "Dependency payload SHA-256 and Authenticode verification before vendor installers are opened.",
+      "No silent update, downgrade, enable, cloak, or reconfiguration of an already-installed dependency.",
+      "Direct action to open the HidHide Configuration Client."
+    ]
+  },
+  {
+    "name": "Launcher, Installer, and Updates",
+    "description": "A native launcher owns stable update checks and installation handoff so network/update work never remains active during mapping.",
+    "subfeatures": [
+      "Console-free native Win32 launcher using WinHTTP and Windows CNG SHA-256.",
+      "Stable-release-only update manifest lookup with short timeouts.",
+      "Downloaded installer checksum verification before silent handoff.",
+      "Failure-safe fallback to the currently installed mapper when update checks, downloads, validation, or installer handoff fail.",
+      "Per-user Inno Setup installation under LocalAppData with Start Menu and Desktop shortcuts.",
+      "Existing QSettings profiles, curves, calibration, and controls are preserved across program upgrades.",
+      "In-app update availability indicator and Settings update action hand off to the already-installed launcher."
+    ]
+  },
+  {
+    "name": "Configuration and Migration",
+    "description": "Persistent configuration evolves through explicit schema migrations while transient runtime state remains outside saved data.",
+    "subfeatures": [
+      "QSettings-backed persistent profiles and global settings.",
+      "Schema migrations preserve established behavior for older configurations.",
+      "Automation schema defaults new temporal fields deterministically.",
+      "Profile IDs remain stable for controls and readable summaries use profile names.",
+      "Runtime-only toggles, latches, timers, and held-control state are never persisted."
+    ]
+  },
+  {
+    "name": "Build, Test, and Release Engineering",
+    "description": "The repository contains a reproducible Windows build and release pipeline intended to catch both correctness and packaging regressions.",
+    "subfeatures": [
+      "Single HOTAS_VERSION authority used by the app, launcher, installer, manifest, and tag validation.",
+      "CMake/C++20 build with Qt 6.5+.",
+      "Headless mapping, automation, launcher, and configuration tests.",
+      "Synthetic mapping hot-path benchmark in release validation.",
+      "QML linting and resource/icon checks.",
+      "Dependency metadata validation.",
+      "Qt deployment staging, installer compilation, install/uninstall smoke test, checksums, update manifest generation, and GitHub Release publication.",
+      "Optional Authenticode signing hooks when signing credentials are configured."
+    ]
+  }
+]

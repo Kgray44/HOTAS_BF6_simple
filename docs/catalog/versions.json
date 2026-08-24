@@ -1,0 +1,204 @@
+[
+  {
+    "version": "1.0",
+    "title": "Initial functional mapper",
+    "summary": "Established the first usable DirectInput-to-vJoy application shell for Battlefield 6.",
+    "highlights": [
+      "Qt Quick application shell and persistent configuration model.",
+      "DirectInput physical-controller acquisition and vJoy virtual output worker.",
+      "Initial four-axis routing intended for roll, pitch, throttle, and yaw.",
+      "Basic mapping start/stop behavior and first-pass controller/vJoy status."
+    ]
+  },
+  {
+    "version": "1.1",
+    "title": "Diagnostics and vJoy stabilization",
+    "summary": "Made the first mapper easier to diagnose and more tolerant of real vJoy installation layouts.",
+    "highlights": [
+      "Improved vJoy readiness and capability reporting.",
+      "Automatic location/loading of the installed vJoy interface path.",
+      "Expanded live diagnostics for controller and virtual output state.",
+      "Safer output reset behavior during stop/disconnect paths."
+    ]
+  },
+  {
+    "version": "1.2",
+    "title": "Per-axis configuration",
+    "summary": "Moved mapping from a simple global setup toward profile-ready, per-axis control.",
+    "highlights": [
+      "Dedicated Axes workspace and selected-axis workflow.",
+      "Per-axis route, deadzone, hysteresis, inversion, and output-limit controls.",
+      "Live curve preview tied to the selected physical axis.",
+      "Persistent axis selection and richer input/output instrumentation."
+    ]
+  },
+  {
+    "version": "1.3",
+    "title": "Axes workspace and live visualization",
+    "summary": "Completed the richer axes workspace foundation and improved live transform visibility.",
+    "highlights": [
+      "Separate physical-input and transformed-output markers.",
+      "Dual input/output response visualization.",
+      "More complete axis status/instrumentation.",
+      "UI refinements preparing the curve editor and profile-aware processing pipeline."
+    ]
+  },
+  {
+    "version": "1.4",
+    "title": "Advanced response curve studio",
+    "summary": "Turned response shaping into a full editor rather than a handful of static curve choices.",
+    "highlights": [
+      "Linear, J-Curve, and S-Curve families with multiple strengths.",
+      "Advanced evidence-informed presets and Personal Presets.",
+      "Point-based editing with Smooth/Linear interpolation and multiple point densities.",
+      "Large response graph, live markers, gain/reference views, comparison/audition tools, and signal-path display.",
+      "Immutable 4097-sample compiled lookup tables kept runtime curve evaluation fast."
+    ]
+  },
+  {
+    "version": "1.5",
+    "title": "Profiles and physical profile controls",
+    "summary": "Added instant profile switching and runtime Hold/Toggle controls without burdening the mapping loop.",
+    "highlights": [
+      "Persistent Normal/Precision-style profiles with create, clone, rename, delete, and activation.",
+      "Physical-button Profile Hold and Profile Toggle behavior.",
+      "Deterministic Hold → Toggle → manual base-profile precedence.",
+      "Profile switches compile complete mapping state before worker adoption.",
+      "Stop/disconnect clears runtime-only profile overrides safely."
+    ]
+  },
+  {
+    "version": "1.6.0",
+    "title": "Installer, launcher, and automatic updates",
+    "summary": "Converted the project from a development executable into an installable application with a stable release pipeline.",
+    "highlights": [
+      "Native Win32 launcher and stable-release automatic update checks.",
+      "Single HOTAS_VERSION authority across app, launcher, installer, and release manifest.",
+      "Per-user Inno Setup installer with Start Menu/Desktop shortcuts.",
+      "GitHub Actions build, test, benchmark, packaging, checksum, manifest, and installer smoke pipeline.",
+      "Optional Authenticode signing hooks."
+    ]
+  },
+  {
+    "version": "1.6.1",
+    "title": "POV diagnostics and profile controls",
+    "summary": "Brought physical POV hats into diagnostics and the same profile-control model used by buttons.",
+    "highlights": [
+      "Support for up to four physical POV hats with raw values and logical directions.",
+      "Eight logical direction cards per hat.",
+      "POV direction Profile Hold/Toggle controls.",
+      "Expanded bounded event log and POV diagnostics.",
+      "Safer center/disconnect behavior for newly exposed hat state."
+    ]
+  },
+  {
+    "version": "1.6.2",
+    "title": "Native vJoy POV and dependency bootstrap",
+    "summary": "Added direct POV-to-vJoy routing and made the installer more helpful around required controller dependencies.",
+    "highlights": [
+      "Native continuous/discrete vJoy POV passthrough independent of direction-as-button routing.",
+      "POV direction profile controls retained alongside native hat output.",
+      "Improved axis Output Min/Max controls and selector behavior.",
+      "Installer detection/offering of pinned vJoy and HidHide dependencies when missing.",
+      "Application icon package integrated across mapper, launcher, installer, and shortcuts."
+    ]
+  },
+  {
+    "version": "1.6.3",
+    "title": "POV, profile-control, and UI stabilization",
+    "summary": "Polished the v1.6 input stack into a stable visual and behavioral baseline.",
+    "highlights": [
+      "Resolved native POV target parsing and profile-trigger schema issues.",
+      "Kept native hat output and direction routing visibly separate.",
+      "Improved dark selector/popup consistency and control presentation.",
+      "Strengthened icon/resource and dependency validation in CI.",
+      "Established the presentation later preserved as the Legacy theme."
+    ]
+  },
+  {
+    "version": "1.7.0",
+    "title": "Legacy, Standard, and Top Gun themes",
+    "summary": "Separated presentation from mapping and added three persistent visual systems.",
+    "highlights": [
+      "Legacy preserves the v1.6.3 interface, Standard provides the modern general UI, and Top Gun adds the aviation treatment.",
+      "Theme state persists separately from profiles and mapper configuration.",
+      "Top Gun adds naval-instrument surfaces, fighter artwork, wing badge, technical lines/stripes, aviation typography, and themed footer/header details.",
+      "Theme switching remains UI-only and does not touch DirectInput, vJoy, mapping state, or profile semantics."
+    ]
+  },
+  {
+    "version": "1.8.0",
+    "title": "Deterministic Automation engine",
+    "summary": "Added a compiled Automation subsystem while preserving the mapper-first performance architecture.",
+    "highlights": [
+      "Up to 64 rules with up to four conditions and four actions each.",
+      "Axis, button, POV, profile, and Always conditions with explicit matching behavior.",
+      "vJoy Button Hold/Toggle, Profile Hold/Toggle, and bounded axis Scale/Offset/Clamp/Override/Mix/Follow actions.",
+      "Persisted master kill switch, invalid-rule health, and Automation diagnostics.",
+      "Automation compiles to fixed-capacity worker records before report processing."
+    ]
+  },
+  {
+    "version": "1.8.1",
+    "title": "Stabilization and update awareness",
+    "summary": "Addressed axis parking safety, profile creation polish, and in-app update visibility.",
+    "highlights": [
+      "Global Disabled Axis Value setting from -100.0% to +100.0%, defaulting to 0.0%.",
+      "New Profile dialog restyled across all themes and Start From selector fixed.",
+      "Profile creation deep-copies the chosen source profile.",
+      "Asynchronous in-app stable-update awareness with top-bar and Settings handoff to the launcher."
+    ]
+  },
+  {
+    "version": "1.8.2",
+    "title": "Full-page Automation editor",
+    "summary": "Replaced the modal-style Automation editing experience with a dedicated, safer rule workspace.",
+    "highlights": [
+      "Each Automation opens in a full-page editor.",
+      "New rules are persisted as disabled, incomplete drafts with no default side effects.",
+      "UI-only draft state validates before Save Automation persists and compiles the rule.",
+      "General, WHEN, THEN, priority, enabled state, deletion, and unsaved-change handling moved into one coherent editor.",
+      "Legacy, Standard, and Top Gun share the same Automation behavior."
+    ]
+  },
+  {
+    "version": "1.8.3",
+    "title": "Human-readable Automation rule builder",
+    "summary": "Reworked Automation around user-facing intent instead of engine terminology.",
+    "highlights": [
+      "WHEN SHOULD THIS HAPPEN? and WHAT SHOULD IT DO? builders.",
+      "Plain-language requirement/effect summaries and readable profile names.",
+      "All the time as a user-level rule choice, with legacy Always normalization hidden underneath.",
+      "Consistent AND/OR connectors for multi-requirement rules.",
+      "Live RULE SUMMARY and Advanced-only priority controls."
+    ]
+  },
+  {
+    "version": "1.8.4",
+    "title": "Temporal Automation triggers and controls",
+    "summary": "Expanded Automation from state matching into event, sequence, and timed behavior.",
+    "highlights": [
+      "Button pressed/released events, two-to-five press sequences, and long-press triggers.",
+      "Axis crosses-above/crosses-below events with hysteresis.",
+      "Momentary, whole-rule Toggle, and Timed rule behavior.",
+      "Bounded Tap virtual button action with worker-owned expiry state.",
+      "Advanced timing for sequence gap, long press, brief active duration, and tap duration.",
+      "Runtime latch/timer state clears on stop, disconnect, configuration replacement, and master disable."
+    ]
+  },
+  {
+    "version": "1.8.5",
+    "title": "Axis safety, mapping controls, and extended routing",
+    "summary": "Closed the major BF6 hardware-use gaps with explicit mapping-state controls, axis domains, richer labels, and wider vJoy routing.",
+    "highlights": [
+      "Physical-button and Automation Mapping On, Mapping Off, and Toggle Mapping controls.",
+      "Mapping Off centers axes, releases buttons, centers POVs, and keeps the physical/vJoy devices acquired.",
+      "Reconnect seeds a fresh physical snapshot to prevent artificial input edges.",
+      "Centered/One-Sided axis domains stored per profile.",
+      "Per-profile custom physical axis/button names and game-facing vJoy output aliases.",
+      "Runtime discovery of X/Y/Z/Rx/Ry/Rz/Slider 0/Slider 1 virtual axes.",
+      "Direct decimal Output Min/Max entry with 0.1% step controls.",
+      "Disabled/unsupported outputs are parked without stale commands while the fixed-array hot path is preserved."
+    ]
+  }
+]
