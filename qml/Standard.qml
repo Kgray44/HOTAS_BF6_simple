@@ -36,6 +36,12 @@ Page {
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
+    Component.onCompleted: {
+        if (backend.controllerSetupSuggested) {
+            Qt.callLater(function() { controllerSetupDialog.open() })
+        }
+    }
+
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
     function axisSelectorModel() {
@@ -2103,6 +2109,19 @@ Page {
  spacing: 14
                 PageTitle { heading: "Settings"
  detail: "Persistent device selection and safe mapping defaults" }
+                Panel { width: parent.width; height: theme.topGun ? 108 : 96
+                    color: theme.topGun ? "#d80b1b20" : "#e9161d23"
+                    border.color: theme.topGun ? theme.borderStrong : theme.border
+                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: "CONTROLLER SETUP"; color: theme.topGun ? theme.ivory : theme.text; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                            Text { text: "Detect readiness, explain gaps, and apply only approved vJoy/HidHide changes."
+                                color: theme.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: backend.controllerReadinessStatus; color: theme.ready; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                        }
+                        CommandButton { label: "CONTROLLER SETUP"; onTriggered: controllerSetupDialog.open() }
+                    }
+                }
                 Panel { width: parent.width; height: 96
                     color: theme.topGun ? "#d80b1b20" : "#e9161d23"
                     border.color: theme.topGun ? theme.borderStrong : theme.border
@@ -2312,6 +2331,20 @@ Page {
         }
         CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens }
         AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
+    }
+
+    Dialog {
+        id: controllerSetupDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(740, root.width - 36)
+        title: ""
+        standardButtons: Dialog.Close
+        padding: 18
+        onOpened: backend.inspectControllerReadiness()
+        onClosed: backend.acknowledgeControllerSetup()
+        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.themeTokens }
     }
 
     Dialog {

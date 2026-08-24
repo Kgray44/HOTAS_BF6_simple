@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, automation, diagnostics, multiple UI themes, and a native installer/updater.",
+  "summary": "HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and an explicit Controller Setup readiness wizard.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {
@@ -22,11 +22,11 @@
     },
     {
       "name": "Capability-aware hardware integration",
-      "description": "vJoy axes, buttons, and POV capacity are discovered at runtime. The app exposes only available targets and warns when the virtual device is undersized."
+      "description": "Controller Setup inspects the selected physical controller plus vJoy and HidHide capabilities, computes only the mapper outputs required by current profiles, and keeps all driver work outside the mapping worker."
     },
     {
       "name": "Conservative dependency handling",
-      "description": "vJoy and HidHide are detected and may be offered when missing, but installed components are not silently reconfigured, downgraded, or replaced."
+      "description": "Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is previewed, explicitly approved, minimally scoped, verified, and rolled back when a transaction fails."
     }
   ],
   "signalPath": [
@@ -41,12 +41,30 @@
   ],
   "usage": [
     "Install the latest HOTAS BF6 setup package from GitHub Releases.",
-    "Configure vJoy Device 1 with the axes, button count, and POV capacity you intend to use.",
-    "Optionally configure HidHide so Battlefield sees the vJoy device while HOTAS BF6 can still read the physical controller.",
-    "Open HOTAS BF6, verify the physical controller and vJoy readiness indicators, then select or create a profile.",
+    "Open HOTAS BF6 and use Controller Setup to detect the physical controller, vJoy Device 1, and optional HidHide state.",
+    "Review the exact proposed changes, then choose Apply Automatically only if they match your intent. HOTAS BF6 stops Mapping and asks Windows for approval before changing a driver configuration.",
+    "Confirm READY FOR BF6 BINDING, then select or create a profile.",
     "Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.",
     "Use Mapping On/Off controls and Diagnostics to confirm neutral behavior before binding controls in Battlefield 6.",
     "Add Automation only after the base mapping is behaving correctly; new rules begin as disabled drafts and must validate before they can run."
+  ],
+  "troubleshooting": [
+    {
+      "symptom": "Controller Setup cannot find vJoyConfig or HidHideCLI",
+      "guidance": "Use the official dependency installer or complete the configuration manually. HOTAS BF6 will not download, update, or silently change an already-installed driver."
+    },
+    {
+      "symptom": "vJoy Device 1 is busy, disabled, or lacks required outputs",
+      "guidance": "Keep Mapping Off, close the process holding the device, then recheck. Automatic setup refuses to overwrite a busy target and previews the exact minimal change before requesting elevation."
+    },
+    {
+      "symptom": "A game sees both the physical controller and vJoy",
+      "guidance": "Review the selected physical controller and HidHide findings in Controller Setup. Only hide the exact selected HID instance after confirming the mapper is allowlisted; leave unrelated devices untouched."
+    },
+    {
+      "symptom": "Mapping or game binding is still not behaving as expected",
+      "guidance": "Use Mapping Off to neutralize output, inspect Diagnostics and Controller Setup, then report the application version, Windows version, selected controller, vJoy summary, HidHide state, and reproducible steps."
+    }
   ],
   "testedStack": [
     {
@@ -98,6 +116,119 @@
       "notes": "Builds the per-user installer and participates in installer smoke validation."
     }
   ],
+  "hardwareStatusDefinitions": [
+    {
+      "status": "Validated",
+      "meaning": "Verified as the primary project hardware baseline; a particular new release can still require fresh physical acceptance."
+    },
+    {
+      "status": "Community Validated",
+      "meaning": "Reported working by users, but not independently re-tested by this repository."
+    },
+    {
+      "status": "Expected / Unverified",
+      "meaning": "The DirectInput/vJoy architecture should support it, but no validation claim is made."
+    },
+    {
+      "status": "Known Issue",
+      "meaning": "A documented configuration or driver condition prevents normal mapping until repaired."
+    },
+    {
+      "status": "Unsupported",
+      "meaning": "Outside the current DirectInput-to-vJoy mapper support boundary."
+    }
+  ],
+  "hardwareMatrix": [
+    {
+      "manufacturer": "Thrustmaster",
+      "model": "T.Flight HOTAS One",
+      "architecture": "DirectInput physical controller → HOTAS BF6 → vJoy Device 1",
+      "axes": "Detected at runtime",
+      "buttons": "Detected at runtime",
+      "povs": "Detected at runtime",
+      "status": "Validated",
+      "windows": "Windows 11 project baseline",
+      "hotasVersion": "v1.8.5 baseline",
+      "notes": "Primary hardware target. v1.9.0 planning is headless-tested; rerun Controller Setup after any driver or device change."
+    },
+    {
+      "manufacturer": "Logitech / Saitek",
+      "model": "X52 / X56",
+      "architecture": "Expected DirectInput physical controller → vJoy",
+      "axes": "Unknown",
+      "buttons": "Unknown",
+      "povs": "Unknown",
+      "status": "Expected / Unverified",
+      "windows": "Not recorded",
+      "hotasVersion": "Not recorded",
+      "notes": "Do not treat this as a tested claim; report results with Controller Setup diagnostics."
+    },
+    {
+      "manufacturer": "Thrustmaster",
+      "model": "T.16000M / TWCS",
+      "architecture": "Expected DirectInput physical controller → vJoy",
+      "axes": "Unknown",
+      "buttons": "Unknown",
+      "povs": "Unknown",
+      "status": "Expected / Unverified",
+      "windows": "Not recorded",
+      "hotasVersion": "Not recorded",
+      "notes": "No repository hardware validation has been recorded."
+    },
+    {
+      "manufacturer": "VKB / Virpil / WinWing",
+      "model": "DirectInput-capable devices",
+      "architecture": "Expected DirectInput physical controller → vJoy",
+      "axes": "Unknown",
+      "buttons": "Unknown",
+      "povs": "Unknown",
+      "status": "Expected / Unverified",
+      "windows": "Not recorded",
+      "hotasVersion": "Not recorded",
+      "notes": "Capability-dependent; no vendor/model has been marked tested."
+    },
+    {
+      "manufacturer": "Windows input stack",
+      "model": "vJoy Device 1 busy or disabled",
+      "architecture": "Virtual output unavailable",
+      "axes": "N/A",
+      "buttons": "N/A",
+      "povs": "N/A",
+      "status": "Known Issue",
+      "windows": "Windows 10/11",
+      "hotasVersion": "v1.9.0",
+      "notes": "Controller Setup leaves Mapping Off and guides repair; it will not reconfigure a busy target."
+    },
+    {
+      "manufacturer": "Virtual input device",
+      "model": "vJoy as a physical input source",
+      "architecture": "Virtual-to-virtual feedback loop",
+      "axes": "N/A",
+      "buttons": "N/A",
+      "povs": "N/A",
+      "status": "Unsupported",
+      "windows": "All",
+      "hotasVersion": "All",
+      "notes": "HOTAS BF6 deliberately excludes vJoy/Virtual Joystick from DirectInput selection."
+    }
+  ],
+  "gallery": {
+    "status": "Capture follow-up required",
+    "note": "No authoritative release-aligned screenshots or safe deterministic offscreen capture backend were present in this source tree. v1.9.0 does not insert fabricated product images.",
+    "followUp": "Capture Top Gun Axes, Automation editor, and Controller Setup/Readiness from the signed or release-candidate build using a controlled documentation capture path; crop and optimize the resulting images for GitHub before adding them to the catalog."
+  },
+  "compatibility": {
+    "official": "Battlefield 6 uses EA Javelin anticheat. HOTAS BF6 does not claim EA endorsement, official approval, or guaranteed anticheat compatibility.",
+    "utility": "HOTAS BF6 is an accessibility-style input-mapping utility: it reads a selected physical DirectInput controller and writes a vJoy virtual controller. It is not intended to create an unfair competitive advantage.",
+    "verified": "Repository evidence verifies deterministic mapper behavior, headless tests, packaging gates, and the Controller Setup planner. It does not by itself verify a live Battlefield session, anticheat acceptance, a particular physical controller, installer interaction, or updater interaction.",
+    "windows": "Unsigned builds can be blocked by Windows Smart App Control or other reputation and policy controls. Optional Authenticode signing hooks remain available, but a certificate is not a release prerequisite.",
+    "reporting": "Report regressions with application version, Windows version, selected controller name and exact Controller Setup findings, vJoy capability summary, HidHide state, and steps to reproduce. Do not attach unrelated device lists or sensitive system data."
+  },
+  "license": {
+    "name": "MIT License",
+    "path": "LICENSE",
+    "noticesPath": "THIRD_PARTY_NOTICES.md"
+  },
   "documentation": [
     {
       "name": "Features",
@@ -123,6 +254,21 @@
       "name": "Dependencies",
       "path": "docs/dependencies.md",
       "description": "Pinned dependency bootstrap and verification details."
+    },
+    {
+      "name": "Hardware Compatibility",
+      "path": "docs/Hardware_Compatibility.md",
+      "description": "Structured controller support matrix and validation boundary."
+    },
+    {
+      "name": "BF6 Compatibility",
+      "path": "docs/BF6_Compatibility.md",
+      "description": "Conservative game, anticheat, Windows, and reporting guidance."
+    },
+    {
+      "name": "Third-Party Notices",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "description": "Dependency and trademark attribution boundary."
     }
   ]
 }

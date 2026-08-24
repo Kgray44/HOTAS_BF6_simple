@@ -9,12 +9,6 @@
 #include <dinput.h>
 #include <windows.h>
 
-#include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
-#include <QProcess>
-#include <QStringList>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -386,128 +380,6 @@ private:
     int m_deviceId = 0;
 };
 
-bool hasHidHideService()
-{
-    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!manager) return false;
-    SC_HANDLE service = OpenServiceW(manager, L"HidHide", SERVICE_QUERY_STATUS);
-    const bool found = service != nullptr;
-    if (service) CloseServiceHandle(service);
-    CloseServiceHandle(manager);
-    return found;
-}
-
-QString findHidHideCli()
-{
-    const QStringList roots{
-        qEnvironmentVariable("ProgramW6432"), qEnvironmentVariable("ProgramFiles"),
-        u"C:/Program Files"_qs,
-    };
-    for (const QString &root : roots) {
-        if (root.isEmpty()) continue;
-        const QString executable = QDir(root).filePath(
-            u"Nefarius Software Solutions/HidHide/x64/HidHideCLI.exe"_qs);
-        if (QFileInfo(executable).isExecutable()) return executable;
-    }
-    return {};
-}
-
-std::optional<bool> queryHidHideCloakState()
-{
-    const QString executable = findHidHideCli();
-    if (executable.isEmpty()) return std::nullopt;
-
-    QProcess process;
-    // HidHideCLI can otherwise keep its inherited input pipe open after
-    // printing a result. Explicit EOF makes this a bounded one-shot query.
-    process.setStandardInputFile(QProcess::nullDevice());
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(executable, {u"--cloak-state"_qs});
-    // HidHideCLI normally exits in a few milliseconds. Waiting for a separate
-    // started signal can therefore race its normal exit and report a false
-    // unknown state, so wait for the completed command instead.
-    if (!process.waitForFinished(800)) {
-        process.terminate();
-        if (!process.waitForFinished(200)) {
-            process.kill();
-            process.waitForFinished(1000);
-        }
-        return std::nullopt;
-    }
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        return std::nullopt;
-    }
-    const QByteArray bytes = process.readAll();
-    QString output = QString::fromLocal8Bit(bytes);
-    // HidHideCLI writes through std::wcout. When stdout is redirected to
-    // QProcess it can be UTF-16LE rather than the console code page.
-    if (!output.contains(u"--cloak-"_qs) && bytes.size() % 2 == 0) {
-        output = QString::fromUtf16(
-            reinterpret_cast<const char16_t *>(bytes.constData()), bytes.size() / 2);
-    }
-    if (output.contains(u"--cloak-on"_qs)) return true;
-    if (output.contains(u"--cloak-off"_qs)) return false;
-    return std::nullopt;
-}
-
-QString hidHideOutput(QProcess *process)
-{
-    const QByteArray bytes = process->readAll();
-    QString output = QString::fromLocal8Bit(bytes);
-    // HidHideCLI writes through std::wcout. When stdout is redirected to
-    // QProcess it can be UTF-16LE rather than the console code page.
-    if (!output.contains(u"--"_qs) && bytes.size() % 2 == 0) {
-        output = QString::fromUtf16(
-            reinterpret_cast<const char16_t *>(bytes.constData()), bytes.size() / 2);
-    }
-    return output;
-}
-
-std::optional<bool> queryHidHideMapperAllowed()
-{
-    const QString executable = findHidHideCli();
-    const QString mapperPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
-    if (executable.isEmpty() || mapperPath.isEmpty()) return std::nullopt;
-
-    QProcess process;
-    process.setStandardInputFile(QProcess::nullDevice());
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(executable, {u"--app-list"_qs});
-    if (!process.waitForFinished(800)) {
-        process.terminate();
-        if (!process.waitForFinished(200)) {
-            process.kill();
-            process.waitForFinished(1000);
-        }
-        return std::nullopt;
-    }
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        return std::nullopt;
-    }
-    return hidHideOutput(&process).contains(mapperPath, Qt::CaseInsensitive);
-}
-
-bool registerHidHideMapper()
-{
-    const QString executable = findHidHideCli();
-    const QString mapperPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
-    if (executable.isEmpty() || mapperPath.isEmpty()) return false;
-
-    QProcess process;
-    process.setStandardInputFile(QProcess::nullDevice());
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(executable, {u"--app-reg"_qs, mapperPath});
-    if (!process.waitForFinished(800)) {
-        process.terminate();
-        if (!process.waitForFinished(200)) {
-            process.kill();
-            process.waitForFinished(1000);
-        }
-        return false;
-    }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-}
-
 struct DirectInputDevice {
     GUID guid{};
     QString name;
@@ -593,6 +465,23 @@ std::optional<DirectInputDevice> selectDevice(LPDIRECTINPUT8W directInput, const
     return std::nullopt;
 }
 
+QString hidInstanceIdForDevice(LPDIRECTINPUTDEVICE8W device)
+{
+    if (!device) return {};
+    DIPROPGUIDANDPATH property{};
+    property.diph.dwSize = sizeof(property);
+    property.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+    property.diph.dwHow = DIPH_DEVICE;
+    property.diph.dwObj = 0;
+    if (FAILED(device->GetProperty(DIPROP_GUIDANDPATH, &property.diph))) return {};
+
+    QString path = QString::fromWCharArray(property.wszPath);
+    path.remove(QStringLiteral("\\\\?\\"), Qt::CaseInsensitive);
+    const int classSeparator = path.indexOf(QStringLiteral("#{"));
+    if (classSeparator >= 0) path.truncate(classSeparator);
+    return path.replace(u'#', u'\\').toUpper();
+}
+
 } // namespace
 
 MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
@@ -639,27 +528,6 @@ MappingWorker::~MappingWorker()
     wait(1500);
 }
 
-void MappingWorker::refreshHidHideState()
-{
-    const bool available = hasHidHideService();
-    m_runtime.hidhideAvailable = available;
-    const std::optional<bool> cloaked = available ? queryHidHideCloakState() : std::nullopt;
-    m_runtime.hidhideCloakStateKnown = cloaked.has_value();
-    m_runtime.hidhideCloaked = cloaked.value_or(false);
-    std::optional<bool> mapperAllowed;
-    if (cloaked.value_or(false)) {
-        mapperAllowed = queryHidHideMapperAllowed();
-        if (!mapperAllowed.value_or(false) && registerHidHideMapper()) {
-            mapperAllowed = queryHidHideMapperAllowed();
-        }
-    }
-    m_runtime.hidhideMapperAllowed = mapperAllowed.value_or(!cloaked.value_or(false));
-    if (cloaked.value_or(false) && !m_runtime.hidhideMapperAllowed.load()) {
-        emit workerEvent(u"HidHide is cloaking the HOTAS and did not allow this mapper executable"_qs);
-    }
-    emit hardwareStateChanged();
-}
-
 void MappingWorker::updateConfiguration(const MapperConfiguration &configuration)
 {
     // Curve construction, point normalization, and LUT allocation are
@@ -679,12 +547,26 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
 
 void MappingWorker::setMappingEnabled(bool enabled)
 {
+    if (enabled) m_vjoyReleasedForControlPlane = false;
     m_mappingRequested = enabled;
 }
 
 bool MappingWorker::mappingRequested() const
 {
     return m_mappingRequested.load();
+}
+
+bool MappingWorker::prepareForDriverConfiguration(int timeoutMs)
+{
+    m_mappingRequested = false;
+    m_vjoyReleasedForControlPlane = false;
+    m_releaseVjoyRequested = true;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_vjoyReleasedForControlPlane.load() && m_runtime.outputNeutralized.load()) return true;
+        QThread::msleep(10);
+    }
+    return false;
 }
 
 void MappingWorker::requestStop()
@@ -789,7 +671,8 @@ void MappingWorker::setDeviceSnapshot(const DeviceSnapshot &snapshot)
     bool changed = false;
     {
         QMutexLocker locker(&m_deviceMutex);
-        changed = m_device.name != snapshot.name || m_device.id != snapshot.id;
+        changed = m_device.name != snapshot.name || m_device.id != snapshot.id
+            || m_device.hidInstanceId != snapshot.hidInstanceId;
         m_device = snapshot;
     }
     if (changed) emit hardwareStateChanged();
@@ -817,7 +700,6 @@ void MappingWorker::run()
     }
 
     VJoyAdapter vjoy;
-    refreshHidHideState();
 
     LPDIRECTINPUTDEVICE8W device = nullptr;
     HANDLE inputEvent = nullptr;
@@ -1049,7 +931,7 @@ void MappingWorker::run()
         m_runtime.povCount = objects.povCount;
         for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
         m_runtime.physicalConnected = true;
-        setDeviceSnapshot({selected->name, guidToString(selected->guid)});
+        setDeviceSnapshot({selected->name, guidToString(selected->guid), hidInstanceIdForDevice(device)});
         emit workerEvent(QString(u"Controller connected: %1 · %2 axes · %3 buttons"_qs)
             .arg(selected->name).arg(objects.axisCount).arg(m_runtime.buttonCount.load()));
         if (inputEvent) SetEvent(inputEvent); // Promptly publish an initial state.
@@ -1192,6 +1074,17 @@ void MappingWorker::run()
             quiesceVirtualController();
             m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
             emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
+        }
+        if (m_releaseVjoyRequested.exchange(false)) {
+            // vJoyConfig must not compete with this process for Device 1.
+            // Normal Mapping Off keeps the acquired device stable for games;
+            // an explicit setup transaction is the sole exception.
+            quiesceVirtualController();
+            vjoy.release();
+            m_runtime.vjoyReady = false;
+            setVjoyStatus(u"vJoy released for controller setup"_qs);
+            m_vjoyReleasedForControlPlane = true;
+            emit hardwareStateChanged();
         }
         wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {

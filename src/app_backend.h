@@ -1,6 +1,7 @@
 #pragma once
 
 #include "event_log.h"
+#include "controller_readiness.h"
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
@@ -68,6 +69,14 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideCloakStateKnown READ hidhideCloakStateKnown NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllerReadinessChecks READ controllerReadinessChecks NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllerReadinessProposedChanges READ controllerReadinessProposedChanges NOTIFY stateChanged)
+    Q_PROPERTY(QString controllerReadinessState READ controllerReadinessState NOTIFY stateChanged)
+    Q_PROPERTY(QString controllerReadinessStatus READ controllerReadinessStatus NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerSetupCanApply READ controllerSetupCanApply NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerSetupInProgress READ controllerSetupInProgress NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerSetupCanUndo READ controllerSetupCanUndo NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerSetupSuggested READ controllerSetupSuggested NOTIFY stateChanged)
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
@@ -158,6 +167,14 @@ public:
     bool hidhideCloakStateKnown() const;
     bool hidhideCloaked() const;
     bool hidhideMapperAllowed() const;
+    QVariantList controllerReadinessChecks() const;
+    QVariantList controllerReadinessProposedChanges() const;
+    QString controllerReadinessState() const;
+    QString controllerReadinessStatus() const;
+    bool controllerSetupCanApply() const;
+    bool controllerSetupInProgress() const;
+    bool controllerSetupCanUndo() const;
+    bool controllerSetupSuggested() const { return m_controllerSetupSuggested; }
     bool calibrationActive() const;
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
@@ -267,6 +284,10 @@ public:
     Q_INVOKABLE bool openVjoyConfiguration();
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool openHidHideConfiguration();
+    Q_INVOKABLE void inspectControllerReadiness();
+    Q_INVOKABLE bool applyControllerReadiness();
+    Q_INVOKABLE bool undoControllerReadiness();
+    Q_INVOKABLE void acknowledgeControllerSetup();
     Q_INVOKABLE void useConnectedDevice();
     Q_INVOKABLE void resetApplicationConfiguration();
 
@@ -295,9 +316,12 @@ private:
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
     QString effectiveProfileId() const;
+    PhysicalControllerCapabilities currentPhysicalCapabilities() const;
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;
+    ControllerReadinessService m_readiness;
+    bool m_controllerSetupSuggested = false;
     QTimer m_snapshotTimer;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;

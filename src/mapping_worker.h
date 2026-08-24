@@ -88,6 +88,9 @@ struct AtomicRuntimeState {
 struct DeviceSnapshot {
     QString name = u"No controller detected"_qs;
     QString id;
+    // Captured once at DirectInput acquisition. Readiness uses this exact HID
+    // instance identity; it never infers a HidHide target from a friendly name.
+    QString hidInstanceId;
 };
 
 class MappingWorker final : public QThread {
@@ -100,12 +103,15 @@ public:
     void updateConfiguration(const MapperConfiguration &configuration);
     void setMappingEnabled(bool enabled);
     bool mappingRequested() const;
+    // A setup transaction uses this bounded control-plane handoff before
+    // touching vJoy. It is never called from a report and it never changes a
+    // mapping profile.
+    bool prepareForDriverConfiguration(int timeoutMs = 1500);
     void requestStop();
     void beginCalibration();
     void cancelCalibration();
     bool calibrationRunning() const;
     std::array<Calibration, kPhysicalAxisCount> capturedCalibration() const;
-    void refreshHidHideState();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
@@ -130,6 +136,8 @@ private:
     AtomicRuntimeState m_runtime;
     std::atomic_bool m_stopRequested{false};
     std::atomic_bool m_mappingRequested{false};
+    std::atomic_bool m_releaseVjoyRequested{false};
+    std::atomic_bool m_vjoyReleasedForControlPlane{false};
     std::atomic_bool m_calibrating{false};
     std::atomic_uint64_t m_configurationVersion{0};
     mutable QMutex m_configurationMutex;

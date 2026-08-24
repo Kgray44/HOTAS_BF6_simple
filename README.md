@@ -2,12 +2,18 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v1.8.5**  
+**Current release: v1.9.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, automation, diagnostics, multiple UI themes, and a native installer/updater.
+HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and an explicit Controller Setup readiness wizard.
+
+## Product gallery
+
+**Capture follow-up required.** No authoritative release-aligned screenshots or safe deterministic offscreen capture backend were present in this source tree. v1.9.0 does not insert fabricated product images.
+
+Capture follow-up: Capture Top Gun Axes, Automation editor, and Controller Setup/Readiness from the signed or release-candidate build using a controlled documentation capture path; crop and optimize the resulting images for GitHub before adding them to the catalog.
 
 ## What it is
 
@@ -46,11 +52,11 @@ Rich editing, live graphs, readable automation summaries, and themes operate in 
 
 ### Capability-aware hardware integration
 
-vJoy axes, buttons, and POV capacity are discovered at runtime. The app exposes only available targets and warns when the virtual device is undersized.
+Controller Setup inspects the selected physical controller plus vJoy and HidHide capabilities, computes only the mapper outputs required by current profiles, and keeps all driver work outside the mapping worker.
 
 ### Conservative dependency handling
 
-vJoy and HidHide are detected and may be offered when missing, but installed components are not silently reconfigured, downgraded, or replaced.
+Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is previewed, explicitly approved, minimally scoped, verified, and rolled back when a transaction fails.
 
 ## Main capabilities
 
@@ -66,7 +72,8 @@ vJoy and HidHide are detected and may be offered when missing, but installed com
 - **Diagnostics and Observability** — The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
 - **User Interface and Themes** — The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.
 - **vJoy Integration** — vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.
-- **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while leaving privileged configuration under user control.
+- **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
+- **Controller Readiness and Safe Setup** — A first-run and Settings-accessible Controller Setup wizard turns the Windows input stack into a short detect, explain, fix, verify flow without moving setup work into real-time mapping.
 - **Launcher, Installer, and Updates** — A native launcher owns stable update checks and installation handoff so network/update work never remains active during mapping.
 - **Configuration and Migration** — Persistent configuration evolves through explicit schema migrations while transient runtime state remains outside saved data.
 - **Build, Test, and Release Engineering** — The repository contains a reproducible Windows build and release pipeline intended to catch both correctness and packaging regressions.
@@ -76,14 +83,32 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 ## Installation and first use
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
-2. Configure vJoy Device 1 with the axes, button count, and POV capacity you intend to use.
-3. Optionally configure HidHide so Battlefield sees the vJoy device while HOTAS BF6 can still read the physical controller.
-4. Open HOTAS BF6, verify the physical controller and vJoy readiness indicators, then select or create a profile.
+2. Open HOTAS BF6 and use Controller Setup to detect the physical controller, vJoy Device 1, and optional HidHide state.
+3. Review the exact proposed changes, then choose Apply Automatically only if they match your intent. HOTAS BF6 stops Mapping and asks Windows for approval before changing a driver configuration.
+4. Confirm READY FOR BF6 BINDING, then select or create a profile.
 5. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.
 6. Use Mapping On/Off controls and Diagnostics to confirm neutral behavior before binding controls in Battlefield 6.
 7. Add Automation only after the base mapping is behaving correctly; new rules begin as disabled drafts and must validate before they can run.
 
 The launcher performs stable-release update checks with short timeouts. Update failures fall back to the installed application, and no updater remains active while mapping.
+
+## Troubleshooting
+
+### Controller Setup cannot find vJoyConfig or HidHideCLI
+
+Use the official dependency installer or complete the configuration manually. HOTAS BF6 will not download, update, or silently change an already-installed driver.
+
+### vJoy Device 1 is busy, disabled, or lacks required outputs
+
+Keep Mapping Off, close the process holding the device, then recheck. Automatic setup refuses to overwrite a busy target and previews the exact minimal change before requesting elevation.
+
+### A game sees both the physical controller and vJoy
+
+Review the selected physical controller and HidHide findings in Controller Setup. Only hide the exact selected HID instance after confirming the mapper is allowlisted; leave unrelated devices untouched.
+
+### Mapping or game binding is still not behaving as expected
+
+Use Mapping Off to neutralize output, inspect Diagnostics and Controller Setup, then report the application version, Windows version, selected controller, vJoy summary, HidHide state, and reproducible steps.
 
 ## Validated and targeted stack
 
@@ -97,6 +122,10 @@ The launcher performs stable-release update checks with short timeouts. Update f
 | UI/runtime | Qt 6.5.3 | CI build target | Core, Gui, Network, Qml, Quick, QuickControls2, and Test are used by the project. |
 | Toolchain | MSVC x64 / Windows Server 2022 GitHub Actions | CI validation | Release builds, headless tests, synthetic performance benchmarks, packaging, and installer smoke tests run in CI. |
 | Installer | Inno Setup 6.7.1 | CI packaging target | Builds the per-user installer and participates in installer smoke validation. |
+
+## Hardware support
+
+The structured support matrix distinguishes validated hardware from expected-but-unverified devices and lists the exact reporting boundary: [Hardware Compatibility](docs/Hardware_Compatibility.md).
 
 ## Runtime safety
 
@@ -138,6 +167,13 @@ The release workflow additionally performs QML validation, headless tests, a syn
 - **[Curve Research](docs/curve-research.md)** — Curve mathematics, presets, and supporting rationale.
 - **[Automation Engineering](docs/v1.8-automation-engineering-report.md)** — Automation ordering and implementation notes.
 - **[Dependencies](docs/dependencies.md)** — Pinned dependency bootstrap and verification details.
+- **[Hardware Compatibility](docs/Hardware_Compatibility.md)** — Structured controller support matrix and validation boundary.
+- **[BF6 Compatibility](docs/BF6_Compatibility.md)** — Conservative game, anticheat, Windows, and reporting guidance.
+- **[Third-Party Notices](THIRD_PARTY_NOTICES.md)** — Dependency and trademark attribution boundary.
+
+## License
+
+HOTAS BF6 Simple source is available under the [MIT License](LICENSE). Dependency and trademark boundaries are documented in [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 ## Documentation maintenance
 
@@ -148,4 +184,3 @@ Run `.\scripts\sync-documentation.ps1` after changing product, feature, or versi
 The generator also requires the newest `docs/catalog/versions.json` entry to match `HOTAS_VERSION`, so a version bump cannot pass documentation validation without a corresponding Version Overview entry.
 
 When adding or changing a user-visible capability or release, update the appropriate file in `docs/catalog/`; do not hand-edit the generated documents.
-

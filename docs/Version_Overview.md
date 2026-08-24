@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v1.8.5**
+**Current release: v1.9.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v1.9.0 — Public readiness and automatic controller setup
+
+Makes first-run controller setup substantially clearer through an explicit, transactional vJoy/HidHide readiness workflow while preserving the mapper's deterministic real-time architecture.
+
+- First-run Controller Setup wizard and persistent Settings entry for Detect → Explain → Fix → Verify → Ready.
+- Pure capability planner computes virtual axes, buttons, and native POV requirements from profiles and Automation, with deterministic CI tests and mocked process transactions.
+- Supported vJoyConfig integration snapshots Device 1, preserves known FFB state, changes only an insufficient target after explicit approval, verifies the result, and rolls back on failure.
+- Supported HidHideCLI integration allowlists HOTAS BF6 before hiding only the exact selected HID instance, preserves unrelated rules, verifies cloaking, and supports narrow session undo.
+- Mapping is explicitly Off, neutralized, and released before setup changes; setup never runs in the DirectInput-to-vJoy report path.
+- Adds normal development CI, MIT licensing, third-party notices, structured hardware compatibility documentation, and conservative BF6/anticheat guidance.
 
 ## v1.8.5 — Axis safety, mapping controls, and extended routing
 
@@ -179,4 +190,3 @@ Established the first usable DirectInput-to-vJoy application shell for Battlefie
 ## Maintenance
 
 This file is generated from `docs/catalog/versions.json`. Add each new published version there and update `HOTAS_VERSION`; the documentation workflow regenerates this overview and verifies that the newest catalog entry matches the current version.
-

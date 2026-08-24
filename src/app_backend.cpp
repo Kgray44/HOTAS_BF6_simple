@@ -17,6 +17,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -220,6 +221,8 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
 {
+    QSettings settings;
+    m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
@@ -810,16 +813,52 @@ QString AppBackend::vjoyStatusSeverity() const
     }
     return u"ready"_qs;
 }
-bool AppBackend::hidhideAvailable() const { return m_worker.runtime().hidhideAvailable.load(); }
+bool AppBackend::hidhideAvailable() const { return m_readiness.plan().hidhide.installed; }
 bool AppBackend::hidhideCloakStateKnown() const
 {
-    return m_worker.runtime().hidhideCloakStateKnown.load();
+    return m_readiness.plan().hidhide.cloakKnown;
 }
-bool AppBackend::hidhideCloaked() const { return m_worker.runtime().hidhideCloaked.load(); }
+bool AppBackend::hidhideCloaked() const { return m_readiness.plan().hidhide.cloaked; }
 bool AppBackend::hidhideMapperAllowed() const
 {
-    return m_worker.runtime().hidhideMapperAllowed.load();
+    return m_readiness.plan().hidhide.mapperAllowlisted;
 }
+
+QVariantList AppBackend::controllerReadinessChecks() const
+{
+    QVariantList checks;
+    for (const QString &finding : m_readiness.plan().findings) {
+        const QString upper = finding.toUpper();
+        const QString severity = upper.contains(u"READY"_qs) || upper.contains(u"DETECTED"_qs)
+            ? u"ready"_qs : (upper.contains(u"MANUAL"_qs) || upper.contains(u"NOT DETECTED"_qs)
+            || upper.contains(u"UNAVAILABLE"_qs) ? u"warning"_qs : u"info"_qs);
+        checks.append(QVariantMap{{u"message"_qs, finding}, {u"severity"_qs, severity}});
+    }
+    return checks;
+}
+
+QVariantList AppBackend::controllerReadinessProposedChanges() const
+{
+    QVariantList changes;
+    for (const QString &change : m_readiness.plan().proposedChanges) {
+        changes.append(QVariantMap{{u"message"_qs, change}});
+    }
+    return changes;
+}
+
+QString AppBackend::controllerReadinessState() const
+{
+    return ControllerReadinessService::stateLabel(m_readiness.plan().state);
+}
+
+QString AppBackend::controllerReadinessStatus() const
+{
+    const QString status = m_readiness.plan().status;
+    return status.isEmpty() ? QStringLiteral("Open Controller Setup to inspect your system.") : status;
+}
+bool AppBackend::controllerSetupCanApply() const { return m_readiness.plan().canApplyAutomatically; }
+bool AppBackend::controllerSetupInProgress() const { return m_readiness.transactionActive(); }
+bool AppBackend::controllerSetupCanUndo() const { return m_readiness.canUndo(); }
 bool AppBackend::calibrationActive() const { return m_worker.calibrationRunning(); }
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
 int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }
@@ -2217,8 +2256,10 @@ bool AppBackend::handoffToLauncher()
 
 bool AppBackend::openVjoyConfiguration()
 {
-    // Request a safe worker-side release before launching the supported utility.
-    m_worker.setMappingEnabled(false);
+    if (!m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Could not release vJoy for manual configuration; Mapping remains Off"_qs);
+        return false;
+    }
     const QStringList roots{
         qEnvironmentVariable("ProgramW6432"), qEnvironmentVariable("ProgramFiles"),
         u"C:/Program Files"_qs,
@@ -2237,7 +2278,7 @@ bool AppBackend::openVjoyConfiguration()
 
 void AppBackend::refreshHidHideStatus()
 {
-    m_worker.refreshHidHideState();
+    inspectControllerReadiness();
     appendEvent(hidhideAvailable()
         ? u"HidHide status refreshed"_qs
         : u"HidHide is not installed or its service is unavailable"_qs);
@@ -2262,6 +2303,58 @@ bool AppBackend::openHidHideConfiguration()
     return false;
 }
 
+void AppBackend::inspectControllerReadiness()
+{
+    const ControllerReadinessPlan &plan = m_readiness.inspect(m_configuration, currentPhysicalCapabilities());
+    appendEvent(QString(u"Controller readiness: %1"_qs).arg(plan.status));
+    emit stateChanged();
+}
+
+bool AppBackend::applyControllerReadiness()
+{
+    // The worker owns vJoy while mapping normally. Release it before the
+    // privileged control-plane transaction; it remains explicitly Off after.
+    if (!m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Controller setup could not release vJoy; Mapping remains Off"_qs);
+        emit stateChanged();
+        return false;
+    }
+    m_readiness.inspect(m_configuration, currentPhysicalCapabilities());
+    if (!m_readiness.plan().canApplyAutomatically) {
+        appendEvent(u"Controller setup needs manual review before it can apply changes"_qs);
+        emit stateChanged();
+        return false;
+    }
+    const bool completed = m_readiness.applyAutomatically();
+    appendEvent(completed ? u"Controller automatic setup verified; Mapping remains Off"_qs
+                          : m_readiness.plan().status);
+    emit stateChanged();
+    return completed;
+}
+
+bool AppBackend::undoControllerReadiness()
+{
+    if (!m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Could not release vJoy for setup rollback; Mapping remains Off"_qs);
+        emit stateChanged();
+        return false;
+    }
+    const bool restored = m_readiness.undoLastAutomaticSetup();
+    appendEvent(restored ? u"Automatic controller setup was undone; Mapping remains Off"_qs
+                         : m_readiness.plan().status);
+    emit stateChanged();
+    return restored;
+}
+
+void AppBackend::acknowledgeControllerSetup()
+{
+    if (!m_controllerSetupSuggested) return;
+    QSettings settings;
+    settings.setValue(u"readiness/controllerSetupIntroSeen"_qs, true);
+    m_controllerSetupSuggested = false;
+    emit stateChanged();
+}
+
 void AppBackend::useConnectedDevice()
 {
     const QString id = deviceId();
@@ -2280,6 +2373,23 @@ void AppBackend::resetApplicationConfiguration()
     m_configuration = defaultConfiguration();
     persistAndApply();
     appendEvent(u"Configuration reset to v1.3 defaults"_qs);
+}
+
+PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
+{
+    PhysicalControllerCapabilities physical;
+    const DeviceSnapshot snapshot = m_worker.deviceSnapshot();
+    physical.name = snapshot.name;
+    physical.directInputId = snapshot.id;
+    physical.hidInstanceId = snapshot.hidInstanceId;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    physical.connected = runtime.physicalConnected.load();
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        physical.axes[static_cast<size_t>(index)] = runtime.axisAvailable[index].load();
+    }
+    physical.buttons = runtime.buttonCount.load();
+    physical.povs = runtime.povCount.load();
+    return physical;
 }
 
 void AppBackend::refreshUiSnapshot()
