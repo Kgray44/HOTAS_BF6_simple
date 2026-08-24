@@ -22,9 +22,9 @@ if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
 }
 
 $catalog = [pscustomobject]@{
-    product = Get-Content -LiteralPath $productCatalogPath -Raw | ConvertFrom-Json -Depth 100
-    features = Get-Content -LiteralPath $featuresCatalogPath -Raw | ConvertFrom-Json -Depth 100
-    versions = Get-Content -LiteralPath $versionsCatalogPath -Raw | ConvertFrom-Json -Depth 100
+    product = (Get-Content -LiteralPath $productCatalogPath -Raw | ConvertFrom-Json -Depth 100)
+    features = (Get-Content -LiteralPath $featuresCatalogPath -Raw | ConvertFrom-Json -Depth 100)
+    versions = (Get-Content -LiteralPath $versionsCatalogPath -Raw | ConvertFrom-Json -Depth 100)
 }
 $version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
 
@@ -178,7 +178,7 @@ function Build-Readme {
     Add-Line $lines 'When adding or changing a user-visible capability or release, update the appropriate file in `docs/catalog/`; do not hand-edit the generated documents.'
     Add-Line $lines
 
-    return Finish-Document $lines
+    return (Finish-Document $lines)
 }
 
 function Build-Features {
@@ -220,7 +220,7 @@ function Build-Features {
     Add-Line $lines 'This file is generated from `docs/catalog/features.json`. Update that catalog when a feature is added, removed, renamed, or materially changed; the documentation workflow regenerates this file automatically.'
     Add-Line $lines
 
-    return Finish-Document $lines
+    return (Finish-Document $lines)
 }
 
 function Build-VersionOverview {
@@ -256,14 +256,13 @@ function Build-VersionOverview {
     Add-Line $lines 'This file is generated from `docs/catalog/versions.json`. Add each new published version there and update `HOTAS_VERSION`; the documentation workflow regenerates this overview and verifies that the newest catalog entry matches the current version.'
     Add-Line $lines
 
-    return Finish-Document $lines
+    return (Finish-Document $lines)
 }
 
-$targets = [ordered]@{
-    (Join-Path $root 'README.md') = Build-Readme $catalog $version
-    (Join-Path $root 'docs\Features.md') = Build-Features $catalog $version
-    (Join-Path $root 'docs\Version_Overview.md') = Build-VersionOverview $catalog $version
-}
+$targets = [ordered]@{}
+$targets[(Join-Path $root 'README.md')] = (Build-Readme $catalog $version)
+$targets[(Join-Path $root 'docs\Features.md')] = (Build-Features $catalog $version)
+$targets[(Join-Path $root 'docs\Version_Overview.md')] = (Build-VersionOverview $catalog $version)
 
 if ($Check) {
     $drift = [System.Collections.Generic.List[string]]::new()
@@ -272,8 +271,9 @@ if ($Check) {
             [void]$drift.Add($entry.Key)
             continue
         }
-        $actual = Get-Content -LiteralPath $entry.Key -Raw
-        if ($actual -ne $entry.Value) {
+        $actual = (Get-Content -LiteralPath $entry.Key -Raw) -replace "`r`n", "`n"
+        $expected = ([string]$entry.Value) -replace "`r`n", "`n"
+        if ($actual -ne $expected) {
             [void]$drift.Add($entry.Key)
         }
     }
