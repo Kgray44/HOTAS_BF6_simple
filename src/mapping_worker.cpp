@@ -35,7 +35,11 @@ namespace {
 constexpr DWORD kVjoyUsageX = 0x30;
 constexpr DWORD kVjoyUsageY = 0x31;
 constexpr DWORD kVjoyUsageZ = 0x32;
+constexpr DWORD kVjoyUsageRx = 0x33;
+constexpr DWORD kVjoyUsageRy = 0x34;
 constexpr DWORD kVjoyUsageRz = 0x35;
+constexpr DWORD kVjoyUsageSlider0 = 0x36;
+constexpr DWORD kVjoyUsageSlider1 = 0x37;
 constexpr LONG kVjoyMinimum = 0;
 constexpr LONG kVjoyMaximum = 32767;
 constexpr DWORD kVjoyPovCentered = 0xFFFFFFFFUL;
@@ -96,7 +100,11 @@ DWORD vjoyUsage(VirtualAxis axis)
     case VirtualAxis::X: return kVjoyUsageX;
     case VirtualAxis::Y: return kVjoyUsageY;
     case VirtualAxis::Z: return kVjoyUsageZ;
+    case VirtualAxis::Rx: return kVjoyUsageRx;
+    case VirtualAxis::Ry: return kVjoyUsageRy;
     case VirtualAxis::Rz: return kVjoyUsageRz;
+    case VirtualAxis::Slider0: return kVjoyUsageSlider0;
+    case VirtualAxis::Slider1: return kVjoyUsageSlider1;
     case VirtualAxis::Disabled: return 0;
     }
     return 0;
@@ -139,17 +147,17 @@ public:
             if (status) *status = QString(u"Device %1 is unavailable"_qs).arg(deviceId);
             return false;
         }
-        for (const DWORD usage : {kVjoyUsageX, kVjoyUsageY, kVjoyUsageZ, kVjoyUsageRz}) {
-            if (!m_axisExists(static_cast<UINT>(deviceId), usage)) {
-                if (status) *status = QString(u"Device %1 must expose X, Y, Z and Rz"_qs).arg(deviceId);
-                return false;
-            }
+        const std::array<bool, kVirtualAxisSlotCount> axes = axisCapabilities(deviceId);
+        const int axisCount = static_cast<int>(std::count(axes.begin() + 1, axes.end(), true));
+        if (axisCount == 0) {
+            if (status) *status = QString(u"Device %1 exposes no usable vJoy axes"_qs).arg(deviceId);
+            return false;
         }
         const int buttons = buttonCapacity(deviceId, nullptr);
         const PovCapabilities povs = povCapabilities(deviceId, nullptr);
         if (status) {
-            *status = QString(u"Device %1 Ready · %2 buttons · %3 continuous / %4 discrete POV"_qs)
-                .arg(deviceId).arg(buttons).arg(povs.continuous).arg(povs.discrete);
+            *status = QString(u"Device %1 Ready · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
+                .arg(deviceId).arg(axisCount).arg(buttons).arg(povs.continuous).arg(povs.discrete);
         }
         return true;
     }
@@ -177,11 +185,12 @@ public:
         }
         m_acquired = true;
         m_deviceId = deviceId;
-        m_reset(static_cast<UINT>(m_deviceId));
         if (status) {
+            const std::array<bool, kVirtualAxisSlotCount> axes = axisCapabilities(deviceId);
+            const int axisCount = static_cast<int>(std::count(axes.begin() + 1, axes.end(), true));
             const PovCapabilities povs = povCapabilities(deviceId, nullptr);
-            *status = QString(u"Device %1 Ready · %2 buttons · %3 continuous / %4 discrete POV"_qs)
-                .arg(deviceId).arg(buttonCapacity(deviceId, nullptr))
+            *status = QString(u"Device %1 Ready · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
+                .arg(deviceId).arg(axisCount).arg(buttonCapacity(deviceId, nullptr))
                 .arg(povs.continuous).arg(povs.discrete);
         }
         return true;
@@ -194,6 +203,19 @@ public:
         }
         return m_setAxis(vjoyValue(value), static_cast<UINT>(m_deviceId), vjoyUsage(axis));
     }
+
+    std::array<bool, kVirtualAxisSlotCount> axisCapabilities(int deviceId, QString *status = nullptr)
+    {
+        std::array<bool, kVirtualAxisSlotCount> result{};
+        if (!load(status)) return result;
+        for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+            result[static_cast<size_t>(index)] = m_axisExists(static_cast<UINT>(deviceId),
+                vjoyUsage(static_cast<VirtualAxis>(index))) != FALSE;
+        }
+        return result;
+    }
+
+    bool acquired() const { return m_acquired; }
 
     int buttonCapacity(int deviceId, QString *status)
     {
@@ -246,6 +268,19 @@ public:
         return false;
     }
 
+    bool centerContinuousPov(int index)
+    {
+        return m_acquired && m_setContinuousPov && index > 0
+            && m_setContinuousPov(kVjoyPovCentered, static_cast<UINT>(m_deviceId),
+                                  static_cast<UCHAR>(index));
+    }
+
+    bool centerDiscretePov(int index)
+    {
+        return m_acquired && m_setDiscretePov && index > 0
+            && m_setDiscretePov(-1, static_cast<UINT>(m_deviceId), static_cast<UCHAR>(index));
+    }
+
     bool setButton(int button, bool pressed)
     {
         if (!m_acquired || !m_setButton || button < 1 || button > kMaximumVirtualButtons) {
@@ -257,8 +292,7 @@ public:
 
     void release()
     {
-        if (m_acquired && m_reset && m_relinquish) {
-            m_reset(static_cast<UINT>(m_deviceId));
+        if (m_acquired && m_relinquish) {
             m_relinquish(static_cast<UINT>(m_deviceId));
         }
         m_acquired = false;
@@ -273,7 +307,6 @@ private:
     using SetAxisFn = BOOL(__cdecl *)(LONG, UINT, UINT);
     using GetVJDButtonNumberFn = int(__cdecl *)(UINT);
     using SetBtnFn = BOOL(__cdecl *)(BOOL, UINT, UCHAR);
-    using ResetVJDFn = BOOL(__cdecl *)(UINT);
     using GetPovNumberFn = int(__cdecl *)(UINT);
     using SetContinuousPovFn = BOOL(__cdecl *)(DWORD, UINT, UCHAR);
     using SetDiscretePovFn = BOOL(__cdecl *)(int, UINT, UCHAR);
@@ -305,14 +338,13 @@ private:
         m_setAxis = reinterpret_cast<SetAxisFn>(GetProcAddress(m_library, "SetAxis"));
         m_getButtonNumber = reinterpret_cast<GetVJDButtonNumberFn>(GetProcAddress(m_library, "GetVJDButtonNumber"));
         m_setButton = reinterpret_cast<SetBtnFn>(GetProcAddress(m_library, "SetBtn"));
-        m_reset = reinterpret_cast<ResetVJDFn>(GetProcAddress(m_library, "ResetVJD"));
         // POV APIs are optional because a valid vJoy configuration may expose
         // no hats. Their absence makes the target unavailable, never fatal.
         m_getContinuousPovNumber = reinterpret_cast<GetPovNumberFn>(GetProcAddress(m_library, "GetVJDContPovNumber"));
         m_getDiscretePovNumber = reinterpret_cast<GetPovNumberFn>(GetProcAddress(m_library, "GetVJDDiscPovNumber"));
         m_setContinuousPov = reinterpret_cast<SetContinuousPovFn>(GetProcAddress(m_library, "SetContPov"));
         m_setDiscretePov = reinterpret_cast<SetDiscretePovFn>(GetProcAddress(m_library, "SetDiscPov"));
-        if (!m_getStatus || !m_axisExists || !m_acquire || !m_relinquish || !m_setAxis || !m_reset) {
+        if (!m_getStatus || !m_axisExists || !m_acquire || !m_relinquish || !m_setAxis) {
             if (status) *status = u"vJoyInterface.dll is missing a required API"_qs;
             unload();
             return false;
@@ -332,7 +364,6 @@ private:
         m_setAxis = nullptr;
         m_getButtonNumber = nullptr;
         m_setButton = nullptr;
-        m_reset = nullptr;
         m_getContinuousPovNumber = nullptr;
         m_getDiscretePovNumber = nullptr;
         m_setContinuousPov = nullptr;
@@ -347,7 +378,6 @@ private:
     SetAxisFn m_setAxis = nullptr;
     GetVJDButtonNumberFn m_getButtonNumber = nullptr;
     SetBtnFn m_setButton = nullptr;
-    ResetVJDFn m_reset = nullptr;
     GetPovNumberFn m_getContinuousPovNumber = nullptr;
     GetPovNumberFn m_getDiscretePovNumber = nullptr;
     SetContinuousPovFn m_setContinuousPov = nullptr;
@@ -582,6 +612,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.calibrationCenter[index] = 0.0F;
         m_runtime.calibrationMaximum[index] = 1.0F;
     }
+    for (std::atomic_bool &available : m_runtime.virtualAxisAvailable) available = false;
     for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
         m_runtime.physicalButtonPressed[index] = false;
         m_runtime.virtualButtonPressed[index] = false;
@@ -804,9 +835,9 @@ void MappingWorker::run()
     AutomationRuntime automation;
     automation.setCompiled(activeProfileCache->automation.get());
     quint64 appliedVersion = m_configurationVersion.load();
-    std::array<float, 5> lastVirtualValues{};
+    std::array<float, kVirtualAxisSlotCount> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
-    std::array<int, 5> virtualAxisSources{};
+    std::array<int, kVirtualAxisSlotCount> virtualAxisSources{};
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
     PhysicalButtonStates latestPhysicalButtons{};
@@ -820,8 +851,10 @@ void MappingWorker::run()
     int vjoyButtonCapacity = 0;
     int vjoyContinuousPovCapacity = 0;
     int vjoyDiscretePovCapacity = 0;
+    std::array<bool, kVirtualAxisSlotCount> vjoyAxisAvailable{};
     bool buttonDefaultsPending = false;
     bool profileTriggerSessionActive = false;
+    bool controlPlaneInitialized = false;
     std::array<bool, kMaximumAutomationRules> lastAutomationRuleStates{};
     bool wasMappingRequested = false;
     std::optional<std::chrono::steady_clock::time_point> pendingProfileSwitchStarted;
@@ -853,6 +886,12 @@ void MappingWorker::run()
     const auto rebuildButtonTargets = [&] {
         runtimeButtonTargets = buildRuntimeButtonTargets(activeMapping->buttons, vjoyButtonCapacity,
             activeProfileCache->profileTriggers);
+        for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
+            if (activeProfileCache->mappingControls[static_cast<size_t>(source)]
+                != MappingControlAction::None) {
+                runtimeButtonTargets[static_cast<size_t>(source)] = 0;
+            }
+        }
         runtimePovTargets = buildRuntimePovTargets(activeMapping->povs, vjoyButtonCapacity,
             activeProfileCache->povProfileTriggers);
     };
@@ -886,20 +925,40 @@ void MappingWorker::run()
         return true;
     };
 
-    const auto releaseMappingOutput = [&] {
-        if (m_runtime.mappingActive.exchange(false)) {
-            vjoy.release();
+    const auto quiesceVirtualController = [&] {
+        // This is an event-boundary failsafe, never report-loop behavior.
+        // Keeping a successfully acquired vJoy device alive avoids game-side
+        // controller re-enumeration while making every game-facing control
+        // explicitly inert.
+        if (vjoy.acquired()) {
+            for (int target = 1; target < kVirtualAxisSlotCount; ++target) {
+                if (vjoyAxisAvailable[static_cast<size_t>(target)]
+                    && vjoy.setAxis(static_cast<VirtualAxis>(target), 0.0F)) {
+                    ++m_runtime.vjoyWrites;
+                }
+            }
+            for (int button = 1; button <= vjoyButtonCapacity; ++button) {
+                if (vjoy.setButton(button, false)) ++m_runtime.vjoyWrites;
+            }
+            for (int pov = 1; pov <= vjoyContinuousPovCapacity; ++pov) {
+                if (vjoy.centerContinuousPov(pov)) ++m_runtime.vjoyWrites;
+            }
+            for (int pov = 1; pov <= vjoyDiscretePovCapacity; ++pov) {
+                if (vjoy.centerDiscretePov(pov)) ++m_runtime.vjoyWrites;
+            }
         }
-        lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
-        lastNativePovValues.fill(-2);
-        clearVirtualAxisSnapshot();
+        lastVirtualValues.fill(0.0F);
+        lastNativePovValues.fill(-1);
         clearVirtualButtonSnapshot();
+        for (std::atomic<float> &value : m_runtime.virtualValues) value = 0.0F;
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        m_runtime.mappingActive = false;
+        m_runtime.outputNeutralized = true;
     };
 
     const auto releaseInput = [&] {
-        if (m_runtime.mappingActive.load()) {
-            releaseMappingOutput();
+        if (m_runtime.mappingActive.load() || !m_runtime.outputNeutralized.load()) {
+            quiesceVirtualController();
             emit workerEvent(u"Mapping paused: controller disconnected"_qs);
         }
         if (device) {
@@ -918,6 +977,7 @@ void MappingWorker::run()
         for (auto &axis : m_runtime.axisAvailable) axis = false;
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
+        controlPlaneInitialized = false;
         clearVirtualButtonSnapshot();
         profileTriggers.reset();
         automation.reset();
@@ -930,6 +990,9 @@ void MappingWorker::run()
         selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                 0, -1, ProfileTriggerMode::Disabled}, false);
         m_runtime.physicalConnected = false;
+        m_runtime.mappingEffectiveState = m_mappingRequested.load()
+            ? static_cast<int>(MappingEffectiveState::Suspended)
+            : static_cast<int>(MappingEffectiveState::Off);
         m_runtime.axisCount = 0;
         m_runtime.buttonCount = 0;
         m_runtime.povCount = 0;
@@ -1006,6 +1069,17 @@ void MappingWorker::run()
         const int reportedCapacity = vjoy.buttonCapacity(configuration.vjoyDeviceId, nullptr);
         const VJoyAdapter::PovCapabilities reportedPovs = vjoy.povCapabilities(
             configuration.vjoyDeviceId, nullptr);
+        const std::array<bool, kVirtualAxisSlotCount> reportedAxes =
+            vjoy.axisCapabilities(configuration.vjoyDeviceId, nullptr);
+        if (reportedAxes != vjoyAxisAvailable) {
+            vjoyAxisAvailable = reportedAxes;
+            for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
+                m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
+                    vjoyAxisAvailable[static_cast<size_t>(axis)];
+            }
+            lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+            emit hardwareStateChanged();
+        }
         if (reportedCapacity != vjoyButtonCapacity) {
             vjoyButtonCapacity = reportedCapacity;
             m_runtime.vjoyButtonCount = vjoyButtonCapacity;
@@ -1032,7 +1106,8 @@ void MappingWorker::run()
         const QString previousProfileId = configuration.activeProfileId;
         if (m_runtime.mappingActive.load()) {
             // Clear every old native target before its binding can change or
-            // be disabled. ResetVJD on release is a second safety net.
+            // be disabled. Explicit writes are the safety mechanism; the
+            // driver reset path is intentionally not trusted for neutral.
             for (const NativePovBinding &binding : activeProfileCache->nativePovBindings) {
                 if (binding.enabled) vjoy.setPov(binding, -1);
             }
@@ -1073,7 +1148,9 @@ void MappingWorker::run()
         rebuildButtonTargets();
         lastNativePovValues.fill(-2);
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
-            releaseMappingOutput();
+            quiesceVirtualController();
+            vjoy.release();
+            m_runtime.vjoyReady = false;
             emit workerEvent(u"vJoy device changed; reacquiring mapping output"_qs);
         }
         if (switched || manualBaseChanged) {
@@ -1083,6 +1160,17 @@ void MappingWorker::run()
             }
         }
         if (inputEvent) SetEvent(inputEvent);
+    };
+
+    const auto applyAutomationMappingControl = [&](MappingControlAction action) {
+        if (action == MappingControlAction::None) return;
+        const bool current = m_mappingRequested.load();
+        const bool desired = action == MappingControlAction::MappingOn ? true
+            : action == MappingControlAction::MappingOff ? false : !current;
+        if (desired != current) {
+            m_mappingRequested = desired;
+            emit workerEvent(u"Automation: "_qs + mappingControlActionLabel(action));
+        }
     };
 
     while (!m_stopRequested.load()) {
@@ -1101,6 +1189,9 @@ void MappingWorker::run()
             for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
             selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                     0, -1, ProfileTriggerMode::Disabled}, false);
+            quiesceVirtualController();
+            m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
+            emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
         }
         wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {
@@ -1118,6 +1209,9 @@ void MappingWorker::run()
         }
 
         if (!device) {
+            m_runtime.mappingEffectiveState = mappingRequestedNow
+                ? static_cast<int>(MappingEffectiveState::Suspended)
+                : static_cast<int>(MappingEffectiveState::Off);
             QThread::msleep(50);
             continue;
         }
@@ -1186,6 +1280,42 @@ void MappingWorker::run()
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
 
+        // Global mapping controls are intentionally evaluated from the fixed
+        // physical snapshot before profile/game routing. The first post-
+        // reconnect report only seeds edge state, preventing a held button
+        // from fabricating a toggle transition.
+        if (!controlPlaneInitialized) {
+            latestPhysicalButtons = physicalSnapshot.buttons;
+            controlPlaneInitialized = true;
+        } else {
+            for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
+                const MappingControlAction action = activeProfileCache->mappingControls[
+                    static_cast<size_t>(source)];
+                const bool pressed = physicalSnapshot.buttons[static_cast<size_t>(source)];
+                const bool rising = pressed && !latestPhysicalButtons[static_cast<size_t>(source)];
+                if (!rising || action == MappingControlAction::None) continue;
+                const bool current = m_mappingRequested.load();
+                const bool desired = action == MappingControlAction::MappingOn ? true
+                    : action == MappingControlAction::MappingOff ? false : !current;
+                if (desired != current) {
+                    m_mappingRequested = desired;
+                    emit workerEvent(QString(u"Button %1: %2"_qs).arg(source + 1)
+                        .arg(mappingControlActionLabel(action)));
+                }
+            }
+        }
+        const bool mappingRequestedAfterControls = m_mappingRequested.load();
+        // Mapping controls are control-plane only. Their raw state remains
+        // visible to diagnostics, but no profile trigger, Automation rule, or
+        // game route can consume the same report as normal input.
+        PhysicalButtonStates routedButtons = physicalSnapshot.buttons;
+        for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
+            if (activeProfileCache->mappingControls[static_cast<size_t>(source)]
+                != MappingControlAction::None) {
+                routedButtons[static_cast<size_t>(source)] = false;
+            }
+        }
+
         // Physical profile controls are resolved first. Automation then sees
         // exactly this pre-Automation effective profile and physical snapshot;
         // it never reads another Automation's output from this report.
@@ -1193,15 +1323,15 @@ void MappingWorker::run()
         AutomationInputSnapshot automationInput;
         std::chrono::steady_clock::time_point automationStarted;
         bool measuredAutomation = false;
-        if (mappingRequestedNow) {
+        if (mappingRequestedAfterControls) {
             EffectiveProfileSelection selection;
             if (!profileTriggerSessionActive) {
-                profileTriggers.initializeForMapping(*activeProfileCache, physicalSnapshot.buttons,
+                profileTriggers.initializeForMapping(*activeProfileCache, routedButtons,
                                                      physicalSnapshot.povs, m_runtime.povCount.load());
                 profileTriggerSessionActive = true;
                 selection = profileTriggers.effectiveProfile(*activeProfileCache);
             } else {
-                selection = profileTriggers.processReport(*activeProfileCache, physicalSnapshot.buttons,
+                selection = profileTriggers.processReport(*activeProfileCache, routedButtons,
                                                            physicalSnapshot.povs, m_runtime.povCount.load());
             }
             const auto profileSwitchStarted = std::chrono::steady_clock::now();
@@ -1216,7 +1346,7 @@ void MappingWorker::run()
                     activeMapping->axes[static_cast<size_t>(axis)].calibration);
                 automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)];
             }
-            automationInput.buttons = physicalSnapshot.buttons;
+            automationInput.buttons = routedButtons;
             automationInput.povs = physicalSnapshot.povs;
             automationInput.povCount = m_runtime.povCount.load();
             automationInput.buttonCount = m_runtime.buttonCount.load();
@@ -1228,6 +1358,7 @@ void MappingWorker::run()
             automationStarted = started;
             measuredAutomation = true;
             automationEffects = &automation.evaluate(automationInput);
+            applyAutomationMappingControl(automationEffects->mappingControlAction);
             profileTriggers.updateAutomationContributions(automationEffects->profileContributions,
                 automationEffects->profileContributionCount,
                 static_cast<int>(activeProfileCache->profiles.size()));
@@ -1247,6 +1378,25 @@ void MappingWorker::run()
                 }
                 lastAutomationRuleStates[static_cast<size_t>(rule)] = active;
             }
+        } else if (activeProfileCache->automation
+                   && activeProfileCache->automation->engineEnabled) {
+            // Mapping control automation remains a compact control-plane path
+            // while game-output actions are intentionally ignored below.
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                automationInput.physicalAxes[static_cast<size_t>(axis)] = normalizeCalibrated(
+                    physicalSnapshot.axes[static_cast<size_t>(axis)],
+                    activeMapping->axes[static_cast<size_t>(axis)].calibration);
+                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)];
+            }
+            automationInput.buttons = routedButtons;
+            automationInput.povs = physicalSnapshot.povs;
+            automationInput.povCount = m_runtime.povCount.load();
+            automationInput.buttonCount = m_runtime.buttonCount.load();
+            automationInput.baseProfileIndex = activeProfileCache->baseProfileIndex;
+            automationInput.preAutomationEffectiveProfileIndex = effectiveProfileIndex;
+            automationInput.timestamp = started;
+            automationEffects = &automation.evaluateMappingControls(automationInput);
+            applyAutomationMappingControl(automationEffects->mappingControlAction);
         }
 
         std::array<float, kPhysicalAxisCount> transformedAxes{};
@@ -1319,12 +1469,14 @@ void MappingWorker::run()
             m_runtime.povValues[static_cast<size_t>(hat)] = physicalSnapshot.povs[static_cast<size_t>(hat)];
         }
 
-        const bool mappingRequested = mappingRequestedNow;
+        const bool mappingRequested = m_mappingRequested.load();
         if (mappingRequested && !m_runtime.mappingActive.load()
             && std::chrono::steady_clock::now() >= nextVjoyAcquire) {
             QString status;
             if (vjoy.acquire(configuration.vjoyDeviceId, &status)) {
                 m_runtime.mappingActive = true;
+                m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Active);
+                m_runtime.outputNeutralized = false;
                 m_runtime.vjoyReady = true;
                 setVjoyStatus(status);
                 emit workerEvent(u"Mapping active"_qs);
@@ -1334,12 +1486,15 @@ void MappingWorker::run()
                 nextVjoyAcquire = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             }
         }
-        if (!mappingRequested && m_runtime.mappingActive.load()) {
-            releaseMappingOutput();
-            emit workerEvent(u"Mapping stopped"_qs);
+        if (!mappingRequested && (m_runtime.mappingActive.load()
+            || !m_runtime.outputNeutralized.load())) {
+            quiesceVirtualController();
+            m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
+            emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
         }
         if (m_runtime.mappingActive.load()) {
             for (int target = 1; target < static_cast<int>(output.size()); ++target) {
+                if (!vjoyAxisAvailable[static_cast<size_t>(target)]) continue;
                 const float desired = output[target];
                 if (std::isfinite(lastVirtualValues[target])
                     && std::abs(desired - lastVirtualValues[target]) < 0.00001F) {
@@ -1423,8 +1578,9 @@ void MappingWorker::run()
         while (latency > peak && !m_runtime.latencyPeakUs.compare_exchange_weak(peak, latency)) {}
     }
 
-    releaseMappingOutput();
+    quiesceVirtualController();
     releaseInput();
+    vjoy.release();
     directInput->Release();
 }
 

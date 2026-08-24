@@ -138,7 +138,7 @@ float transformAxis(float raw, const RuntimeAxisMapping &mapping)
 
 bool normalizeMappingConflicts(AxisMappings &mappings)
 {
-    std::array<bool, 5> occupied{};
+    std::array<bool, kVirtualAxisSlotCount> occupied{};
     bool clean = true;
     for (auto &mapping : mappings) {
         const int target = static_cast<int>(mapping.target);

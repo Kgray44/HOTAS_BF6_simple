@@ -888,7 +888,7 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
         runtime.axes[index].profile = profile.axes[index];
         runtime.axes[index].calibration = configuration.calibration[index];
         runtime.axes[index].responseCurve = compileResponseCurve(profile.axes[index].curve,
-            isUnipolarAxis(static_cast<PhysicalAxis>(index)));
+            profile.axes[index].rangeMode == AxisRangeMode::OneSided);
     }
     runtime.buttons = profile.buttons;
     runtime.povs = profile.povs;
@@ -908,7 +908,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             runtime.axes[static_cast<size_t>(axis)].calibration = configuration.calibration[static_cast<size_t>(axis)];
             runtime.axes[static_cast<size_t>(axis)].responseCurve = compileResponseCurve(
                 profile.axes[static_cast<size_t>(axis)].curve,
-                isUnipolarAxis(static_cast<PhysicalAxis>(axis)));
+                profile.axes[static_cast<size_t>(axis)].rangeMode == AxisRangeMode::OneSided);
         }
         runtime.buttons = profile.buttons;
         runtime.povs = profile.povs;
@@ -918,6 +918,12 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
     if (cache.profiles.empty()) {
         cache.profiles.push_back(compileActiveProfile(defaultConfiguration()));
         cache.baseProfileIndex = 0;
+    }
+    const int mappingControlCount = std::min(static_cast<int>(configuration.mappingControls.size()),
+                                             kMaximumPhysicalButtons);
+    for (int source = 0; source < mappingControlCount; ++source) {
+        cache.mappingControls[static_cast<size_t>(source)] =
+            configuration.mappingControls[static_cast<size_t>(source)];
     }
     const int triggerCount = std::min(static_cast<int>(configuration.profileTriggers.size()),
                                       kMaximumPhysicalButtons);

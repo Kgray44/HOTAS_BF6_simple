@@ -73,6 +73,7 @@ private slots:
     void axisCrossingUsesHysteresisAndRearms();
     void v183AutomationMigratesWithSafeTemporalDefaults();
     void temporalStateResetsOnStopDisconnectAndConfigurationSwap();
+    void mappingControlsPublishOnlyOnActivationEdges();
 };
 
 void AutomationEngineTests::axisThresholdHysteresis()
@@ -708,6 +709,43 @@ void AutomationEngineTests::temporalStateResetsOnStopDisconnectAndConfigurationS
     snapshot.buttons[7] = true;
     setTimestamp(snapshot, 80);
     QVERIFY(evaluate(runtime, replacementCache, snapshot).activeRules[0]);
+}
+
+void AutomationEngineTests::mappingControlsPublishOnlyOnActivationEdges()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonHeld;
+    condition.button = 3;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::ToggleMapping;
+    configuration.automations.push_back(rule(u"Toggle mapper"_qs, condition, action));
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.automation->publishable);
+
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    QCOMPARE(evaluate(runtime, cache, snapshot).mappingControlAction, MappingControlAction::None);
+    snapshot.buttons[2] = true;
+    QCOMPARE(evaluate(runtime, cache, snapshot).mappingControlAction,
+             MappingControlAction::ToggleMapping);
+    // Holding the same control does not cause repeated mapping state changes.
+    QCOMPARE(evaluate(runtime, cache, snapshot).mappingControlAction, MappingControlAction::None);
+    snapshot.buttons[2] = false;
+    QCOMPARE(evaluate(runtime, cache, snapshot).mappingControlAction, MappingControlAction::None);
+    snapshot.buttons[2] = true;
+    QCOMPARE(evaluate(runtime, cache, snapshot).mappingControlAction,
+             MappingControlAction::ToggleMapping);
+
+    // The off-state control path has independent edge state and does not
+    // publish ordinary game actions from the same Automation rule set.
+    runtime.reset();
+    snapshot.buttons[2] = false;
+    runtime.evaluateMappingControls(snapshot);
+    snapshot.buttons[2] = true;
+    const AutomationEvaluationResult &controlOnly = runtime.evaluateMappingControls(snapshot);
+    QCOMPARE(controlOnly.mappingControlAction, MappingControlAction::ToggleMapping);
+    QVERIFY(!controlOnly.heldButtons[1]);
 }
 
 } // namespace

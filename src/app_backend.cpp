@@ -130,6 +130,9 @@ QString automationActionSummary(const AutomationActionDefinition &action,
         if (std::abs(action.offset) > 0.00001F) summary += u" with "_qs + percent(action.offset) + u" offset"_qs;
         return summary;
     }
+    case AutomationActionType::MappingOn: return u"Turn mapping on"_qs;
+    case AutomationActionType::MappingOff: return u"Turn mapping off"_qs;
+    case AutomationActionType::ToggleMapping: return u"Toggle mapping on or off"_qs;
     }
     return u"Invalid action"_qs;
 }
@@ -202,7 +205,7 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         action.maximum = static_cast<float>(input.value(u"maximum"_qs, 1.0).toDouble());
         action.tapDurationMs = input.value(u"tapDurationMs"_qs, 80).toInt();
         if (static_cast<int>(action.type) < static_cast<int>(AutomationActionType::VJoyButtonHold)
-            || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::VJoyButtonTap)) {
+            || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::ToggleMapping)) {
             if (reason) *reason = u"Action type is invalid."_qs;
             return false;
         }
@@ -266,7 +269,11 @@ QVariantList AppBackend::axes() const
         QVariantMap item;
         item.insert(u"index"_qs, index);
         item.insert(u"key"_qs, physicalAxisKey(axis));
-        item.insert(u"label"_qs, physicalAxisLabel(axis));
+        const QString hardwareLabel = physicalAxisLabel(axis);
+        const QString customLabel = mapping.customName.trimmed();
+        item.insert(u"label"_qs, customLabel.isEmpty() ? hardwareLabel : customLabel);
+        item.insert(u"hardwareLabel"_qs, hardwareLabel);
+        item.insert(u"customName"_qs, customLabel);
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"available"_qs, runtime.axisAvailable[index].load());
         item.insert(u"raw"_qs, runtime.raw[index].load());
@@ -276,6 +283,14 @@ QVariantList AppBackend::axes() const
         item.insert(u"virtualValue"_qs, virtualValue);
         item.insert(u"virtualValid"_qs, std::isfinite(virtualValue));
         item.insert(u"target"_qs, virtualAxisLabel(mapping.target));
+        const int targetIndex = static_cast<int>(mapping.target);
+        const QString alias = targetIndex > 0 && targetIndex < kVirtualAxisSlotCount
+            ? profile.virtualAxisAliases[static_cast<size_t>(targetIndex)].trimmed() : QString{};
+        item.insert(u"outputAlias"_qs, alias);
+        item.insert(u"targetAvailable"_qs, targetIndex == 0 || runtime.virtualAxisAvailable[
+            static_cast<size_t>(targetIndex)].load());
+        item.insert(u"rangeMode"_qs, axisRangeModeKey(mapping.rangeMode));
+        item.insert(u"rangeModeLabel"_qs, axisRangeModeLabel(mapping.rangeMode));
         item.insert(u"inverted"_qs, mapping.inverted);
         item.insert(u"deadzone"_qs, mapping.deadzone);
         item.insert(u"hysteresis"_qs, mapping.hysteresis);
@@ -283,7 +298,7 @@ QVariantList AppBackend::axes() const
         item.insert(u"outputMaximum"_qs, mapping.outputMaximum);
         item.insert(u"curveSummary"_qs, curveDefinitionSummary(mapping.curve));
         item.insert(u"curvePointEditing"_qs, mapping.curve.pointEditing);
-        item.insert(u"unipolar"_qs, isUnipolarAxis(axis));
+        item.insert(u"unipolar"_qs, mapping.rangeMode == AxisRangeMode::OneSided);
         item.insert(u"calibrationEnabled"_qs, m_configuration.calibration[index].enabled);
         item.insert(u"calibrationMinimum"_qs, runtime.calibrationMinimum[index].load());
         item.insert(u"calibrationCenter"_qs, runtime.calibrationCenter[index].load());
@@ -345,7 +360,7 @@ QVariantMap AppBackend::curveEditorState() const
     QVariantMap state;
     const AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return state;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = mapping->rangeMode == AxisRangeMode::OneSided;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const float raw = runtime.raw[m_configuration.selectedAxisIndex].load();
     const float afterInversion = runtime.afterInversion[m_configuration.selectedAxisIndex].load();
@@ -400,7 +415,7 @@ QVariantMap AppBackend::curveComparisonState() const
     if (m_curveComparisonId.isEmpty()) return state;
     const AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return state;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = mapping->rangeMode == AxisRangeMode::OneSided;
     const CurveDefinition comparison = comparisonCurveDefinition();
     const float raw = m_worker.runtime().raw[m_configuration.selectedAxisIndex].load();
     const float input = unipolar ? (raw + 1.0F) * 0.5F : raw;
@@ -456,7 +471,7 @@ QVariantList AppBackend::curveAdvancedPresets() const
 QVariantList AppBackend::personalCurvePresets() const
 {
     QVariantList result;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     for (const PersonalCurvePreset &preset : m_configuration.personalCurvePresets) {
         if (preset.unipolar != unipolar) continue;
         result.append(QVariantMap{{u"id"_qs, preset.id}, {u"name"_qs, preset.name},
@@ -470,7 +485,7 @@ QVariantList AppBackend::curveComparisonChoices() const
 {
     QVariantList result;
     result.append(QVariantMap{{u"id"_qs, QString{}}, {u"label"_qs, u"None"_qs}});
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     const AxisMapping *current = selectedAxisMapping();
     if (current && current->curve.family == CurveFamily::Custom
         && current->curve.sourceFamily != CurveFamily::Linear) {
@@ -480,7 +495,7 @@ QVariantList AppBackend::curveComparisonChoices() const
     for (const ControllerProfile &profile : m_configuration.profiles) {
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             if (profile.id == m_configuration.activeProfileId && axis == m_configuration.selectedAxisIndex) continue;
-            if (isUnipolarAxis(static_cast<PhysicalAxis>(axis)) != unipolar) continue;
+            if ((profile.axes[static_cast<size_t>(axis)].rangeMode == AxisRangeMode::OneSided) != unipolar) continue;
             result.append(QVariantMap{{u"id"_qs, QString(u"profile:%1:%2"_qs).arg(profile.id).arg(axis)},
                 {u"label"_qs, profile.name + u" / "_qs
                     + physicalAxisLabel(static_cast<PhysicalAxis>(axis))}});
@@ -506,7 +521,7 @@ QVariantList AppBackend::curvePreviewChoices() const
             {u"label"_qs, u"Advanced · "_qs + preset.name}});
     }
     for (const PersonalCurvePreset &preset : m_configuration.personalCurvePresets) {
-        if (preset.unipolar != isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex))) continue;
+        if (preset.unipolar != axisIsOneSided(m_configuration.selectedAxisIndex)) continue;
         result.append(QVariantMap{{u"id"_qs, u"personal:"_qs + preset.id},
             {u"label"_qs, u"Personal · "_qs + preset.name}});
     }
@@ -516,11 +531,11 @@ QVariantList AppBackend::curvePreviewChoices() const
 QVariantList AppBackend::curveCopyChoices() const
 {
     QVariantList result;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     for (const ControllerProfile &profile : m_configuration.profiles) {
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             if (profile.id == m_configuration.activeProfileId && axis == m_configuration.selectedAxisIndex) continue;
-            if (isUnipolarAxis(static_cast<PhysicalAxis>(axis)) != unipolar) continue;
+            if ((profile.axes[static_cast<size_t>(axis)].rangeMode == AxisRangeMode::OneSided) != unipolar) continue;
             result.append(QVariantMap{{u"id"_qs, QString(u"%1:%2"_qs).arg(profile.id).arg(axis)},
                 {u"label"_qs, profile.name + u" / "_qs
                     + physicalAxisLabel(static_cast<PhysicalAxis>(axis)) + u" · "_qs
@@ -551,7 +566,13 @@ QVariantList AppBackend::buttons() const
             runtime.profileOverrideMode.load());
         QVariantMap item;
         item.insert(u"index"_qs, source + 1);
-        item.insert(u"label"_qs, QString(u"Button %1"_qs).arg(source + 1));
+        const QString hardwareLabel = QString(u"Button %1"_qs).arg(source + 1);
+        const QString customLabel = binding.customName.trimmed();
+        const MappingControlAction mappingControl = source < static_cast<int>(m_configuration.mappingControls.size())
+            ? m_configuration.mappingControls[static_cast<size_t>(source)] : MappingControlAction::None;
+        item.insert(u"label"_qs, customLabel.isEmpty() ? hardwareLabel : customLabel);
+        item.insert(u"hardwareLabel"_qs, hardwareLabel);
+        item.insert(u"customName"_qs, customLabel);
         item.insert(u"pressed"_qs, runtime.physicalButtonPressed[source].load());
         item.insert(u"target"_qs, target);
         item.insert(u"targetLabel"_qs, target > 0
@@ -566,6 +587,8 @@ QVariantList AppBackend::buttons() const
         item.insert(u"profileControlMode"_qs, profileTriggerModeLabel(trigger.mode));
         item.insert(u"profileControlActive"_qs, runtime.profileOverrideButton.load() == source + 1
             && activeMode == trigger.mode && profileControlEnabled);
+        item.insert(u"mappingControl"_qs, mappingControlActionLabel(mappingControl));
+        item.insert(u"mappingControlKey"_qs, mappingControlActionKey(mappingControl));
         result.append(item);
     }
     return result;
@@ -768,6 +791,15 @@ int AppBackend::lastPhysicalButton() const { return m_worker.runtime().lastPhysi
 int AppBackend::lastPhysicalButtonTarget() const { return m_worker.runtime().lastPhysicalButtonTarget.load(); }
 bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive.load(); }
 bool AppBackend::mappingRequested() const { return m_worker.mappingRequested(); }
+QString AppBackend::mappingStatus() const
+{
+    switch (static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load())) {
+    case MappingEffectiveState::Active: return u"MAPPING ACTIVE"_qs;
+    case MappingEffectiveState::Suspended: return u"DEVICE MISSING / MAPPING SUSPENDED"_qs;
+    case MappingEffectiveState::Off: return u"MAPPING OFF"_qs;
+    }
+    return u"MAPPING OFF"_qs;
+}
 bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
 QString AppBackend::vjoyStatusSeverity() const
@@ -956,6 +988,40 @@ QStringList AppBackend::buttonOutputChoices() const
     return choices;
 }
 
+QStringList AppBackend::virtualAxisChoices() const
+{
+    QStringList choices{u"Disabled"_qs};
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        const VirtualAxis axis = static_cast<VirtualAxis>(index);
+        const bool available = runtime.virtualAxisAvailable[static_cast<size_t>(index)].load();
+        bool configured = false;
+        for (const AxisMapping &mapping : currentProfile().axes) {
+            configured = configured || mapping.target == axis;
+        }
+        if (available || configured) choices.append(virtualAxisLabel(axis));
+    }
+    return choices;
+}
+
+QString AppBackend::virtualAxisStatus() const
+{
+    QStringList available;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        if (runtime.virtualAxisAvailable[static_cast<size_t>(index)].load()) {
+            available.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+        }
+    }
+    return available.isEmpty() ? u"No vJoy axis reported"_qs
+        : u"Axes: "_qs + available.join(u" / "_qs);
+}
+
+QStringList AppBackend::mappingControlActionChoices() const
+{
+    return {u"None"_qs, u"Mapping On"_qs, u"Mapping Off"_qs, u"Toggle Mapping"_qs};
+}
+
 QVariantList AppBackend::profileTriggerChoices() const
 {
     QVariantList choices;
@@ -1002,6 +1068,13 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     if (!validAxis(physicalAxis)) return false;
     ControllerProfile &profile = currentProfile();
     const VirtualAxis virtualAxis = virtualAxisFromString(target);
+    const int targetIndex = static_cast<int>(virtualAxis);
+    if (virtualAxis != VirtualAxis::Disabled
+        && (targetIndex < 1 || targetIndex >= kVirtualAxisSlotCount
+            || !m_worker.runtime().virtualAxisAvailable[static_cast<size_t>(targetIndex)].load())) {
+        appendEvent(u"Selected vJoy axis is not exposed by the active device"_qs);
+        return false;
+    }
     if (hasMappingConflict(profile.axes, physicalAxis, virtualAxis)) {
         if (!explicitOverride) return false;
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
@@ -1013,6 +1086,39 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     profile.axes[physicalAxis].target = virtualAxis;
     persistAndApply();
     return true;
+}
+
+void AppBackend::setAxisCustomName(int physicalAxis, const QString &name)
+{
+    if (!validAxis(physicalAxis)) return;
+    AxisMapping &mapping = currentProfile().axes[static_cast<size_t>(physicalAxis)];
+    const QString normalized = name.trimmed().left(48);
+    if (mapping.customName == normalized) return;
+    mapping.customName = normalized;
+    persistAndApply();
+}
+
+void AppBackend::setAxisRangeMode(int physicalAxis, const QString &mode)
+{
+    if (!validAxis(physicalAxis)) return;
+    AxisMapping &mapping = currentProfile().axes[static_cast<size_t>(physicalAxis)];
+    const AxisRangeMode normalized = axisRangeModeFromString(mode, mapping.rangeMode);
+    if (mapping.rangeMode == normalized) return;
+    mapping.rangeMode = normalized;
+    // Keep existing limits and curve data intact; only curve-domain metadata
+    // is normalized at the configuration boundary.
+    normalizeCurveDefinition(mapping.curve, normalized == AxisRangeMode::OneSided);
+    persistAndApply();
+}
+
+void AppBackend::setVirtualAxisAlias(const QString &target, const QString &alias)
+{
+    const VirtualAxis axis = virtualAxisFromString(target);
+    const int index = static_cast<int>(axis);
+    if (index <= 0 || index >= kVirtualAxisSlotCount) return;
+    QString normalized = alias.trimmed().left(48);
+    currentProfile().virtualAxisAliases[static_cast<size_t>(index)] = normalized;
+    persistAndApply();
 }
 
 void AppBackend::setSelectedAxis(int physicalAxis)
@@ -1077,9 +1183,9 @@ void AppBackend::setCurveFamily(const QString &family)
         mapping->curve = advancedCurveDefinition(advancedCurvePresets().front().id);
     } else if (normalized == u"custom"_qs) {
         mapping->curve = materializeCurveDefinition(
-            mapping->curve, isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)));
+            mapping->curve, axisIsOneSided(m_configuration.selectedAxisIndex));
     } else if (normalized == u"personal"_qs) {
-        const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+        const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
         const auto preset = std::find_if(m_configuration.personalCurvePresets.cbegin(),
             m_configuration.personalCurvePresets.cend(), [unipolar](const PersonalCurvePreset &entry) {
                 return entry.unipolar == unipolar;
@@ -1135,7 +1241,7 @@ bool AppBackend::applyPersonalCurvePreset(const QString &presetId)
 {
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return false;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     const auto found = std::find_if(m_configuration.personalCurvePresets.cbegin(),
         m_configuration.personalCurvePresets.cend(), [&presetId](const PersonalCurvePreset &preset) {
             return preset.id == presetId;
@@ -1156,7 +1262,7 @@ void AppBackend::setCurvePointEditing(bool enabled)
 {
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping || mapping->curve.pointEditing == enabled) return;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     if (enabled) {
         mapping->curve = materializeCurveDefinition(mapping->curve, unipolar);
     } else {
@@ -1178,7 +1284,7 @@ void AppBackend::setCurvePointDensity(int density)
 {
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping || !mapping->curve.pointEditing || !supportedCurvePointDensity(density)) return;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     mapping->curve = resampleCurveDefinition(mapping->curve, unipolar, density);
     persistAndApply();
 }
@@ -1187,7 +1293,7 @@ void AppBackend::setCurveSymmetry(bool enabled)
 {
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping || !mapping->curve.pointEditing
-        || isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex))) return;
+        || axisIsOneSided(m_configuration.selectedAxisIndex)) return;
     mapping->curve.symmetry = enabled;
     normalizeCurveDefinition(mapping->curve, false);
     persistAndApply();
@@ -1198,7 +1304,7 @@ bool AppBackend::setCurvePoint(int index, double input, double output)
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return false;
     const bool changed = updateCurvePoint(mapping->curve,
-        isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)), index,
+        axisIsOneSided(m_configuration.selectedAxisIndex), index,
         static_cast<float>(input), static_cast<float>(output));
     if (changed) persistAndApply();
     return changed;
@@ -1209,7 +1315,7 @@ bool AppBackend::setCurvePointLocked(int index, bool locked)
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return false;
     const bool changed = hotas::setCurvePointLocked(mapping->curve,
-        isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)), index, locked);
+        axisIsOneSided(m_configuration.selectedAxisIndex), index, locked);
     if (changed) persistAndApply();
     return changed;
 }
@@ -1220,7 +1326,7 @@ int AppBackend::addCurvePoint(double input, double output)
     if (!mapping) return -1;
     int selected = -1;
     if (!hotas::addCurvePoint(mapping->curve,
-            isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)),
+            axisIsOneSided(m_configuration.selectedAxisIndex),
             static_cast<float>(input), static_cast<float>(output), &selected)) return -1;
     persistAndApply();
     return selected;
@@ -1231,7 +1337,7 @@ bool AppBackend::removeCurvePoint(int index)
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return false;
     const bool changed = hotas::removeCurvePoint(mapping->curve,
-        isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex)), index);
+        axisIsOneSided(m_configuration.selectedAxisIndex), index);
     if (changed) persistAndApply();
     return changed;
 }
@@ -1270,8 +1376,9 @@ bool AppBackend::copyCurveFrom(const QString &profileId, int axisIndex)
     const ControllerProfile *source = findProfile(m_configuration, profileId);
     AxisMapping *target = selectedAxisMapping();
     if (!source || !target) return false;
-    const bool targetUnipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
-    const bool sourceUnipolar = isUnipolarAxis(static_cast<PhysicalAxis>(axisIndex));
+    const bool targetUnipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
+    const bool sourceUnipolar = source->axes[static_cast<size_t>(axisIndex)].rangeMode
+        == AxisRangeMode::OneSided;
     const CurveDefinition &curve = source->axes[axisIndex].curve;
     if (targetUnipolar != sourceUnipolar && (curve.pointEditing || curve.family == CurveFamily::Custom)) {
         appendEvent(u"Point-edited curves can only copy to a compatible axis domain"_qs);
@@ -1303,7 +1410,7 @@ bool AppBackend::saveCurrentCurveAsPersonalPreset(const QString &name)
     PersonalCurvePreset preset;
     preset.id = u"curve-"_qs + QUuid::createUuid().toString(QUuid::WithoutBraces);
     preset.name = trimmed;
-    preset.unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    preset.unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     preset.definition = mapping->curve;
     // A library entry owns a concrete curve shape. Materialize generated
     // families once so applying it later is always a copy, never a reference
@@ -1350,7 +1457,7 @@ bool AppBackend::updatePersonalCurvePreset(const QString &presetId)
 {
     const AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return false;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     const auto found = std::find_if(m_configuration.personalCurvePresets.begin(),
         m_configuration.personalCurvePresets.end(), [&presetId](const PersonalCurvePreset &preset) {
             return preset.id == presetId;
@@ -1391,7 +1498,7 @@ QVariantMap AppBackend::inspectCurve(double domainInput) const
     QVariantMap result;
     const AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return result;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     const float input = std::clamp(static_cast<float>(domainInput), unipolar ? 0.0F : -1.0F, 1.0F);
     result.insert(u"input"_qs, input);
     result.insert(u"output"_qs, evaluateCurveDefinition(input, mapping->curve, unipolar));
@@ -1413,7 +1520,7 @@ bool AppBackend::restoreCurveEditorSnapshot(const QString &snapshot)
     if (!mapping) return false;
     const QJsonDocument document = QJsonDocument::fromJson(snapshot.toUtf8());
     if (!document.isObject()) return false;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(m_configuration.selectedAxisIndex));
+    const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     CurveDefinition restored = curveDefinitionFromJson(document.object(), unipolar);
     if (!curveDefinitionIsValid(restored, unipolar)) return false;
     mapping->curve = std::move(restored);
@@ -1526,12 +1633,46 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
             }
         }
     }
-    bindings[static_cast<size_t>(source)] = virtualButton > 0
+    ButtonBinding &updated = bindings[static_cast<size_t>(source)];
+    const QString customName = updated.customName;
+    updated = virtualButton > 0
         ? ButtonBinding{ButtonActionType::VirtualButton, virtualButton} : ButtonBinding{};
-    bindings[static_cast<size_t>(source)].explicitlyConfigured = true;
+    updated.customName = customName;
+    updated.explicitlyConfigured = true;
     persistAndApply();
     appendEvent(QString(u"Button %1 → %2"_qs).arg(physicalButton).arg(
         virtualButton > 0 ? QString(u"vJoy %1"_qs).arg(virtualButton) : u"Disabled"_qs));
+    return true;
+}
+
+void AppBackend::setButtonCustomName(int physicalButton, const QString &name)
+{
+    if (!validPhysicalButton(physicalButton)) return;
+    const int source = physicalButton - 1;
+    ButtonBindings &bindings = currentProfile().buttons;
+    if (bindings.size() <= static_cast<size_t>(source)) {
+        bindings.resize(static_cast<size_t>(source + 1));
+    }
+    ButtonBinding &binding = bindings[static_cast<size_t>(source)];
+    const QString normalized = name.trimmed().left(48);
+    if (binding.customName == normalized) return;
+    binding.customName = normalized;
+    persistAndApply();
+}
+
+bool AppBackend::setMappingControl(int physicalButton, const QString &action)
+{
+    if (!validPhysicalButton(physicalButton)) return false;
+    const int source = physicalButton - 1;
+    const MappingControlAction normalized = mappingControlActionFromString(action);
+    if (m_configuration.mappingControls.size() <= static_cast<size_t>(source)) {
+        m_configuration.mappingControls.resize(static_cast<size_t>(source + 1));
+    }
+    if (m_configuration.mappingControls[static_cast<size_t>(source)] == normalized) return true;
+    m_configuration.mappingControls[static_cast<size_t>(source)] = normalized;
+    persistAndApply();
+    appendEvent(QString(u"Button %1 mapping control: %2"_qs).arg(physicalButton)
+        .arg(mappingControlActionLabel(normalized)));
     return true;
 }
 
@@ -2235,8 +2376,8 @@ void AppBackend::rebuildSelectedAxisCurve()
     m_curveAnalysis.clear();
     if (!validAxis(m_configuration.selectedAxisIndex)) return;
     const int axisIndex = m_configuration.selectedAxisIndex;
-    const bool unipolar = isUnipolarAxis(static_cast<PhysicalAxis>(axisIndex));
     const AxisMapping &axis = currentProfile().axes[axisIndex];
+    const bool unipolar = axis.rangeMode == AxisRangeMode::OneSided;
     RuntimeAxisMapping mapping;
     mapping.profile = axis;
     mapping.calibration = m_configuration.calibration[axisIndex];
@@ -2353,6 +2494,13 @@ bool AppBackend::validPhysicalButton(int physicalButton) const
     const int source = physicalButton - 1;
     return source >= 0 && source < kMaximumPhysicalButtons
         && m_worker.runtime().buttonAvailable[source].load();
+}
+
+bool AppBackend::axisIsOneSided(int physicalAxis) const
+{
+    return validAxis(physicalAxis)
+        && currentProfile().axes[static_cast<size_t>(physicalAxis)].rangeMode
+            == AxisRangeMode::OneSided;
 }
 
 } // namespace hotas

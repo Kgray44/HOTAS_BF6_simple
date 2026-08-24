@@ -39,6 +39,16 @@ bool isEventCondition(AutomationConditionType type)
         || type == AutomationConditionType::AxisCrossesBelow;
 }
 
+MappingControlAction mappingControlForAutomationAction(AutomationActionType type)
+{
+    switch (type) {
+    case AutomationActionType::MappingOn: return MappingControlAction::MappingOn;
+    case AutomationActionType::MappingOff: return MappingControlAction::MappingOff;
+    case AutomationActionType::ToggleMapping: return MappingControlAction::ToggleMapping;
+    default: return MappingControlAction::None;
+    }
+}
+
 QString ruleName(const AutomationDefinition &definition, int index)
 {
     const QString trimmed = definition.name.trimmed();
@@ -271,6 +281,12 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
                 target.target = source.targetAxis;
                 target.source = source.sourceAxis;
                 break;
+            case AutomationActionType::MappingOn:
+            case AutomationActionType::MappingOff:
+            case AutomationActionType::ToggleMapping:
+                // No game-output payload: the worker consumes this compact
+                // action at a state boundary.
+                break;
             }
             if (!valid) break;
         }
@@ -349,6 +365,9 @@ void AutomationRuntime::reset()
     m_previousRuleActive.fill(false);
     m_toggledButtons.fill(false);
     m_tapExpiry = {};
+    m_controlConditionStates = {};
+    m_controlConditionLatches = {};
+    m_controlPreviousRuleActive.fill(false);
     m_result = {};
 }
 
@@ -572,12 +591,59 @@ const AutomationEvaluationResult &AutomationRuntime::evaluateLevelOnly(
             }
             case AutomationActionType::VJoyButtonTap:
                 break;
+            case AutomationActionType::MappingOn:
+            case AutomationActionType::MappingOff:
+            case AutomationActionType::ToggleMapping:
+                if (rising) m_result.mappingControlAction =
+                    mappingControlForAutomationAction(action.type);
+                break;
             default:
                 break;
             }
         }
     }
     m_result.toggledButtons = m_toggledButtons;
+    return m_result;
+}
+
+const AutomationEvaluationResult &AutomationRuntime::evaluateMappingControls(
+    const AutomationInputSnapshot &input)
+{
+    m_result = {};
+    if (!m_compiled || !m_compiled->engineEnabled || !m_compiled->publishable) {
+        return m_result;
+    }
+    for (int ruleIndex = 0; ruleIndex < m_compiled->ruleCount; ++ruleIndex) {
+        const CompiledAutomationRule &rule = m_compiled->rules[static_cast<size_t>(ruleIndex)];
+        const bool valid = m_compiled->ruleHealth[static_cast<size_t>(ruleIndex)]
+            != AutomationHealth::Invalid;
+        bool matched = rule.enabled && valid;
+        if (matched) {
+            matched = rule.matchMode == AutomationMatchMode::All;
+            for (int conditionIndex = 0; conditionIndex < rule.conditionCount; ++conditionIndex) {
+                const CompiledAutomationCondition &condition = rule.conditions[
+                    static_cast<size_t>(conditionIndex)];
+                const bool event = isEventCondition(condition.type);
+                const bool matchedCondition = event
+                    ? eventConditionMatches(condition, input, m_controlConditionStates[
+                        static_cast<size_t>(ruleIndex)][static_cast<size_t>(conditionIndex)])
+                    : conditionMatches(condition, input, m_controlConditionLatches[
+                        static_cast<size_t>(ruleIndex)][static_cast<size_t>(conditionIndex)]);
+                if (rule.matchMode == AutomationMatchMode::All) matched = matched && matchedCondition;
+                else matched = matched || matchedCondition;
+            }
+        }
+        const bool rising = matched && !m_controlPreviousRuleActive[static_cast<size_t>(ruleIndex)];
+        m_controlPreviousRuleActive[static_cast<size_t>(ruleIndex)] = matched;
+        for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
+            const CompiledAutomationAction &action = rule.actions[static_cast<size_t>(actionIndex)];
+            if (rising && (action.type == AutomationActionType::MappingOn
+                           || action.type == AutomationActionType::MappingOff
+                           || action.type == AutomationActionType::ToggleMapping)) {
+                m_result.mappingControlAction = mappingControlForAutomationAction(action.type);
+            }
+        }
+    }
     return m_result;
 }
 
@@ -667,6 +733,12 @@ const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationIn
                 contribution.rising = triggered;
                 break;
             }
+            case AutomationActionType::MappingOn:
+            case AutomationActionType::MappingOff:
+            case AutomationActionType::ToggleMapping:
+                if (triggered) m_result.mappingControlAction =
+                    mappingControlForAutomationAction(action.type);
+                break;
             default:
                 break;
             }

@@ -28,7 +28,7 @@ Page {
     property int conflictingVirtualButton: 0
     property int conflictingPovHat: 0
     property int conflictingPovDirection: -1
-    readonly property var outputChoices: ["Disabled", "X", "Y", "Z", "Rz"]
+    readonly property var outputChoices: backend.virtualAxisChoices
     readonly property var buttonOutputChoices: backend.buttonOutputChoices
     readonly property var profileTriggerChoices: backend.profileTriggerChoices
     readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
@@ -242,10 +242,12 @@ Page {
     }
     component FlightNumericStepper: Item {
         id: flightStepper
-        property int value: 0
-        property int from: -100
-        property int to: 100
-        signal valueEdited(int value)
+        property real value: 0
+        property real from: -100
+        property real to: 100
+        property real stepSize: 0.1
+        property int decimals: 1
+        signal valueEdited(real value)
         implicitWidth: 148
         implicitHeight: 30
         Rectangle {
@@ -262,12 +264,21 @@ Page {
                 Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? theme.ivory : theme.textFaint; font.pixelSize: 17 }
                 MouseArea { id: minusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value > flightStepper.from
-                    onClicked: flightStepper.valueEdited(flightStepper.value - 1) }
+                    onClicked: flightStepper.valueEdited(Math.max(flightStepper.from, flightStepper.value - flightStepper.stepSize)) }
             }
             Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: theme.divider }
-            Text { width: parent.width - 68; height: parent.height; text: flightStepper.value + " %"
+            TextInput { id: valueInput; width: parent.width - 68; height: parent.height
+                text: Number(flightStepper.value).toFixed(flightStepper.decimals)
                 color: theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                font.pixelSize: 11; font.bold: true; font.family: theme.telemetryFont }
+                font.pixelSize: 11; font.bold: true; font.family: theme.telemetryFont; selectByMouse: true
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                onEditingFinished: {
+                    const parsed = Number(text)
+                    if (isFinite(parsed)) flightStepper.valueEdited(Math.max(flightStepper.from, Math.min(flightStepper.to, parsed)))
+                    text = Number(flightStepper.value).toFixed(flightStepper.decimals)
+                }
+                onActiveFocusChanged: if (!activeFocus) text = Number(flightStepper.value).toFixed(flightStepper.decimals)
+            }
             Rectangle { width: 1; height: parent.height - 8; anchors.verticalCenter: parent.verticalCenter; color: theme.divider }
             Rectangle {
                 width: 33; height: parent.height
@@ -275,7 +286,7 @@ Page {
                 Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? theme.ivory : theme.textFaint; font.pixelSize: 15 }
                 MouseArea { id: plusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value < flightStepper.to
-                    onClicked: flightStepper.valueEdited(flightStepper.value + 1) }
+                    onClicked: flightStepper.valueEdited(Math.min(flightStepper.to, flightStepper.value + flightStepper.stepSize)) }
             }
         }
     }
@@ -378,7 +389,7 @@ Page {
                 }
                 Item { Layout.fillWidth: true }
                 Text {
-                    text: backend.mappingActive ? "Mapping active" : "Mapping stopped"
+                    text: backend.mappingStatus
                     color: backend.mappingActive ? "#a9c9b3" : "#a7afb4"
                     font.pixelSize: 10
                     font.bold: true
@@ -708,7 +719,7 @@ Page {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 258
+        Layout.preferredHeight: 344
         color: info && (info.pressed || info.profileControlActive) ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
         border.color: info && info.profileControlActive ? theme.ready : (info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border)
         function triggerChoiceIndex(targetId) {
@@ -718,6 +729,7 @@ Page {
             return 0
         }
         ColumnLayout {
+            id: buttonContent
             anchors.fill: parent
             anchors.margins: 13
             spacing: 7
@@ -766,6 +778,20 @@ Page {
                     : "VIRTUAL    UNROUTED"
                 color: buttonCard.info.virtualPressed ? theme.ready : theme.textFaint
                 font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: buttonCard.info.virtualPressed }
+            FineLine { Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "BUTTON NAME"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 108 }
+                FlightTextInput { Layout.fillWidth: true; text: buttonCard.info.customName || ""; placeholderText: buttonCard.info.hardwareLabel || "Controller button"
+                    onEditingFinished: backend.setButtonCustomName(buttonCard.info.index, text) }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { text: "MAPPING CTRL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 108 }
+                FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 29; model: backend.mappingControlActionChoices
+                    currentIndex: Math.max(0, backend.mappingControlActionChoices.indexOf(buttonCard.info.mappingControl))
+                    onActivated: backend.setMappingControl(buttonCard.info.index, currentText) }
+            }
+            Text { visible: buttonCard.info.mappingControl !== "None"; text: "This control is consumed before game output and uses press edges only."
+                color: theme.warning; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
                 Text { text: "PROFILE CONTROL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
@@ -1108,7 +1134,7 @@ Page {
             }
             Row { spacing: 7
                 StatusDot { tone: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : (backend.vjoyReady ? theme.cyan : theme.textMuted)) }
-                Text { text: backend.mappingActive ? "MAPPING ACTIVE" : (backend.mappingRequested ? "MAPPING PAUSED · RECONNECTING" : (backend.vjoyReady ? "OUTPUT READY" : "MAPPING STOPPED"))
+                Text { text: backend.mappingStatus
  color: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted)
  font.pixelSize: 10
  font.bold: true
@@ -1161,7 +1187,7 @@ Page {
             Item { visible: root.width >= 1180; anchors.right: parent.right; anchors.rightMargin: 18; y: 8; width: 278; height: 76
                 Image { anchors.right: parent.right; y: 3; width: 66; height: 62; source: "qrc:/assets/themes/topgun/fighter-silhouette.svg"; fillMode: Image.PreserveAspectFit; opacity: 0.94 }
                 Image { x: 0; y: 31; width: 80; height: 20; source: "qrc:/assets/themes/topgun/slash-stripes.svg"; fillMode: Image.PreserveAspectFit }
-                Text { x: 85; y: 28; text: backend.mappingActive ? "MAPPING ACTIVE" : "MAPPING STANDBY"; color: backend.mappingActive ? theme.orangeBright : theme.textMuted; font.family: theme.displayFont; font.pixelSize: 15; font.bold: true }
+                Text { x: 85; y: 28; text: backend.mappingStatus; color: backend.mappingActive ? theme.orangeBright : theme.textMuted; font.family: theme.displayFont; font.pixelSize: 15; font.bold: true }
                 Rectangle { x: 0; y: 54; width: 238; height: 1; color: theme.orange }
                 Rectangle { x: 104; y: 58; width: 120; height: 2; color: "#8d291d" }
             }
@@ -1442,6 +1468,24 @@ Page {
                                     }
                                 }
                                 RowLayout { Layout.fillWidth: true
+                                    Text { text: "AXIS NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    FlightTextInput { Layout.fillWidth: true; text: processingPanel.info.customName || ""; placeholderText: processingPanel.info.hardwareLabel || "Controller axis"
+                                        onEditingFinished: backend.setAxisCustomName(processingPanel.info.index, text) }
+                                }
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "RANGE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 31; model: ["Centered", "One-Sided"]
+                                        currentIndex: processingPanel.info.rangeMode === "oneSided" ? 1 : 0
+                                        onActivated: backend.setAxisRangeMode(processingPanel.info.index, currentText) }
+                                }
+                                RowLayout { Layout.fillWidth: true; visible: processingPanel.info.target !== "Disabled"
+                                    Text { text: "VJOY NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    FlightTextInput { Layout.fillWidth: true; text: processingPanel.info.outputAlias || ""; placeholderText: processingPanel.info.target + " alias (e.g. R Up/Down)"
+                                        onEditingFinished: backend.setVirtualAxisAlias(processingPanel.info.target, text) }
+                                }
+                                Text { visible: processingPanel.info.target !== "Disabled" && !processingPanel.info.targetAvailable
+                                    text: "The selected vJoy device does not expose this axis."; color: theme.warning; font.pixelSize: 9; Layout.fillWidth: true }
+                                RowLayout { Layout.fillWidth: true
                                     Text { text: "INVERT"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     Switch {
                                         id: selectedAxisInvert
@@ -1491,14 +1535,14 @@ Page {
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMinimum; from: -100; to: 99
-                                        value: Math.round(Number(processingPanel.info.outputMinimum) * 100)
+                                        value: Number(processingPanel.info.outputMinimum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMaximum; from: -99; to: 100
-                                        value: Math.round(Number(processingPanel.info.outputMaximum) * 100)
+                                        value: Number(processingPanel.info.outputMaximum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
@@ -1713,8 +1757,8 @@ Page {
                           note: "LIFETIME SINCE MAPPING START" },
                         { c: "VJOY WRITES", v: backend.vjoyWritesPerSecond.toFixed(0) + " / S", t: backend.vjoyReady ? theme.cyan : theme.textFaint,
                           note: backend.vjoyWritesPerSecond > 0 ? "ACTIVE · CHANGE-DRIVEN" : "IDLE · CHANGE-DRIVEN" },
-                        { c: "MAPPING", v: backend.mappingActive ? "ACTIVE" : (backend.mappingRequested ? "RECONNECTING" : "STOPPED"), t: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted),
-                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT WILL REACQUIRE AUTOMATICALLY" : "PHYSICAL MONITORING CONTINUES") },
+                        { c: "MAPPING", v: backend.mappingStatus, t: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted),
+                          note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT QUIESCED; WILL REACQUIRE" : "OUTPUT NEUTRALIZED") },
                         { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: theme.ivory,
                           note: "PERSISTENT MANUAL SELECTION" },
                         { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: theme.ivory,
@@ -1788,7 +1832,7 @@ Page {
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
-                            Text { text: backend.vjoyReady ? "X / Y / Z / RZ   ·   " + backend.vjoyButtonCount + " BUTTONS" : "Physical monitoring remains independent"
+                            Text { text: backend.vjoyReady ? backend.vjoyStatus : "Physical monitoring remains independent"
  color: "#91a0a6"; font.pixelSize: 10; font.family: "Consolas" }
                             Text { text: backend.vjoyReady ? root.capacityState() + "   ·   REQUIRED " + backend.vjoyRequiredButtonCount : backend.vjoyStatus
  color: root.capacityColor()
@@ -2195,7 +2239,7 @@ Page {
                                 color: backend.vjoyReady ? "#d9ebe7" : root.capacityColor(); font.pixelSize: 13; font.bold: true }
                             Text { text: "X / Y / Z / Rz"
                                 color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
-                            Text { text: backend.vjoyButtonCount + " buttons   ·   Required " + backend.vjoyRequiredButtonCount
+                            Text { text: backend.virtualAxisStatus + "   ·   " + backend.vjoyButtonCount + " buttons   ·   Required " + backend.vjoyRequiredButtonCount
                                 color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
                             Text { text: backend.vjoyReady ? (backend.vjoyStatusSeverity === "ready"
                                 ? "Virtual output is ready." : root.capacityState()) : backend.vjoyStatus

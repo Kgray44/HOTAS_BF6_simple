@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 12;
+constexpr int kProfileSchemaVersion = 13;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -60,6 +60,8 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
 {
     return {
         {u"target"_qs, virtualAxisLabel(mapping.target)},
+        {u"rangeMode"_qs, axisRangeModeKey(mapping.rangeMode)},
+        {u"customName"_qs, mapping.customName.trimmed().left(48)},
         {u"inverted"_qs, mapping.inverted},
         {u"deadzone"_qs, mapping.deadzone},
         {u"hysteresis"_qs, mapping.hysteresis},
@@ -69,16 +71,20 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
     };
 }
 
-AxisMapping axisMappingFromJson(const QJsonObject &json, bool unipolar)
+AxisMapping axisMappingFromJson(const QJsonObject &json, AxisRangeMode legacyRangeMode)
 {
     AxisMapping mapping;
     mapping.target = virtualAxisFromString(json.value(u"target"_qs).toString());
+    mapping.rangeMode = axisRangeModeFromString(json.value(u"rangeMode"_qs).toString(),
+                                                 legacyRangeMode);
+    mapping.customName = json.value(u"customName"_qs).toString().trimmed().left(48);
     mapping.inverted = json.value(u"inverted"_qs).toBool(false);
     mapping.deadzone = std::clamp(float(json.value(u"deadzone"_qs).toDouble(0.03)), 0.0F, 0.95F);
     mapping.hysteresis = std::clamp(float(json.value(u"hysteresis"_qs).toDouble(0.002)), 0.0F, 0.25F);
     mapping.outputMinimum = std::clamp(float(json.value(u"outputMinimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
     mapping.outputMaximum = std::clamp(float(json.value(u"outputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
-    mapping.curve = curveDefinitionFromJson(json.value(u"curve"_qs).toObject(), unipolar);
+    mapping.curve = curveDefinitionFromJson(json.value(u"curve"_qs).toObject(),
+                                             mapping.rangeMode == AxisRangeMode::OneSided);
     normalizeAxisProcessing(mapping);
     return mapping;
 }
@@ -87,18 +93,22 @@ QJsonObject buttonBindingToJson(const ButtonBinding &binding)
 {
     if (binding.type == ButtonActionType::VirtualButton) {
         return {{u"type"_qs, u"virtualButton"_qs}, {u"target"_qs, binding.target},
-                {u"explicit"_qs, binding.explicitlyConfigured}};
+                {u"explicit"_qs, binding.explicitlyConfigured},
+                {u"customName"_qs, binding.customName.trimmed().left(48)}};
     }
-    return {{u"type"_qs, u"disabled"_qs}, {u"explicit"_qs, binding.explicitlyConfigured}};
+    return {{u"type"_qs, u"disabled"_qs}, {u"explicit"_qs, binding.explicitlyConfigured},
+            {u"customName"_qs, binding.customName.trimmed().left(48)}};
 }
 
 ButtonBinding buttonBindingFromJson(const QJsonObject &json)
 {
     const bool explicitlyConfigured = json.value(u"explicit"_qs).toBool(false);
+    const QString customName = json.value(u"customName"_qs).toString().trimmed().left(48);
     if (json.value(u"type"_qs).toString().trimmed().compare(u"virtualButton"_qs, Qt::CaseInsensitive) == 0) {
-        return {ButtonActionType::VirtualButton, json.value(u"target"_qs).toInt(0), explicitlyConfigured};
+        return {ButtonActionType::VirtualButton, json.value(u"target"_qs).toInt(0), explicitlyConfigured,
+                customName};
     }
-    return {ButtonActionType::Disabled, 0, explicitlyConfigured};
+    return {ButtonActionType::Disabled, 0, explicitlyConfigured, customName};
 }
 
 void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configuration)
@@ -111,6 +121,38 @@ void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configurat
     configuration.selectedAxisIndex = std::clamp(json.value(u"selectedAxisIndex"_qs)
         .toInt(static_cast<int>(PhysicalAxis::X)), 0, kPhysicalAxisCount - 1);
     configuration.automationEnabled = json.value(u"automationEnabled"_qs).toBool(true);
+}
+
+AxisRangeMode legacyRangeModeFor(PhysicalAxis axis)
+{
+    // Preserve pre-v1.8.5 throttle presentation when migrating an existing
+    // profile, while every newly created v1.8.5 mapping is centered by
+    // explicit default.
+    return axis == PhysicalAxis::Z ? AxisRangeMode::OneSided : AxisRangeMode::Centered;
+}
+
+QJsonArray mappingControlsToJson(const MappingControlBindings &bindings)
+{
+    QJsonArray controls;
+    const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalButtons);
+    for (int index = 0; index < count; ++index) {
+        controls.append(mappingControlActionKey(bindings[static_cast<size_t>(index)]));
+    }
+    return controls;
+}
+
+MappingControlBindings mappingControlsFromJson(const QJsonValue &value)
+{
+    MappingControlBindings bindings;
+    if (!value.isArray()) return bindings;
+    const QJsonArray controls = value.toArray();
+    const int count = std::min(static_cast<int>(controls.size()), kMaximumPhysicalButtons);
+    bindings.resize(static_cast<size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        bindings[static_cast<size_t>(index)] = mappingControlActionFromString(
+            controls.at(index).toString());
+    }
+    return bindings;
 }
 
 QString automationMatchModeToString(AutomationMatchMode mode)
@@ -216,6 +258,9 @@ QString automationActionTypeToString(AutomationActionType type)
     case AutomationActionType::AxisMix: return u"axisMix"_qs;
     case AutomationActionType::AxisFollow: return u"axisFollow"_qs;
     case AutomationActionType::VJoyButtonTap: return u"vJoyButtonTap"_qs;
+    case AutomationActionType::MappingOn: return u"mappingOn"_qs;
+    case AutomationActionType::MappingOff: return u"mappingOff"_qs;
+    case AutomationActionType::ToggleMapping: return u"toggleMapping"_qs;
     }
     return {};
 }
@@ -224,13 +269,16 @@ bool automationActionTypeFromString(const QString &value, AutomationActionType *
 {
     if (!type) return false;
     const QString normalized = value.trimmed();
-    const std::array<std::pair<QString, AutomationActionType>, 11> choices{{
+    const std::array<std::pair<QString, AutomationActionType>, 14> choices{{
         {u"vJoyButtonHold"_qs, AutomationActionType::VJoyButtonHold}, {u"vJoyButtonToggle"_qs, AutomationActionType::VJoyButtonToggle},
         {u"profileHold"_qs, AutomationActionType::ProfileHold}, {u"profileToggle"_qs, AutomationActionType::ProfileToggle},
         {u"axisScale"_qs, AutomationActionType::AxisScale}, {u"axisOffset"_qs, AutomationActionType::AxisOffset},
         {u"axisClamp"_qs, AutomationActionType::AxisClamp}, {u"axisOverride"_qs, AutomationActionType::AxisOverride},
         {u"axisMix"_qs, AutomationActionType::AxisMix}, {u"axisFollow"_qs, AutomationActionType::AxisFollow},
         {u"vJoyButtonTap"_qs, AutomationActionType::VJoyButtonTap},
+        {u"mappingOn"_qs, AutomationActionType::MappingOn},
+        {u"mappingOff"_qs, AutomationActionType::MappingOff},
+        {u"toggleMapping"_qs, AutomationActionType::ToggleMapping},
     }};
     for (const auto &[key, candidate] : choices) if (normalized == key) { *type = candidate; return true; }
     return false;
@@ -539,16 +587,25 @@ QJsonObject profileToJson(const ControllerProfile &profile)
 {
     QJsonArray axes;
     for (const AxisMapping &mapping : profile.axes) axes.append(axisMappingToJson(mapping));
+    QJsonObject virtualAliases;
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        const QString alias = profile.virtualAxisAliases[static_cast<size_t>(index)].trimmed().left(48);
+        if (!alias.isEmpty()) {
+            virtualAliases.insert(virtualAxisLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
+                                      .remove(u" "_qs), alias);
+        }
+    }
     return {
         {u"id"_qs, profile.id},
         {u"name"_qs, profile.name},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
         {u"povs"_qs, povBindingsToJson(profile.povs)},
+        {u"virtualAxisAliases"_qs, virtualAliases},
     };
 }
 
-bool profileFromJson(const QJsonObject &json, ControllerProfile *profile)
+bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool migrateLegacyRangeMode)
 {
     if (!profile) return false;
     const QString id = json.value(u"id"_qs).toString().trimmed();
@@ -565,12 +622,20 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile)
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
         if (axis.isEmpty()) return false;
-        restored.axes[index] = axisMappingFromJson(axis, isUnipolarAxis(static_cast<PhysicalAxis>(index)));
+        restored.axes[index] = axisMappingFromJson(axis, migrateLegacyRangeMode
+            ? legacyRangeModeFor(static_cast<PhysicalAxis>(index)) : AxisRangeMode::Centered);
     }
     normalizeMappingConflicts(restored.axes);
     restored.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
     restored.povs = povBindingsFromJson(json.value(u"povs"_qs));
     normalizePovMappings(restored.povs, restored.buttons, kMaximumVirtualButtons);
+    const QJsonObject virtualAliases = json.value(u"virtualAxisAliases"_qs).toObject();
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        const QString key = virtualAxisLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
+            .remove(u" "_qs);
+        restored.virtualAxisAliases[static_cast<size_t>(index)] = virtualAliases.value(key)
+            .toString().trimmed().left(48);
+    }
     *profile = std::move(restored);
     return true;
 }
@@ -592,7 +657,8 @@ MapperConfiguration migrateLegacyConfiguration(const QJsonObject &json, int vers
             if (valid) *valid = false;
             return defaultConfiguration();
         }
-        normal.axes[index] = axisMappingFromJson(axis, isUnipolarAxis(static_cast<PhysicalAxis>(index)));
+        normal.axes[index] = axisMappingFromJson(axis,
+            legacyRangeModeFor(static_cast<PhysicalAxis>(index)));
         configuration.calibration[index] = calibrationFromJson(axis.value(u"calibration"_qs).toObject());
     }
     normalizeMappingConflicts(normal.axes);
@@ -676,6 +742,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
+        {u"mappingControls"_qs, mappingControlsToJson(configuration.mappingControls)},
         {u"nativePovBindings"_qs, nativePovBindingsToJson(configuration.nativePovBindings)},
         {u"automationEnabled"_qs, configuration.automationEnabled},
         {u"automations"_qs, automations},
@@ -688,7 +755,8 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
-        && version != 9 && version != 10 && version != 11 && version != kProfileSchemaVersion) {
+        && version != 9 && version != 10 && version != 11 && version != 12
+        && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -714,7 +782,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     QSet<QString> names;
     for (const QJsonValue &value : profiles) {
         ControllerProfile profile;
-        if (!profileFromJson(value.toObject(), &profile)
+        if (!profileFromJson(value.toObject(), &profile, version < kProfileSchemaVersion)
             || ids.contains(profile.id) || names.contains(profile.name.toCaseFolded())) {
             if (valid) *valid = false;
             return fallbackWithGlobalSettings(json);
@@ -773,6 +841,11 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version >= 10) {
         configuration.povProfileTriggers = povProfileTriggersFromJson(json.value(u"povProfileTriggers"_qs));
         configuration.nativePovBindings = nativePovBindingsFromJson(json.value(u"nativePovBindings"_qs));
+    }
+    // v1.8.5 adds global mapping controls. Earlier records migrate safely
+    // with no source assigned.
+    if (version >= 13) {
+        configuration.mappingControls = mappingControlsFromJson(json.value(u"mappingControls"_qs));
     }
     // v1.8 adds global Automation with an ON/empty migration. Definitions
     // may intentionally reference a deleted profile or unavailable device;

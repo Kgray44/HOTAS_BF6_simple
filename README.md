@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.8.4
+# HOTAS BF6 Simple v1.8.5
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -20,8 +20,9 @@ The installer upgrades program files only. Existing QSettings data—including p
 - a C++20 Visual Studio build environment
 - Qt 6.5+ with the `Core`, `Gui`, `Network`, `Qml`, `Quick`, `QuickControls2`, and `Test`
   components
-- vJoy configured with Device 1 exposing X, Y, Z, Rz, 32 virtual buttons, and
-  a continuous or discrete POV if native hat passthrough is wanted
+- vJoy configured with Device 1 exposing the virtual axes and buttons you plan
+  to route. X, Y, Z, Rz, Rx, Ry, Slider 0, and Slider 1 are discovered at
+  runtime; unavailable targets remain safely disabled.
 - [HidHide](https://github.com/nefarius/HidHide) is optional but recommended for hiding the physical controller from games when configured correctly
 
 vJoy is required for virtual output. The v1.8.2 installer can offer the pinned
@@ -44,6 +45,36 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.8.5 safe mapping controls, axis domains, and extended vJoy routing
+
+- A global physical-button control can now set **Mapping On**, **Mapping Off**,
+  or **Toggle Mapping**. Controls are consumed before normal routing and act on
+  a press edge, so holding a button cannot repeatedly toggle output. Automation
+  offers the same three control actions and they remain effective while mapping
+  is off; ordinary Automation game output stays suppressed in that state.
+- Mapping Off and controller disconnect quiesce the acquired vJoy device in
+  place: all exposed axes center, virtual buttons release, and continuous and
+  discrete POVs center. The UI distinguishes **MAPPING ACTIVE**, **MAPPING
+  OFF**, and **DEVICE MISSING / MAPPING SUSPENDED**. A reconnect seeds a fresh
+  physical snapshot before output resumes, preventing artificial button edges.
+- Axis range is profile-owned: choose **Centered** or **One-Sided** per axis.
+  Existing profiles migrate with the former throttle behavior only where it was
+  previously implied; new mappings make no physical-axis assumption. Curves,
+  output limits, previews, and labels use that one selected domain.
+- Physical axes and buttons may have per-profile custom names. vJoy outputs can
+  be labelled with game-facing aliases, and extended vJoy X/Y/Z/Rx/Ry/Rz/Slider
+  0/Slider 1 routes appear only when the active device exposes them. Default
+  routes stay conservative rather than silently assigning uncertain BF6 actions.
+- The output-limit editor accepts direct decimal percentage entry as well as
+  fine 0.1% step adjustments. The report loop remains precompiled and fixed
+  array based; disabled/unsupported outputs are parked without stale commands.
+
+Before a physical release, verify with the real HOTAS and vJoy device that every
+mapped axis reaches BF6, Mapping Off centers all axes and releases buttons/POVs,
+the chosen physical control only acts once per press, reconnect does not create
+an input edge, and Standard, Legacy, and Top Gun show the same saved profile.
+The headless test suite cannot prove those device, installer, or updater checks.
 
 ## v1.8.4 Automation triggers and temporal controls
 

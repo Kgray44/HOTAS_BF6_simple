@@ -42,7 +42,7 @@ Item {
     readonly property var axisComparisonTypes: [1, 2, 3, 4, 15, 16]
     readonly property var povStates: ["points", "is not pointing"]
     readonly property var profileStates: ["is selected", "is active"]
-    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another", "Tap virtual button"]
+    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another", "Tap virtual button", "Turn mapping on", "Turn mapping off", "Toggle mapping"]
     readonly property var behaviorChoices: ["While the trigger is active", "Toggle on each trigger", "Run briefly"]
     readonly property var sourceStages: ["Controller input", "Current mapped output"]
     readonly property var directions: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
@@ -194,6 +194,9 @@ Item {
             + " from " + sourceStageName(effect.sourceStage) + " at " + percent(effect.value)
             + (Number(effect.offset) === 0 ? "" : " with " + percent(effect.offset) + " offset")
         case 10: return "Tap virtual button " + effect.virtualButton
+        case 11: return "Turn mapping on"
+        case 12: return "Turn mapping off"
+        case 13: return "Toggle mapping on or off"
         }
         return "Choose what this automation should do."
     }

@@ -30,6 +30,7 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> curveResponse{};
     std::array<std::atomic<float>, kPhysicalAxisCount> transformed{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
+    std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationMinimum{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationCenter{};
@@ -50,6 +51,8 @@ struct AtomicRuntimeState {
     std::atomic_int lastPhysicalButton{0};
     std::atomic_int lastPhysicalButtonTarget{0};
     std::atomic_bool mappingActive{false};
+    std::atomic_int mappingEffectiveState{static_cast<int>(MappingEffectiveState::Off)};
+    std::atomic_bool outputNeutralized{true};
     std::atomic_bool vjoyReady{false};
     std::atomic_bool hidhideAvailable{false};
     std::atomic_bool hidhideCloakStateKnown{false};

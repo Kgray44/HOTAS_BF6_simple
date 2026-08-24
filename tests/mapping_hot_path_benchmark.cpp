@@ -78,8 +78,8 @@ struct HotPathState {
     std::array<bool, hotas::kPhysicalAxisCount> availableAxes{};
     std::array<bool, hotas::kMaximumPhysicalButtons> availableButtons{};
     std::array<hotas::AxisHysteresisState, hotas::kPhysicalAxisCount> hysteresis{};
-    std::array<float, 5> lastVirtualValues{};
-    std::array<int, 5> virtualAxisSources{};
+    std::array<float, hotas::kVirtualAxisSlotCount> lastVirtualValues{};
+    std::array<int, hotas::kVirtualAxisSlotCount> virtualAxisSources{};
     hotas::RuntimeButtonTargets buttonTargets{};
     hotas::RuntimePovTargets povTargets{};
     std::array<hotas::NativePovBinding, hotas::kMaximumPhysicalPovs> nativePovBindings{};
@@ -159,8 +159,6 @@ std::vector<SyntheticReport> makeReports()
             report.axes[static_cast<size_t>(axis)]
                 = static_cast<float>((state >> 8) & 0xFFFFu) / 32767.5F - 1.0F;
         }
-        report.axes[static_cast<size_t>(hotas::PhysicalAxis::Z)]
-            = (report.axes[static_cast<size_t>(hotas::PhysicalAxis::Z)] + 1.0F) * 0.5F;
         report.buttons[static_cast<size_t>(reportIndex % 15)] = (reportIndex / 31) % 2 == 0;
         report.pov = (reportIndex / 97) % 2 == 0 ? 9000 : -1;
         reports.push_back(report);
@@ -182,8 +180,8 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
     state.physicalMonitor.accept(physicalReport);
     const hotas::PhysicalInputSnapshot &snapshot = state.physicalMonitor.snapshot();
 
-    std::array<float, 5> output{};
-    std::array<bool, 5> targetUsed{};
+    std::array<float, hotas::kVirtualAxisSlotCount> output{};
+    std::array<bool, hotas::kVirtualAxisSlotCount> targetUsed{};
     state.virtualAxisSources.fill(-1);
     for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
         if (!state.availableAxes[static_cast<size_t>(index)]) continue;

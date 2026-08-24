@@ -14,7 +14,10 @@ namespace hotas {
 using namespace Qt::StringLiterals;
 
 constexpr int kPhysicalAxisCount = 8;
-constexpr int kVirtualAxisSlotCount = 5;
+// Slot zero is the durable Disabled sentinel. Keep every real vJoy usage at
+// an explicit value: configuration serializes string keys, while the worker
+// can retain a compact fixed-size index with no lookup or allocation.
+constexpr int kVirtualAxisSlotCount = 9;
 // DIJOYSTATE2 exposes up to 128 DirectInput button-state bytes. The actual
 // controller count is always enumerated at runtime; this is only storage.
 constexpr int kMaximumPhysicalButtons = 128;
@@ -50,10 +53,19 @@ enum class PhysicalAxis : int {
 
 enum class VirtualAxis : int {
     Disabled = 0,
-    X,
-    Y,
-    Z,
-    Rz,
+    X = 1,
+    Y = 2,
+    Z = 3,
+    Rx = 4,
+    Ry = 5,
+    Rz = 6,
+    Slider0 = 7,
+    Slider1 = 8,
+};
+
+enum class AxisRangeMode : int {
+    Centered = 0,
+    OneSided,
 };
 
 // A response definition is durable user configuration.  It deliberately
@@ -116,6 +128,10 @@ struct Calibration {
 
 struct AxisMapping {
     VirtualAxis target = VirtualAxis::Disabled;
+    // Presentation/editing semantics only. The worker keeps the same
+    // normalized -1..+1 transfer domain for both modes.
+    AxisRangeMode rangeMode = AxisRangeMode::Centered;
+    QString customName;
     bool inverted = false;
     float deadzone = 0.03F;
     // Hysteresis is evaluated on the normalized, deadzone-rescaled input in
@@ -149,6 +165,9 @@ struct ButtonBinding {
     // Defaults are filled as 1:1 passthrough when a controller is discovered.
     // A user edit, including Disabled, makes that source authoritative.
     bool explicitlyConfigured = false;
+    // Per-profile presentation metadata. The physical identity stays the
+    // button's fixed DirectInput index.
+    QString customName;
 };
 
 using ButtonBindings = std::vector<ButtonBinding>;
@@ -236,6 +255,24 @@ struct ProfileTriggerBinding {
     ProfileTriggerMode mode = ProfileTriggerMode::Disabled;
 };
 
+// Mapping state is global control-plane configuration, deliberately separate
+// from profile-specific game routes. A configured source is consumed before
+// normal vJoy button routing.
+enum class MappingControlAction : int {
+    None = 0,
+    MappingOn,
+    MappingOff,
+    ToggleMapping,
+};
+
+enum class MappingEffectiveState : int {
+    Active = 0,
+    Off,
+    Suspended,
+};
+
+using MappingControlBindings = std::vector<MappingControlAction>;
+
 // Automation definitions are durable, UI-facing data only. They are resolved
 // into compact numeric records by AutomationCompiler before the mapping
 // worker observes them. The fixed limits are deliberately part of the
@@ -289,6 +326,9 @@ enum class AutomationActionType : int {
     AxisMix,
     AxisFollow,
     VJoyButtonTap,
+    MappingOn,
+    MappingOff,
+    ToggleMapping,
 };
 
 enum class AutomationAxisSourceStage : int {
@@ -357,6 +397,9 @@ struct ControllerProfile {
     // Missing entries mean safely disabled hats. A saved controller can have
     // fewer hats than a later-connected controller without losing anything.
     PovBindings povs;
+    // Aliases are profile-local user-facing labels; VirtualAxis remains the
+    // immutable vJoy HID identity used by the worker.
+    std::array<QString, kVirtualAxisSlotCount> virtualAxisAliases{};
 };
 
 struct MapperConfiguration {
@@ -377,6 +420,7 @@ struct MapperConfiguration {
     // is deliberately not persisted here.
     ProfileTriggerBindings profileTriggers;
     PovProfileTriggerBindings povProfileTriggers;
+    MappingControlBindings mappingControls;
     // Native vJoy POV passthrough is global to the selected physical device,
     // rather than profile-specific, and defaults safely off on migration.
     NativePovBindings nativePovBindings;
@@ -415,6 +459,7 @@ using RuntimePovProfileTriggers = std::array<std::array<RuntimeProfileTrigger,
 struct RuntimeProfileCache {
     std::vector<RuntimeMappingConfiguration> profiles;
     std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> profileTriggers{};
+    std::array<MappingControlAction, kMaximumPhysicalButtons> mappingControls{};
     RuntimePovProfileTriggers povProfileTriggers{};
     std::array<NativePovBinding, kMaximumPhysicalPovs> nativePovBindings{};
     std::shared_ptr<const struct CompiledAutomationSet> automation;
@@ -479,9 +524,68 @@ inline bool isVirtualControllerName(const QString &name)
 
 inline bool isUnipolarAxis(PhysicalAxis axis)
 {
-    // The HOTAS throttle is displayed as 0–100%, while the internal mapping
-    // representation remains the vJoy-friendly -1…+1 normalized range.
-    return axis == PhysicalAxis::Z;
+    Q_UNUSED(axis);
+    // v1.8.5 removes the old physical-Z special case. This helper remains for
+    // source compatibility with legacy migration only; new mappings are
+    // explicitly configured through AxisRangeMode.
+    return false;
+}
+
+inline QString axisRangeModeKey(AxisRangeMode mode)
+{
+    return mode == AxisRangeMode::OneSided ? u"oneSided"_qs : u"centered"_qs;
+}
+
+inline AxisRangeMode axisRangeModeFromString(const QString &value,
+                                              AxisRangeMode fallback = AxisRangeMode::Centered)
+{
+    QString normalized = value.trimmed().toCaseFolded();
+    normalized.remove(u' ');
+    normalized.remove(u'-');
+    if (normalized == u"centered"_qs) return AxisRangeMode::Centered;
+    if (normalized == u"onesided"_qs || normalized == u"one-sided"_qs) {
+        return AxisRangeMode::OneSided;
+    }
+    return fallback;
+}
+
+inline QString axisRangeModeLabel(AxisRangeMode mode)
+{
+    return mode == AxisRangeMode::OneSided
+        ? u"One-Sided (0 to 100)"_qs : u"Centered (-100 to +100)"_qs;
+}
+
+inline QString mappingControlActionKey(MappingControlAction action)
+{
+    switch (action) {
+    case MappingControlAction::MappingOn: return u"mappingOn"_qs;
+    case MappingControlAction::MappingOff: return u"mappingOff"_qs;
+    case MappingControlAction::ToggleMapping: return u"toggleMapping"_qs;
+    case MappingControlAction::None: return u"none"_qs;
+    }
+    return u"none"_qs;
+}
+
+inline MappingControlAction mappingControlActionFromString(const QString &value)
+{
+    QString normalized = value.trimmed().toCaseFolded();
+    normalized.remove(u' ');
+    normalized.remove(u'-');
+    if (normalized == u"mappingon"_qs) return MappingControlAction::MappingOn;
+    if (normalized == u"mappingoff"_qs) return MappingControlAction::MappingOff;
+    if (normalized == u"togglemapping"_qs) return MappingControlAction::ToggleMapping;
+    return MappingControlAction::None;
+}
+
+inline QString mappingControlActionLabel(MappingControlAction action)
+{
+    switch (action) {
+    case MappingControlAction::MappingOn: return u"Mapping On"_qs;
+    case MappingControlAction::MappingOff: return u"Mapping Off"_qs;
+    case MappingControlAction::ToggleMapping: return u"Toggle Mapping"_qs;
+    case MappingControlAction::None: return u"None"_qs;
+    }
+    return u"None"_qs;
 }
 
 inline QString virtualAxisLabel(VirtualAxis axis)
@@ -491,7 +595,11 @@ inline QString virtualAxisLabel(VirtualAxis axis)
     case VirtualAxis::X: return u"X"_qs;
     case VirtualAxis::Y: return u"Y"_qs;
     case VirtualAxis::Z: return u"Z"_qs;
+    case VirtualAxis::Rx: return u"Rx"_qs;
+    case VirtualAxis::Ry: return u"Ry"_qs;
     case VirtualAxis::Rz: return u"Rz"_qs;
+    case VirtualAxis::Slider0: return u"Slider 0"_qs;
+    case VirtualAxis::Slider1: return u"Slider 1"_qs;
     }
     return u"Disabled"_qs;
 }
@@ -502,7 +610,11 @@ inline VirtualAxis virtualAxisFromString(const QString &value)
     if (normalized == u"x") return VirtualAxis::X;
     if (normalized == u"y") return VirtualAxis::Y;
     if (normalized == u"z") return VirtualAxis::Z;
+    if (normalized == u"rx") return VirtualAxis::Rx;
+    if (normalized == u"ry") return VirtualAxis::Ry;
     if (normalized == u"rz") return VirtualAxis::Rz;
+    if (normalized == u"slider0"_qs || normalized == u"slider 0"_qs) return VirtualAxis::Slider0;
+    if (normalized == u"slider1"_qs || normalized == u"slider 1"_qs) return VirtualAxis::Slider1;
     return VirtualAxis::Disabled;
 }
 
@@ -543,6 +655,12 @@ inline ControllerProfile defaultProfile(const QString &id, const QString &name)
     profile.id = id;
     profile.name = name;
     profile.axes = defaultAxisMappings();
+    // These are editable game-facing aliases only; no BF6 raw-HID assumption
+    // is made by the worker or the route defaults.
+    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::X)] = u"L Left/Right"_qs;
+    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Y)] = u"L Up/Down"_qs;
+    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Z)] = u"R Left/Right"_qs;
+    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Rx)] = u"R Up/Down"_qs;
     return profile;
 }
 

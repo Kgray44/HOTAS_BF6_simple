@@ -120,6 +120,8 @@ private slots:
     void disabledAxisValueDefaultsMigratesAndPersistsGlobally();
     void disabledAxisValueClampsSafely();
     void disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes();
+    void v185AxisMetadataAndMappingControlsRoundTrip();
+    void expandedVirtualAxesArePlannedAndUnavailableRoutesStayParked();
     void duplicateMappingIsRejectedAndNormalized();
     void buttonCapacityMismatchIsReported();
     void defaultButtonPassthroughIsCapacityBounded();
@@ -603,6 +605,86 @@ void MappingCoreTests::disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMa
     QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Rz)], -0.75F);
     QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::X)], -1);
     QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::Y)], static_cast<int>(PhysicalAxis::Y));
+}
+
+void MappingCoreTests::v185AxisMetadataAndMappingControlsRoundTrip()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    AxisMapping &roll = profile.axes[static_cast<size_t>(PhysicalAxis::X)];
+    roll.customName = QStringLiteral("Stick Roll");
+    roll.rangeMode = AxisRangeMode::OneSided;
+    roll.target = VirtualAxis::Ry;
+    profile.virtualAxisAliases[static_cast<size_t>(VirtualAxis::Ry)] = QStringLiteral("R Up/Down");
+    profile.buttons.resize(3);
+    profile.buttons[2].customName = QStringLiteral("Master Arm");
+    configuration.mappingControls.resize(3);
+    configuration.mappingControls[2] = MappingControlAction::ToggleMapping;
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const ControllerProfile &restoredProfile = activeProfile(restored);
+    QCOMPARE(restoredProfile.axes[static_cast<size_t>(PhysicalAxis::X)].customName,
+             QStringLiteral("Stick Roll"));
+    QCOMPARE(restoredProfile.axes[static_cast<size_t>(PhysicalAxis::X)].rangeMode,
+             AxisRangeMode::OneSided);
+    QCOMPARE(restoredProfile.axes[static_cast<size_t>(PhysicalAxis::X)].target, VirtualAxis::Ry);
+    QCOMPARE(restoredProfile.virtualAxisAliases[static_cast<size_t>(VirtualAxis::Ry)],
+             QStringLiteral("R Up/Down"));
+    QCOMPARE(restoredProfile.buttons[2].customName, QStringLiteral("Master Arm"));
+    QCOMPARE(restored.mappingControls[2], MappingControlAction::ToggleMapping);
+    QCOMPARE(compileRuntimeProfileCache(restored).mappingControls[2],
+             MappingControlAction::ToggleMapping);
+
+    // Older records retain the historical throttle behavior only at migration;
+    // newly configured profiles are explicit rather than tied to physical Z.
+    QJsonObject v12 = ConfigStore::toJson(configuration);
+    v12.insert(QStringLiteral("version"), 12);
+    v12.remove(QStringLiteral("mappingControls"));
+    QJsonArray profiles = v12.value(QStringLiteral("profiles")).toArray();
+    for (int profileIndex = 0; profileIndex < profiles.size(); ++profileIndex) {
+        QJsonObject serialized = profiles.at(profileIndex).toObject();
+        serialized.remove(QStringLiteral("virtualAxisAliases"));
+        QJsonArray axes = serialized.value(QStringLiteral("axes")).toArray();
+        for (int axisIndex = 0; axisIndex < axes.size(); ++axisIndex) {
+            QJsonObject axis = axes.at(axisIndex).toObject();
+            axis.remove(QStringLiteral("rangeMode"));
+            axis.remove(QStringLiteral("customName"));
+            axes[axisIndex] = axis;
+        }
+        serialized.insert(QStringLiteral("axes"), axes);
+        profiles[profileIndex] = serialized;
+    }
+    v12.insert(QStringLiteral("profiles"), profiles);
+    const MapperConfiguration migrated = ConfigStore::fromJson(v12, &valid);
+    QVERIFY(valid);
+    QCOMPARE(activeProfile(migrated).axes[static_cast<size_t>(PhysicalAxis::Z)].rangeMode,
+             AxisRangeMode::OneSided);
+    QCOMPARE(activeProfile(migrated).axes[static_cast<size_t>(PhysicalAxis::X)].rangeMode,
+             AxisRangeMode::Centered);
+    QVERIFY(migrated.mappingControls.empty());
+}
+
+void MappingCoreTests::expandedVirtualAxesArePlannedAndUnavailableRoutesStayParked()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.axes[static_cast<size_t>(PhysicalAxis::Rx)].target = VirtualAxis::Slider1;
+    profile.axes[static_cast<size_t>(PhysicalAxis::Y)].target = VirtualAxis::Ry;
+    RuntimeMappingConfiguration mapping = compileActiveProfile(configuration);
+    std::array<bool, kPhysicalAxisCount> available{};
+    std::array<float, kPhysicalAxisCount> transformed{};
+    available.fill(true);
+    transformed[static_cast<size_t>(PhysicalAxis::Rx)] = 0.42F;
+    transformed[static_cast<size_t>(PhysicalAxis::Y)] = -0.30F;
+    const VirtualAxisOutputPlan plan = buildVirtualAxisOutputPlan(mapping, available, transformed, -0.15F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Slider1)], 0.42F);
+    QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::Slider1)],
+             static_cast<int>(PhysicalAxis::Rx));
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Ry)], -0.30F);
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Slider0)], -0.15F);
+    QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::Slider0)], -1);
 }
 
 void MappingCoreTests::duplicateMappingIsRejectedAndNormalized()
@@ -1117,7 +1199,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 12);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 13);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1360,7 +1442,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 12);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 13);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

@@ -101,6 +101,10 @@ struct AutomationEvaluationResult {
         profileContributions{};
     int profileContributionCount = 0;
     int activeRuleCount = 0;
+    // Control-plane actions are emitted only on a rule activation edge. They
+    // deliberately have no vJoy output representation, so the worker can
+    // keep them alive while ordinary mapping output is suppressed.
+    MappingControlAction mappingControlAction = MappingControlAction::None;
 };
 
 // This compiler runs only at a configuration boundary. Invalid individual
@@ -113,6 +117,10 @@ public:
     void reset();
     void setCompiled(const CompiledAutomationSet *compiled);
     const AutomationEvaluationResult &evaluate(const AutomationInputSnapshot &input);
+    // Evaluates only Mapping On/Off/Toggle actions. This maintains independent
+    // edge state so ordinary vJoy/profile/axis Automation effects cannot
+    // latch or publish while mapping is explicitly off.
+    const AutomationEvaluationResult &evaluateMappingControls(const AutomationInputSnapshot &input);
 
     // Implements the documented deterministic action order:
     // Follow/Override, Scale, Mix, Offset, Clamp, final legal-domain clamp.
@@ -153,6 +161,11 @@ private:
     std::array<bool, kMaximumVirtualButtons + 1> m_toggledButtons{};
     std::array<std::array<std::chrono::steady_clock::time_point,
                           kMaximumAutomationActions>, kMaximumAutomationRules> m_tapExpiry{};
+    std::array<std::array<ConditionRuntimeState, kMaximumAutomationConditions>,
+               kMaximumAutomationRules> m_controlConditionStates{};
+    std::array<std::array<bool, kMaximumAutomationConditions>, kMaximumAutomationRules>
+        m_controlConditionLatches{};
+    std::array<bool, kMaximumAutomationRules> m_controlPreviousRuleActive{};
     AutomationEvaluationResult m_result{};
 };
 

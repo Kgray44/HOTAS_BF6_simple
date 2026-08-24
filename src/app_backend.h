@@ -60,6 +60,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int lastPhysicalButtonTarget READ lastPhysicalButtonTarget NOTIFY stateChanged)
     Q_PROPERTY(bool mappingActive READ mappingActive NOTIFY stateChanged)
     Q_PROPERTY(bool mappingRequested READ mappingRequested NOTIFY stateChanged)
+    Q_PROPERTY(QString mappingStatus READ mappingStatus NOTIFY stateChanged)
     Q_PROPERTY(bool vjoyReady READ vjoyReady NOTIFY stateChanged)
     Q_PROPERTY(QString vjoyStatus READ vjoyStatus NOTIFY stateChanged)
     Q_PROPERTY(QString vjoyStatusSeverity READ vjoyStatusSeverity NOTIFY stateChanged)
@@ -94,6 +95,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList automationRules READ automationRules NOTIFY stateChanged)
     Q_PROPERTY(QString automationValidationMessage READ automationValidationMessage NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
+    Q_PROPERTY(QStringList virtualAxisChoices READ virtualAxisChoices NOTIFY stateChanged)
+    Q_PROPERTY(QString virtualAxisStatus READ virtualAxisStatus NOTIFY stateChanged)
+    Q_PROPERTY(QStringList mappingControlActionChoices READ mappingControlActionChoices CONSTANT)
     Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
@@ -146,6 +150,7 @@ public:
     int lastPhysicalButtonTarget() const;
     bool mappingActive() const;
     bool mappingRequested() const;
+    QString mappingStatus() const;
     bool vjoyReady() const;
     QString vjoyStatus() const;
     QString vjoyStatusSeverity() const;
@@ -180,6 +185,9 @@ public:
     QVariantList automationRules() const;
     QString automationValidationMessage() const;
     QStringList buttonOutputChoices() const;
+    QStringList virtualAxisChoices() const;
+    QString virtualAxisStatus() const;
+    QStringList mappingControlActionChoices() const;
     QVariantList profileTriggerChoices() const;
     QVariantList nativePovTargetChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
@@ -188,6 +196,9 @@ public:
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
     Q_INVOKABLE bool setMapping(int physicalAxis, const QString &target, bool explicitOverride = false);
+    Q_INVOKABLE void setAxisCustomName(int physicalAxis, const QString &name);
+    Q_INVOKABLE void setAxisRangeMode(int physicalAxis, const QString &mode);
+    Q_INVOKABLE void setVirtualAxisAlias(const QString &target, const QString &alias);
     Q_INVOKABLE void setSelectedAxis(int physicalAxis);
     Q_INVOKABLE void setAxisInverted(int physicalAxis, bool inverted);
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
@@ -222,6 +233,8 @@ public:
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
+    Q_INVOKABLE void setButtonCustomName(int physicalButton, const QString &name);
+    Q_INVOKABLE bool setMappingControl(int physicalButton, const QString &action);
     Q_INVOKABLE bool setPovMapping(int povHat, int direction, int virtualButton,
                                    bool explicitOverride = false);
     Q_INVOKABLE bool setProfileTrigger(int physicalButton, const QString &targetProfileId,
@@ -278,6 +291,7 @@ private:
     const AxisMapping *selectedAxisMapping() const;
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
+    bool axisIsOneSided(int physicalAxis) const;
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
     QString effectiveProfileId() const;
