@@ -148,3 +148,4 @@ Run `.\scripts\sync-documentation.ps1` after changing product, feature, or versi
 The generator also requires the newest `docs/catalog/versions.json` entry to match `HOTAS_VERSION`, so a version bump cannot pass documentation validation without a corresponding Version Overview entry.
 
 When adding or changing a user-visible capability or release, update the appropriate file in `docs/catalog/`; do not hand-edit the generated documents.
+
