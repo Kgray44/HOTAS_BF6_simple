@@ -19,6 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Regenerate documentation
+        shell: pwsh
+        run: .\scripts\sync-documentation.ps1
+
       - name: Verify generated documentation is synchronized
         shell: pwsh
-        run: .\scripts\sync-documentation.ps1 -Check
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $changes = @(git status --porcelain -- README.md docs/Features.md docs/Version_Overview.md)
+          if ($changes.Count -eq 0) {
+            Write-Host 'Generated documentation is synchronized.'
+            exit 0
+          }
+
+          Write-Host 'Generated documentation differs from the committed files:'
+          $changes | ForEach-Object { Write-Host $_ }
+          git --no-pager diff -- README.md docs/Features.md docs/Version_Overview.md
+          throw 'Generated documentation is stale. Run .\scripts\sync-documentation.ps1 and commit the generated files.'
