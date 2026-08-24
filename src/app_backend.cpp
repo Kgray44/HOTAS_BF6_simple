@@ -36,6 +36,16 @@ QString automationProfileName(const MapperConfiguration &configuration, const QS
     return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
 }
 
+QString automationBehaviorLabel(AutomationActivationMode mode)
+{
+    switch (mode) {
+    case AutomationActivationMode::WhileTriggerActive: return u"MOMENTARY"_qs;
+    case AutomationActivationMode::ToggleOnTrigger: return u"TOGGLE"_qs;
+    case AutomationActivationMode::RunBriefly: return u"TIMED"_qs;
+    }
+    return u"UNKNOWN"_qs;
+}
+
 QString automationConditionSummary(const AutomationConditionDefinition &condition,
                                    const MapperConfiguration &configuration)
 {
@@ -58,6 +68,16 @@ QString automationConditionSummary(const AutomationConditionDefinition &conditio
         + u" is outside "_qs + percent(condition.minimum) + u" to "_qs + percent(condition.maximum);
     case AutomationConditionType::ButtonHeld: return QString(u"Button %1 is held"_qs).arg(condition.button);
     case AutomationConditionType::ButtonReleased: return QString(u"Button %1 is not held"_qs).arg(condition.button);
+    case AutomationConditionType::ButtonPressed: return QString(u"Button %1 is pressed"_qs).arg(condition.button);
+    case AutomationConditionType::ButtonReleaseEvent: return QString(u"Button %1 is released"_qs).arg(condition.button);
+    case AutomationConditionType::ButtonMultiPress: return QString(u"Button %1 is pressed %2 times"_qs)
+        .arg(condition.button).arg(condition.pressCount);
+    case AutomationConditionType::ButtonLongPress: return QString(u"Button %1 is held for %2 ms"_qs)
+        .arg(condition.button).arg(condition.longPressDurationMs);
+    case AutomationConditionType::AxisCrossesAbove: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" crosses above "_qs + percent(condition.minimum);
+    case AutomationConditionType::AxisCrossesBelow: return physicalAxisLabel(static_cast<PhysicalAxis>(condition.axis))
+        + u" crosses below "_qs + percent(condition.minimum);
     case AutomationConditionType::PovActive: return QString(u"POV %1 points %2"_qs).arg(condition.povHat)
         .arg(povDirectionLabel(condition.povDirection));
     case AutomationConditionType::PovInactive: return QString(u"POV %1 is not pointing %2"_qs).arg(condition.povHat)
@@ -78,6 +98,8 @@ QString automationActionSummary(const AutomationActionDefinition &action,
     case AutomationActionType::VJoyButtonHold: return QString(u"Press and hold virtual button %1"_qs)
         .arg(action.virtualButton);
     case AutomationActionType::VJoyButtonToggle: return QString(u"Toggle virtual button %1"_qs)
+        .arg(action.virtualButton);
+    case AutomationActionType::VJoyButtonTap: return QString(u"Tap virtual button %1"_qs)
         .arg(action.virtualButton);
     case AutomationActionType::ProfileHold: return u"Use "_qs
         + automationProfileName(configuration, action.profileId) + u" while active"_qs;
@@ -121,9 +143,16 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
     restored.name = map.value(u"name"_qs).toString().trimmed();
     restored.enabled = map.value(u"enabled"_qs, true).toBool();
     restored.matchMode = static_cast<AutomationMatchMode>(map.value(u"matchMode"_qs, 0).toInt());
+    restored.activationMode = static_cast<AutomationActivationMode>(map.value(u"activationMode"_qs, 0).toInt());
+    restored.activeDurationMs = map.value(u"activeDurationMs"_qs, 250).toInt();
     restored.priority = std::clamp(map.value(u"priority"_qs, 50).toInt(), 0, 100);
     if (restored.id.isEmpty() || restored.name.isEmpty() || restored.name.size() > 64
-        || (restored.matchMode != AutomationMatchMode::All && restored.matchMode != AutomationMatchMode::Any)) {
+        || (restored.matchMode != AutomationMatchMode::All && restored.matchMode != AutomationMatchMode::Any)
+        || (restored.activationMode != AutomationActivationMode::WhileTriggerActive
+            && restored.activationMode != AutomationActivationMode::ToggleOnTrigger
+            && restored.activationMode != AutomationActivationMode::RunBriefly)
+        || restored.activeDurationMs < kAutomationMinimumRuleActiveDurationMs
+        || restored.activeDurationMs > kAutomationMaximumRuleActiveDurationMs) {
         if (reason) *reason = u"Name and match mode are required."_qs;
         return false;
     }
@@ -147,8 +176,11 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         condition.povDirection = static_cast<PovDirection>(input.value(u"povDirection"_qs,
             static_cast<int>(PovDirection::Up)).toInt());
         condition.profileId = input.value(u"profileId"_qs).toString().trimmed();
+        condition.pressCount = input.value(u"pressCount"_qs, 2).toInt();
+        condition.multiPressWindowMs = input.value(u"multiPressWindowMs"_qs, 350).toInt();
+        condition.longPressDurationMs = input.value(u"longPressDurationMs"_qs, 600).toInt();
         if (static_cast<int>(condition.type) < static_cast<int>(AutomationConditionType::Always)
-            || static_cast<int>(condition.type) > static_cast<int>(AutomationConditionType::EffectiveProfileIs)) {
+            || static_cast<int>(condition.type) > static_cast<int>(AutomationConditionType::AxisCrossesBelow)) {
             if (reason) *reason = u"Condition type is invalid."_qs;
             return false;
         }
@@ -168,8 +200,9 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         action.offset = static_cast<float>(input.value(u"offset"_qs, 0.0).toDouble());
         action.minimum = static_cast<float>(input.value(u"minimum"_qs, -1.0).toDouble());
         action.maximum = static_cast<float>(input.value(u"maximum"_qs, 1.0).toDouble());
+        action.tapDurationMs = input.value(u"tapDurationMs"_qs, 80).toInt();
         if (static_cast<int>(action.type) < static_cast<int>(AutomationActionType::VJoyButtonHold)
-            || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::AxisFollow)) {
+            || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::VJoyButtonTap)) {
             if (reason) *reason = u"Action type is invalid."_qs;
             return false;
         }
@@ -791,7 +824,9 @@ QVariantList AppBackend::automationRules() const
                 {u"maximum"_qs, condition.maximum}, {u"hysteresis"_qs, condition.hysteresis},
                 {u"button"_qs, condition.button}, {u"povHat"_qs, condition.povHat},
                 {u"povDirection"_qs, static_cast<int>(condition.povDirection)},
-                {u"profileId"_qs, condition.profileId}});
+                {u"profileId"_qs, condition.profileId}, {u"pressCount"_qs, condition.pressCount},
+                {u"multiPressWindowMs"_qs, condition.multiPressWindowMs},
+                {u"longPressDurationMs"_qs, condition.longPressDurationMs}});
         }
         QVariantList actions;
         QStringList actionLabels;
@@ -801,7 +836,8 @@ QVariantList AppBackend::automationRules() const
                 {u"virtualButton"_qs, action.virtualButton}, {u"profileId"_qs, action.profileId},
                 {u"targetAxis"_qs, action.targetAxis}, {u"sourceAxis"_qs, action.sourceAxis},
                 {u"sourceStage"_qs, static_cast<int>(action.sourceStage)}, {u"value"_qs, action.value},
-                {u"offset"_qs, action.offset}, {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum}});
+                {u"offset"_qs, action.offset}, {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum},
+                {u"tapDurationMs"_qs, action.tapDurationMs}});
         }
         AutomationHealth health = AutomationHealth::Valid;
         QString healthMessage;
@@ -818,14 +854,20 @@ QVariantList AppBackend::automationRules() const
                 const bool axisCondition = condition.type == AutomationConditionType::AxisAbove
                     || condition.type == AutomationConditionType::AxisBelow
                     || condition.type == AutomationConditionType::AxisBetween
-                    || condition.type == AutomationConditionType::AxisOutsideRange;
+                    || condition.type == AutomationConditionType::AxisOutsideRange
+                    || condition.type == AutomationConditionType::AxisCrossesAbove
+                    || condition.type == AutomationConditionType::AxisCrossesBelow;
                 if (axisCondition && (condition.axis < 0 || condition.axis >= kPhysicalAxisCount
                     || !runtime.axisAvailable[static_cast<size_t>(condition.axis)].load())) {
                     availabilityMessage = u"Required physical axis is unavailable on the connected controller."_qs;
                     break;
                 }
                 const bool buttonCondition = condition.type == AutomationConditionType::ButtonHeld
-                    || condition.type == AutomationConditionType::ButtonReleased;
+                    || condition.type == AutomationConditionType::ButtonReleased
+                    || condition.type == AutomationConditionType::ButtonPressed
+                    || condition.type == AutomationConditionType::ButtonReleaseEvent
+                    || condition.type == AutomationConditionType::ButtonMultiPress
+                    || condition.type == AutomationConditionType::ButtonLongPress;
                 if (buttonCondition && (condition.button < 1 || condition.button > kMaximumPhysicalButtons
                     || !runtime.buttonAvailable[static_cast<size_t>(condition.button - 1)].load())) {
                     availabilityMessage = u"Required physical button is unavailable on the connected controller."_qs;
@@ -840,7 +882,12 @@ QVariantList AppBackend::automationRules() const
             }
             if (availabilityMessage.isEmpty()) {
                 for (const AutomationActionDefinition &action : definition.actions) {
-                    const bool axisTarget = action.type >= AutomationActionType::AxisScale;
+                    const bool axisTarget = action.type == AutomationActionType::AxisScale
+                        || action.type == AutomationActionType::AxisOffset
+                        || action.type == AutomationActionType::AxisClamp
+                        || action.type == AutomationActionType::AxisOverride
+                        || action.type == AutomationActionType::AxisMix
+                        || action.type == AutomationActionType::AxisFollow;
                     const bool usesAxisSource = action.type == AutomationActionType::AxisMix
                         || action.type == AutomationActionType::AxisFollow;
                     if ((axisTarget && (action.targetAxis < 0 || action.targetAxis >= kPhysicalAxisCount
@@ -851,7 +898,8 @@ QVariantList AppBackend::automationRules() const
                         break;
                     }
                     if ((action.type == AutomationActionType::VJoyButtonHold
-                         || action.type == AutomationActionType::VJoyButtonToggle)
+                         || action.type == AutomationActionType::VJoyButtonToggle
+                         || action.type == AutomationActionType::VJoyButtonTap)
                         && runtime.vjoyButtonCount.load() > 0
                         && action.virtualButton > runtime.vjoyButtonCount.load()) {
                         availabilityMessage = u"Automation targets a vJoy button not exposed by the active device."_qs;
@@ -887,6 +935,9 @@ QVariantList AppBackend::automationRules() const
         const QString connector = definition.matchMode == AutomationMatchMode::Any ? u" OR "_qs : u" AND "_qs;
         rules.append(QVariantMap{{u"id"_qs, definition.id}, {u"name"_qs, definition.name},
             {u"enabled"_qs, definition.enabled}, {u"matchMode"_qs, static_cast<int>(definition.matchMode)},
+            {u"activationMode"_qs, static_cast<int>(definition.activationMode)},
+            {u"activeDurationMs"_qs, definition.activeDurationMs},
+            {u"behaviorLabel"_qs, automationBehaviorLabel(definition.activationMode)},
             {u"priority"_qs, definition.priority}, {u"conditions"_qs, conditions}, {u"actions"_qs, actions},
             {u"conditionSummary"_qs, conditionLabels.join(connector)},
             {u"actionSummary"_qs, actionLabels.join(u" · "_qs)},

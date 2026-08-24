@@ -1222,7 +1222,10 @@ void MappingWorker::run()
             automationInput.buttonCount = m_runtime.buttonCount.load();
             automationInput.baseProfileIndex = activeProfileCache->baseProfileIndex;
             automationInput.preAutomationEffectiveProfileIndex = effectiveProfileIndex;
-            automationStarted = std::chrono::steady_clock::now();
+            // Reuse the report's one monotonic timestamp for every temporal
+            // Automation condition and action in this pass.
+            automationInput.timestamp = started;
+            automationStarted = started;
             measuredAutomation = true;
             automationEffects = &automation.evaluate(automationInput);
             profileTriggers.updateAutomationContributions(automationEffects->profileContributions,
@@ -1358,7 +1361,8 @@ void MappingWorker::run()
                 for (int target = 1; target <= vjoyButtonCapacity; ++target) {
                     desiredButtons[static_cast<size_t>(target)] = desiredButtons[static_cast<size_t>(target)]
                         || automationEffects->heldButtons[static_cast<size_t>(target)]
-                        || automationEffects->toggledButtons[static_cast<size_t>(target)];
+                        || automationEffects->toggledButtons[static_cast<size_t>(target)]
+                        || automationEffects->pulsedButtons[static_cast<size_t>(target)];
                 }
             }
             for (int target = 1; target <= kMaximumVirtualButtons; ++target) {

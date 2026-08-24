@@ -3,7 +3,9 @@
 #include "button_mapping.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace hotas {
@@ -16,6 +18,9 @@ struct CompiledAutomationCondition {
     float minimum = 0.0F;
     float maximum = 0.0F;
     float hysteresis = 0.0F;
+    int pressCount = 2;
+    int multiPressWindowMs = 350;
+    int longPressDurationMs = 600;
 };
 
 struct CompiledAutomationAction {
@@ -28,11 +33,14 @@ struct CompiledAutomationAction {
     float offset = 0.0F;
     float minimum = -1.0F;
     float maximum = 1.0F;
+    int tapDurationMs = 80;
 };
 
 struct CompiledAutomationRule {
     bool enabled = false;
     AutomationMatchMode matchMode = AutomationMatchMode::All;
+    AutomationActivationMode activationMode = AutomationActivationMode::WhileTriggerActive;
+    int activeDurationMs = 250;
     int priority = 50;
     int sourceOrder = 0; // Persisted vector order is the equal-priority tie-break.
     int conditionCount = 0;
@@ -44,6 +52,12 @@ struct CompiledAutomationRule {
 struct CompiledAutomationSet {
     bool engineEnabled = true;
     bool publishable = true;
+    // These flags keep the legacy level-only path lean: no temporal state or
+    // duration checks are touched unless a compiled rule actually needs them.
+    bool hasEventConditions = false;
+    bool hasTemporalConditions = false;
+    bool hasTimedActions = false;
+    bool hasLatchedRules = false;
     int ruleCount = 0;
     AutomationHealth health = AutomationHealth::Valid;
     std::array<CompiledAutomationRule, kMaximumAutomationRules> rules{};
@@ -64,6 +78,9 @@ struct AutomationInputSnapshot {
     int buttonCount = 0;
     int baseProfileIndex = 0;
     int preAutomationEffectiveProfileIndex = 0;
+    // The worker obtains this once per physical report and shares it across
+    // every condition and action in this evaluation.
+    std::chrono::steady_clock::time_point timestamp{};
 };
 
 struct AutomationProfileContribution {
@@ -79,6 +96,7 @@ struct AutomationEvaluationResult {
     std::array<bool, kMaximumAutomationRules> activeRules{};
     std::array<bool, kMaximumVirtualButtons + 1> heldButtons{};
     std::array<bool, kMaximumVirtualButtons + 1> toggledButtons{};
+    std::array<bool, kMaximumVirtualButtons + 1> pulsedButtons{};
     std::array<AutomationProfileContribution, kMaximumAutomationProfileContributors>
         profileContributions{};
     int profileContributionCount = 0;
@@ -102,15 +120,39 @@ public:
                           std::array<float, kPhysicalAxisCount> &processedAxes) const;
 
 private:
+    struct ConditionRuntimeState {
+        bool initialized = false;
+        bool previousButtonState = false;
+        bool thresholdLatched = false;
+        bool longPressFired = false;
+        int pressCount = 0;
+        std::chrono::steady_clock::time_point lastPress{};
+        std::chrono::steady_clock::time_point holdStarted{};
+    };
+
+    struct RuleRuntimeState {
+        bool toggledActive = false;
+        std::chrono::steady_clock::time_point activeUntil{};
+    };
+
     bool conditionMatches(const CompiledAutomationCondition &condition,
                           const AutomationInputSnapshot &input,
                           bool &latch) const;
+    bool eventConditionMatches(const CompiledAutomationCondition &condition,
+                               const AutomationInputSnapshot &input,
+                               ConditionRuntimeState &state);
+    const AutomationEvaluationResult &evaluateLevelOnly(const AutomationInputSnapshot &input);
 
     const CompiledAutomationSet *m_compiled = nullptr;
+    std::array<std::array<ConditionRuntimeState, kMaximumAutomationConditions>,
+               kMaximumAutomationRules> m_conditionStates{};
     std::array<std::array<bool, kMaximumAutomationConditions>, kMaximumAutomationRules>
         m_conditionLatches{};
+    std::array<RuleRuntimeState, kMaximumAutomationRules> m_ruleStates{};
     std::array<bool, kMaximumAutomationRules> m_previousRuleActive{};
     std::array<bool, kMaximumVirtualButtons + 1> m_toggledButtons{};
+    std::array<std::array<std::chrono::steady_clock::time_point,
+                          kMaximumAutomationActions>, kMaximumAutomationRules> m_tapExpiry{};
     AutomationEvaluationResult m_result{};
 };
 

@@ -24,6 +24,14 @@ constexpr int kMaximumAutomationConditions = 4;
 constexpr int kMaximumAutomationActions = 4;
 constexpr int kMaximumAutomationProfileContributors =
     kMaximumAutomationRules * kMaximumAutomationActions;
+constexpr int kAutomationMinimumMultiPressWindowMs = 150;
+constexpr int kAutomationMaximumMultiPressWindowMs = 1000;
+constexpr int kAutomationMinimumLongPressDurationMs = 200;
+constexpr int kAutomationMaximumLongPressDurationMs = 3000;
+constexpr int kAutomationMinimumRuleActiveDurationMs = 20;
+constexpr int kAutomationMaximumRuleActiveDurationMs = 5000;
+constexpr int kAutomationMinimumTapDurationMs = 20;
+constexpr int kAutomationMaximumTapDurationMs = 500;
 // DIJOYSTATE2 exposes four POV values. Keep the physical report fixed-size so
 // the input thread can retain every reported hat without allocating.
 constexpr int kMaximumPhysicalPovs = 4;
@@ -238,6 +246,14 @@ enum class AutomationMatchMode : int {
     Any,
 };
 
+// This is deliberately rule-level rather than an action type: the same
+// lifetime semantics apply to every existing and future Automation action.
+enum class AutomationActivationMode : int {
+    WhileTriggerActive = 0,
+    ToggleOnTrigger,
+    RunBriefly,
+};
+
 enum class AutomationConditionType : int {
     Always = 0,
     AxisAbove,
@@ -250,6 +266,15 @@ enum class AutomationConditionType : int {
     PovInactive,
     BaseProfileIs,
     EffectiveProfileIs,
+    // Keep the original values above stable: persisted v1.8.0–v1.8.3
+    // `buttonReleased` means the level condition "not held". The two new
+    // event types intentionally have distinct names and serialized values.
+    ButtonPressed,
+    ButtonReleaseEvent,
+    ButtonMultiPress,
+    ButtonLongPress,
+    AxisCrossesAbove,
+    AxisCrossesBelow,
 };
 
 enum class AutomationActionType : int {
@@ -263,6 +288,7 @@ enum class AutomationActionType : int {
     AxisOverride,
     AxisMix,
     AxisFollow,
+    VJoyButtonTap,
 };
 
 enum class AutomationAxisSourceStage : int {
@@ -286,6 +312,9 @@ struct AutomationConditionDefinition {
     int povHat = 1; // One-based physical POV hat.
     PovDirection povDirection = PovDirection::Up;
     QString profileId;
+    int pressCount = 2;
+    int multiPressWindowMs = 350;
+    int longPressDurationMs = 600;
 };
 
 struct AutomationActionDefinition {
@@ -299,6 +328,7 @@ struct AutomationActionDefinition {
     float offset = 0.0F;  // Axis Follow offset.
     float minimum = -1.0F;
     float maximum = 1.0F;
+    int tapDurationMs = 80;
 };
 
 struct AutomationDefinition {
@@ -306,6 +336,8 @@ struct AutomationDefinition {
     QString name;
     bool enabled = true;
     AutomationMatchMode matchMode = AutomationMatchMode::All;
+    AutomationActivationMode activationMode = AutomationActivationMode::WhileTriggerActive;
+    int activeDurationMs = 250;
     int priority = 50;
     std::vector<AutomationConditionDefinition> conditions;
     std::vector<AutomationActionDefinition> actions;

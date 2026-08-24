@@ -36,29 +36,39 @@ Item {
     readonly property var rules: backendObject ? backendObject.automationRules : []
     readonly property var axisChoices: ["Roll", "Pitch", "Throttle", "Rotation X", "Rotation Y", "Yaw", "Additional axis 1", "Additional axis 2"]
     readonly property var requirementKinds: ["Choose what happens", "Button", "Axis", "POV / Hat", "Profile"]
-    readonly property var buttonStates: ["is held", "is not held"]
-    readonly property var axisComparisons: ["is above", "is below", "is between", "is outside"]
+    readonly property var buttonStates: ["is held", "is not held", "is pressed", "is released", "is pressed multiple times", "is held for a while"]
+    readonly property var buttonStateTypes: [5, 6, 11, 12, 13, 14]
+    readonly property var axisComparisons: ["is above", "is below", "is between", "is outside", "crosses above", "crosses below"]
+    readonly property var axisComparisonTypes: [1, 2, 3, 4, 15, 16]
     readonly property var povStates: ["points", "is not pointing"]
     readonly property var profileStates: ["is selected", "is active"]
-    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another"]
+    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another", "Tap virtual button"]
+    readonly property var behaviorChoices: ["While the trigger is active", "Toggle on each trigger", "Run briefly"]
     readonly property var sourceStages: ["Controller input", "Current mapped output"]
     readonly property var directions: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
 
     function clone(value) { return JSON.parse(JSON.stringify(value)) }
     function setDraft(value) { draft = clone(value); draftDirty = true }
-    function defaultRequirement(type) { return ({ type: type === undefined ? -1 : type, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "" }) }
-    function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1 }) }
+    function defaultRequirement(type) { return ({ type: type === undefined ? -1 : type, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "", pressCount: 2, multiPressWindowMs: 350, longPressDurationMs: 600 }) }
+    function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1, tapDurationMs: 80 }) }
+    function includesType(types, type) { return types.indexOf(Number(type)) >= 0 }
+    function buttonStateIndex(type) { const index = buttonStateTypes.indexOf(Number(type)); return index < 0 ? 0 : index }
+    function axisComparisonIndex(type) { const index = axisComparisonTypes.indexOf(Number(type)); return index < 0 ? 0 : index }
+    function behaviorMode(rule) { return rule && rule.activationMode !== undefined ? Number(rule.activationMode) : 0 }
+    function isMultiPress(requirement) { return requirement && Number(requirement.type) === 13 }
+    function isLongPress(requirement) { return requirement && Number(requirement.type) === 14 }
+    function isTap(effect) { return effect && Number(effect.type) === 10 }
     function requirementKind(condition) {
         const type = condition && condition.type !== undefined ? Number(condition.type) : -1
-        if (type >= 1 && type <= 4) return 2
-        if (type >= 5 && type <= 6) return 1
+        if (includesType(axisComparisonTypes, type)) return 2
+        if (includesType(buttonStateTypes, type)) return 1
         if (type >= 7 && type <= 8) return 3
         if (type >= 9 && type <= 10) return 4
         return 0
     }
     function requirementType(kind, previous) {
-        if (kind === 1) return previous === 6 ? 6 : 5
-        if (kind === 2) return previous >= 1 && previous <= 4 ? previous : 1
+        if (kind === 1) return includesType(buttonStateTypes, previous) ? previous : 5
+        if (kind === 2) return includesType(axisComparisonTypes, previous) ? previous : 1
         if (kind === 3) return previous === 8 ? 8 : 7
         if (kind === 4) return previous === 10 ? 10 : 9
         return -1
@@ -120,9 +130,11 @@ Item {
     function setTriggerMode(alwaysActive) {
         const next = clone(draft)
         next.conditions = alwaysActive ? [defaultRequirement(0)] : []
+        if (alwaysActive) next.activationMode = 0
         setDraft(next)
     }
     function setMatchMode(mode) { const next = clone(draft); next.matchMode = mode; setDraft(next) }
+    function setBehaviorMode(mode) { const next = clone(draft); next.activationMode = mode; setDraft(next) }
     function percent(value) { return (Number(value) * 100).toFixed(1) + "%" }
     function conditionPercent(value, axis) { const displayed = axis === 2 ? (Number(value) + 1) * 50 : Number(value) * 100; return displayed.toFixed(1) + "%" }
     function conditionValue(text, axis) { const displayed = Number(String(text).replace("%", "")); return axis === 2 ? displayed / 50 - 1 : displayed / 100 }
@@ -153,6 +165,12 @@ Item {
         case 4: return axisName(requirement.axis) + " is outside " + conditionPercent(requirement.minimum, requirement.axis) + " to " + conditionPercent(requirement.maximum, requirement.axis)
         case 5: return "Button " + requirement.button + " is held"
         case 6: return "Button " + requirement.button + " is not held"
+        case 11: return "Button " + requirement.button + " is pressed"
+        case 12: return "Button " + requirement.button + " is released"
+        case 13: return "Button " + requirement.button + " is pressed " + requirement.pressCount + " times"
+        case 14: return "Button " + requirement.button + " is held for " + requirement.longPressDurationMs + " ms"
+        case 15: return axisName(requirement.axis) + " crosses above " + conditionPercent(requirement.minimum, requirement.axis)
+        case 16: return axisName(requirement.axis) + " crosses below " + conditionPercent(requirement.minimum, requirement.axis)
         case 7: return "POV " + requirement.povHat + " points " + directionName(requirement.povDirection)
         case 8: return "POV " + requirement.povHat + " is not pointing " + directionName(requirement.povDirection)
         case 9: return profileIndex(requirement.profileId) < 0 ? "Choose the selected profile" : "Selected profile is " + profileName(requirement.profileId)
@@ -175,6 +193,7 @@ Item {
         case 9: return "Make " + axisName(effect.targetAxis) + " follow " + axisName(effect.sourceAxis)
             + " from " + sourceStageName(effect.sourceStage) + " at " + percent(effect.value)
             + (Number(effect.offset) === 0 ? "" : " with " + percent(effect.offset) + " offset")
+        case 10: return "Tap virtual button " + effect.virtualButton
         }
         return "Choose what this automation should do."
     }
@@ -194,6 +213,8 @@ Item {
         const effectText = joinSummary(effects.map(function(effect) { return effectSummary(effect) }), "and")
         if (isAlwaysActive(draft)) return "All the time, " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
         const whenText = joinSummary(requirements.map(function(requirement) { return requirementSummary(requirement) }), Number(draft.matchMode) === 1 ? "or" : "and")
+        if (behaviorMode(draft) === 1) return "When " + whenText + ", toggle this automation on or off. While active, " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
+        if (behaviorMode(draft) === 2) return "When " + whenText + ", activate this automation for " + draft.activeDurationMs + " ms. While active, " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
         return "When " + whenText + ", " + effectText.charAt(0).toLowerCase() + effectText.slice(1) + "."
     }
     function canSaveDraft() {
@@ -344,6 +365,7 @@ Item {
                                 Item { Layout.fillWidth: true }
                                 Text { text: "OPEN ›"; color: root.accentColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
                             }
+                            Text { text: modelData.behaviorLabel; color: root.accentColor; font.pixelSize: 9; font.bold: true; font.family: root.telemetryFont }
                             Text { text: "WHEN"; color: root.faintColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
                             Text { text: modelData.conditions.length ? modelData.conditionSummary : "Nothing selected yet"; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             Text { text: "DO"; color: root.faintColor; font.pixelSize: 9; font.bold: true; font.family: root.displayFont }
@@ -450,9 +472,11 @@ Item {
                                         Layout.fillWidth: true; spacing: 8
                                         EditorCombo { width: 144; model: root.requirementKinds; currentIndex: root.requirementKind(modelData); onActivated: root.setRequirementKind(index, currentIndex) }
                                         EditorSpin { visible: root.requirementKind(modelData) === 1; width: 108; from: 1; to: 128; value: modelData.button; onValueModified: root.updateCondition(index, "button", value) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 1; width: 132; model: root.buttonStates; currentIndex: Number(modelData.type) === 6 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 6 : 5) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 1; width: 168; model: root.buttonStates; currentIndex: root.buttonStateIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.buttonStateTypes[currentIndex]) }
+                                        EditorSpin { visible: root.isMultiPress(modelData); width: 78; from: 2; to: 5; value: modelData.pressCount; onValueModified: root.updateCondition(index, "pressCount", value) }
+                                        Text { visible: root.isMultiPress(modelData); text: "times"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
                                         EditorCombo { visible: root.requirementKind(modelData) === 2; width: 148; model: root.axisChoices; currentIndex: modelData.axis; onActivated: root.updateCondition(index, "axis", currentIndex) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 132; model: root.axisComparisons; currentIndex: Number(modelData.type) - 1; onActivated: root.updateCondition(index, "type", currentIndex + 1) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 142; model: root.axisComparisons; currentIndex: root.axisComparisonIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.axisComparisonTypes[currentIndex]) }
                                         EditorTextField { visible: root.requirementKind(modelData) === 2; width: 94; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "minimum", root.conditionValue(text, modelData.axis)) }
                                         Text { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; text: Number(modelData.type) === 3 ? "and" : "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
                                         EditorTextField { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; width: 94; text: root.conditionPercent(modelData.maximum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "maximum", root.conditionValue(text, modelData.axis)) }
@@ -472,6 +496,18 @@ Item {
                         }
                     }
                     ActionButton { visible: !root.isAlwaysActive(root.draft) && (root.draft.conditions || []).length > 0; label: "+ ADD REQUIREMENT"; subdued: true; commandEnabled: (root.draft.conditions || []).length < 4; onTriggered: root.addRequirement(0) }
+                }
+            }
+            ThemedPanel {
+                width: parent.width; implicitHeight: behaviorContent.implicitHeight + 28
+                ColumnLayout {
+                    id: behaviorContent
+                    anchors.fill: parent; anchors.margins: 14; spacing: 8
+                    Text { text: "HOW SHOULD THIS AUTOMATION BEHAVE?"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
+                    RowLayout { Layout.fillWidth: true
+                        EditorCombo { Layout.preferredWidth: 260; model: root.behaviorChoices; enabled: !root.isAlwaysActive(root.draft); currentIndex: root.behaviorMode(root.draft); onActivated: root.setBehaviorMode(currentIndex) }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.mutedColor; font.pixelSize: 10; text: root.isAlwaysActive(root.draft) ? "All-the-time rules always stay active." : (root.behaviorMode(root.draft) === 0 ? "Effects apply only while the WHEN section is true." : root.behaviorMode(root.draft) === 1 ? "Each trigger switches this automation on or off." : "Each trigger activates this automation for a short time.") }
+                    }
                 }
             }
             ThemedPanel {
@@ -501,8 +537,8 @@ Item {
                                     id: effectFlow
                                     Layout.fillWidth: true; spacing: 8
                                     EditorCombo { width: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: root.setEffectType(index, currentIndex) }
-                                    Text { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorSpin { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; width: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                    Text { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1 || root.isTap(modelData); text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                    EditorSpin { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1 || root.isTap(modelData); width: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
                                     EditorCombo { visible: Number(modelData.type) === 2 || Number(modelData.type) === 3; width: 180; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileChoiceId(currentIndex)) }
                                     EditorCombo { visible: Number(modelData.type) >= 4 && Number(modelData.type) <= 7; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
                                     Text { visible: Number(modelData.type) === 4; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
@@ -537,13 +573,12 @@ Item {
                 }
             }
             ThemedPanel {
-                width: parent.width; implicitHeight: summaryContent.implicitHeight + 28; surfaceColor: root.topGun ? "#d80e1e1c" : root.panelFill
+                width: parent.width; implicitHeight: summaryContent.implicitHeight + 40; surfaceColor: root.topGun ? "#d80e1e1c" : root.panelFill
                 ColumnLayout {
                     id: summaryContent
-                    anchors.fill: parent; anchors.margins: 14; spacing: 8
-                    Text { text: "RULE SUMMARY"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
-                    Text { text: root.ruleSummary(); color: root.textColor; font.pixelSize: 13; font.family: root.displayFont; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                    Text { text: "This summary updates from the draft. It is never generated while controller reports are processed."; color: root.faintColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    anchors.fill: parent; anchors.margins: 20; spacing: 12
+                    Text { text: "RULE SUMMARY"; color: root.accentColor; font.pixelSize: 14; font.bold: true; font.family: root.displayFont }
+                    Text { text: root.ruleSummary(); color: root.textColor; font.pixelSize: 16; font.weight: Font.DemiBold; font.family: root.displayFont; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 }
             }
             ThemedPanel {
@@ -554,7 +589,7 @@ Item {
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
                             Text { text: "ADVANCED"; color: root.accentColor; font.pixelSize: 12; font.bold: true; font.family: root.displayFont }
-                            Text { text: "Priority and conflict handling."; color: root.mutedColor; font.pixelSize: 10 }
+                            Text { text: "Timing and conflict handling."; color: root.mutedColor; font.pixelSize: 10 }
                         }
                         ActionButton { label: root.advancedOpen ? "HIDE" : "SHOW"; subdued: true; onTriggered: root.advancedOpen = !root.advancedOpen }
                     }
@@ -563,6 +598,44 @@ Item {
                             Text { text: "Priority"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 110 }
                             EditorSpin { from: 0; to: 100; value: root.draft.priority === undefined ? 50 : root.draft.priority; onValueModified: { const next = root.clone(root.draft); next.priority = value; root.setDraft(next) } }
                             Text { text: "When automations force the same axis, the higher priority wins. Equal priorities use saved order."; color: root.faintColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        }
+                        RowLayout { visible: root.behaviorMode(root.draft) === 2; Layout.fillWidth: true
+                            Text { text: "Active duration"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
+                            EditorSpin { from: 20; to: 5000; value: root.draft.activeDurationMs === undefined ? 250 : root.draft.activeDurationMs; onValueModified: { const next = root.clone(root.draft); next.activeDurationMs = value; root.setDraft(next) } }
+                            Text { text: "ms · Each trigger restarts this short active window."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Repeater {
+                            model: root.draft.conditions || []
+                            delegate: RowLayout {
+                                required property int index
+                                required property var modelData
+                                visible: root.isMultiPress(modelData); Layout.fillWidth: true
+                                Text { text: "Maximum time between presses"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
+                                EditorSpin { from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(index, "multiPressWindowMs", value) }
+                                Text { text: "ms · Button " + modelData.button + " sequence gap."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            }
+                        }
+                        Repeater {
+                            model: root.draft.conditions || []
+                            delegate: RowLayout {
+                                required property int index
+                                required property var modelData
+                                visible: root.isLongPress(modelData); Layout.fillWidth: true
+                                Text { text: "Long-press duration"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
+                                EditorSpin { from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(index, "longPressDurationMs", value) }
+                                Text { text: "ms · Button " + modelData.button + " must stay held continuously."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            }
+                        }
+                        Repeater {
+                            model: root.draft.actions || []
+                            delegate: RowLayout {
+                                required property int index
+                                required property var modelData
+                                visible: root.isTap(modelData); Layout.fillWidth: true
+                                Text { text: "Virtual button tap duration"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
+                                EditorSpin { from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(index, "tapDurationMs", value) }
+                                Text { text: "ms · Virtual button " + modelData.virtualButton + "."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            }
                         }
                     }
                 }

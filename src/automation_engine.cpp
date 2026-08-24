@@ -29,6 +29,16 @@ bool finite(float value)
     return std::isfinite(value);
 }
 
+bool isEventCondition(AutomationConditionType type)
+{
+    return type == AutomationConditionType::ButtonPressed
+        || type == AutomationConditionType::ButtonReleaseEvent
+        || type == AutomationConditionType::ButtonMultiPress
+        || type == AutomationConditionType::ButtonLongPress
+        || type == AutomationConditionType::AxisCrossesAbove
+        || type == AutomationConditionType::AxisCrossesBelow;
+}
+
 QString ruleName(const AutomationDefinition &definition, int index)
 {
     const QString trimmed = definition.name.trimmed();
@@ -74,6 +84,8 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
         rule.sourceOrder = index;
         rule.priority = std::clamp(definition.priority, 0, 100);
         rule.matchMode = definition.matchMode;
+        rule.activationMode = definition.activationMode;
+        rule.activeDurationMs = definition.activeDurationMs;
         if (definition.name.trimmed().isEmpty() || definition.name.trimmed().size() > 64) {
             invalidate(*result, index, u"Automation name must contain 1–64 characters."_qs);
             continue;
@@ -86,9 +98,21 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             invalidate(*result, index, u"Each Automation needs one to four actions."_qs);
             continue;
         }
+        if (definition.activationMode != AutomationActivationMode::WhileTriggerActive
+            && definition.activationMode != AutomationActivationMode::ToggleOnTrigger
+            && definition.activationMode != AutomationActivationMode::RunBriefly) {
+            invalidate(*result, index, u"Automation behavior is invalid."_qs);
+            continue;
+        }
+        if (definition.activeDurationMs < kAutomationMinimumRuleActiveDurationMs
+            || definition.activeDurationMs > kAutomationMaximumRuleActiveDurationMs) {
+            invalidate(*result, index, u"Brief Automation duration must be 20–5000 ms."_qs);
+            continue;
+        }
 
         bool hasEffectiveProfileCondition = false;
         bool hasProfileAction = false;
+        bool hasAlwaysCondition = false;
         bool valid = true;
         rule.conditionCount = static_cast<int>(definition.conditions.size());
         rule.actionCount = static_cast<int>(definition.actions.size());
@@ -100,6 +124,9 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             target.minimum = source.minimum;
             target.maximum = source.maximum;
             target.hysteresis = source.hysteresis;
+            target.pressCount = source.pressCount;
+            target.multiPressWindowMs = source.multiPressWindowMs;
+            target.longPressDurationMs = source.longPressDurationMs;
             if (!finite(target.minimum) || !finite(target.maximum) || !finite(target.hysteresis)
                 || target.hysteresis < 0.0F || target.hysteresis > 1.0F) {
                 invalidate(*result, index, u"Condition values must be finite and bounded."_qs);
@@ -108,11 +135,14 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             }
             switch (source.type) {
             case AutomationConditionType::Always:
+                hasAlwaysCondition = true;
                 break;
             case AutomationConditionType::AxisAbove:
             case AutomationConditionType::AxisBelow:
             case AutomationConditionType::AxisBetween:
             case AutomationConditionType::AxisOutsideRange:
+            case AutomationConditionType::AxisCrossesAbove:
+            case AutomationConditionType::AxisCrossesBelow:
                 if (!validAxis(source.axis) || source.minimum < -1.0F || source.maximum > 1.0F
                     || ((source.type == AutomationConditionType::AxisBetween
                          || source.type == AutomationConditionType::AxisOutsideRange)
@@ -124,8 +154,27 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
                 break;
             case AutomationConditionType::ButtonHeld:
             case AutomationConditionType::ButtonReleased:
+            case AutomationConditionType::ButtonPressed:
+            case AutomationConditionType::ButtonReleaseEvent:
+            case AutomationConditionType::ButtonMultiPress:
+            case AutomationConditionType::ButtonLongPress:
                 if (source.button < 1 || source.button > kMaximumPhysicalButtons) {
                     invalidate(*result, index, u"Physical button reference is invalid."_qs);
+                    valid = false;
+                }
+                if (source.type == AutomationConditionType::ButtonMultiPress
+                    && (source.pressCount < 2 || source.pressCount > 5
+                        || source.multiPressWindowMs < kAutomationMinimumMultiPressWindowMs
+                        || source.multiPressWindowMs > kAutomationMaximumMultiPressWindowMs)) {
+                    invalidate(*result, index,
+                        u"Multi-press needs two to five presses and a 150–1000 ms gap."_qs);
+                    valid = false;
+                }
+                if (source.type == AutomationConditionType::ButtonLongPress
+                    && (source.longPressDurationMs < kAutomationMinimumLongPressDurationMs
+                        || source.longPressDurationMs > kAutomationMaximumLongPressDurationMs)) {
+                    invalidate(*result, index,
+                        u"Long-press duration must be 200–3000 ms."_qs);
                     valid = false;
                 }
                 target.source = source.button - 1;
@@ -164,6 +213,7 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             target.minimum = source.minimum;
             target.maximum = source.maximum;
             target.sourceStage = source.sourceStage;
+            target.tapDurationMs = source.tapDurationMs;
             if (!finite(target.value) || !finite(target.offset) || !finite(target.minimum) || !finite(target.maximum)) {
                 invalidate(*result, index, u"Action values must be finite."_qs);
                 valid = false;
@@ -172,8 +222,16 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             switch (source.type) {
             case AutomationActionType::VJoyButtonHold:
             case AutomationActionType::VJoyButtonToggle:
+            case AutomationActionType::VJoyButtonTap:
                 if (source.virtualButton < 1 || source.virtualButton > kMaximumVirtualButtons) {
                     invalidate(*result, index, u"vJoy button reference is invalid."_qs);
+                    valid = false;
+                }
+                if (source.type == AutomationActionType::VJoyButtonTap
+                    && (source.tapDurationMs < kAutomationMinimumTapDurationMs
+                        || source.tapDurationMs > kAutomationMaximumTapDurationMs)) {
+                    invalidate(*result, index,
+                        u"Virtual button tap duration must be 20–500 ms."_qs);
                     valid = false;
                 }
                 target.target = source.virtualButton;
@@ -217,6 +275,12 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             if (!valid) break;
         }
         if (!valid) continue;
+        if (hasAlwaysCondition
+            && definition.activationMode != AutomationActivationMode::WhileTriggerActive) {
+            invalidate(*result, index,
+                       u"All-the-time Automation must use while-active behavior."_qs);
+            continue;
+        }
         if (hasEffectiveProfileCondition && hasProfileAction) {
             invalidate(*result, index,
                        u"Effective Profile condition cannot drive a Profile action."_qs);
@@ -226,6 +290,29 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
             warn(*result, index, u"High-priority override may compete with other rules."_qs);
         }
         rule.enabled = definition.enabled;
+        if (!rule.enabled) continue;
+        for (int conditionIndex = 0; conditionIndex < rule.conditionCount; ++conditionIndex) {
+            const AutomationConditionType type = rule.conditions[static_cast<size_t>(conditionIndex)].type;
+            const bool event = type == AutomationConditionType::ButtonPressed
+                || type == AutomationConditionType::ButtonReleaseEvent
+                || type == AutomationConditionType::ButtonMultiPress
+                || type == AutomationConditionType::ButtonLongPress
+                || type == AutomationConditionType::AxisCrossesAbove
+                || type == AutomationConditionType::AxisCrossesBelow;
+            result->hasEventConditions = result->hasEventConditions || event;
+            result->hasTemporalConditions = result->hasTemporalConditions
+                || type == AutomationConditionType::ButtonMultiPress
+                || type == AutomationConditionType::ButtonLongPress;
+        }
+        result->hasTimedActions = result->hasTimedActions
+            || rule.activationMode == AutomationActivationMode::RunBriefly;
+        result->hasLatchedRules = result->hasLatchedRules
+            || rule.activationMode == AutomationActivationMode::ToggleOnTrigger;
+        for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
+            result->hasTimedActions = result->hasTimedActions
+                || rule.actions[static_cast<size_t>(actionIndex)].type
+                    == AutomationActionType::VJoyButtonTap;
+        }
     }
 
     // Clamp intersections are order-independent. Reject an impossible set at
@@ -256,9 +343,12 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
 
 void AutomationRuntime::reset()
 {
+    m_conditionStates = {};
     m_conditionLatches = {};
+    m_ruleStates = {};
     m_previousRuleActive.fill(false);
     m_toggledButtons.fill(false);
+    m_tapExpiry = {};
     m_result = {};
 }
 
@@ -314,6 +404,13 @@ bool AutomationRuntime::conditionMatches(const CompiledAutomationCondition &cond
     case AutomationConditionType::ButtonReleased:
         return condition.source >= 0 && condition.source < input.buttonCount
             && !input.buttons[static_cast<size_t>(condition.source)];
+    case AutomationConditionType::ButtonPressed:
+    case AutomationConditionType::ButtonReleaseEvent:
+    case AutomationConditionType::ButtonMultiPress:
+    case AutomationConditionType::ButtonLongPress:
+    case AutomationConditionType::AxisCrossesAbove:
+    case AutomationConditionType::AxisCrossesBelow:
+        return false;
     case AutomationConditionType::PovActive:
     case AutomationConditionType::PovInactive: {
         const int hat = condition.source / kPovDirectionCount;
@@ -332,25 +429,116 @@ bool AutomationRuntime::conditionMatches(const CompiledAutomationCondition &cond
     return false;
 }
 
-const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationInputSnapshot &input)
+bool AutomationRuntime::eventConditionMatches(const CompiledAutomationCondition &condition,
+                                              const AutomationInputSnapshot &input,
+                                              ConditionRuntimeState &state)
 {
-    m_result = {};
-    if (!m_compiled || !m_compiled->engineEnabled || !m_compiled->publishable) {
-        m_toggledButtons.fill(false);
-        m_previousRuleActive.fill(false);
-        return m_result;
+    switch (condition.type) {
+    case AutomationConditionType::ButtonPressed:
+    case AutomationConditionType::ButtonReleaseEvent:
+    case AutomationConditionType::ButtonMultiPress:
+    case AutomationConditionType::ButtonLongPress: {
+        if (condition.source < 0 || condition.source >= input.buttonCount) {
+            state = {};
+            return false;
+        }
+        const bool pressed = input.buttons[static_cast<size_t>(condition.source)];
+        if (!state.initialized) {
+            state.initialized = true;
+            state.previousButtonState = pressed;
+            if (pressed && condition.type == AutomationConditionType::ButtonLongPress) {
+                state.holdStarted = input.timestamp;
+            }
+            return false;
+        }
+        const bool pressedEdge = !state.previousButtonState && pressed;
+        const bool releasedEdge = state.previousButtonState && !pressed;
+        state.previousButtonState = pressed;
+        if (condition.type == AutomationConditionType::ButtonPressed) return pressedEdge;
+        if (condition.type == AutomationConditionType::ButtonReleaseEvent) return releasedEdge;
+        if (condition.type == AutomationConditionType::ButtonMultiPress) {
+            if (!pressedEdge) return false;
+            const auto window = std::chrono::milliseconds(condition.multiPressWindowMs);
+            if (state.pressCount == 0 || input.timestamp - state.lastPress <= window) {
+                ++state.pressCount;
+            } else {
+                state.pressCount = 1;
+            }
+            state.lastPress = input.timestamp;
+            if (state.pressCount < condition.pressCount) return false;
+            state.pressCount = 0;
+            return true;
+        }
+        if (pressed && pressedEdge) {
+            state.holdStarted = input.timestamp;
+            state.longPressFired = false;
+        } else if (!pressed) {
+            state.holdStarted = {};
+            state.longPressFired = false;
+        }
+        if (!pressed || state.longPressFired
+            || input.timestamp - state.holdStarted
+                < std::chrono::milliseconds(condition.longPressDurationMs)) {
+            return false;
+        }
+        state.longPressFired = true;
+        return true;
     }
+    case AutomationConditionType::AxisCrossesAbove:
+    case AutomationConditionType::AxisCrossesBelow: {
+        if (!validAxis(condition.source)
+            || !input.axisAvailable[static_cast<size_t>(condition.source)]) {
+            state = {};
+            return false;
+        }
+        const float value = input.physicalAxes[static_cast<size_t>(condition.source)];
+        if (!state.initialized) {
+            state.initialized = true;
+            state.thresholdLatched = condition.type == AutomationConditionType::AxisCrossesAbove
+                ? value > condition.minimum : value < condition.minimum;
+            return false;
+        }
+        if (condition.type == AutomationConditionType::AxisCrossesAbove) {
+            if (state.thresholdLatched) {
+                if (value <= condition.minimum - condition.hysteresis) state.thresholdLatched = false;
+                return false;
+            }
+            if (value > condition.minimum) {
+                state.thresholdLatched = true;
+                return true;
+            }
+            return false;
+        }
+        if (state.thresholdLatched) {
+            if (value >= condition.minimum + condition.hysteresis) state.thresholdLatched = false;
+            return false;
+        }
+        if (value < condition.minimum) {
+            state.thresholdLatched = true;
+            return true;
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+const AutomationEvaluationResult &AutomationRuntime::evaluateLevelOnly(
+    const AutomationInputSnapshot &input)
+{
     for (int ruleIndex = 0; ruleIndex < m_compiled->ruleCount; ++ruleIndex) {
         const CompiledAutomationRule &rule = m_compiled->rules[static_cast<size_t>(ruleIndex)];
-        const bool valid = m_compiled->ruleHealth[static_cast<size_t>(ruleIndex)] != AutomationHealth::Invalid;
+        const bool valid = m_compiled->ruleHealth[static_cast<size_t>(ruleIndex)]
+            != AutomationHealth::Invalid;
         bool matched = rule.enabled && valid;
         if (matched) {
             matched = rule.matchMode == AutomationMatchMode::All;
             for (int conditionIndex = 0; conditionIndex < rule.conditionCount; ++conditionIndex) {
                 bool &latch = m_conditionLatches[static_cast<size_t>(ruleIndex)]
                     [static_cast<size_t>(conditionIndex)];
-                const bool condition = conditionMatches(rule.conditions[static_cast<size_t>(conditionIndex)],
-                                                        input, latch);
+                const bool condition = conditionMatches(
+                    rule.conditions[static_cast<size_t>(conditionIndex)], input, latch);
                 if (rule.matchMode == AutomationMatchMode::All) matched = matched && condition;
                 else matched = matched || condition;
             }
@@ -380,6 +568,103 @@ const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationIn
                     ? ProfileTriggerMode::Hold : ProfileTriggerMode::Toggle;
                 contribution.active = matched;
                 contribution.rising = rising;
+                break;
+            }
+            case AutomationActionType::VJoyButtonTap:
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    m_result.toggledButtons = m_toggledButtons;
+    return m_result;
+}
+
+const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationInputSnapshot &input)
+{
+    m_result = {};
+    if (!m_compiled || !m_compiled->engineEnabled || !m_compiled->publishable) {
+        reset();
+        return m_result;
+    }
+    if (!m_compiled->hasEventConditions && !m_compiled->hasTimedActions
+        && !m_compiled->hasLatchedRules) {
+        return evaluateLevelOnly(input);
+    }
+    for (int ruleIndex = 0; ruleIndex < m_compiled->ruleCount; ++ruleIndex) {
+        const CompiledAutomationRule &rule = m_compiled->rules[static_cast<size_t>(ruleIndex)];
+        const bool valid = m_compiled->ruleHealth[static_cast<size_t>(ruleIndex)] != AutomationHealth::Invalid;
+        bool matched = rule.enabled && valid;
+        if (matched) {
+            matched = rule.matchMode == AutomationMatchMode::All;
+            for (int conditionIndex = 0; conditionIndex < rule.conditionCount; ++conditionIndex) {
+                const CompiledAutomationCondition &conditionRecord = rule.conditions[
+                    static_cast<size_t>(conditionIndex)];
+                const bool event = m_compiled->hasEventConditions
+                    && isEventCondition(conditionRecord.type);
+                const bool condition = event
+                    ? eventConditionMatches(conditionRecord, input,
+                        m_conditionStates[static_cast<size_t>(ruleIndex)]
+                            [static_cast<size_t>(conditionIndex)])
+                    : conditionMatches(conditionRecord, input,
+                        m_conditionLatches[static_cast<size_t>(ruleIndex)]
+                            [static_cast<size_t>(conditionIndex)]);
+                if (rule.matchMode == AutomationMatchMode::All) matched = matched && condition;
+                else matched = matched || condition;
+            }
+        }
+        // For multiple event conditions, ALL means that every event must be
+        // observed in this one physical report; no hidden event window exists.
+        const bool triggered = matched && !m_previousRuleActive[static_cast<size_t>(ruleIndex)];
+        m_previousRuleActive[static_cast<size_t>(ruleIndex)] = matched;
+        bool active = matched;
+        if (rule.activationMode == AutomationActivationMode::ToggleOnTrigger) {
+            RuleRuntimeState &ruleState = m_ruleStates[static_cast<size_t>(ruleIndex)];
+            if (triggered) ruleState.toggledActive = !ruleState.toggledActive;
+            active = ruleState.toggledActive;
+        } else if (rule.activationMode == AutomationActivationMode::RunBriefly) {
+            RuleRuntimeState &ruleState = m_ruleStates[static_cast<size_t>(ruleIndex)];
+            if (triggered) {
+                ruleState.activeUntil = input.timestamp
+                    + std::chrono::milliseconds(rule.activeDurationMs);
+            }
+            active = input.timestamp < ruleState.activeUntil;
+        }
+        m_result.activeRules[static_cast<size_t>(ruleIndex)] = active;
+        if (active) ++m_result.activeRuleCount;
+        const bool startTap = triggered
+            && (rule.activationMode != AutomationActivationMode::ToggleOnTrigger || active);
+        for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
+            const CompiledAutomationAction &action = rule.actions[static_cast<size_t>(actionIndex)];
+            switch (action.type) {
+            case AutomationActionType::VJoyButtonHold:
+                if (active) m_result.heldButtons[static_cast<size_t>(action.target)] = true;
+                break;
+            case AutomationActionType::VJoyButtonToggle:
+                if (triggered) m_toggledButtons[static_cast<size_t>(action.target)] =
+                    !m_toggledButtons[static_cast<size_t>(action.target)];
+                break;
+            case AutomationActionType::VJoyButtonTap: {
+                std::chrono::steady_clock::time_point &expiry = m_tapExpiry[
+                    static_cast<size_t>(ruleIndex)][static_cast<size_t>(actionIndex)];
+                if (startTap) expiry = input.timestamp + std::chrono::milliseconds(action.tapDurationMs);
+                if (input.timestamp < expiry) {
+                    m_result.pulsedButtons[static_cast<size_t>(action.target)] = true;
+                }
+                break;
+            }
+            case AutomationActionType::ProfileHold:
+            case AutomationActionType::ProfileToggle: {
+                AutomationProfileContribution &contribution = m_result.profileContributions[
+                    static_cast<size_t>(m_result.profileContributionCount++)];
+                contribution.source = ruleIndex * kMaximumAutomationActions + actionIndex;
+                contribution.ruleIndex = ruleIndex;
+                contribution.targetProfileIndex = action.profileIndex;
+                contribution.mode = action.type == AutomationActionType::ProfileHold
+                    ? ProfileTriggerMode::Hold : ProfileTriggerMode::Toggle;
+                contribution.active = active;
+                contribution.rising = triggered;
                 break;
             }
             default:

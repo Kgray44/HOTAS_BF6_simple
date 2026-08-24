@@ -512,7 +512,7 @@ void runProfileControlBenchmarks()
         [](auto &process, auto &buttons, auto &povValues) { povValues[0] = 0; process(buttons); }));
 }
 
-hotas::MapperConfiguration automationConfiguration(int ruleCount)
+hotas::MapperConfiguration automationConfiguration(int ruleCount, bool temporal = false)
 {
     hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
     for (int index = 0; index < ruleCount; ++index) {
@@ -521,6 +521,31 @@ hotas::MapperConfiguration automationConfiguration(int ruleCount)
         rule.name = QStringLiteral("Benchmark %1").arg(index);
         rule.matchMode = index % 3 == 0 ? hotas::AutomationMatchMode::Any : hotas::AutomationMatchMode::All;
         hotas::AutomationConditionDefinition condition;
+        if (temporal) {
+            switch (index % 3) {
+            case 0:
+                condition.type = hotas::AutomationConditionType::ButtonPressed;
+                condition.button = index % 15 + 1;
+                break;
+            case 1:
+                condition.type = hotas::AutomationConditionType::ButtonMultiPress;
+                condition.button = index % 15 + 1;
+                condition.pressCount = 2;
+                condition.multiPressWindowMs = 350;
+                break;
+            default:
+                condition.type = hotas::AutomationConditionType::AxisCrossesAbove;
+                condition.axis = static_cast<int>(hotas::PhysicalAxis::Z);
+                condition.minimum = 0.15F;
+                condition.hysteresis = 0.03F;
+                break;
+            }
+            rule.activationMode = index % 3 == 0
+                ? hotas::AutomationActivationMode::ToggleOnTrigger
+                : index % 3 == 1 ? hotas::AutomationActivationMode::RunBriefly
+                                 : hotas::AutomationActivationMode::WhileTriggerActive;
+            rule.activeDurationMs = 250;
+        } else {
         switch (index % 4) {
         case 0:
             condition.type = hotas::AutomationConditionType::AxisAbove;
@@ -541,8 +566,15 @@ hotas::MapperConfiguration automationConfiguration(int ruleCount)
             condition.type = hotas::AutomationConditionType::Always;
             break;
         }
+        }
         rule.conditions.push_back(condition);
         hotas::AutomationActionDefinition action;
+        if (temporal) {
+            action.type = index % 2 == 0 ? hotas::AutomationActionType::VJoyButtonTap
+                                         : hotas::AutomationActionType::VJoyButtonHold;
+            action.virtualButton = index % 32 + 1;
+            action.tapDurationMs = 80;
+        } else {
         switch (index % 5) {
         case 0:
             action.type = hotas::AutomationActionType::VJoyButtonHold;
@@ -572,16 +604,18 @@ hotas::MapperConfiguration automationConfiguration(int ruleCount)
             action.maximum = 0.92F;
             break;
         }
+        }
         rule.actions.push_back(action);
         configuration.automations.push_back(std::move(rule));
     }
     return configuration;
 }
 
-void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &reports)
+void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &reports,
+                            bool temporal = false)
 {
     const hotas::RuntimeProfileCache cache = hotas::compileRuntimeProfileCache(
-        automationConfiguration(ruleCount));
+        automationConfiguration(ruleCount, temporal));
     hotas::AutomationRuntime runtime;
     runtime.setCompiled(cache.automation.get());
     const auto runOne = [&](const SyntheticReport &report, volatile float &sink) {
@@ -595,6 +629,7 @@ void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &r
         input.buttonCount = 15;
         input.baseProfileIndex = cache.baseProfileIndex;
         input.preAutomationEffectiveProfileIndex = cache.baseProfileIndex;
+        if (temporal) input.timestamp = Clock::now();
         const hotas::AutomationEvaluationResult &effects = runtime.evaluate(input);
         std::array<float, hotas::kPhysicalAxisCount> processed = report.axes;
         runtime.applyAxisActions(input, processed);
@@ -619,7 +654,7 @@ void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &r
     const Percentiles timing = summarize(samples);
     const double seconds = std::chrono::duration<double>(throughputFinished - throughputStarted).count();
     std::cout << std::fixed << std::setprecision(3)
-              << "automation rules=" << ruleCount
+              << (temporal ? "automation temporal rules=" : "automation rules=") << ruleCount
               << " typical_us=" << timing.typicalUs
               << " p95_us=" << timing.p95Us
               << " p99_us=" << timing.p99Us
@@ -632,6 +667,7 @@ void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &r
 void runAutomationBenchmarks(const std::vector<SyntheticReport> &reports)
 {
     for (const int ruleCount : {0, 8, 32, 64}) runAutomationBenchmark(ruleCount, reports);
+    runAutomationBenchmark(64, reports, true);
 }
 
 void runUiModelStress(std::atomic_bool &stop)

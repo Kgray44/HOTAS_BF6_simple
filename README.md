@@ -1,4 +1,4 @@
-# HOTAS BF6 Simple v1.8.3
+# HOTAS BF6 Simple v1.8.4
 
 A lightweight Windows mapper for routing the Thrustmaster T.Flight HOTAS One
 to the vJoy inputs Battlefield 6 recognizes.
@@ -44,6 +44,14 @@ for diagnostics and mapping.
 - Per-user Inno Setup installer with Start Menu and Desktop shortcuts to the launcher
 - GitHub Actions release pipeline for headless tests, synthetic performance benchmark, Qt deployment, installer smoke test, checksums, manifest generation, and release assets
 - Optional Authenticode signing hooks through GitHub Secrets; builds are explicitly reported as unsigned until credentials are configured
+
+## v1.8.4 Automation triggers and temporal controls
+
+- Automation now supports true Button **pressed** and **released** events, two-to-five press sequences, long presses, and axis **crosses above/below** events with the established threshold hysteresis.
+- A rule-level behavior selector keeps effects composable: apply them while the trigger is active, toggle the entire rule on each trigger, or run it briefly for a per-rule duration. Runtime latch and timer state is never saved and clears on mapping stop, controller disconnect, configuration replacement, and master disable.
+- **Tap virtual button** presses a vJoy button immediately and clears it from a bounded worker-owned expiry state—there are no waits, timers, UI reads, or allocations in report processing.
+- Timing is shown only under **Advanced** when relevant: multi-press gap, long-press duration, brief active duration, and tap duration. Schema 12 deterministically defaults all new fields for v1.8.0–v1.8.3 Automation rules.
+- **RULE SUMMARY** is now a larger primary editor panel and explains event and rule behavior in ordinary language. Overview cards show compact MOMENTARY, TOGGLE, or TIMED behavior labels across Legacy, Standard, and Top Gun.
 
 ## v1.8.3 Automation rule-builder UX
 

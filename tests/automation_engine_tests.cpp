@@ -4,6 +4,7 @@
 
 #include <QtTest>
 
+#include <chrono>
 #include <cmath>
 
 namespace {
@@ -36,6 +37,12 @@ AutomationInputSnapshot input()
     return snapshot;
 }
 
+void setTimestamp(AutomationInputSnapshot &snapshot, int milliseconds)
+{
+    snapshot.timestamp = std::chrono::steady_clock::time_point{}
+        + std::chrono::milliseconds(milliseconds);
+}
+
 const AutomationEvaluationResult &evaluate(AutomationRuntime &runtime,
                                             const RuntimeProfileCache &cache,
                                             const AutomationInputSnapshot &snapshot)
@@ -58,6 +65,14 @@ private slots:
     void disabledEmptyDraftPersistsWithoutPublishing();
     void legacyAlwaysRuleRoundTripsWithoutChangingBehavior();
     void masterDisableClearsLatchedAutomationState();
+    void buttonPressedAndReleasedAreTrueEvents();
+    void multiPressResetsAfterItsWindow();
+    void longPressFiresOnlyOncePerHold();
+    void ruleToggleAndTimedActivationModes();
+    void virtualButtonTapIsNonBlockingAndResets();
+    void axisCrossingUsesHysteresisAndRearms();
+    void v183AutomationMigratesWithSafeTemporalDefaults();
+    void temporalStateResetsOnStopDisconnectAndConfigurationSwap();
 };
 
 void AutomationEngineTests::axisThresholdHysteresis()
@@ -326,6 +341,373 @@ void AutomationEngineTests::masterDisableClearsLatchedAutomationState()
     disabled.automationEnabled = false;
     const RuntimeProfileCache disabledCache = compileRuntimeProfileCache(disabled);
     QVERIFY(!evaluate(runtime, disabledCache, snapshot).toggledButtons[20]);
+}
+
+void AutomationEngineTests::buttonPressedAndReleasedAreTrueEvents()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition pressed;
+    pressed.type = AutomationConditionType::ButtonPressed;
+    pressed.button = 2;
+    AutomationActionDefinition hold;
+    hold.type = AutomationActionType::VJoyButtonHold;
+    hold.virtualButton = 20;
+    configuration.automations.push_back(rule(u"Pressed"_qs, pressed, hold));
+    AutomationConditionDefinition released = pressed;
+    released.type = AutomationConditionType::ButtonReleaseEvent;
+    hold.virtualButton = 21;
+    configuration.automations.push_back(rule(u"Released"_qs, released, hold));
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[1] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 20);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[1] = false;
+    setTimestamp(snapshot, 30);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[1]);
+    setTimestamp(snapshot, 40);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[1]);
+    snapshot.buttons[1] = true;
+    setTimestamp(snapshot, 50);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+}
+
+void AutomationEngineTests::multiPressResetsAfterItsWindow()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonMultiPress;
+    condition.button = 3;
+    condition.pressCount = 2;
+    condition.multiPressWindowMs = 350;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 22;
+    configuration.automations.push_back(rule(u"Double Press"_qs, condition, action));
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[2] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[2] = false;
+    setTimestamp(snapshot, 20);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[2] = true;
+    setTimestamp(snapshot, 100);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[2] = false;
+    setTimestamp(snapshot, 110);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[2] = true;
+    setTimestamp(snapshot, 200);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[2] = false;
+    setTimestamp(snapshot, 210);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[2] = true;
+    setTimestamp(snapshot, 700);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[2] = false;
+    setTimestamp(snapshot, 710);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[2] = true;
+    setTimestamp(snapshot, 800);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+}
+
+void AutomationEngineTests::longPressFiresOnlyOncePerHold()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonLongPress;
+    condition.button = 4;
+    condition.longPressDurationMs = 600;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 23;
+    configuration.automations.push_back(rule(u"Long Press"_qs, condition, action));
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[3] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 609);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 610);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 700);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[3] = false;
+    setTimestamp(snapshot, 710);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[3] = true;
+    setTimestamp(snapshot, 720);
+    evaluate(runtime, cache, snapshot);
+    setTimestamp(snapshot, 1320);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+}
+
+void AutomationEngineTests::ruleToggleAndTimedActivationModes()
+{
+    MapperConfiguration toggleConfiguration = defaultConfiguration();
+    AutomationConditionDefinition pressed;
+    pressed.type = AutomationConditionType::ButtonPressed;
+    pressed.button = 5;
+    AutomationActionDefinition scale;
+    scale.type = AutomationActionType::AxisScale;
+    scale.targetAxis = static_cast<int>(PhysicalAxis::X);
+    scale.value = 0.5F;
+    AutomationDefinition toggle = rule(u"Precision"_qs, pressed, scale);
+    toggle.activationMode = AutomationActivationMode::ToggleOnTrigger;
+    AutomationActionDefinition buttonHold;
+    buttonHold.type = AutomationActionType::VJoyButtonHold;
+    buttonHold.virtualButton = 29;
+    toggle.actions.push_back(buttonHold);
+    toggleConfiguration.automations.push_back(toggle);
+    const RuntimeProfileCache toggleCache = compileRuntimeProfileCache(toggleConfiguration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, toggleCache, snapshot);
+    snapshot.buttons[4] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(evaluate(runtime, toggleCache, snapshot).activeRules[0]);
+    QVERIFY(evaluate(runtime, toggleCache, snapshot).heldButtons[29]);
+    std::array<float, kPhysicalAxisCount> axes{};
+    axes[0] = 1.0F;
+    runtime.applyAxisActions(snapshot, axes);
+    QCOMPARE(axes[0], 0.5F);
+    snapshot.buttons[4] = false;
+    setTimestamp(snapshot, 20);
+    QVERIFY(evaluate(runtime, toggleCache, snapshot).activeRules[0]);
+    snapshot.buttons[4] = true;
+    setTimestamp(snapshot, 30);
+    QVERIFY(!evaluate(runtime, toggleCache, snapshot).activeRules[0]);
+    QVERIFY(!evaluate(runtime, toggleCache, snapshot).heldButtons[29]);
+
+    MapperConfiguration timedConfiguration = defaultConfiguration();
+    AutomationActionDefinition hold;
+    hold.type = AutomationActionType::VJoyButtonHold;
+    hold.virtualButton = 24;
+    AutomationDefinition timed = rule(u"Brief"_qs, pressed, hold);
+    timed.activationMode = AutomationActivationMode::RunBriefly;
+    timed.activeDurationMs = 250;
+    timedConfiguration.automations.push_back(timed);
+    const RuntimeProfileCache timedCache = compileRuntimeProfileCache(timedConfiguration);
+    AutomationRuntime timedRuntime;
+    snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(timedRuntime, timedCache, snapshot);
+    snapshot.buttons[4] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(evaluate(timedRuntime, timedCache, snapshot).activeRules[0]);
+    snapshot.buttons[4] = false;
+    setTimestamp(snapshot, 259);
+    QVERIFY(evaluate(timedRuntime, timedCache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 260);
+    QVERIFY(!evaluate(timedRuntime, timedCache, snapshot).activeRules[0]);
+    snapshot.buttons[4] = true;
+    setTimestamp(snapshot, 270);
+    QVERIFY(evaluate(timedRuntime, timedCache, snapshot).activeRules[0]);
+}
+
+void AutomationEngineTests::virtualButtonTapIsNonBlockingAndResets()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonPressed;
+    condition.button = 6;
+    AutomationActionDefinition tap;
+    tap.type = AutomationActionType::VJoyButtonTap;
+    tap.virtualButton = 25;
+    tap.tapDurationMs = 80;
+    configuration.automations.push_back(rule(u"Tap"_qs, condition, tap));
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[5] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(evaluate(runtime, cache, snapshot).pulsedButtons[25]);
+    setTimestamp(snapshot, 89);
+    QVERIFY(evaluate(runtime, cache, snapshot).pulsedButtons[25]);
+    setTimestamp(snapshot, 90);
+    QVERIFY(!evaluate(runtime, cache, snapshot).pulsedButtons[25]);
+
+    MapperConfiguration disabled = configuration;
+    disabled.automationEnabled = false;
+    const RuntimeProfileCache disabledCache = compileRuntimeProfileCache(disabled);
+    QVERIFY(!evaluate(runtime, disabledCache, snapshot).pulsedButtons[25]);
+    QVERIFY(!evaluate(runtime, cache, snapshot).pulsedButtons[25]);
+}
+
+void AutomationEngineTests::axisCrossingUsesHysteresisAndRearms()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition above;
+    above.type = AutomationConditionType::AxisCrossesAbove;
+    above.axis = static_cast<int>(PhysicalAxis::X);
+    above.minimum = 0.5F;
+    above.hysteresis = 0.1F;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 26;
+    configuration.automations.push_back(rule(u"Above"_qs, above, action));
+    AutomationConditionDefinition below;
+    below.type = AutomationConditionType::AxisCrossesBelow;
+    below.axis = static_cast<int>(PhysicalAxis::Y);
+    below.minimum = -0.5F;
+    below.hysteresis = 0.1F;
+    action.virtualButton = 27;
+    configuration.automations.push_back(rule(u"Below"_qs, below, action));
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, cache, snapshot);
+    snapshot.physicalAxes[0] = 0.6F;
+    setTimestamp(snapshot, 10);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+    setTimestamp(snapshot, 20);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.physicalAxes[0] = 0.45F;
+    setTimestamp(snapshot, 30);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.physicalAxes[0] = 0.4F;
+    setTimestamp(snapshot, 40);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.physicalAxes[0] = 0.6F;
+    setTimestamp(snapshot, 50);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[0]);
+
+    snapshot.physicalAxes[1] = -0.6F;
+    setTimestamp(snapshot, 60);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[1]);
+    snapshot.physicalAxes[1] = -0.7F;
+    setTimestamp(snapshot, 70);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[1]);
+    snapshot.physicalAxes[1] = -0.4F;
+    setTimestamp(snapshot, 80);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[1]);
+    snapshot.physicalAxes[1] = -0.6F;
+    setTimestamp(snapshot, 90);
+    QVERIFY(evaluate(runtime, cache, snapshot).activeRules[1]);
+}
+
+void AutomationEngineTests::v183AutomationMigratesWithSafeTemporalDefaults()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonHeld;
+    condition.button = 7;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 28;
+    configuration.automations.push_back(rule(u"v183 rule"_qs, condition, action));
+    QJsonObject v183 = ConfigStore::toJson(configuration);
+    v183.insert(u"version"_qs, 11);
+    QJsonArray automations = v183.value(u"automations"_qs).toArray();
+    QJsonObject oldRule = automations.first().toObject();
+    oldRule.remove(u"activationMode"_qs);
+    oldRule.remove(u"activeDurationMs"_qs);
+    QJsonArray conditions = oldRule.value(u"conditions"_qs).toArray();
+    QJsonObject oldCondition = conditions.first().toObject();
+    oldCondition.remove(u"pressCount"_qs);
+    oldCondition.remove(u"multiPressWindowMs"_qs);
+    oldCondition.remove(u"longPressDurationMs"_qs);
+    conditions[0] = oldCondition;
+    oldRule.insert(u"conditions"_qs, conditions);
+    QJsonArray actions = oldRule.value(u"actions"_qs).toArray();
+    QJsonObject oldAction = actions.first().toObject();
+    oldAction.remove(u"tapDurationMs"_qs);
+    actions[0] = oldAction;
+    oldRule.insert(u"actions"_qs, actions);
+    automations[0] = oldRule;
+    v183.insert(u"automations"_qs, automations);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(v183, &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.automations.size(), size_t{1});
+    QCOMPARE(restored.automations[0].activationMode,
+             AutomationActivationMode::WhileTriggerActive);
+    QCOMPARE(restored.automations[0].activeDurationMs, 250);
+    QCOMPARE(restored.automations[0].conditions[0].pressCount, 2);
+    QCOMPARE(restored.automations[0].conditions[0].multiPressWindowMs, 350);
+    QCOMPARE(restored.automations[0].conditions[0].longPressDurationMs, 600);
+    QCOMPARE(restored.automations[0].actions[0].tapDurationMs, 80);
+}
+
+void AutomationEngineTests::temporalStateResetsOnStopDisconnectAndConfigurationSwap()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonMultiPress;
+    condition.button = 8;
+    condition.pressCount = 2;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 30;
+    configuration.automations.push_back(rule(u"Reset sequence"_qs, condition, action));
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    AutomationRuntime runtime;
+    AutomationInputSnapshot snapshot = input();
+    setTimestamp(snapshot, 0);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[7] = true;
+    setTimestamp(snapshot, 10);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[7] = false;
+    setTimestamp(snapshot, 20);
+    evaluate(runtime, cache, snapshot);
+
+    // Mapping stop and controller disconnect both call this runtime reset.
+    runtime.reset();
+    snapshot.buttons[7] = true;
+    setTimestamp(snapshot, 30);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[7] = false;
+    setTimestamp(snapshot, 40);
+    evaluate(runtime, cache, snapshot);
+    snapshot.buttons[7] = true;
+    setTimestamp(snapshot, 45);
+    QVERIFY(!evaluate(runtime, cache, snapshot).activeRules[0]);
+    snapshot.buttons[7] = false;
+    setTimestamp(snapshot, 46);
+    evaluate(runtime, cache, snapshot);
+
+    // Replacing the immutable compiled table also discards partial sequences.
+    MapperConfiguration replacement = configuration;
+    replacement.automations[0].priority = 51;
+    const RuntimeProfileCache replacementCache = compileRuntimeProfileCache(replacement);
+    snapshot.buttons[7] = false;
+    setTimestamp(snapshot, 50);
+    QVERIFY(!evaluate(runtime, replacementCache, snapshot).activeRules[0]);
+    snapshot.buttons[7] = true;
+    setTimestamp(snapshot, 60);
+    QVERIFY(!evaluate(runtime, replacementCache, snapshot).activeRules[0]);
+    snapshot.buttons[7] = false;
+    setTimestamp(snapshot, 70);
+    evaluate(runtime, replacementCache, snapshot);
+    snapshot.buttons[7] = true;
+    setTimestamp(snapshot, 80);
+    QVERIFY(evaluate(runtime, replacementCache, snapshot).activeRules[0]);
 }
 
 } // namespace
