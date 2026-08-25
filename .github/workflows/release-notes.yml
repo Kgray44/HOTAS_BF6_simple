@@ -28,12 +28,27 @@ jobs:
             const dir = path.join(process.env.GITHUB_WORKSPACE, 'docs', 'releases');
             const files = fs.readdirSync(dir)
               .filter(name => name.endsWith('.json'))
-              .sort((a, b) => {
-                const order = ['milestones.json', 'v1.6.json', 'v1.7.json', 'v1.8.json', 'v1.9.json'];
-                return order.indexOf(a) - order.indexOf(b);
-              });
+              .sort();
 
             const entries = files.flatMap(name => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+
+            function versionParts(version) {
+              const parts = version.split('.').map(Number);
+              while (parts.length < 3) parts.push(0);
+              return parts;
+            }
+
+            function compareVersions(left, right) {
+              const a = versionParts(left.version);
+              const b = versionParts(right.version);
+              for (let i = 0; i < 3; ++i) {
+                if (a[i] !== b[i]) return a[i] - b[i];
+              }
+              return 0;
+            }
+
+            entries.sort(compareVersions);
+
             const seen = new Set();
             const rendered = new Map();
             let previousTag = null;
@@ -67,10 +82,8 @@ jobs:
             }
 
             function versionAtLeast(version, target) {
-              const a = version.split('.').map(Number);
-              const b = target.split('.').map(Number);
-              while (a.length < 3) a.push(0);
-              while (b.length < 3) b.push(0);
+              const a = versionParts(version);
+              const b = versionParts(target);
               for (let i = 0; i < 3; ++i) {
                 if (a[i] !== b[i]) return a[i] > b[i];
               }
