@@ -1,0 +1,152 @@
+name: Release Notes Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/releases/**'
+      - '.github/workflows/release-notes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and synchronize curated release notes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const dir = path.join(process.env.GITHUB_WORKSPACE, 'docs', 'releases');
+            const files = fs.readdirSync(dir)
+              .filter(name => name.endsWith('.json'))
+              .sort((a, b) => {
+                const order = ['milestones.json', 'v1.6.json', 'v1.7.json', 'v1.8.json', 'v1.9.json'];
+                return order.indexOf(a) - order.indexOf(b);
+              });
+
+            const entries = files.flatMap(name => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+            const seen = new Set();
+            const rendered = new Map();
+            let previousTag = null;
+
+            function statusBlock(entry) {
+              switch (entry.status) {
+                case 'current':
+                  return `> [!TIP]\n> **Current recommended release.**\n>\n> ${entry.statusNote}`;
+                case 'deprecated':
+                  if (!entry.replacement) throw new Error(`Deprecated release ${entry.tag} requires a replacement.`);
+                  return `> [!CAUTION]\n> **Deprecated — do not install or use this release.**\n>\n> ${entry.statusNote}\n>\n> **Use ${entry.replacement} or newer.**`;
+                case 'superseded':
+                  if (!entry.replacement) throw new Error(`Superseded release ${entry.tag} requires a replacement.`);
+                  return `> [!WARNING]\n> **Superseded due to a known issue.**\n>\n> ${entry.statusNote}\n>\n> **Use ${entry.replacement} or newer.**`;
+                case 'historical-stable':
+                  return `> [!NOTE]\n> **Historical stable release.**\n>\n> ${entry.statusNote}`;
+                case 'historical':
+                  return `> [!NOTE]\n> **Historical release.**\n>\n> ${entry.statusNote}`;
+                case 'milestone':
+                  return `> [!NOTE]\n> **Historical development milestone.**\n>\n> ${entry.statusNote}`;
+                default:
+                  throw new Error(`Unknown release status '${entry.status}' for ${entry.tag}.`);
+              }
+            }
+
+            function architectureText(version) {
+              if (version.startsWith('1.9.')) return 'Setup/readiness work is control-plane logic only. The DirectInput-to-vJoy report path remains isolated from UI, dependency, elevation, and repair operations.';
+              if (version.startsWith('1.8.')) return 'The mapper-first architecture remains the governing constraint: profiles and Automation compile outside the report loop, and UI work does not schedule vJoy output.';
+              if (['1.4','1.5','1.6.0','1.6.1','1.6.2','1.6.3','1.7.0'].includes(version)) return 'This release continues the project separation between real-time mapping and configuration/UI work. Later releases deepen that separation while retaining the same low-latency design goal.';
+              return 'This early milestone predates the mature release pipeline but establishes part of the mapping/configuration architecture used by later versions.';
+            }
+
+            function versionAtLeast(version, target) {
+              const a = version.split('.').map(Number);
+              const b = target.split('.').map(Number);
+              while (a.length < 3) a.push(0);
+              while (b.length < 3) b.push(0);
+              for (let i = 0; i < 3; ++i) {
+                if (a[i] !== b[i]) return a[i] > b[i];
+              }
+              return true;
+            }
+
+            function render(entry, previous) {
+              const lines = [];
+              lines.push(statusBlock(entry), '', `# ${entry.tag}`, '', entry.summary, '', '## What changed', '');
+              for (const item of entry.highlights) lines.push(`- ${item}`);
+              lines.push('', '## Runtime and architecture', '', architectureText(entry.version));
+              lines.push('', '## Project scope at this release', '', 'HOTAS BF6 Simple remains a Windows DirectInput-to-vJoy mapper designed primarily for Battlefield 6. Unless a note above says otherwise, capabilities introduced by earlier releases remain part of this version.');
+              lines.push('', '## Compatibility and requirements', '');
+              if (entry.syncToGitHubRelease) {
+                lines.push('- Windows 10/11 is the intended runtime family.');
+                lines.push('- vJoy is required for virtual output.');
+                if (versionAtLeast(entry.version, '1.6.2')) lines.push('- HidHide is optional but recommended when the physical controller must be hidden from the game.');
+                lines.push('- Thrustmaster T.Flight HOTAS One is the primary validation target for this release line; other DirectInput devices are not guaranteed unless separately validated.');
+              } else {
+                lines.push('This is a source/history milestone rather than a maintained packaged release. Use current documentation for present-day hardware, Windows, vJoy, HidHide, and Battlefield compatibility requirements.');
+              }
+              lines.push('', '## Upgrade guidance', '');
+              if (entry.status === 'current') lines.push('No upgrade is required within the currently published release line.');
+              else if (entry.replacement) lines.push(`Use **${entry.replacement} or newer** rather than selecting this version for a new installation.`);
+              else lines.push('Use the newest available stable release for a normal installation.');
+
+              if (entry.syncToGitHubRelease) {
+                lines.push('', '## Download', '');
+                if (entry.status === 'current') lines.push('For normal use, download the installer attached to this GitHub Release.');
+                else lines.push(`If you intentionally need this historical build, use the assets attached to the GitHub Release for **${entry.tag}**. For normal use, prefer the current recommended release.`);
+                lines.push('', '### Signing note', '', 'This release belongs to the pre-public-trusted-signing release line. Windows reputation or Smart App Control may warn about or block unsigned binaries; do not weaken unrelated Windows security controls to work around those protections.');
+              } else {
+                lines.push('', '## Packaging note', '', 'No packaged GitHub Release is maintained for this early milestone. It is documented for source/history purposes.');
+              }
+
+              if (previous) lines.push('', '## Full changelog', '', `[${previous}...${entry.tag}](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${previous}...${entry.tag})`);
+              lines.push('');
+              return lines.join('\n');
+            }
+
+            for (const entry of entries) {
+              if (entry.tag !== `v${entry.version}`) throw new Error(`Version/tag mismatch for ${entry.version}.`);
+              if (entry.releaseTitle !== entry.tag) throw new Error(`Release title for ${entry.tag} must be exactly the version ID.`);
+              if (seen.has(entry.tag)) throw new Error(`Duplicate catalog entry: ${entry.tag}`);
+              if (!entry.summary || !Array.isArray(entry.highlights) || entry.highlights.length === 0) throw new Error(`Incomplete notes for ${entry.tag}.`);
+              seen.add(entry.tag);
+              const body = render(entry, previousTag);
+              if (entry.status === 'deprecated' && !body.includes('Deprecated — do not install or use this release.')) throw new Error(`Deprecated warning missing for ${entry.tag}.`);
+              rendered.set(entry.tag, body);
+              if (!['v1.0','v1.2'].includes(entry.tag)) previousTag = entry.tag;
+            }
+
+            let updated = 0;
+            let sourceOnly = 0;
+            for (const entry of entries) {
+              if (!entry.syncToGitHubRelease) {
+                sourceOnly++;
+                continue;
+              }
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: entry.tag,
+              });
+              await github.rest.repos.updateRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                name: entry.tag,
+                body: rendered.get(entry.tag),
+              });
+              core.info(`Updated ${entry.tag}: title='${entry.tag}', status=${entry.status}`);
+              updated++;
+            }
+
+            core.summary
+              .addHeading('Release history synchronization')
+              .addRaw(`${updated} existing GitHub Releases updated. ${sourceOnly} source-only milestones preserved without creating retroactive Releases.`)
+              .write();
