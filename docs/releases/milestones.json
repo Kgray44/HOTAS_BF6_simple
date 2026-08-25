@@ -1,0 +1,106 @@
+[
+  {
+    "version": "1.0",
+    "tag": "v1.0",
+    "releaseTitle": "v1.0",
+    "title": "Initial functional mapper",
+    "summary": "Established the first usable DirectInput-to-vJoy application shell for Battlefield 6.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "This was an early source milestone rather than a packaged GitHub Release. It is retained for project history, not recommended for present-day use.",
+    "highlights": [
+      "Qt Quick application shell and persistent configuration model.",
+      "DirectInput physical-controller acquisition and vJoy virtual-output worker.",
+      "Initial four-axis routing for roll, pitch, throttle, and yaw.",
+      "Basic mapping start/stop behavior and first-pass controller/vJoy status."
+    ]
+  },
+  {
+    "version": "1.1",
+    "tag": "v1.1",
+    "releaseTitle": "v1.1",
+    "title": "Diagnostics and vJoy stabilization",
+    "summary": "Made the first mapper easier to diagnose and more tolerant of real vJoy installation layouts.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "Historical source/tag milestone. Later versions substantially improve setup, safety, profiles, curves, and packaging.",
+    "highlights": [
+      "Improved vJoy readiness and capability reporting.",
+      "Automatic location/loading of the installed vJoy interface path.",
+      "Expanded live diagnostics for controller and virtual-output state.",
+      "Safer output reset behavior during stop/disconnect paths."
+    ]
+  },
+  {
+    "version": "1.2",
+    "tag": "v1.2",
+    "releaseTitle": "v1.2",
+    "title": "Per-axis configuration",
+    "summary": "Moved mapping from a simple global setup toward profile-ready, per-axis control.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "Historical development milestone. No packaged GitHub Release is associated with this version.",
+    "highlights": [
+      "Dedicated Axes workspace and selected-axis workflow.",
+      "Per-axis route, deadzone, hysteresis, inversion, and output-limit controls.",
+      "Live curve preview tied to the selected physical axis.",
+      "Persistent axis selection and richer input/output instrumentation."
+    ]
+  },
+  {
+    "version": "1.3",
+    "tag": "v1.3",
+    "releaseTitle": "v1.3",
+    "title": "Axes workspace and live visualization",
+    "summary": "Completed the richer axes workspace foundation and improved live transform visibility.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "Historical source/tag milestone. Preserved for development history rather than present-day installation.",
+    "highlights": [
+      "Separate physical-input and transformed-output markers.",
+      "Dual input/output response visualization.",
+      "More complete axis status and instrumentation.",
+      "UI groundwork for the later curve editor and profile-aware pipeline."
+    ]
+  },
+  {
+    "version": "1.4",
+    "tag": "v1.4",
+    "releaseTitle": "v1.4",
+    "title": "Advanced response curve studio",
+    "summary": "Turned response shaping into a full editor rather than a handful of static curve choices.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "Historical source/tag milestone. The curve architecture established here remains an important foundation of later releases.",
+    "highlights": [
+      "Linear, J-Curve, and S-Curve families with multiple strengths.",
+      "Advanced evidence-informed presets and Personal Presets.",
+      "Point-based editing with Smooth/Linear interpolation and multiple point densities.",
+      "Large response graph with live markers, gain/reference views, comparison/audition tools, and signal-path display.",
+      "Immutable 4097-sample compiled lookup tables kept runtime evaluation fast."
+    ]
+  },
+  {
+    "version": "1.5",
+    "tag": "v1.5",
+    "releaseTitle": "v1.5",
+    "title": "Profiles and physical profile controls",
+    "summary": "Added instant profile switching and runtime Hold/Toggle controls without burdening the mapping loop.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "statusNote": "Historical source/tag milestone immediately preceding the first installer-based release line.",
+    "highlights": [
+      "Persistent Normal/Precision-style profiles with create, clone, rename, delete, and activation.",
+      "Physical-button Profile Hold and Profile Toggle behavior.",
+      "Deterministic Hold → Toggle → manual base-profile precedence.",
+      "Profile switches compile complete mapping state before worker adoption.",
+      "Stop/disconnect clears runtime-only profile overrides safely."
+    ]
+  }
+]
