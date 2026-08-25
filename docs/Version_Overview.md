@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v1.9.2**
+**Current release: v1.9.3**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v1.9.3 — Real-world setup and calibration reliability
+
+Targets the remaining external-machine setup failures without changing the real-time mapper architecture.
+
+- Controller arrival evaluates readiness and opens the shared setup dialog only when selection, calibration, vJoy, HidHide, or another action needs attention.
+- Two-stage range then robust center calibration makes measured neutral the user-facing 0.0% for centered axes while retaining range-only controls.
+- Axis meters and linear graphs consume calibrated coordinates; raw sensor readings remain explicit Diagnostics data.
+- Automatic HidHide setup requires a forced DirectInput reacquisition and fresh physical report before Ready is published.
+- A failed physical reacquisition triggers narrow transaction rollback and clear reconnect/rollback status instead of stranding the selected controller.
+- Attention and failure states include Copy Diagnostics with sanitized setup, repair, rollback, and calibration evidence.
 
 ## v1.9.2 — Automatic repair verification and single-UAC flow
 

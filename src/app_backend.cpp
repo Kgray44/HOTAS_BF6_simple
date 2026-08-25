@@ -10,15 +10,19 @@
 #include "response_curve.h"
 
 #include <QCoreApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QLocale>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSettings>
+#include <QSysInfo>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -37,6 +41,17 @@ QString automationProfileName(const MapperConfiguration &configuration, const QS
 {
     if (const ControllerProfile *profile = findProfile(configuration, id)) return profile->name;
     return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
+}
+
+QString sanitizeDiagnosticText(QString text)
+{
+    const QString home = QDir::homePath();
+    if (!home.isEmpty()) text.replace(home, QStringLiteral("<USER_HOME>"), Qt::CaseInsensitive);
+    const QString appDirectory = QCoreApplication::applicationDirPath();
+    if (!appDirectory.isEmpty()) text.replace(appDirectory, QStringLiteral("<APP_DIR>"), Qt::CaseInsensitive);
+    text.replace(QRegularExpression(QStringLiteral("(?i)[A-Z]:\\\\Users\\\\[^\\\\\\r\\n]+")),
+                 QStringLiteral("<USER_HOME>"));
+    return text.trimmed();
 }
 
 QString automationBehaviorLabel(AutomationActivationMode mode)
@@ -225,6 +240,17 @@ AppBackend::AppBackend(QObject *parent)
 {
     QSettings settings;
     m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
+    if (m_readiness.hasPendingRecovery()) {
+        ControllerReadinessPlan pending;
+        pending.state = ControllerReadinessState::Attention;
+        pending.physicalStatus = VerificationSubsystemState::Attention;
+        pending.hidhideStatus = VerificationSubsystemState::Attention;
+        pending.physicalSummary = QStringLiteral("A prior automatic setup transaction needs physical-controller recovery verification.");
+        pending.hidhideSummary = QStringLiteral("HOTAS BF6 retained a narrow recovery record; connect the controller and use Undo Automatic Repair if visibility was not restored.");
+        pending.status = QStringLiteral("RECOVERY PENDING — A prior automatic setup did not reach physical-controller verification.");
+        pending.lastChecked = QDateTime::currentDateTime();
+        m_readiness.adoptPlan(std::move(pending));
+    }
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
@@ -291,6 +317,9 @@ QVariantList AppBackend::axes() const
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"available"_qs, runtime.axisAvailable[index].load());
         item.insert(u"raw"_qs, runtime.raw[index].load());
+        // Normal screens deliberately use the calibrated coordinate system.
+        // Raw remains exposed separately for calibration and support work.
+        item.insert(u"calibrated"_qs, runtime.normalized[index].load());
         item.insert(u"curveResponse"_qs, runtime.curveResponse[index].load());
         item.insert(u"transformed"_qs, runtime.transformed[index].load());
         const float virtualValue = runtime.virtualValues[index].load();
@@ -314,9 +343,16 @@ QVariantList AppBackend::axes() const
         item.insert(u"curvePointEditing"_qs, mapping.curve.pointEditing);
         item.insert(u"unipolar"_qs, mapping.rangeMode == AxisRangeMode::OneSided);
         item.insert(u"calibrationEnabled"_qs, m_configuration.calibration[index].enabled);
-        item.insert(u"calibrationMinimum"_qs, runtime.calibrationMinimum[index].load());
-        item.insert(u"calibrationCenter"_qs, runtime.calibrationCenter[index].load());
-        item.insert(u"calibrationMaximum"_qs, runtime.calibrationMaximum[index].load());
+        item.insert(u"calibrationCentered"_qs, m_configuration.calibration[index].centered);
+        const CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
+        const bool showingCapture = m_calibrationStage != CalibrationStageState::Idle && capture.available;
+        item.insert(u"calibrationMinimum"_qs, showingCapture ? capture.minimum
+            : runtime.calibrationMinimum[index].load());
+        item.insert(u"calibrationCenter"_qs, showingCapture && capture.centerSampleCount > 0
+            ? robustCalibrationCenter(capture.centerSamples, capture.centerSampleCount)
+            : runtime.calibrationCenter[index].load());
+        item.insert(u"calibrationMaximum"_qs, showingCapture ? capture.maximum
+            : runtime.calibrationMaximum[index].load());
         result.append(item);
     }
     return result;
@@ -922,7 +958,23 @@ bool AppBackend::controllerSetupInProgress() const
     return m_verificationInProgress || m_readiness.transactionActive();
 }
 bool AppBackend::controllerSetupCanUndo() const { return m_readiness.canUndo(); }
-bool AppBackend::calibrationActive() const { return m_worker.calibrationRunning(); }
+bool AppBackend::controllerDiagnosticsAvailable() const
+{
+    const ControllerReadinessState state = m_readiness.plan().state;
+    return state == ControllerReadinessState::Attention || state == ControllerReadinessState::Failed
+        || state == ControllerReadinessState::NeedsChanges || state == ControllerReadinessState::Cancelled;
+}
+bool AppBackend::calibrationActive() const { return m_calibrationStage != CalibrationStageState::Idle; }
+QString AppBackend::calibrationStage() const
+{
+    switch (m_calibrationStage) {
+    case CalibrationStageState::Idle: return QStringLiteral("IDLE");
+    case CalibrationStageState::Range: return QStringLiteral("RANGE");
+    case CalibrationStageState::Center: return QStringLiteral("CENTER");
+    case CalibrationStageState::Finalizing: return QStringLiteral("FINALIZING");
+    }
+    return QStringLiteral("IDLE");
+}
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
 int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }
 
@@ -1998,40 +2050,137 @@ bool AppBackend::activateProfile(const QString &profileId)
 
 void AppBackend::beginCalibration()
 {
-    m_worker.beginCalibration();
-    appendEvent(u"Calibration capture started; center controls, then move through full travel"_qs);
+    if (m_calibrationStage != CalibrationStageState::Idle) return;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
+        capture = {};
+        capture.available = runtime.axisAvailable[index].load();
+        const float raw = runtime.raw[index].load();
+        capture.minimum = raw;
+        capture.maximum = raw;
+    }
+    m_calibrationStage = CalibrationStageState::Range;
+    m_calibrationStatus = u"STEP 1 OF 2 — Move every control through its complete range several times."_qs;
+    appendEvent(u"Calibration range capture started"_qs);
     emit stateChanged();
+}
+
+bool AppBackend::beginCalibrationCenterCapture()
+{
+    if (m_calibrationStage != CalibrationStageState::Range) return false;
+    m_calibrationStage = CalibrationStageState::Center;
+    m_calibrationStatus = u"STEP 2 OF 2 — Release self-centering controls. Throttles and sliders do not need a center."_qs;
+    appendEvent(u"Calibration range captured; ready to capture centered controls"_qs);
+    emit stateChanged();
+    return true;
 }
 
 bool AppBackend::saveCalibration()
 {
-    const auto captured = m_worker.capturedCalibration();
-    bool savedAny = false;
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        if (!m_worker.runtime().axisAvailable[index].load()) continue;
-        const Calibration calibration = captured[index];
-        if (calibration.minimum < calibration.center && calibration.center < calibration.maximum) {
-            m_configuration.calibration[index] = calibration;
-            savedAny = true;
-        }
-    }
-    m_worker.cancelCalibration();
-    if (savedAny) {
-        persistAndApply();
-        appendEvent(u"Calibration saved"_qs);
-    } else {
-        appendEvent(u"Calibration needs movement on both sides of the captured center"_qs);
-    }
+    if (m_calibrationStage != CalibrationStageState::Center) return false;
+    for (CalibrationCaptureAxis &capture : m_calibrationCapture) capture.centerSampleCount = 0;
+    m_calibrationStage = CalibrationStageState::Finalizing;
+    m_calibrationFinalizationClock.restart();
+    m_calibrationStatus = u"Measuring a short, stable center sample. Keep self-centering controls released."_qs;
+    appendEvent(u"Calibration center sampling started"_qs);
     emit stateChanged();
-    return savedAny;
+    return true;
 }
 
 void AppBackend::resetCalibration()
 {
-    m_worker.cancelCalibration();
+    m_calibrationStage = CalibrationStageState::Idle;
+    m_calibrationCapture = {};
     for (Calibration &calibration : m_configuration.calibration) calibration = Calibration{};
     persistAndApply();
+    m_calibrationStatus = u"Calibration reset. Raw input is shown until you calibrate again."_qs;
     appendEvent(u"Calibration reset"_qs);
+}
+
+void AppBackend::sampleCalibrationControlPlane()
+{
+    if (m_calibrationStage == CalibrationStageState::Idle) return;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
+        if (!capture.available || !runtime.axisAvailable[index].load()) continue;
+        const float raw = runtime.raw[index].load();
+        if (m_calibrationStage == CalibrationStageState::Range) {
+            capture.minimum = std::min(capture.minimum, raw);
+            capture.maximum = std::max(capture.maximum, raw);
+        } else if (m_calibrationStage == CalibrationStageState::Finalizing
+                   && currentProfile().axes[static_cast<size_t>(index)].rangeMode == AxisRangeMode::Centered
+                   && capture.centerSampleCount < static_cast<int>(capture.centerSamples.size())) {
+            capture.centerSamples[static_cast<size_t>(capture.centerSampleCount++)] = raw;
+        }
+    }
+    if (m_calibrationStage == CalibrationStageState::Finalizing
+        && m_calibrationFinalizationClock.elapsed() >= 400) {
+        finishCalibration();
+    }
+}
+
+void AppBackend::finishCalibration()
+{
+    constexpr float kMinimumTravel = 0.08F;
+    constexpr float kMinimumCenteredMargin = 0.01F;
+    constexpr float kMaximumCenterSpread = 0.12F;
+    QStringList problems;
+    std::array<Calibration, kPhysicalAxisCount> captured = m_configuration.calibration;
+    bool savedAny = false;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
+        if (!capture.available) continue;
+        const float span = capture.maximum - capture.minimum;
+        if (!(span >= kMinimumTravel)) {
+            problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" needs more range movement"_qs);
+            continue;
+        }
+        Calibration calibration;
+        calibration.enabled = true;
+        calibration.minimum = capture.minimum;
+        calibration.maximum = capture.maximum;
+        calibration.centered = currentProfile().axes[static_cast<size_t>(index)].rangeMode
+            == AxisRangeMode::Centered;
+        if (calibration.centered) {
+            if (capture.centerSampleCount < 10) {
+                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" did not receive enough center samples"_qs);
+                continue;
+            }
+            const float center = robustCalibrationCenter(capture.centerSamples, capture.centerSampleCount);
+            const auto samples = capture.centerSamples;
+            const auto bounds = std::minmax_element(samples.cbegin(), samples.cbegin() + capture.centerSampleCount);
+            if (!(capture.minimum + kMinimumCenteredMargin < center
+                  && center < capture.maximum - kMinimumCenteredMargin)) {
+                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" center is outside its measured range"_qs);
+                continue;
+            }
+            if (*bounds.second - *bounds.first > kMaximumCenterSpread) {
+                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" center was too unstable; release it and try again"_qs);
+                continue;
+            }
+            calibration.center = center;
+        } else {
+            // This value is retained only for backward-compatible storage;
+            // normalization uses the measured range and ignores it.
+            calibration.center = 0.0F;
+        }
+        captured[static_cast<size_t>(index)] = calibration;
+        savedAny = true;
+    }
+    if (savedAny && problems.isEmpty()) {
+        m_configuration.calibration = captured;
+        m_calibrationStage = CalibrationStageState::Idle;
+        persistAndApply();
+        m_calibrationStatus = u"Calibration complete. Centered axes now use measured neutral as 0.0%."_qs;
+        appendEvent(u"Two-stage calibration saved"_qs);
+    } else {
+        m_calibrationStage = CalibrationStageState::Center;
+        m_calibrationStatus = QStringLiteral("Calibration needs attention: %1.").arg(problems.join(QStringLiteral("; ")));
+        appendEvent(m_calibrationStatus);
+    }
+    emit stateChanged();
 }
 
 void AppBackend::setStartMappingOnLaunch(bool enabled)
@@ -2390,6 +2539,7 @@ void AppBackend::startVerification(VerificationMode mode)
     const bool mapperOwnsVjoy = m_worker.runtime().mappingActive.load();
     const bool outputReportsSucceeding = mapperOwnsVjoy && m_worker.runtime().vjoyReady.load();
     const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const QString arrivalId = mode == VerificationMode::Quick ? m_pendingControllerArrivalId : QString{};
 
     m_verificationInProgress = true;
     m_readiness.adoptPlan(ControllerReadinessService::checkingPlan(physical, mode));
@@ -2399,7 +2549,7 @@ void AppBackend::startVerification(VerificationMode mode)
         : u"Quick HOTAS verification started"_qs);
 
     QThread *thread = QThread::create([this, configuration, physical, mode, mappingWasRequested,
-                                       mapperOwnsVjoy, outputReportsSucceeding] {
+                                       mapperOwnsVjoy, outputReportsSucceeding, arrivalId] {
         ControllerReadinessPlan plan;
         bool prepared = true;
         bool restored = true;
@@ -2437,12 +2587,40 @@ void AppBackend::startVerification(VerificationMode mode)
             }
         }
 
-        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored] () mutable {
+        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId] () mutable {
             m_readiness.adoptPlan(std::move(plan));
+            if (m_readiness.hasPendingRecovery()) {
+                // A process restart between the privileged change and fresh
+                // DirectInput proof must stay visible even when the current
+                // device inspection happens to look healthy. The retained
+                // journal exposes only this app's own reversible entries.
+                ControllerReadinessPlan pending = m_readiness.plan();
+                pending.state = ControllerReadinessState::Attention;
+                pending.isChecking = false;
+                pending.physicalStatus = VerificationSubsystemState::Attention;
+                pending.hidhideStatus = VerificationSubsystemState::Attention;
+                pending.physicalSummary = QStringLiteral("A prior automatic setup did not complete fresh physical-controller verification.");
+                pending.hidhideSummary = QStringLiteral("A narrow recovery record is available. Use Undo Automatic Repair after confirming the selected HOTAS is connected.");
+                pending.status = QStringLiteral("RECOVERY PENDING — Review the previous automatic setup and Undo Automatic Repair if needed.");
+                pending.lastChecked = QDateTime::currentDateTime();
+                m_readiness.adoptPlan(std::move(pending));
+            }
             m_verificationInProgress = false;
             appendEvent(restored
                 ? QString(u"HOTAS verification complete: %1"_qs).arg(m_readiness.plan().status)
                 : u"HOTAS verification complete, but mapping restoration failed"_qs);
+            if (mode == VerificationMode::Quick && !arrivalId.isEmpty()
+                && arrivalId == m_pendingControllerArrivalId) {
+                m_pendingControllerArrivalId.clear();
+                const PhysicalControllerCapabilities current = currentPhysicalCapabilities();
+                const bool actionable = ControllerReadinessService::needsSetupAfterControllerArrival(
+                    true, m_readiness.plan());
+                if (current.connected && current.directInputId == arrivalId
+                    && (actionable || calibrationNeedsSetup(current) || m_readiness.hasPendingRecovery())) {
+                    appendEvent(u"HOTAS setup needs attention after controller arrival"_qs);
+                    emit controllerSetupRequested();
+                }
+            }
             emit stateChanged();
         }, Qt::QueuedConnection);
     });
@@ -2452,6 +2630,19 @@ void AppBackend::startVerification(VerificationMode mode)
         thread->deleteLater();
     });
     thread->start();
+}
+
+bool AppBackend::calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const
+{
+    if (!physical.connected || m_configuration.preferredDeviceId != physical.directInputId) return true;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        if (!physical.axes[static_cast<size_t>(index)]) continue;
+        if (currentProfile().axes[static_cast<size_t>(index)].rangeMode == AxisRangeMode::Centered
+            && !m_configuration.calibration[static_cast<size_t>(index)].enabled) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool AppBackend::applyControllerReadiness()
@@ -2476,6 +2667,10 @@ bool AppBackend::applyControllerReadiness()
     QThread *thread = QThread::create([this, repair, configuration, physical, mappingWasRequested] {
         bool prepared = m_worker.prepareForDriverConfiguration();
         bool completed = false;
+        bool physicalReacquired = false;
+        bool recoveryAttempted = false;
+        bool recoverySucceeded = false;
+        bool recoveredPhysicalReports = false;
         if (prepared) {
             repair->inspect(configuration, physical, VerificationMode::Full);
             if (repair->plan().canApplyAutomatically) {
@@ -2488,6 +2683,24 @@ bool AppBackend::applyControllerReadiness()
                     emit stateChanged();
                 }, Qt::QueuedConnection);
                 completed = repair->applyAutomatically();
+            }
+        }
+
+        if (completed) {
+            // This is the safety invariant v1.9.2 was missing. Config read-
+            // back cannot prove HidHide still lets this process open the
+            // selected device, so force a fresh DirectInput acquisition first.
+            physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+            if (!physicalReacquired) {
+                recoveryAttempted = true;
+                recoverySucceeded = repair->recoverFromPhysicalAccessFailure();
+                if (recoverySucceeded) {
+                    recoveredPhysicalReports = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                }
+                repair->completePhysicalAccessVerification(false, false, recoveryAttempted,
+                                                           recoverySucceeded, recoveredPhysicalReports);
+            } else if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Ready) {
+                repair->completePhysicalAccessVerification(true, true);
             }
         }
 
@@ -2518,21 +2731,32 @@ bool AppBackend::applyControllerReadiness()
         } else if (completed && mappingWasRequested && m_worker.runtime().mappingActive.load()) {
             ControllerReadinessPlan restoredPlan = repair->plan();
             const QString repairStatus = restoredPlan.status;
+            const ControllerReadinessState repairState = restoredPlan.state;
+            const VerificationSubsystemState repairPhysicalStatus = restoredPlan.physicalStatus;
+            const QString repairPhysicalSummary = restoredPlan.physicalSummary;
+            const VerificationSubsystemState repairHidHideStatus = restoredPlan.hidhideStatus;
+            const QString repairHidHideSummary = restoredPlan.hidhideSummary;
             restoredPlan.vjoy.ownedByHotasBf6 = true;
             restoredPlan.vjoy.outputReportsSucceeding = m_worker.runtime().vjoyReady.load();
             restoredPlan = ControllerReadinessService::planFor(restoredPlan.physical, restoredPlan.requirements,
                                                                restoredPlan.vjoy, restoredPlan.hidhide,
                                                                VerificationMode::Full);
-            if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Attention) {
-                restoredPlan.state = ControllerReadinessState::Attention;
+            if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Attention
+                || repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Failed) {
+                restoredPlan.state = repairState;
                 restoredPlan.status = repairStatus;
+                restoredPlan.physicalStatus = repairPhysicalStatus;
+                restoredPlan.physicalSummary = repairPhysicalSummary;
+                restoredPlan.hidhideStatus = repairHidHideStatus;
+                restoredPlan.hidhideSummary = repairHidHideSummary;
             } else if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Ready) {
-                restoredPlan.status = QStringLiteral("READY — HOTAS setup repaired successfully.");
+                restoredPlan.status = repairStatus;
             }
             repair->adoptPlan(std::move(restoredPlan));
         }
 
-        QMetaObject::invokeMethod(this, [this, repair, completed, restored] {
+        QMetaObject::invokeMethod(this, [this, repair, completed, restored, physicalReacquired,
+                                         recoveryAttempted, recoverySucceeded, recoveredPhysicalReports] {
             m_readiness = std::move(*repair);
             m_verificationInProgress = false;
             if (!restored) {
@@ -2541,6 +2765,13 @@ bool AppBackend::applyControllerReadiness()
                 appendEvent(u"HOTAS setup requires a manual repair; no changes were applied"_qs);
             } else {
                 appendEvent(m_readiness.plan().status);
+                if (recoveryAttempted) {
+                    appendEvent(recoverySucceeded && recoveredPhysicalReports
+                        ? u"Automatic HidHide setup was reverted and physical reports resumed"_qs
+                        : u"Automatic HidHide recovery needs a physical reconnect; diagnostics are available"_qs);
+                } else if (completed && !physicalReacquired) {
+                    appendEvent(u"Physical controller reacquisition did not complete; diagnostics are available"_qs);
+                }
                 for (const AutomaticRepairOperationResult &operation : m_readiness.lastAutomaticRepairResult().operations) {
                     if (!operation.succeeded && !operation.rollback) {
                         appendEvent(QString(u"Repair operation failed: %1 (exit code %2)"_qs)
@@ -2563,19 +2794,121 @@ bool AppBackend::applyControllerReadiness()
 bool AppBackend::undoControllerReadiness()
 {
     const bool mappingWasRequested = m_worker.mappingRequested();
+    const QString expectedHidInstanceId = currentPhysicalCapabilities().hidInstanceId;
     if (!m_worker.prepareForDriverConfiguration()) {
         appendEvent(u"Could not release vJoy for HOTAS setup rollback"_qs);
         emit stateChanged();
         return false;
     }
     const bool restored = m_readiness.undoLastAutomaticSetup();
+    const bool physicalRestored = restored && m_worker.reacquirePhysicalController(expectedHidInstanceId);
     const bool mappingStateRestored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
-    appendEvent(restored && mappingStateRestored
-        ? u"Automatic HOTAS repair was undone; previous mapping state restored"_qs
+    ControllerReadinessPlan plan = m_readiness.plan();
+    if (restored && physicalRestored) {
+        plan.physicalStatus = VerificationSubsystemState::Ready;
+        plan.physicalSummary = QStringLiteral("Physical HOTAS reacquired and live reports confirmed after undo.");
+        plan.status = QStringLiteral("Automatic HOTAS repair was undone; physical input was verified.");
+        m_readiness.adoptPlan(std::move(plan));
+    } else if (restored) {
+        plan.state = ControllerReadinessState::Attention;
+        plan.physicalStatus = VerificationSubsystemState::Error;
+        plan.physicalSummary = QStringLiteral("Undo commands completed, but HOTAS BF6 has not reacquired physical reports.");
+        plan.status = QStringLiteral("UNDO VERIFICATION INCOMPLETE — Reconnect your HOTAS, then use Verify Again or Copy Diagnostics.");
+        m_readiness.adoptPlan(std::move(plan));
+    }
+    appendEvent(restored && physicalRestored && mappingStateRestored
+        ? u"Automatic HOTAS repair was undone; physical input and previous mapping state restored"_qs
         : mappingStateRestored ? m_readiness.plan().status
                                : u"HOTAS setup rollback completed, but mapping restoration failed"_qs);
     emit stateChanged();
-    return restored && mappingStateRestored;
+    return restored && physicalRestored && mappingStateRestored;
+}
+
+QString AppBackend::buildControllerDiagnostics() const
+{
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    const AutomaticRepairResult &repair = m_readiness.lastAutomaticRepairResult();
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    QStringList lines{
+        QStringLiteral("HOTAS BF6 Diagnostics"),
+        QStringLiteral("Version: v%1").arg(QString::fromLatin1(HOTAS_BF6_VERSION)),
+        QStringLiteral("Timestamp: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)),
+        QStringLiteral("Windows: %1").arg(QSysInfo::prettyProductName()),
+        QString{},
+        QStringLiteral("PHYSICAL CONTROLLER"),
+        QStringLiteral("Name: %1").arg(physical.name),
+        QStringLiteral("Connected: %1").arg(physical.connected ? QStringLiteral("yes") : QStringLiteral("no")),
+        QStringLiteral("Axes: %1  Buttons: %2  POVs: %3")
+            .arg(std::count(physical.axes.cbegin(), physical.axes.cend(), true))
+            .arg(physical.buttons).arg(physical.povs),
+        QStringLiteral("Input reports received: %1").arg(physical.inputReportsReceived ? QStringLiteral("yes") : QStringLiteral("no")),
+        QStringLiteral("Reacquisition attempted: %1").arg(repair.physicalReacquisitionAttempted ? QStringLiteral("yes") : QStringLiteral("no")),
+        QStringLiteral("Reacquisition result: %1").arg(repair.physicalReacquisitionSucceeded ? QStringLiteral("success") : QStringLiteral("not confirmed")),
+        QString{},
+        QStringLiteral("VJOY"),
+        QStringLiteral("Installed: %1  Device ID: %2  Driver ready: %3")
+            .arg(plan.vjoy.installed ? QStringLiteral("yes") : QStringLiteral("no"))
+            .arg(plan.vjoy.deviceId).arg(plan.vjoy.driverReady ? QStringLiteral("yes") : QStringLiteral("no")),
+        QStringLiteral("Configured axes: %1  Buttons: %2  Continuous POV: %3  Discrete POV: %4")
+            .arg(std::count(plan.vjoy.axes.cbegin(), plan.vjoy.axes.cend(), true))
+            .arg(plan.vjoy.buttons).arg(plan.vjoy.continuousPovs).arg(plan.vjoy.discretePovs),
+        QString{},
+        QStringLiteral("HIDHIDE"),
+        QStringLiteral("Installed: %1  Service ready: %2  Cloaking: %3")
+            .arg(plan.hidhide.installed ? QStringLiteral("yes") : QStringLiteral("no"))
+            .arg(plan.hidhide.serviceReady ? QStringLiteral("yes") : QStringLiteral("no"))
+            .arg(plan.hidhide.cloaked ? QStringLiteral("on") : QStringLiteral("off")),
+        QStringLiteral("HOTAS BF6 allowlisted: %1  Selected controller hidden: %2")
+            .arg(plan.hidhide.mapperAllowlisted ? QStringLiteral("yes") : QStringLiteral("no"))
+            .arg(plan.hidhide.selectedControllerHidden ? QStringLiteral("yes") : QStringLiteral("no")),
+        QStringLiteral("Post-repair controller reacquisition: %1")
+            .arg(repair.physicalReacquisitionSucceeded ? QStringLiteral("confirmed") : QStringLiteral("not confirmed")),
+        QString{},
+        QStringLiteral("AUTOMATIC REPAIR"),
+        QStringLiteral("Result: %1").arg(repair.message),
+    };
+    for (const AutomaticRepairOperationResult &operation : repair.operations) {
+        lines.append(QStringLiteral("%1: %2 (exit code %3%4)")
+            .arg(operation.operationName,
+                 operation.succeeded ? QStringLiteral("success") : QStringLiteral("failed"),
+                 QString::number(operation.exitCode),
+                 operation.rollback ? QStringLiteral(", rollback") : QString{}));
+        const QString output = sanitizeDiagnosticText(operation.output).left(800);
+        const QString error = sanitizeDiagnosticText(operation.errorOutput.isEmpty()
+            ? operation.message : operation.errorOutput).left(800);
+        if (!output.isEmpty()) lines.append(QStringLiteral("  stdout: %1").arg(output));
+        if (!error.isEmpty()) lines.append(QStringLiteral("  stderr: %1").arg(error));
+    }
+    lines.append(QString{});
+    lines.append(QStringLiteral("ROLLBACK"));
+    lines.append(QStringLiteral("Attempted: %1  Result: %2  Physical reports after rollback: %3")
+        .arg(repair.rollbackAttempted ? QStringLiteral("yes") : QStringLiteral("no"),
+             repair.rollbackSucceeded ? QStringLiteral("success") : QStringLiteral("not confirmed"),
+             repair.physicalReportsReceivedAfterRollback ? QStringLiteral("yes") : QStringLiteral("no")));
+    lines.append(QString{});
+    lines.append(QStringLiteral("CALIBRATION"));
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
+        const AtomicRuntimeState &runtime = m_worker.runtime();
+        lines.append(QStringLiteral("%1 RAW MIN: %2  RAW NEUTRAL: %3  RAW MAX: %4  CALIBRATED: %5  MAPPED: %6")
+            .arg(physicalAxisLabel(static_cast<PhysicalAxis>(index)))
+            .arg(calibration.minimum, 0, 'f', 3).arg(calibration.center, 0, 'f', 3)
+            .arg(calibration.maximum, 0, 'f', 3).arg(runtime.normalized[index].load(), 0, 'f', 3)
+            .arg(runtime.transformed[index].load(), 0, 'f', 3));
+    }
+    lines.append(QString{});
+    lines.append(QStringLiteral("ADVANCED / TECHNICAL"));
+    lines.append(QStringLiteral("Selected HID instance: %1").arg(physical.hidInstanceId));
+    return lines.join(u'\n');
+}
+
+bool AppBackend::copyControllerDiagnostics()
+{
+    if (!controllerDiagnosticsAvailable() || !QGuiApplication::clipboard()) return false;
+    QGuiApplication::clipboard()->setText(buildControllerDiagnostics());
+    appendEvent(u"HOTAS setup diagnostics copied to the clipboard"_qs);
+    emit stateChanged();
+    return true;
 }
 
 void AppBackend::acknowledgeControllerSetup()
@@ -2616,7 +2949,7 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
     physical.hidInstanceId = snapshot.hidInstanceId;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     physical.connected = runtime.physicalConnected.load();
-    physical.inputReportsReceived = runtime.inputReports.load() > 0;
+    physical.inputReportsReceived = runtime.physicalReportsSinceAcquisition.load() > 0;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         physical.axes[static_cast<size_t>(index)] = runtime.axisAvailable[index].load();
     }
@@ -2627,6 +2960,10 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
 
 void AppBackend::refreshUiSnapshot()
 {
+    // Range and center statistics are sampled here at presentation cadence.
+    // The worker publishes raw atomics only; no calibration calculation is
+    // performed during DirectInput-to-vJoy report processing.
+    sampleCalibrationControlPlane();
     // Percentiles are diagnostic telemetry; four updates per second avoids
     // turning their presentation into a source of GUI-side CPU pressure.
     if (m_latencyPercentileClock.elapsed() >= 250) {
@@ -2656,6 +2993,15 @@ void AppBackend::refreshUiSnapshot()
     }
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
+    const bool connected = m_worker.runtime().physicalConnected.load();
+    if (connected && !m_physicalControllerWasConnected && !m_verificationInProgress) {
+        m_pendingControllerArrivalId = deviceId();
+        appendEvent(u"Physical HOTAS arrived; evaluating setup readiness"_qs);
+        startQuickVerification();
+    } else if (!connected) {
+        m_pendingControllerArrivalId.clear();
+    }
+    m_physicalControllerWasConnected = connected;
     emit stateChanged();
 }
 
@@ -2723,7 +3069,10 @@ void AppBackend::rebuildSelectedAxisCurve()
     const bool unipolar = axis.rangeMode == AxisRangeMode::OneSided;
     RuntimeAxisMapping mapping;
     mapping.profile = axis;
-    mapping.calibration = m_configuration.calibration[axisIndex];
+    // The chart domain is the calibrated coordinate system. Applying raw
+    // calibration again would bend a linear curve around an electrical sensor
+    // offset, even though the user-facing neutral is exactly zero.
+    mapping.calibration = {};
     mapping.responseCurve = compileResponseCurve(axis.curve, unipolar);
     constexpr int kSamples = 101;
     m_selectedAxisCurve.reserve(kSamples);

@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 13;
+constexpr int kProfileSchemaVersion = 14;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -37,6 +37,7 @@ QJsonObject calibrationToJson(const Calibration &calibration)
         {u"minimum"_qs, calibration.minimum},
         {u"center"_qs, calibration.center},
         {u"maximum"_qs, calibration.maximum},
+        {u"centered"_qs, calibration.centered},
     };
 }
 
@@ -47,11 +48,16 @@ Calibration calibrationFromJson(const QJsonObject &json)
     calibration.minimum = std::clamp(float(json.value(u"minimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
     calibration.center = std::clamp(float(json.value(u"center"_qs).toDouble(0.0)), -1.0F, 1.0F);
     calibration.maximum = std::clamp(float(json.value(u"maximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
-    if (!(calibration.minimum < calibration.center && calibration.center < calibration.maximum)) {
+    calibration.centered = json.value(u"centered"_qs).toBool(true);
+    const bool valid = calibration.centered
+        ? calibration.minimum < calibration.center && calibration.center < calibration.maximum
+        : calibration.minimum < calibration.maximum;
+    if (!valid) {
         calibration.enabled = false;
         calibration.minimum = -1.0F;
         calibration.center = 0.0F;
         calibration.maximum = 1.0F;
+        calibration.centered = true;
     }
     return calibration;
 }
@@ -755,7 +761,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
-        && version != 9 && version != 10 && version != 11 && version != 12
+        && version != 9 && version != 10 && version != 11 && version != 12 && version != 13
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);

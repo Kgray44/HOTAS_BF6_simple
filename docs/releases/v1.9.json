@@ -43,10 +43,10 @@
     "releaseTitle": "v1.9.2",
     "title": "Automatic HOTAS Repair transaction stabilization",
     "summary": "Corrected the Automatic HOTAS Repair path so one approved repair uses one elevation boundary, preserves transactional rollback and diagnostics, and verifies the result clearly.",
-    "status": "current",
-    "replacement": null,
+    "status": "deprecated",
+    "replacement": "v1.9.3",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended published release. Use this instead of v1.9.0 or v1.9.1.",
+    "statusNote": "Do not use for new setup. v1.9.3 adds the missing physical-controller reacquisition proof, fail-safe self-access rollback, and two-stage calibrated-coordinate workflow.",
     "highlights": [
       "Automatic repair confirmation is a shared themed in-app overlay across Legacy, Standard, and Top Gun and shows the exact planned changes before elevation.",
       "One confirmed repair crosses one elevation boundary instead of launching separate elevated HidHide/vJoy commands.",
@@ -56,6 +56,27 @@
       "Successful commands are followed by bounded full verification; inconclusive verification is reported as Attention rather than Repair Failed.",
       "HidHide repair uses the normalized exact selected HID instance and preserves unrelated hidden-device/application rules.",
       "Automatic repair restores the Mapping On/Off state that existed before the transaction, including safe failure/cancellation paths."
+    ]
+  },
+  {
+    "version": "1.9.3",
+    "tag": "v1.9.3",
+    "releaseTitle": "v1.9.3",
+    "title": "Real-world setup and calibration reliability",
+    "summary": "A focused external-machine reliability patch for controller arrival, two-stage calibration, calibrated-axis presentation, and fail-safe HidHide setup verification.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for first-use HOTAS setup and calibration.",
+    "highlights": [
+      "A newly acquired physical controller now triggers the shared themed setup experience only when readiness, selection, or calibration needs attention.",
+      "Calibration uses a deliberate range step followed by a bounded robust center sample for self-centering axes; throttles and sliders retain range-only calibration.",
+      "Normal axis pages and linear transfer graphs use calibrated coordinates, while Diagnostics keeps raw sensor, calibrated, and mapped values distinct.",
+      "Automatic HidHide repair forces a fresh DirectInput acquisition and confirms live physical reports before it can show Ready.",
+      "If that proof fails, HOTAS BF6 reverses only its own HidHide/vJoy transaction entries, restores physical visibility where possible, and reports reconnect or rollback failure explicitly.",
+      "Session-scoped HidHide blacklisting is deferred: the project pins the signed 1.5.230 release, while the feeder-session API is only documented in newer upstream source and would require a driver compatibility change outside this patch.",
+      "Failure and attention states expose a copyable privacy-sanitized diagnostic report with readiness, operation, rollback, and calibration evidence.",
+      "The DirectInput-to-vJoy report path remains fixed-array and allocation-free; calibration statistics, setup, diagnostics, enumeration, and repair stay on the control plane."
     ]
   }
 ]

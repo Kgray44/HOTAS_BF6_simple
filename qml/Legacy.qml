@@ -456,9 +456,9 @@ Page {
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
- value: Number(axisModule.info.raw)
+ value: Number(axisModule.info.calibrated)
  tone: "#8eb5c1" }
-                Text { text: root.controlValue(axisModule.info, axisModule.info.raw)
+                Text { text: root.controlValue(axisModule.info, axisModule.info.calibrated)
  color: "#c6dce1"
  font.family: "Consolas"
  font.pixelSize: 14
@@ -605,7 +605,7 @@ Page {
                 antialiasing: true
                 renderTarget: Canvas.Image
                 property var curveSamples: curveViewer.samples
-                property real physicalInput: curveViewer.info ? Number(curveViewer.info.raw) : 0
+                property real physicalInput: curveViewer.info ? Number(curveViewer.info.calibrated) : 0
                 property real transformedOutput: curveViewer.info ? Number(curveViewer.info.transformed) : 0
                 function xFor(value, left, plotWidth) { return left + ((value + 1) * 0.5) * plotWidth }
                 function yFor(value, top, plotHeight) { return top + (1 - ((value + 1) * 0.5)) * plotHeight }
@@ -1291,8 +1291,8 @@ Page {
                                 property var info: root.selectedAxisInfo
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "PHYSICAL INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.raw); color: "#dce8ea"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
+                                        Text { text: "CALIBRATED INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.calibrated); color: "#dce8ea"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
                                         Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: "#718a93"; font.pixelSize: 9; font.bold: true }
                                     }
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
@@ -1513,18 +1513,31 @@ Page {
  spacing: 14
                 RowLayout { width: parent.width
                     PageTitle { heading: "Calibration"
- detail: backend.calibrationActive ? "Capture active: move each control through full travel" : "Save custom ranges only after a complete movement pass" }
+ detail: backend.calibrationStatus }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: backend.calibrationActive ? "CAPTURING" : "START CAPTURE"
+                    CommandButton { label: backend.calibrationStage === "RANGE" ? "CAPTURING RANGE" : "START CALIBRATION"
+ commandEnabled: backend.calibrationStage === "IDLE"
  onTriggered: backend.beginCalibration() }
-                    CommandButton { label: "SAVE"
- commandEnabled: backend.calibrationActive
+                    CommandButton { label: "NEXT — CAPTURE CENTER"
+ commandEnabled: backend.calibrationStage === "RANGE"
+ subdued: true
+ onTriggered: backend.beginCalibrationCenterCapture() }
+                    CommandButton { label: backend.calibrationStage === "FINALIZING" ? "MEASURING CENTER" : "COMPLETE CALIBRATION"
+ commandEnabled: backend.calibrationStage === "CENTER"
  subdued: true
  onTriggered: backend.saveCalibration() }
                     CommandButton { label: "RESET"
  subdued: true
  onTriggered: backend.resetCalibration() }
                 }
+                Text { visible: backend.calibrationStage === "RANGE"
+                    width: parent.width
+                    text: "STEP 1 OF 2 — Move the stick fully left/right and forward/back, twist, throttle, paddles, sliders, and every additional axis through its complete travel several times."
+                    color: "#9dafb4"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                Text { visible: backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING"
+                    width: parent.width
+                    text: "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Do not touch the stick, twist, rudder, or paddles. Throttles and sliders do not need to be centered."
+                    color: "#9dafb4"; font.pixelSize: 11; wrapMode: Text.WordWrap }
                 Text { text: "AXIS RANGE STATUS"
  color: "#94a1a6"
  font.pixelSize: 10
@@ -1549,7 +1562,7 @@ Page {
  color: "#eaf0f1"
  font.pixelSize: 12
  font.bold: true }
-                                    Text { text: backend.calibrationActive ? "CAPTURING LIVE" : (calibrationAxisCard.info.calibrationEnabled ? "SAVED RANGE" : "RAW DEFAULT")
+                                    Text { text: backend.calibrationStage === "RANGE" ? "STEP 1 · RANGE" : backend.calibrationStage === "CENTER" ? "STEP 2 · RELEASE CENTERED" : backend.calibrationStage === "FINALIZING" ? "MEASURING CENTER" : (calibrationAxisCard.info.calibrationEnabled ? (calibrationAxisCard.info.calibrationCentered ? "CALIBRATED CENTER" : "CALIBRATED RANGE") : "RAW DEFAULT")
  color: backend.calibrationActive ? "#abd7e2" : (calibrationAxisCard.info.calibrationEnabled ? "#9fc7b1" : "#89979d")
  font.pixelSize: 9 }
                                 }
@@ -1699,7 +1712,7 @@ Page {
                             property var info: root.axisAt(index)
                             visible: info && info.available
                             Layout.fillWidth: true
- Layout.preferredHeight: 116
+ Layout.preferredHeight: 132
                             Column { anchors.fill: parent
  anchors.margins: 12
  spacing: 4
@@ -1711,7 +1724,11 @@ Page {
  color: "#dfeaec"
  font.pixelSize: 12
  font.family: "Consolas" }
-                                Text { text: "PHYSICAL  " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.transformed)
+                                Text { text: "CALIBRATED " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.calibrated)
+ color: "#a9cad2"
+ font.pixelSize: 10
+ font.family: "Consolas" }
+                                Text { text: "MAPPED    " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.transformed)
  color: "#a9cad2"
  font.pixelSize: 10
  font.family: "Consolas" }
@@ -2154,6 +2171,13 @@ Page {
         }
         LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
         AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
+    }
+
+    Connections {
+        target: backend
+        function onControllerSetupRequested() {
+            if (!controllerSetupDialog.opened) controllerSetupDialog.open()
+        }
     }
 
     Dialog {

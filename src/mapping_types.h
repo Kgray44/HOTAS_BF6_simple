@@ -124,6 +124,10 @@ struct Calibration {
     float minimum = -1.0F;
     float center = 0.0F;
     float maximum = 1.0F;
+    // A throttle, slider, or other positional control has useful range but no
+    // natural neutral. Keep that distinction durable so calibration never
+    // invents a center from wherever a non-centering control happened to be.
+    bool centered = true;
 };
 
 struct AxisMapping {

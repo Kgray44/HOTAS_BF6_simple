@@ -497,9 +497,9 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.transformed[index] = 0.0F;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
-        m_runtime.calibrationMinimum[index] = -1.0F;
-        m_runtime.calibrationCenter[index] = 0.0F;
-        m_runtime.calibrationMaximum[index] = 1.0F;
+        m_runtime.calibrationMinimum[index] = m_configuration.calibration[index].minimum;
+        m_runtime.calibrationCenter[index] = m_configuration.calibration[index].center;
+        m_runtime.calibrationMaximum[index] = m_configuration.calibration[index].maximum;
     }
     for (std::atomic_bool &available : m_runtime.virtualAxisAvailable) available = false;
     for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
@@ -543,6 +543,11 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
     m_preparedProfileCache = std::move(compiled);
     ++m_configurationVersion;
     m_runtime.lastCurveCompileUs = compileUs;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        m_runtime.calibrationMinimum[index] = configuration.calibration[index].minimum;
+        m_runtime.calibrationCenter[index] = configuration.calibration[index].center;
+        m_runtime.calibrationMaximum[index] = configuration.calibration[index].maximum;
+    }
 }
 
 void MappingWorker::setMappingEnabled(bool enabled)
@@ -587,44 +592,29 @@ bool MappingWorker::restoreAfterDriverConfiguration(bool mappingWasRequested, in
     return false;
 }
 
+bool MappingWorker::reacquirePhysicalController(const QString &expectedHidInstanceId, int timeoutMs)
+{
+    const QString expected = expectedHidInstanceId.trimmed();
+    if (expected.isEmpty() || timeoutMs <= 0) return false;
+    const std::uint64_t request = m_reacquireInputRequested.fetch_add(1) + 1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_reacquireInputAcknowledged.load() >= request) {
+            const DeviceSnapshot snapshot = deviceSnapshot();
+            if (m_runtime.physicalConnected.load()
+                && snapshot.hidInstanceId.compare(expected, Qt::CaseInsensitive) == 0
+                && m_runtime.physicalReportsSinceAcquisition.load() > 0) {
+                return true;
+            }
+        }
+        QThread::msleep(25);
+    }
+    return false;
+}
+
 void MappingWorker::requestStop()
 {
     m_stopRequested = true;
-}
-
-void MappingWorker::beginCalibration()
-{
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        const float current = m_runtime.raw[index].load();
-        m_runtime.calibrationMinimum[index] = current;
-        m_runtime.calibrationCenter[index] = current;
-        m_runtime.calibrationMaximum[index] = current;
-    }
-    m_calibrating = true;
-}
-
-void MappingWorker::cancelCalibration()
-{
-    m_calibrating = false;
-}
-
-bool MappingWorker::calibrationRunning() const
-{
-    return m_calibrating.load();
-}
-
-std::array<Calibration, kPhysicalAxisCount> MappingWorker::capturedCalibration() const
-{
-    std::array<Calibration, kPhysicalAxisCount> captured;
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        captured[index] = {
-            true,
-            m_runtime.calibrationMinimum[index].load(),
-            m_runtime.calibrationCenter[index].load(),
-            m_runtime.calibrationMaximum[index].load(),
-        };
-    }
-    return captured;
 }
 
 DeviceSnapshot MappingWorker::deviceSnapshot() const
@@ -761,6 +751,7 @@ void MappingWorker::run()
     std::uint64_t processedReports = 0;
     std::uint64_t latencyTotal = 0;
     std::uint64_t latencySampleSequence = 0;
+    std::uint64_t handledReacquireRequest = 0;
     auto nextDiscovery = std::chrono::steady_clock::now();
     auto nextVjoyCheck = std::chrono::steady_clock::now();
     auto nextVjoyAcquire = std::chrono::steady_clock::now();
@@ -890,6 +881,7 @@ void MappingWorker::run()
         selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                 0, -1, ProfileTriggerMode::Disabled}, false);
         m_runtime.physicalConnected = false;
+        m_runtime.physicalReportsSinceAcquisition = 0;
         m_runtime.mappingEffectiveState = m_mappingRequested.load()
             ? static_cast<int>(MappingEffectiveState::Suspended)
             : static_cast<int>(MappingEffectiveState::Off);
@@ -1104,6 +1096,16 @@ void MappingWorker::run()
             m_vjoyReleasedForControlPlane = true;
             emit hardwareStateChanged();
         }
+        const std::uint64_t requestedReacquire = m_reacquireInputRequested.load();
+        if (requestedReacquire != handledReacquireRequest) {
+            // A completed HidHide change must be proven against a brand-new
+            // DirectInput open, not the handle that existed before cloaking.
+            releaseInput();
+            handledReacquireRequest = requestedReacquire;
+            m_reacquireInputAcknowledged = requestedReacquire;
+            nextDiscovery = now;
+            emit workerEvent(u"Physical controller reacquisition requested by HOTAS setup"_qs);
+        }
         wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {
             discoverInput();
@@ -1190,6 +1192,7 @@ void MappingWorker::run()
         }
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
+        ++m_runtime.physicalReportsSinceAcquisition;
 
         // Global mapping controls are intentionally evaluated from the fixed
         // physical snapshot before profile/game routing. The first post-
@@ -1315,10 +1318,6 @@ void MappingWorker::run()
             if (!availableAxes[index]) continue;
             const float raw = physicalSnapshot.axes[index];
             m_runtime.raw[index] = raw;
-            if (m_calibrating.load()) {
-                m_runtime.calibrationMinimum[index] = std::min(m_runtime.calibrationMinimum[index].load(), raw);
-                m_runtime.calibrationMaximum[index] = std::max(m_runtime.calibrationMaximum[index].load(), raw);
-            }
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
             float curveResponse = 0.0F;
             AxisSignalPath signalPath;

@@ -55,6 +55,9 @@ inline VirtualAxisOutputPlan buildVirtualAxisOutputPlan(
 }
 
 float clampUnit(float value);
+// Bounded control-plane estimator used only when calibration is finalized.
+// It is intentionally not called from the DirectInput report path.
+float robustCalibrationCenter(const std::array<float, 32> &values, int count);
 float normalizeCalibrated(float raw, const Calibration &calibration);
 float applyRescaledDeadzone(float value, float deadzone);
 float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping);

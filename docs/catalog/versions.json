@@ -239,5 +239,18 @@
       "Normalizes and uses the exact selected HID instance for HidHide changes while preserving unrelated device and application entries.",
       "Runs bounded post-repair verification and restores the prior Mapping On/Off state outside the real-time report path."
     ]
+  },
+  {
+    "version": "1.9.3",
+    "title": "Real-world setup and calibration reliability",
+    "summary": "Targets the remaining external-machine setup failures without changing the real-time mapper architecture.",
+    "highlights": [
+      "Controller arrival evaluates readiness and opens the shared setup dialog only when selection, calibration, vJoy, HidHide, or another action needs attention.",
+      "Two-stage range then robust center calibration makes measured neutral the user-facing 0.0% for centered axes while retaining range-only controls.",
+      "Axis meters and linear graphs consume calibrated coordinates; raw sensor readings remain explicit Diagnostics data.",
+      "Automatic HidHide setup requires a forced DirectInput reacquisition and fresh physical report before Ready is published.",
+      "A failed physical reacquisition triggers narrow transaction rollback and clear reconnect/rollback status instead of stranding the selected controller.",
+      "Attention and failure states include Copy Diagnostics with sanitized setup, repair, rollback, and calibration evidence."
+    ]
   }
 ]

@@ -97,6 +97,9 @@ class MappingCoreTests final : public QObject {
 
 private slots:
     void calibrationNormalizesBothSides();
+    void calibrationCenterRejectsSingleOutlier();
+    void offsetCenterBecomesUserFacingZero();
+    void nonCenteringCalibrationUsesRangeWithoutInventedNeutral();
     void invalidCalibrationFallsBackToRaw();
     void deadzoneIsRescaled();
     void inversionIsAppliedAfterDeadzone();
@@ -168,6 +171,49 @@ void MappingCoreTests::calibrationNormalizesBothSides()
     QVERIFY(nearlyEqual(normalizeCalibrated(0.50F, calibration), 0.50F));
     QVERIFY(nearlyEqual(normalizeCalibrated(-1.0F, calibration), -1.0F));
     QVERIFY(nearlyEqual(normalizeCalibrated(1.0F, calibration), 1.0F));
+}
+
+void MappingCoreTests::calibrationCenterRejectsSingleOutlier()
+{
+    // Center capture is bounded and sampled on the UI control plane. A single
+    // bump must not move the persisted neutral away from the quiet samples.
+    std::array<float, 32> samples{};
+    samples[0] = 0.010F;
+    samples[1] = 0.012F;
+    samples[2] = 0.009F;
+    samples[3] = 0.011F;
+    samples[4] = 0.010F;
+    samples[5] = 0.013F;
+    samples[6] = 0.008F;
+    samples[7] = 0.012F;
+    samples[8] = 0.750F; // brief accidental movement
+    QVERIFY(nearlyEqual(robustCalibrationCenter(samples, 9), 0.011F));
+}
+
+void MappingCoreTests::offsetCenterBecomesUserFacingZero()
+{
+    const Calibration calibration{true, -1.0F, -0.04F, 1.0F};
+    QVERIFY(nearlyEqual(normalizeCalibrated(-1.0F, calibration), -1.0F));
+    QVERIFY(nearlyEqual(normalizeCalibrated(-0.04F, calibration), 0.0F));
+    QVERIFY(nearlyEqual(normalizeCalibrated(1.0F, calibration), 1.0F));
+
+    // The graph now receives calibrated coordinates, so its Linear trace is
+    // the visual identity rather than a raw-sensor piecewise correction.
+    RuntimeAxisMapping graphMapping;
+    graphMapping.profile.deadzone = 0.0F;
+    graphMapping.profile.hysteresis = 0.0F;
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-1.0F, graphMapping), -1.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.0F, graphMapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, graphMapping), 1.0F));
+}
+
+void MappingCoreTests::nonCenteringCalibrationUsesRangeWithoutInventedNeutral()
+{
+    Calibration calibration{true, -0.82F, 0.0F, 0.91F};
+    calibration.centered = false;
+    QVERIFY(nearlyEqual(normalizeCalibrated(-0.82F, calibration), -1.0F));
+    QVERIFY(nearlyEqual(normalizeCalibrated(0.91F, calibration), 1.0F));
+    QVERIFY(nearlyEqual(normalizeCalibrated(0.045F, calibration), 0.0F));
 }
 
 void MappingCoreTests::invalidCalibrationFallsBackToRaw()
@@ -525,6 +571,7 @@ void MappingCoreTests::configurationRoundTrips()
     normal.axes[0].inverted = true;
     normal.axes[1].deadzone = 0.12F;
     configuration.calibration[2] = {true, -0.9F, 0.1F, 0.8F};
+    configuration.calibration[2].centered = false;
     normal.buttons = defaultButtonMappings(4, 4);
     QVERIFY(createProfile(configuration, QStringLiteral("Helicopter")));
     QVERIFY(activateProfile(configuration, QStringLiteral("profile-normal")));
@@ -541,6 +588,7 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(activeProfile(restored).axes[1].deadzone, 0.12F);
     QVERIFY(restored.calibration[2].enabled);
     QCOMPARE(restored.calibration[2].center, 0.1F);
+    QVERIFY(!restored.calibration[2].centered);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
 }
 
@@ -1199,7 +1247,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 13);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 14);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1442,7 +1490,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 13);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 14);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
