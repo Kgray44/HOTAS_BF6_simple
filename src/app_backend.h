@@ -15,6 +15,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <array>
+
 namespace hotas {
 
 class AppBackend final : public QObject {
@@ -80,8 +82,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool controllerSetupCanApply READ controllerSetupCanApply NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupInProgress READ controllerSetupInProgress NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupCanUndo READ controllerSetupCanUndo NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerDiagnosticsAvailable READ controllerDiagnosticsAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupSuggested READ controllerSetupSuggested NOTIFY stateChanged)
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
+    Q_PROPERTY(QString calibrationStage READ calibrationStage NOTIFY stateChanged)
+    Q_PROPERTY(QString calibrationStatus READ calibrationStatus NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
     Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
@@ -181,8 +186,11 @@ public:
     bool controllerSetupCanApply() const;
     bool controllerSetupInProgress() const;
     bool controllerSetupCanUndo() const;
+    bool controllerDiagnosticsAvailable() const;
     bool controllerSetupSuggested() const { return m_controllerSetupSuggested; }
     bool calibrationActive() const;
+    QString calibrationStage() const;
+    QString calibrationStatus() const { return m_calibrationStatus; }
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
     double disabledAxisValue() const;
@@ -273,6 +281,7 @@ public:
     Q_INVOKABLE bool deleteProfile(const QString &profileId);
     Q_INVOKABLE bool activateProfile(const QString &profileId);
     Q_INVOKABLE void beginCalibration();
+    Q_INVOKABLE bool beginCalibrationCenterCapture();
     Q_INVOKABLE bool saveCalibration();
     Q_INVOKABLE void resetCalibration();
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
@@ -295,6 +304,7 @@ public:
     Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
+    Q_INVOKABLE bool copyControllerDiagnostics();
     Q_INVOKABLE void acknowledgeControllerSetup();
     Q_INVOKABLE void useConnectedDevice();
     Q_INVOKABLE void resetApplicationConfiguration();
@@ -303,6 +313,10 @@ signals:
     void stateChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
+    // An actual no-controller -> acquired-controller transition completed a
+    // quick readiness check with a user-actionable result. Presentation opens
+    // the existing shared setup dialog in response to this signal.
+    void controllerSetupRequested();
 
 private slots:
     void refreshUiSnapshot();
@@ -327,6 +341,25 @@ private:
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
     void startVerification(VerificationMode mode);
+    void sampleCalibrationControlPlane();
+    void finishCalibration();
+    bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
+    QString buildControllerDiagnostics() const;
+
+    enum class CalibrationStageState {
+        Idle,
+        Range,
+        Center,
+        Finalizing,
+    };
+
+    struct CalibrationCaptureAxis {
+        bool available = false;
+        float minimum = 0.0F;
+        float maximum = 0.0F;
+        std::array<float, 32> centerSamples{};
+        int centerSampleCount = 0;
+    };
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;
@@ -334,12 +367,18 @@ private:
     // Retained only for upgrade compatibility with the v1.9.0 preference.
     // v1.9.1 never shows a first-run setup modal.
     bool m_controllerSetupSuggested = false;
+    bool m_physicalControllerWasConnected = false;
+    QString m_pendingControllerArrivalId;
     bool m_verificationInProgress = false;
     QPointer<QThread> m_verificationThread;
     QTimer m_snapshotTimer;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
+    QElapsedTimer m_calibrationFinalizationClock;
+    CalibrationStageState m_calibrationStage = CalibrationStageState::Idle;
+    std::array<CalibrationCaptureAxis, kPhysicalAxisCount> m_calibrationCapture{};
+    QString m_calibrationStatus = u"Move each control through its complete range before capturing center."_qs;
     quint64 m_previousInputReports = 0;
     quint64 m_previousVjoyWrites = 0;
     double m_inputReportsPerSecond = 0.0;

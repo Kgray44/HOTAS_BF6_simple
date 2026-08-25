@@ -175,6 +175,12 @@ struct AutomaticRepairResult {
     QList<AutomaticRepairOperationResult> operations;
     bool requiresRestart = false;
     bool requiresReboot = false;
+    bool physicalReacquisitionAttempted = false;
+    bool physicalReacquisitionSucceeded = false;
+    bool physicalReportsReceivedAfterRepair = false;
+    bool rollbackAttempted = false;
+    bool rollbackSucceeded = false;
+    bool physicalReportsReceivedAfterRollback = false;
 
     bool completed() const {
         return outcome == AutomaticRepairOutcome::Ready || outcome == AutomaticRepairOutcome::Attention;
@@ -228,6 +234,8 @@ public:
     static QString normalizeDeviceInstanceId(QString value);
     static ControllerReadinessPlan checkingPlan(const PhysicalControllerCapabilities &physical,
                                                 VerificationMode mode);
+    static bool needsSetupAfterControllerArrival(bool isNewPhysicalArrival,
+                                                 const ControllerReadinessPlan &plan);
 
     const ControllerReadinessPlan &inspect(const MapperConfiguration &configuration,
                                            const PhysicalControllerCapabilities &physical,
@@ -236,6 +244,16 @@ public:
                                            bool outputReportsSucceeding = false);
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
+    // The mapper performs this proof after a forced DirectInput reopen. A
+    // HidHide CLI read-back is never sufficient to declare a repair safe.
+    void completePhysicalAccessVerification(bool reacquired, bool reportsReceived,
+                                            bool rollbackAttempted = false,
+                                            bool rollbackSucceeded = false,
+                                            bool reportsReceivedAfterRollback = false);
+    // Used only after the post-change DirectInput proof fails. It reverses
+    // the narrow journal entries created by this automatic transaction.
+    bool recoverFromPhysicalAccessFailure();
+    bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }
     const AutomaticRepairResult &lastAutomaticRepairResult() const { return m_lastRepairResult; }
@@ -271,6 +289,9 @@ private:
     AutomaticRepairResult runRepairTransaction(const QList<RepairOperation> &operations) const;
     bool verifyAfterRepair();
     bool rollback(Journal *journal, QString *failure);
+    void persistRecoveryJournal() const;
+    void loadRecoveryJournal();
+    void clearRecoveryJournal() const;
     bool verifyReady();
     SetupProcessResult runHidHide(bool elevated, const QStringList &arguments) const;
     SetupProcessResult runVJoy(bool elevated, const QStringList &arguments) const;

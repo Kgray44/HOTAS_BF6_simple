@@ -13,6 +13,19 @@ float clampUnit(float value)
     return std::clamp(value, -1.0F, 1.0F);
 }
 
+float robustCalibrationCenter(const std::array<float, 32> &values, int count)
+{
+    count = std::clamp(count, 0, static_cast<int>(values.size()));
+    if (count == 0) return 0.0F;
+
+    std::array<float, 32> ordered = values;
+    std::sort(ordered.begin(), ordered.begin() + count);
+    const int middle = count / 2;
+    return count % 2 == 0
+        ? (ordered[middle - 1] + ordered[middle]) * 0.5F
+        : ordered[middle];
+}
+
 float normalizeCalibrated(float raw, const Calibration &calibration)
 {
     raw = clampUnit(raw);
@@ -23,9 +36,11 @@ float normalizeCalibrated(float raw, const Calibration &calibration)
     const float minimum = clampUnit(calibration.minimum);
     const float center = clampUnit(calibration.center);
     const float maximum = clampUnit(calibration.maximum);
-    if (!(minimum < center && center < maximum)) {
-        return raw;
+    if (!calibration.centered) {
+        if (!(minimum < maximum)) return raw;
+        return clampUnit(-1.0F + 2.0F * (raw - minimum) / (maximum - minimum));
     }
+    if (!(minimum < center && center < maximum)) return raw;
 
     if (raw >= center) {
         return clampUnit((raw - center) / (maximum - center));

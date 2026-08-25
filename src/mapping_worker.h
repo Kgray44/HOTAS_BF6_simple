@@ -59,6 +59,10 @@ struct AtomicRuntimeState {
     std::atomic_bool hidhideCloaked{false};
     std::atomic_bool hidhideMapperAllowed{false};
     std::atomic_uint64_t inputReports{0};
+    // This resets at a DirectInput acquisition boundary. It lets setup prove
+    // that a freshly reopened physical device is still delivering reports,
+    // without confusing historical report totals for current access.
+    std::atomic_uint64_t physicalReportsSinceAcquisition{0};
     std::atomic_uint64_t vjoyWrites{0};
     std::atomic_uint64_t latencyCurrentUs{0};
     std::atomic_uint64_t latencyAverageUs{0};
@@ -110,11 +114,11 @@ public:
     // Restores exactly the Mapping On/Off choice that preceded a deliberate
     // verification or repair operation. This is control-plane work only.
     bool restoreAfterDriverConfiguration(bool mappingWasRequested, int timeoutMs = 1500);
+    // Forces a fresh DirectInput acquisition and waits only on the control
+    // plane for the exact expected HID instance plus a newly received report.
+    // It is never called by the report path.
+    bool reacquirePhysicalController(const QString &expectedHidInstanceId, int timeoutMs = 3500);
     void requestStop();
-    void beginCalibration();
-    void cancelCalibration();
-    bool calibrationRunning() const;
-    std::array<Calibration, kPhysicalAxisCount> capturedCalibration() const;
     const AtomicRuntimeState &runtime() const { return m_runtime; }
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
@@ -141,7 +145,8 @@ private:
     std::atomic_bool m_mappingRequested{false};
     std::atomic_bool m_releaseVjoyRequested{false};
     std::atomic_bool m_vjoyReleasedForControlPlane{false};
-    std::atomic_bool m_calibrating{false};
+    std::atomic_uint64_t m_reacquireInputRequested{0};
+    std::atomic_uint64_t m_reacquireInputAcknowledged{0};
     std::atomic_uint64_t m_configurationVersion{0};
     mutable QMutex m_configurationMutex;
     MapperConfiguration m_configuration;

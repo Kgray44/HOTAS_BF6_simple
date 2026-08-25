@@ -237,6 +237,15 @@ Item {
                     border.color: contextualActionButton.enabled ? root.readyColor : root.borderColor }
             }
             Button {
+                id: diagnosticsButton
+                visible: root.backendObject && root.backendObject.controllerDiagnosticsAvailable
+                text: "COPY DIAGNOSTICS"
+                onClicked: root.backendObject.copyControllerDiagnostics()
+                contentItem: Text { text: diagnosticsButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true
+                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.warningColor }
+            }
+            Button {
                 id: closeButton
                 text: "CLOSE"
                 onClicked: root.closeRequested()

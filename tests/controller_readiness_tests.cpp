@@ -205,9 +205,11 @@ private slots:
     void externalVJoyConflictRequiresAction();
     void passiveIdentityGapIsAttentionNotFailure();
     void checkingPlanPublishesEverySubsystem();
+    void controllerArrivalRequestsSetupOnlyForActionableTransitions();
     void activeInputReportsArePhysicalHealthEvidence();
     void processRunnerRollbackOnlyReversesThisTransaction();
     void repairCompletesInOneElevationAndVerifies();
+    void selfAccessFailureRollsBackBeforeReportingReady();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
 };
@@ -342,6 +344,18 @@ void ControllerReadinessTests::checkingPlanPublishesEverySubsystem()
     QCOMPARE(plan.hidhideStatus, VerificationSubsystemState::Checking);
 }
 
+void ControllerReadinessTests::controllerArrivalRequestsSetupOnlyForActionableTransitions()
+{
+    const ControllerReadinessPlan needsChanges = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), readyVJoy(), HidHideCapabilities{}, VerificationMode::Quick);
+    QVERIFY(ControllerReadinessService::needsSetupAfterControllerArrival(true, needsChanges));
+    QVERIFY(!ControllerReadinessService::needsSetupAfterControllerArrival(false, needsChanges));
+
+    const ControllerReadinessPlan ready = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), readyVJoy(), readyHidHide(), VerificationMode::Quick);
+    QVERIFY(!ControllerReadinessService::needsSetupAfterControllerArrival(true, ready));
+}
+
 void ControllerReadinessTests::activeInputReportsArePhysicalHealthEvidence()
 {
     PhysicalControllerCapabilities physical = connectedController();
@@ -398,10 +412,37 @@ void ControllerReadinessTests::repairCompletesInOneElevationAndVerifies()
     configuration.profiles.front().buttons = {button};
     QVERIFY(service.inspect(configuration, connectedController()).canApplyAutomatically);
     QVERIFY(service.applyAutomatically());
+    service.completePhysicalAccessVerification(true, true);
     QCOMPARE(probe->elevatedTransactions, 1);
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Ready);
     QCOMPARE(service.plan().state, ControllerReadinessState::Ready);
-    QCOMPARE(service.plan().status, QStringLiteral("READY — HOTAS setup repaired successfully."));
+    QCOMPARE(service.plan().status, QStringLiteral("READY — HOTAS setup repaired successfully and physical input was reacquired."));
+}
+
+void ControllerReadinessTests::selfAccessFailureRollsBackBeforeReportingReady()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    ButtonBinding button;
+    button.type = ButtonActionType::VirtualButton;
+    button.target = 15;
+    configuration.profiles.front().buttons = {button};
+    QVERIFY(service.inspect(configuration, connectedController()).canApplyAutomatically);
+    QVERIFY(service.applyAutomatically());
+    QCOMPARE(service.plan().state, ControllerReadinessState::Verifying);
+    QVERIFY(service.recoverFromPhysicalAccessFailure());
+    service.completePhysicalAccessVerification(false, false, true, true, true);
+    QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Failed);
+    QCOMPARE(service.plan().state, ControllerReadinessState::Attention);
+    QVERIFY(service.plan().status.contains(QStringLiteral("SELF-ACCESS FAILURE")));
+    QVERIFY(probe->calls.contains(QStringLiteral("elevated:--dev-unhide HID\\VID_044F&PID_B68D\\EXACT-INSTANCE")));
 }
 
 void ControllerReadinessTests::uacCancellationIsNotReportedAsRepairFailure()
