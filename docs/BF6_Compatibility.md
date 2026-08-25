@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Battlefield 6 Compatibility
 
-**Current release: v1.9.0**
+**Current release: v1.9.2**
 
 ## Official / anticheat boundary
 
@@ -14,7 +14,7 @@ HOTAS BF6 is an accessibility-style input-mapping utility: it reads a selected p
 
 ## Verified versus unverified
 
-Repository evidence verifies deterministic mapper behavior, headless tests, packaging gates, and the Controller Setup planner. It does not by itself verify a live Battlefield session, anticheat acceptance, a particular physical controller, installer interaction, or updater interaction.
+Repository evidence verifies deterministic mapper behavior, headless tests, packaging gates, and the HOTAS Setup & Verification planner/transaction logic. It does not by itself verify a live Battlefield session, anticheat acceptance, a particular physical controller, installer interaction, UAC behavior on a particular machine, or updater interaction.
 
 ## Windows and signing
 
@@ -22,7 +22,7 @@ Azure Artifact Signing with GitHub OIDC is prepared for trusted stable releases,
 
 ## Reporting a compatibility regression
 
-Report regressions with application version, Windows version, selected controller name and exact Controller Setup findings, vJoy capability summary, HidHide state, and steps to reproduce. Do not attach unrelated device lists or sensitive system data.
+Report regressions with application version, Windows version, selected controller name and exact HOTAS Setup & Verification findings, vJoy capability summary, HidHide state, and steps to reproduce. Do not attach unrelated device lists or sensitive system data.
 
 ## Maintenance
 
