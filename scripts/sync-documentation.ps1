@@ -178,7 +178,7 @@ function Build-Readme {
     Add-Line $lines '.\build-release\HOTAS BF6.exe'
     Add-Line $lines '```'
     Add-Line $lines
-    Add-Line $lines 'The release workflow additionally performs QML validation, headless tests, a synthetic mapping benchmark, dependency/resource checks, Qt deployment, installer build, install/uninstall smoke testing, checksums, update-manifest generation, and GitHub Release publication.'
+    Add-Line $lines 'The release workflow additionally performs QML validation, headless tests, a synthetic mapping benchmark, dependency/resource checks, Qt deployment, installer build, install/uninstall smoke testing, final installer verification when trusted signing is enabled, checksums, update-manifest generation, and GitHub Release publication.'
     Add-Line $lines
     Add-Line $lines '## Documentation'
     Add-Line $lines

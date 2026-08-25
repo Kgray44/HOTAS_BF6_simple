@@ -18,7 +18,7 @@ Repository evidence verifies deterministic mapper behavior, headless tests, pack
 
 ## Windows and signing
 
-Unsigned builds can be blocked by Windows Smart App Control or other reputation and policy controls. Optional Authenticode signing hooks remain available, but a certificate is not a release prerequisite.
+Azure Artifact Signing with GitHub OIDC is prepared for trusted stable releases, but its Public Trust certificate profile is pending Microsoft identity validation. Until that profile exists, manual release runs are explicitly unsigned dry runs and stable tag publication is blocked. Local self-signing is development-only and never a public-release identity.
 
 ## Reporting a compatibility regression
 

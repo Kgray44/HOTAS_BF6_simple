@@ -158,7 +158,7 @@ ctest --test-dir build-release --output-on-failure -C Release
 .\build-release\HOTAS BF6.exe
 ```
 
-The release workflow additionally performs QML validation, headless tests, a synthetic mapping benchmark, dependency/resource checks, Qt deployment, installer build, install/uninstall smoke testing, checksums, update-manifest generation, and GitHub Release publication.
+The release workflow additionally performs QML validation, headless tests, a synthetic mapping benchmark, dependency/resource checks, Qt deployment, installer build, install/uninstall smoke testing, final installer verification when trusted signing is enabled, checksums, update-manifest generation, and GitHub Release publication.
 
 ## Documentation
 
@@ -167,6 +167,7 @@ The release workflow additionally performs QML validation, headless tests, a syn
 - **[Curve Research](docs/curve-research.md)** — Curve mathematics, presets, and supporting rationale.
 - **[Automation Engineering](docs/v1.8-automation-engineering-report.md)** — Automation ordering and implementation notes.
 - **[Dependencies](docs/dependencies.md)** — Pinned dependency bootstrap and verification details.
+- **[Release Signing](docs/signing.md)** — Azure Artifact Signing, GitHub OIDC, local development signing, and the pending Public Trust enablement procedure.
 - **[Hardware Compatibility](docs/Hardware_Compatibility.md)** — Structured controller support matrix and validation boundary.
 - **[BF6 Compatibility](docs/BF6_Compatibility.md)** — Conservative game, anticheat, Windows, and reporting guidance.
 - **[Third-Party Notices](THIRD_PARTY_NOTICES.md)** — Dependency and trademark attribution boundary.
