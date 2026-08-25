@@ -27,11 +27,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify generated documentation is synchronized
+      - name: Verify generated documentation and curated release notes
         shell: pwsh
         run: .\scripts\sync-documentation.ps1 -Check
 
       - name: Validate release source and select release tag
+        id: release_source
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -49,6 +50,8 @@ jobs:
             $tag = "v$version"
           }
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_notes_path=docs/releases/$tag.md" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Install Qt 6.5.3
         uses: jurplel/install-qt-action@v4
@@ -254,8 +257,9 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
+          tag_name: ${{ steps.release_source.outputs.release_tag }}
+          name: HOTAS BF6 Simple ${{ steps.release_source.outputs.release_tag }}
+          body_path: ${{ steps.release_source.outputs.release_notes_path }}
           files: |
             release/HOTAS-BF6-Setup-v*.exe
             release/update-manifest.json

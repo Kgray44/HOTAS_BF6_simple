@@ -178,7 +178,7 @@ HOTAS BF6 Simple source is available under the [MIT License](LICENSE). Dependenc
 
 ## Documentation maintenance
 
-README.md, docs/Features.md, and docs/Version_Overview.md are generated from the structured files in `docs/catalog/` plus `HOTAS_VERSION`.
+README.md, docs/Features.md, and docs/Version_Overview.md are generated from the structured files in `docs/catalog/` plus `HOTAS_VERSION`. Each stable version also requires committed curated release notes at `docs/releases/v<version>.md`.
 
 Run `.\scripts\sync-documentation.ps1` after changing product, feature, or version catalog data. The Documentation Check workflow runs on pull requests, pushes to `main`, tags, and manual dispatch and fails if any generated document is stale.
 

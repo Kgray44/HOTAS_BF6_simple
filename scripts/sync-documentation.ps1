@@ -40,6 +40,24 @@ if ($latestCatalogVersion -ne $version) {
     throw "Newest documentation-catalog version '$latestCatalogVersion' does not match HOTAS_VERSION '$version'."
 }
 
+$releaseNotesPath = Join-Path $root ("docs\releases\v{0}.md" -f $version)
+if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+    throw "Curated release notes are missing for v${version}: $releaseNotesPath"
+}
+
+$releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw
+$releaseHeading = "# HOTAS BF6 Simple v$version"
+$expectedInstaller = "HOTAS-BF6-Setup-v$version.exe"
+if (-not $releaseNotes.StartsWith($releaseHeading)) {
+    throw "Curated release notes for v$version must start with '$releaseHeading'."
+}
+if ($releaseNotes -notmatch [regex]::Escape($expectedInstaller)) {
+    throw "Curated release notes for v$version must name the installer '$expectedInstaller'."
+}
+if ($releaseNotes -notmatch '(?m)^## Full Changelog\s*$') {
+    throw "Curated release notes for v$version must contain a '## Full Changelog' section."
+}
+
 function Add-Line {
     param(
         $Lines,
@@ -195,7 +213,7 @@ function Build-Readme {
     Add-Line $lines
     Add-Line $lines '## Documentation maintenance'
     Add-Line $lines
-    Add-Line $lines 'README.md, docs/Features.md, and docs/Version_Overview.md are generated from the structured files in `docs/catalog/` plus `HOTAS_VERSION`.'
+    Add-Line $lines 'README.md, docs/Features.md, and docs/Version_Overview.md are generated from the structured files in `docs/catalog/` plus `HOTAS_VERSION`. Each stable version also requires committed curated release notes at `docs/releases/v<version>.md`.'
     Add-Line $lines
     Add-Line $lines 'Run `.\scripts\sync-documentation.ps1` after changing product, feature, or version catalog data. The Documentation Check workflow runs on pull requests, pushes to `main`, tags, and manual dispatch and fails if any generated document is stale.'
     Add-Line $lines
@@ -389,7 +407,7 @@ if ($Check) {
         throw ("Generated documentation is stale: " + ($drift -join ', ') + ". Run .\scripts\sync-documentation.ps1 and commit the generated files.")
     }
 
-    Write-Host "Generated documentation is synchronized for v$version."
+    Write-Host "Generated documentation and curated release notes are valid for v$version."
     exit 0
 }
 

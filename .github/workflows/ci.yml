@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify generated documentation is synchronized
+      - name: Verify generated documentation and curated release notes
         shell: pwsh
         run: .\scripts\sync-documentation.ps1 -Check
 
