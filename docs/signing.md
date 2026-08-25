@@ -1,8 +1,10 @@
 # Release signing
 
-HOTAS BF6 stable-release signing is designed around Azure Artifact Signing and
-GitHub OpenID Connect (OIDC). GitHub does not store a PFX, private key, or
-Azure client secret for this path.
+HOTAS BF6 supports optional Azure Artifact Signing through GitHub OpenID Connect (OIDC).
+GitHub does not store a PFX, private key, or Azure client secret for this path.
+
+Signing is an optional trust/reputation enhancement. It is **not** a prerequisite for
+building, tagging, or publishing a stable HOTAS BF6 release.
 
 ## Current state
 
@@ -12,12 +14,15 @@ currently `false` because the `HOTASBF6Public` Public Trust certificate profile
 cannot be created until Microsoft's Individual/Public identity validation
 finishes.
 
-While it is disabled, a manual `workflow_dispatch` release run from `main` is
-an **UNSIGNED DRY RUN**. It still builds, tests, benchmarks, stages the Qt
-application, compiles and smoke-tests the installer, generates metadata, and
-uploads the artifacts. Azure login, signing, and signature-validity checks are
-skipped. A pushed stable `v*` tag fails before build rather than publishing an
-unsigned public release.
+While signing is disabled, both manual release dry runs and matching stable `v*`
+tag builds continue normally without Azure login, signing, or signature-validity
+checks. Stable tag builds still build, test, benchmark, stage the Qt application,
+compile and smoke-test the installer, generate manifests and checksums, upload
+artifacts, and publish the GitHub Release.
+
+Unsigned builds may trigger Windows reputation, Smart App Control, or other
+security warnings. Users should not weaken unrelated Windows security controls to
+work around those protections.
 
 No artifact should be described as Microsoft-signed or publicly trusted until a
 real enabled Azure signing run has completed successfully.
@@ -43,6 +48,9 @@ installer are signing targets. The installer is not rebuilt or otherwise
 mutated after its signature is applied; manifests and checksums are separate
 metadata files derived from its signed bytes.
 
+If signing is disabled, the same release pipeline runs without the signing and
+signature-verification steps.
+
 ## Local development signing
 
 Development self-signing is separate from Azure public signing and is optional
@@ -57,15 +65,15 @@ certificate named `CN=HOTAS BF6 Development`; it never exports a private key.
 `-TrustForCurrentUser` adds only the development certificate's public portion
 to the current user's `TrustedPublisher` and `Root` stores. It requires neither
 administrator privileges nor any LocalMachine trust change. This certificate
-must never be distributed to users or used for a stable public release.
+must never be distributed to users or represented as a public-trust signature.
 
-## Enable trusted signing after Microsoft validation
+## Enable trusted signing later
 
-After the individual/public identity is verified:
+If Microsoft identity validation is completed and public signing is desired:
 
 1. In Azure Artifact Signing, create a **Public Trust** certificate profile.
 2. Name it exactly `HOTASBF6Public` and select the completed verified identity.
-3. Keep Program Type appropriate for ordinary Win32 signing (currently `None`).
+3. Keep Program Type appropriate for ordinary Win32 signing.
 4. Confirm the existing GitHub signing principal still has signer access.
 5. In GitHub's `release-signing` environment, change
    `ARTIFACT_SIGNING_ENABLED` from `false` to `true`.
@@ -74,8 +82,11 @@ After the individual/public identity is verified:
    signatures all verify as valid.
 8. Confirm the installer, SHA256SUMS, and update manifest describe the same
    signed installer bytes.
-9. Only then create the next stable `vX.Y.Z` tag.
+
+After that, future stable releases will be signed automatically while the flag
+remains enabled. If signing is later disabled again, stable releases remain
+publishable as unsigned builds.
 
 The Azure subscription, Microsoft Entra application, federated credential,
-GitHub environment, and Artifact Signing account are existing external
-configuration; this repository does not create or modify them.
+GitHub environment, and Artifact Signing account are external configuration;
+this repository does not create or modify them.
