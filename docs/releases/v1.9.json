@@ -1,0 +1,40 @@
+[
+  {
+    "version": "1.9.0",
+    "tag": "v1.9.0",
+    "releaseTitle": "v1.9.0",
+    "title": "Public readiness and automatic controller setup",
+    "summary": "Added first-run readiness inspection and transactional vJoy/HidHide setup so the surrounding Windows controller stack could be repaired from inside the app.",
+    "status": "deprecated",
+    "replacement": "v1.9.1",
+    "syncToGitHubRelease": true,
+    "statusNote": "Do not use. The initial Setup & Verification experience could interrupt healthy startup, misclassify a vJoy device already owned by HOTAS BF6, provide unclear verification progress, and fail automatic-repair flows in ways that could produce repeated elevation prompts. v1.9.1 specifically stabilizes this subsystem.",
+    "highlights": [
+      "First-run Controller Setup wizard and persistent Settings entry for Detect → Explain → Fix → Verify → Ready.",
+      "Capability planner computes required virtual axes, buttons, and native POV capacity from profiles and Automation.",
+      "vJoyConfig integration snapshots Device 1, proposes narrow changes, verifies results, and supports rollback.",
+      "HidHideCLI integration allowlists HOTAS BF6 before hiding only the selected physical device and preserves unrelated configuration.",
+      "Mapping is explicitly neutralized before setup changes.",
+      "Added normal development CI, MIT licensing, third-party notices, hardware compatibility documentation, and conservative BF6/anticheat guidance."
+    ]
+  },
+  {
+    "version": "1.9.1",
+    "tag": "v1.9.1",
+    "releaseTitle": "v1.9.1",
+    "title": "HOTAS setup verification stabilization",
+    "summary": "Stabilized and polished the v1.9 controller-readiness experience while leaving the real-time mapper architecture unchanged.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release in the published release line. Use this instead of v1.9.0.",
+    "highlights": [
+      "Healthy startup uses passive asynchronous readiness checking instead of an unnecessary setup interruption.",
+      "vJoy Device 1 is accepted as ready when owned by HOTAS BF6, while external ownership remains a real conflict.",
+      "Verification uses active controller-report evidence and exact HID/PnP identity captured by DirectInput.",
+      "Full verification visibly reports progress across physical HOTAS, vJoy output, and HidHide isolation checks.",
+      "Verification and scoped automatic repairs restore the prior Mapping On/Off choice.",
+      "Legacy, Standard, and Top Gun use the same setup/verification behavior and terminology."
+    ]
+  }
+]
