@@ -2,6 +2,7 @@
 
 #include "event_log.h"
 #include "controller_readiness.h"
+#include "controller_diagnostics.h"
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
@@ -344,7 +345,7 @@ private:
     void sampleCalibrationControlPlane();
     void finishCalibration();
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
-    QString buildControllerDiagnostics() const;
+    ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
 
     enum class CalibrationStageState {
         Idle,

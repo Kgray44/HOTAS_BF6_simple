@@ -4,23 +4,21 @@
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "controller_diagnostics.h"
 #include "hotas_build_version.h"
 #include "launcher_core.h"
 #include "profile_model.h"
 #include "response_curve.h"
 
 #include <QCoreApplication>
-#include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
-#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QLocale>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
-#include <QRegularExpression>
 #include <QSettings>
 #include <QSysInfo>
 #include <QTimer>
@@ -41,17 +39,6 @@ QString automationProfileName(const MapperConfiguration &configuration, const QS
 {
     if (const ControllerProfile *profile = findProfile(configuration, id)) return profile->name;
     return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
-}
-
-QString sanitizeDiagnosticText(QString text)
-{
-    const QString home = QDir::homePath();
-    if (!home.isEmpty()) text.replace(home, QStringLiteral("<USER_HOME>"), Qt::CaseInsensitive);
-    const QString appDirectory = QCoreApplication::applicationDirPath();
-    if (!appDirectory.isEmpty()) text.replace(appDirectory, QStringLiteral("<APP_DIR>"), Qt::CaseInsensitive);
-    text.replace(QRegularExpression(QStringLiteral("(?i)[A-Z]:\\\\Users\\\\[^\\\\\\r\\n]+")),
-                 QStringLiteral("<USER_HOME>"));
-    return text.trimmed();
 }
 
 QString automationBehaviorLabel(AutomationActivationMode mode)
@@ -960,9 +947,7 @@ bool AppBackend::controllerSetupInProgress() const
 bool AppBackend::controllerSetupCanUndo() const { return m_readiness.canUndo(); }
 bool AppBackend::controllerDiagnosticsAvailable() const
 {
-    const ControllerReadinessState state = m_readiness.plan().state;
-    return state == ControllerReadinessState::Attention || state == ControllerReadinessState::Failed
-        || state == ControllerReadinessState::NeedsChanges || state == ControllerReadinessState::Cancelled;
+    return isControllerDiagnosticsAvailable(m_readiness.plan().state);
 }
 bool AppBackend::calibrationActive() const { return m_calibrationStage != CalibrationStageState::Idle; }
 QString AppBackend::calibrationStage() const
@@ -2824,88 +2809,32 @@ bool AppBackend::undoControllerReadiness()
     return restored && physicalRestored && mappingStateRestored;
 }
 
-QString AppBackend::buildControllerDiagnostics() const
+ControllerDiagnosticsSnapshot AppBackend::controllerDiagnosticsSnapshot() const
 {
-    const ControllerReadinessPlan &plan = m_readiness.plan();
-    const AutomaticRepairResult &repair = m_readiness.lastAutomaticRepairResult();
-    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
-    QStringList lines{
-        QStringLiteral("HOTAS BF6 Diagnostics"),
-        QStringLiteral("Version: v%1").arg(QString::fromLatin1(HOTAS_BF6_VERSION)),
-        QStringLiteral("Timestamp: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)),
-        QStringLiteral("Windows: %1").arg(QSysInfo::prettyProductName()),
-        QString{},
-        QStringLiteral("PHYSICAL CONTROLLER"),
-        QStringLiteral("Name: %1").arg(physical.name),
-        QStringLiteral("Connected: %1").arg(physical.connected ? QStringLiteral("yes") : QStringLiteral("no")),
-        QStringLiteral("Axes: %1  Buttons: %2  POVs: %3")
-            .arg(std::count(physical.axes.cbegin(), physical.axes.cend(), true))
-            .arg(physical.buttons).arg(physical.povs),
-        QStringLiteral("Input reports received: %1").arg(physical.inputReportsReceived ? QStringLiteral("yes") : QStringLiteral("no")),
-        QStringLiteral("Reacquisition attempted: %1").arg(repair.physicalReacquisitionAttempted ? QStringLiteral("yes") : QStringLiteral("no")),
-        QStringLiteral("Reacquisition result: %1").arg(repair.physicalReacquisitionSucceeded ? QStringLiteral("success") : QStringLiteral("not confirmed")),
-        QString{},
-        QStringLiteral("VJOY"),
-        QStringLiteral("Installed: %1  Device ID: %2  Driver ready: %3")
-            .arg(plan.vjoy.installed ? QStringLiteral("yes") : QStringLiteral("no"))
-            .arg(plan.vjoy.deviceId).arg(plan.vjoy.driverReady ? QStringLiteral("yes") : QStringLiteral("no")),
-        QStringLiteral("Configured axes: %1  Buttons: %2  Continuous POV: %3  Discrete POV: %4")
-            .arg(std::count(plan.vjoy.axes.cbegin(), plan.vjoy.axes.cend(), true))
-            .arg(plan.vjoy.buttons).arg(plan.vjoy.continuousPovs).arg(plan.vjoy.discretePovs),
-        QString{},
-        QStringLiteral("HIDHIDE"),
-        QStringLiteral("Installed: %1  Service ready: %2  Cloaking: %3")
-            .arg(plan.hidhide.installed ? QStringLiteral("yes") : QStringLiteral("no"))
-            .arg(plan.hidhide.serviceReady ? QStringLiteral("yes") : QStringLiteral("no"))
-            .arg(plan.hidhide.cloaked ? QStringLiteral("on") : QStringLiteral("off")),
-        QStringLiteral("HOTAS BF6 allowlisted: %1  Selected controller hidden: %2")
-            .arg(plan.hidhide.mapperAllowlisted ? QStringLiteral("yes") : QStringLiteral("no"))
-            .arg(plan.hidhide.selectedControllerHidden ? QStringLiteral("yes") : QStringLiteral("no")),
-        QStringLiteral("Post-repair controller reacquisition: %1")
-            .arg(repair.physicalReacquisitionSucceeded ? QStringLiteral("confirmed") : QStringLiteral("not confirmed")),
-        QString{},
-        QStringLiteral("AUTOMATIC REPAIR"),
-        QStringLiteral("Result: %1").arg(repair.message),
-    };
-    for (const AutomaticRepairOperationResult &operation : repair.operations) {
-        lines.append(QStringLiteral("%1: %2 (exit code %3%4)")
-            .arg(operation.operationName,
-                 operation.succeeded ? QStringLiteral("success") : QStringLiteral("failed"),
-                 QString::number(operation.exitCode),
-                 operation.rollback ? QStringLiteral(", rollback") : QString{}));
-        const QString output = sanitizeDiagnosticText(operation.output).left(800);
-        const QString error = sanitizeDiagnosticText(operation.errorOutput.isEmpty()
-            ? operation.message : operation.errorOutput).left(800);
-        if (!output.isEmpty()) lines.append(QStringLiteral("  stdout: %1").arg(output));
-        if (!error.isEmpty()) lines.append(QStringLiteral("  stderr: %1").arg(error));
-    }
-    lines.append(QString{});
-    lines.append(QStringLiteral("ROLLBACK"));
-    lines.append(QStringLiteral("Attempted: %1  Result: %2  Physical reports after rollback: %3")
-        .arg(repair.rollbackAttempted ? QStringLiteral("yes") : QStringLiteral("no"),
-             repair.rollbackSucceeded ? QStringLiteral("success") : QStringLiteral("not confirmed"),
-             repair.physicalReportsReceivedAfterRollback ? QStringLiteral("yes") : QStringLiteral("no")));
-    lines.append(QString{});
-    lines.append(QStringLiteral("CALIBRATION"));
+    ControllerDiagnosticsSnapshot diagnostics;
+    diagnostics.version = QString::fromLatin1(HOTAS_BF6_VERSION);
+    diagnostics.timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+    diagnostics.windowsVersion = QSysInfo::prettyProductName();
+    diagnostics.physical = currentPhysicalCapabilities();
+    diagnostics.vjoy = m_readiness.plan().vjoy;
+    diagnostics.hidhide = m_readiness.plan().hidhide;
+    diagnostics.repair = m_readiness.lastAutomaticRepairResult();
+    diagnostics.privatePaths = {QDir::homePath(), QCoreApplication::applicationDirPath()};
+    const AtomicRuntimeState &runtime = m_worker.runtime();
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
-        const AtomicRuntimeState &runtime = m_worker.runtime();
-        lines.append(QStringLiteral("%1 RAW MIN: %2  RAW NEUTRAL: %3  RAW MAX: %4  CALIBRATED: %5  MAPPED: %6")
-            .arg(physicalAxisLabel(static_cast<PhysicalAxis>(index)))
-            .arg(calibration.minimum, 0, 'f', 3).arg(calibration.center, 0, 'f', 3)
-            .arg(calibration.maximum, 0, 'f', 3).arg(runtime.normalized[index].load(), 0, 'f', 3)
-            .arg(runtime.transformed[index].load(), 0, 'f', 3));
+        diagnostics.axes.append({physicalAxisLabel(static_cast<PhysicalAxis>(index)), calibration.minimum,
+            calibration.center, calibration.maximum, runtime.normalized[index].load(),
+            runtime.transformed[index].load()});
     }
-    lines.append(QString{});
-    lines.append(QStringLiteral("ADVANCED / TECHNICAL"));
-    lines.append(QStringLiteral("Selected HID instance: %1").arg(physical.hidInstanceId));
-    return lines.join(u'\n');
+    diagnostics.selectedHidInstance = diagnostics.physical.hidInstanceId;
+    return diagnostics;
 }
 
 bool AppBackend::copyControllerDiagnostics()
 {
-    if (!controllerDiagnosticsAvailable() || !QGuiApplication::clipboard()) return false;
-    QGuiApplication::clipboard()->setText(buildControllerDiagnostics());
+    if (!controllerDiagnosticsAvailable()
+        || !copyControllerDiagnosticsToClipboard(controllerDiagnosticsSnapshot())) return false;
     appendEvent(u"HOTAS setup diagnostics copied to the clipboard"_qs);
     emit stateChanged();
     return true;
@@ -2994,7 +2923,8 @@ void AppBackend::refreshUiSnapshot()
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
-    if (connected && !m_physicalControllerWasConnected && !m_verificationInProgress) {
+    if (ControllerReadinessService::isNewPhysicalControllerArrival(
+            m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
         m_pendingControllerArrivalId = deviceId();
         appendEvent(u"Physical HOTAS arrived; evaluating setup readiness"_qs);
         startQuickVerification();

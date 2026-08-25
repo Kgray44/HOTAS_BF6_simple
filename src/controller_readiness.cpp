@@ -503,6 +503,11 @@ bool ControllerReadinessService::needsSetupAfterControllerArrival(bool isNewPhys
         || plan.state == ControllerReadinessState::Failed;
 }
 
+bool ControllerReadinessService::isNewPhysicalControllerArrival(bool wasConnected, bool isConnected)
+{
+    return !wasConnected && isConnected;
+}
+
 QString ControllerReadinessService::normalizeDeviceInstanceId(QString value)
 {
     value = value.trimmed().replace(u'/', u'\\');
