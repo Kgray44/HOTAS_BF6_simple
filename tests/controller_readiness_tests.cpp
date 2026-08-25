@@ -1,6 +1,9 @@
 #include "controller_readiness.h"
+#include "controller_diagnostics.h"
 
+#include <QClipboard>
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -65,6 +68,7 @@ MapperOutputRequirements defaultRequirements()
 class FakeRunner final : public SetupProcessRunner {
 public:
     bool failHide = false;
+    bool failRollback = false;
     bool cancelElevation = false;
     bool repairApplied = false;
     int elevatedTransactions = 0;
@@ -156,6 +160,9 @@ public:
             }
             return {true, true, success ? 0 : 1, {}, {}};
         }
+        if (failRollback && arguments.contains(QStringLiteral("--dev-unhide"))) {
+            return {true, true, 5, {}, QStringLiteral("Access denied")};
+        }
         return result(arguments);
     }
 
@@ -210,6 +217,9 @@ private slots:
     void processRunnerRollbackOnlyReversesThisTransaction();
     void repairCompletesInOneElevationAndVerifies();
     void selfAccessFailureRollsBackBeforeReportingReady();
+    void failedReacquisitionRequestsReconnectInsteadOfReady();
+    void failedRecoveryReportsRollbackFailure();
+    void diagnosticsAreScopedSanitizedAndCopyable();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
 };
@@ -346,6 +356,11 @@ void ControllerReadinessTests::checkingPlanPublishesEverySubsystem()
 
 void ControllerReadinessTests::controllerArrivalRequestsSetupOnlyForActionableTransitions()
 {
+    QVERIFY(ControllerReadinessService::isNewPhysicalControllerArrival(false, true));
+    QVERIFY(!ControllerReadinessService::isNewPhysicalControllerArrival(true, true));
+    QVERIFY(!ControllerReadinessService::isNewPhysicalControllerArrival(false, false));
+    QVERIFY(!ControllerReadinessService::isNewPhysicalControllerArrival(true, false));
+
     const ControllerReadinessPlan needsChanges = ControllerReadinessService::planFor(
         connectedController(), defaultRequirements(), readyVJoy(), HidHideCapabilities{}, VerificationMode::Quick);
     QVERIFY(ControllerReadinessService::needsSetupAfterControllerArrival(true, needsChanges));
@@ -438,11 +453,110 @@ void ControllerReadinessTests::selfAccessFailureRollsBackBeforeReportingReady()
     QVERIFY(service.applyAutomatically());
     QCOMPARE(service.plan().state, ControllerReadinessState::Verifying);
     QVERIFY(service.recoverFromPhysicalAccessFailure());
+    QVERIFY(!service.hasPendingRecovery());
     service.completePhysicalAccessVerification(false, false, true, true, true);
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Failed);
     QCOMPARE(service.plan().state, ControllerReadinessState::Attention);
     QVERIFY(service.plan().status.contains(QStringLiteral("SELF-ACCESS FAILURE")));
     QVERIFY(probe->calls.contains(QStringLiteral("elevated:--dev-unhide HID\\VID_044F&PID_B68D\\EXACT-INSTANCE")));
+}
+
+void ControllerReadinessTests::failedReacquisitionRequestsReconnectInsteadOfReady()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    ButtonBinding button;
+    button.type = ButtonActionType::VirtualButton;
+    button.target = 15;
+    configuration.profiles.front().buttons = {button};
+    QVERIFY(service.inspect(configuration, connectedController()).canApplyAutomatically);
+    QVERIFY(service.applyAutomatically());
+    QVERIFY(service.recoverFromPhysicalAccessFailure());
+    // Configuration rollback alone is not enough: without new reports, this
+    // must remain a reconnect state rather than a false successful undo.
+    service.completePhysicalAccessVerification(false, false, true, true, false);
+    QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Failed);
+    QCOMPARE(service.plan().state, ControllerReadinessState::Failed);
+    QVERIFY(service.plan().status.contains(QStringLiteral("PHYSICAL CONTROLLER LOST")));
+    QVERIFY(service.plan().status.contains(QStringLiteral("reconnect"), Qt::CaseInsensitive));
+    QVERIFY(!service.lastAutomaticRepairResult().physicalReportsReceivedAfterRollback);
+}
+
+void ControllerReadinessTests::failedRecoveryReportsRollbackFailure()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    ButtonBinding button;
+    button.type = ButtonActionType::VirtualButton;
+    button.target = 15;
+    configuration.profiles.front().buttons = {button};
+    QVERIFY(service.inspect(configuration, connectedController()).canApplyAutomatically);
+    QVERIFY(service.applyAutomatically());
+    probe->failRollback = true;
+    QVERIFY(!service.recoverFromPhysicalAccessFailure());
+    QVERIFY(service.hasPendingRecovery());
+    service.completePhysicalAccessVerification(false, false, true, false, false);
+    QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Failed);
+    QCOMPARE(service.plan().state, ControllerReadinessState::Failed);
+    QVERIFY(service.plan().status.contains(QStringLiteral("ROLLBACK FAILURE")));
+    QVERIFY(service.lastAutomaticRepairResult().rollbackAttempted);
+    QVERIFY(!service.lastAutomaticRepairResult().rollbackSucceeded);
+    QVERIFY(probe->calls.contains(QStringLiteral("elevated:--dev-unhide HID\\VID_044F&PID_B68D\\EXACT-INSTANCE")));
+}
+
+void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
+{
+    ControllerDiagnosticsSnapshot snapshot;
+    snapshot.version = QStringLiteral("1.9.3");
+    snapshot.timestamp = QStringLiteral("2026-08-25T15:00:00Z");
+    snapshot.windowsVersion = QStringLiteral("Windows 11");
+    snapshot.physical = connectedController();
+    snapshot.physical.inputReportsReceived = true;
+    snapshot.vjoy = readyVJoy();
+    snapshot.hidhide = readyHidHide();
+    snapshot.repair.outcome = AutomaticRepairOutcome::Failed;
+    snapshot.repair.message = QStringLiteral("HIDHIDE SELF-ACCESS FAILURE");
+    snapshot.repair.physicalReacquisitionAttempted = true;
+    snapshot.repair.rollbackAttempted = true;
+    snapshot.repair.rollbackSucceeded = true;
+    snapshot.repair.physicalReportsReceivedAfterRollback = true;
+    snapshot.repair.operations.append({QStringLiteral("Hide selected HOTAS"), true, true, false, false,
+        5, 31, QStringLiteral("C:\\Users\\Snow\\HOTAS failure"),
+        QStringLiteral("See C:\\Program Files\\HOTAS BF6\\setup.log"), {}});
+    snapshot.axes.append({QStringLiteral("X"), -1.0F, -0.041F, 1.0F, 0.0F, 0.0F});
+    snapshot.selectedHidInstance = connectedController().hidInstanceId;
+    snapshot.privatePaths = {QStringLiteral("C:\\Program Files\\HOTAS BF6")};
+
+    const QString report = buildControllerDiagnostics(snapshot);
+    QVERIFY(report.contains(QStringLiteral("HOTAS BF6 Diagnostics")));
+    QVERIFY(report.contains(QStringLiteral("PHYSICAL CONTROLLER")));
+    QVERIFY(report.contains(QStringLiteral("exit code 5")));
+    QVERIFY(report.contains(QStringLiteral("X RAW MIN: -1.000  RAW NEUTRAL: -0.041")));
+    QVERIFY(report.contains(snapshot.selectedHidInstance));
+    QVERIFY(report.contains(QStringLiteral("<USER_HOME>")));
+    QVERIFY(report.contains(QStringLiteral("<LOCAL_PATH>")));
+    QVERIFY(!report.contains(QStringLiteral("Snow")));
+    QVERIFY(!report.contains(QStringLiteral("C:\\Program Files\\HOTAS BF6")));
+
+    QVERIFY(copyControllerDiagnosticsToClipboard(snapshot));
+    QCOMPARE(QGuiApplication::clipboard()->text(), report);
+    QVERIFY(isControllerDiagnosticsAvailable(ControllerReadinessState::Attention));
+    QVERIFY(isControllerDiagnosticsAvailable(ControllerReadinessState::Failed));
+    QVERIFY(isControllerDiagnosticsAvailable(ControllerReadinessState::NeedsChanges));
+    QVERIFY(!isControllerDiagnosticsAvailable(ControllerReadinessState::Ready));
 }
 
 void ControllerReadinessTests::uacCancellationIsNotReportedAsRepairFailure()
@@ -489,5 +603,10 @@ void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxe
     QCOMPARE(requirements.buttons, 64);
 }
 
-QTEST_MAIN(ControllerReadinessTests)
+int main(int argc, char *argv[])
+{
+    QGuiApplication application(argc, argv);
+    ControllerReadinessTests tests;
+    return QTest::qExec(&tests, argc, argv);
+}
 #include "controller_readiness_tests.moc"

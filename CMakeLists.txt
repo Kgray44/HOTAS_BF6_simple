@@ -48,6 +48,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_store.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/controller_diagnostics.h
+    src/controller_diagnostics.cpp
     src/setup_repair_helper.h
     src/setup_repair_helper.cpp
     src/theme_manager.h
@@ -230,14 +232,16 @@ if (BUILD_TESTING)
         tests/controller_readiness_tests.cpp
         src/controller_readiness.h
         src/controller_readiness.cpp
+        src/controller_diagnostics.h
+        src/controller_diagnostics.cpp
         src/mapping_types.h
     )
-    target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Test shell32 advapi32)
+    target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test shell32 advapi32)
     target_include_directories(controller_readiness_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME controller_readiness_tests COMMAND controller_readiness_tests)
     if (WIN32)
         set_tests_properties(controller_readiness_tests PROPERTIES
-            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(theme_manager_tests

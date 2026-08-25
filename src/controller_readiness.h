@@ -234,6 +234,7 @@ public:
     static QString normalizeDeviceInstanceId(QString value);
     static ControllerReadinessPlan checkingPlan(const PhysicalControllerCapabilities &physical,
                                                 VerificationMode mode);
+    static bool isNewPhysicalControllerArrival(bool wasConnected, bool isConnected);
     static bool needsSetupAfterControllerArrival(bool isNewPhysicalArrival,
                                                  const ControllerReadinessPlan &plan);
 
