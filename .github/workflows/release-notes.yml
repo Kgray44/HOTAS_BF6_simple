@@ -189,7 +189,20 @@ jobs:
                 });
                 release = response.data;
               } catch (error) {
-                if (error.status !== 404 || !entry.createReleaseIfMissing) throw error;
+                if (error.status !== 404) throw error;
+                // A new current entry reaches main before its matching stable
+                // tag is permitted to publish. Do not fabricate an unsigned
+                // public Release simply to satisfy this metadata synchronizer;
+                // the release event will synchronize it once publication is
+                // authorized. Historical entries remain fail-closed unless
+                // they explicitly opt in to safe reconstruction below.
+                if (!entry.createReleaseIfMissing) {
+                  if (entry.status === 'current') {
+                    core.info(`Deferring ${entry.tag}: its signed stable Release has not been published yet.`);
+                    continue;
+                  }
+                  throw error;
+                }
 
                 const params = {
                   owner: context.repo.owner,
