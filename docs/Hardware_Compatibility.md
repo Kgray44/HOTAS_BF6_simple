@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Hardware Compatibility
 
-**Current release: v1.9.0**
+**Current release: v1.9.2**
 
 This matrix records only supported states and evidence boundaries. “Expected / Unverified” is not a tested or endorsed claim.
 
@@ -20,11 +20,11 @@ This matrix records only supported states and evidence boundaries. “Expected /
 
 | Manufacturer | Device / model | Connection architecture | Axes | Buttons | POVs | Status | Windows | HOTAS BF6 | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Thrustmaster | T.Flight HOTAS One | DirectInput physical controller → HOTAS BF6 → vJoy Device 1 | Detected at runtime | Detected at runtime | Detected at runtime | Validated | Windows 11 project baseline | v1.8.5 baseline | Primary hardware target. v1.9.0 planning is headless-tested; rerun Controller Setup after any driver or device change. |
-| Logitech / Saitek | X52 / X56 | Expected DirectInput physical controller → vJoy | Unknown | Unknown | Unknown | Expected / Unverified | Not recorded | Not recorded | Do not treat this as a tested claim; report results with Controller Setup diagnostics. |
+| Thrustmaster | T.Flight HOTAS One | DirectInput physical controller → HOTAS BF6 → vJoy Device 1 | Detected at runtime | Detected at runtime | Detected at runtime | Validated | Windows 11 project baseline | v1.8.5 baseline | Primary hardware target. v1.9.2 setup and Automatic Repair logic are headless-tested; rerun HOTAS Setup & Verification after any driver or device change and perform real-device acceptance for a new environment. |
+| Logitech / Saitek | X52 / X56 | Expected DirectInput physical controller → vJoy | Unknown | Unknown | Unknown | Expected / Unverified | Not recorded | Not recorded | Do not treat this as a tested claim; report results with HOTAS Setup & Verification diagnostics. |
 | Thrustmaster | T.16000M / TWCS | Expected DirectInput physical controller → vJoy | Unknown | Unknown | Unknown | Expected / Unverified | Not recorded | Not recorded | No repository hardware validation has been recorded. |
 | VKB / Virpil / WinWing | DirectInput-capable devices | Expected DirectInput physical controller → vJoy | Unknown | Unknown | Unknown | Expected / Unverified | Not recorded | Not recorded | Capability-dependent; no vendor/model has been marked tested. |
-| Windows input stack | vJoy Device 1 busy or disabled | Virtual output unavailable | N/A | N/A | N/A | Known Issue | Windows 10/11 | v1.9.0 | Controller Setup leaves Mapping Off and guides repair; it will not reconfigure a busy target. |
+| Windows input stack | vJoy Device 1 busy or disabled | Virtual output unavailable | N/A | N/A | N/A | Known Issue | Windows 10/11 | v1.9.2 | HOTAS BF6 ownership is Ready; an external owner is an actionable conflict. Automatic Repair uses one approved elevated transaction, performs bounded verification, and does not reconfigure an externally busy target. |
 | Virtual input device | vJoy as a physical input source | Virtual-to-virtual feedback loop | N/A | N/A | N/A | Unsupported | All | All | HOTAS BF6 deliberately excludes vJoy/Virtual Joystick from DirectInput selection. |
 
 ## Adding evidence
