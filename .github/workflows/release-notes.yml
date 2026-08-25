@@ -7,10 +7,17 @@ on:
     paths:
       - 'docs/releases/**'
       - '.github/workflows/release-notes.yml'
+  release:
+    types:
+      - published
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-notes-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -98,30 +105,41 @@ jobs:
               lines.push('', '## Project scope at this release', '', 'HOTAS BF6 Simple remains a Windows DirectInput-to-vJoy mapper designed primarily for Battlefield 6. Unless a note above says otherwise, capabilities introduced by earlier releases remain part of this version.');
               lines.push('', '## Compatibility and requirements', '');
               if (entry.syncToGitHubRelease) {
-                lines.push('- Windows 10/11 is the intended runtime family.');
-                lines.push('- vJoy is required for virtual output.');
+                lines.push('- Windows 10/11 is the intended runtime family for these source/release lines.');
+                lines.push('- vJoy is required for virtual output when running the mapper.');
                 if (versionAtLeast(entry.version, '1.6.2')) lines.push('- HidHide is optional but recommended when the physical controller must be hidden from the game.');
-                lines.push('- Thrustmaster T.Flight HOTAS One is the primary validation target for this release line; other DirectInput devices are not guaranteed unless separately validated.');
+                lines.push('- Thrustmaster T.Flight HOTAS One is the primary historical validation target; other DirectInput devices are not guaranteed unless separately validated.');
               } else {
-                lines.push('This is a source/history milestone rather than a maintained packaged release. Use current documentation for present-day hardware, Windows, vJoy, HidHide, and Battlefield compatibility requirements.');
+                lines.push('This is a documentation-only milestone because no exact taggable source snapshot exists in Git. Use current documentation for present-day hardware, Windows, vJoy, HidHide, and Battlefield compatibility requirements.');
               }
+
               lines.push('', '## Upgrade guidance', '');
               if (entry.status === 'current') lines.push('No upgrade is required within the currently published release line.');
               else if (entry.replacement) lines.push(`Use **${entry.replacement} or newer** rather than selecting this version for a new installation.`);
               else lines.push('Use the newest available stable release for a normal installation.');
 
-              if (entry.syncToGitHubRelease) {
+              if (entry.syncToGitHubRelease && entry.packagedAssets !== false) {
                 lines.push('', '## Download', '');
                 if (entry.status === 'current') lines.push('For normal use, download the installer attached to this GitHub Release.');
-                else lines.push(`If you intentionally need this historical build, use the assets attached to the GitHub Release for **${entry.tag}**. For normal use, prefer the current recommended release.`);
+                else lines.push(`If you intentionally need this historical packaged build, use the assets attached to the GitHub Release for **${entry.tag}**. For normal use, prefer the current recommended release.`);
                 lines.push('', '### Signing note', '', 'This release belongs to the pre-public-trusted-signing release line. Windows reputation or Smart App Control may warn about or block unsigned binaries; do not weaken unrelated Windows security controls to work around those protections.');
+              } else if (entry.syncToGitHubRelease) {
+                lines.push('', '## Source-only historical release', '', 'No installer or binary asset was published for this early version. This retroactive GitHub Release documents the exact historical source/tag only; no binary has been reconstructed or fabricated. GitHub’s source-code archives are the only downloads intentionally associated with it.');
               } else {
-                lines.push('', '## Packaging note', '', 'No packaged GitHub Release is maintained for this early milestone. It is documented for source/history purposes.');
+                lines.push('', '## Packaging note', '', 'No GitHub Release/tag is created for this milestone because the repository does not contain an exact source snapshot that can be identified honestly.');
               }
 
-              if (previous) lines.push('', '## Full changelog', '', `[${previous}...${entry.tag}](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${previous}...${entry.tag})`);
+              if (previous && entry.syncToGitHubRelease) lines.push('', '## Full changelog', '', `[${previous}...${entry.tag}](https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${previous}...${entry.tag})`);
               lines.push('');
               return lines.join('\n');
+            }
+
+            const currentEntries = entries.filter(entry => entry.status === 'current');
+            if (currentEntries.length !== 1) throw new Error(`Exactly one current release is required; found ${currentEntries.length}.`);
+            const currentEntry = currentEntries[0];
+            const highestSynced = entries.filter(entry => entry.syncToGitHubRelease).sort(compareVersions).at(-1);
+            if (!highestSynced || highestSynced.tag !== currentEntry.tag) {
+              throw new Error(`Current release ${currentEntry.tag} must be the highest synchronized version.`);
             }
 
             for (const entry of entries) {
@@ -129,37 +147,81 @@ jobs:
               if (entry.releaseTitle !== entry.tag) throw new Error(`Release title for ${entry.tag} must be exactly the version ID.`);
               if (seen.has(entry.tag)) throw new Error(`Duplicate catalog entry: ${entry.tag}`);
               if (!entry.summary || !Array.isArray(entry.highlights) || entry.highlights.length === 0) throw new Error(`Incomplete notes for ${entry.tag}.`);
+              if (entry.createReleaseIfMissing && !entry.syncToGitHubRelease) throw new Error(`${entry.tag} cannot request release creation while sync is disabled.`);
               seen.add(entry.tag);
               const body = render(entry, previousTag);
               if (entry.status === 'deprecated' && !body.includes('Deprecated — do not install or use this release.')) throw new Error(`Deprecated warning missing for ${entry.tag}.`);
               rendered.set(entry.tag, body);
-              if (!['v1.0','v1.2'].includes(entry.tag)) previousTag = entry.tag;
+              if (entry.syncToGitHubRelease) previousTag = entry.tag;
+            }
+
+            // Independently normalize the just-published release title. This catches
+            // future release workflows that accidentally use a descriptive name.
+            if (context.eventName === 'release' && context.payload.release) {
+              const published = context.payload.release;
+              if (published.name !== published.tag_name) {
+                await github.rest.repos.updateRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: published.id,
+                  name: published.tag_name,
+                });
+                core.info(`Normalized published release title to '${published.tag_name}'.`);
+              }
             }
 
             let updated = 0;
+            let created = 0;
             let sourceOnly = 0;
+
             for (const entry of entries) {
               if (!entry.syncToGitHubRelease) {
                 sourceOnly++;
                 continue;
               }
-              const { data: release } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: entry.tag,
-              });
+
+              let release = null;
+              try {
+                const response = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: entry.tag,
+                });
+                release = response.data;
+              } catch (error) {
+                if (error.status !== 404 || !entry.createReleaseIfMissing) throw error;
+
+                const params = {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: entry.tag,
+                  name: entry.tag,
+                  body: rendered.get(entry.tag),
+                  draft: false,
+                  prerelease: false,
+                  make_latest: 'false',
+                };
+                if (entry.targetCommit) params.target_commitish = entry.targetCommit;
+
+                const response = await github.rest.repos.createRelease(params);
+                release = response.data;
+                created++;
+                core.info(`Created historical release ${entry.tag}${entry.targetCommit ? ` at ${entry.targetCommit}` : ''}.`);
+              }
+
               await github.rest.repos.updateRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: release.id,
                 name: entry.tag,
                 body: rendered.get(entry.tag),
+                make_latest: entry.status === 'current' ? 'true' : 'false',
               });
-              core.info(`Updated ${entry.tag}: title='${entry.tag}', status=${entry.status}`);
+              core.info(`Synchronized ${entry.tag}: title='${entry.tag}', status=${entry.status}, latest=${entry.status === 'current'}.`);
               updated++;
             }
 
             core.summary
               .addHeading('Release history synchronization')
-              .addRaw(`${updated} existing GitHub Releases updated. ${sourceOnly} source-only milestones preserved without creating retroactive Releases.`)
+              .addRaw(`${updated} GitHub Releases synchronized; ${created} missing historical Releases created; ${sourceOnly} documentation-only milestones preserved without fabricating a source snapshot.`)
               .write();
