@@ -6,9 +6,9 @@
     "title": "Public readiness and automatic controller setup",
     "summary": "Added first-run readiness inspection and transactional vJoy/HidHide setup so the surrounding Windows controller stack could be repaired from inside the app.",
     "status": "deprecated",
-    "replacement": "v1.9.1",
+    "replacement": "v1.9.2",
     "syncToGitHubRelease": true,
-    "statusNote": "Do not use. The initial Setup & Verification experience could interrupt healthy startup, misclassify a vJoy device already owned by HOTAS BF6, provide unclear verification progress, and fail automatic-repair flows in ways that could produce repeated elevation prompts. v1.9.1 specifically stabilizes this subsystem.",
+    "statusNote": "Do not use. The initial Setup & Verification experience could interrupt healthy startup, misclassify a vJoy device already owned by HOTAS BF6, provide unclear verification progress, and fail automatic-repair flows. v1.9.1 improved verification, and v1.9.2 completed the corrective Automatic Repair transaction work.",
     "highlights": [
       "First-run Controller Setup wizard and persistent Settings entry for Detect → Explain → Fix → Verify → Ready.",
       "Capability planner computes required virtual axes, buttons, and native POV capacity from profiles and Automation.",
@@ -24,10 +24,10 @@
     "releaseTitle": "v1.9.1",
     "title": "HOTAS setup verification stabilization",
     "summary": "Stabilized and polished the v1.9 controller-readiness experience while leaving the real-time mapper architecture unchanged.",
-    "status": "current",
-    "replacement": null,
+    "status": "deprecated",
+    "replacement": "v1.9.2",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release in the published release line. Use this instead of v1.9.0.",
+    "statusNote": "Do not use for automatic repair. This release fixed healthy-startup and readiness-verification problems, but its Automatic Repair confirmation/elevation path could still produce repeated administrator prompts, weak failure reporting, and unsuccessful repair transactions. v1.9.2 specifically corrects that path.",
     "highlights": [
       "Healthy startup uses passive asynchronous readiness checking instead of an unnecessary setup interruption.",
       "vJoy Device 1 is accepted as ready when owned by HOTAS BF6, while external ownership remains a real conflict.",
@@ -35,6 +35,27 @@
       "Full verification visibly reports progress across physical HOTAS, vJoy output, and HidHide isolation checks.",
       "Verification and scoped automatic repairs restore the prior Mapping On/Off choice.",
       "Legacy, Standard, and Top Gun use the same setup/verification behavior and terminology."
+    ]
+  },
+  {
+    "version": "1.9.2",
+    "tag": "v1.9.2",
+    "releaseTitle": "v1.9.2",
+    "title": "Automatic HOTAS Repair transaction stabilization",
+    "summary": "Corrected the Automatic HOTAS Repair path so one approved repair uses one elevation boundary, preserves transactional rollback and diagnostics, and verifies the result clearly.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended published release. Use this instead of v1.9.0 or v1.9.1.",
+    "highlights": [
+      "Automatic repair confirmation is a shared themed in-app overlay across Legacy, Standard, and Top Gun and shows the exact planned changes before elevation.",
+      "One confirmed repair crosses one elevation boundary instead of launching separate elevated HidHide/vJoy commands.",
+      "Partial work rolls back within the same approved transaction where safe.",
+      "Per-operation completion state, exit code, stdout, and stderr are retained for diagnostics and concise user-facing failures.",
+      "Administrator denial is reported as cancellation rather than a technical failure.",
+      "Successful commands are followed by bounded full verification; inconclusive verification is reported as Attention rather than Repair Failed.",
+      "HidHide repair uses the normalized exact selected HID instance and preserves unrelated hidden-device/application rules.",
+      "Automatic repair restores the Mapping On/Off state that existed before the transaction, including safe failure/cancellation paths."
     ]
   }
 ]
