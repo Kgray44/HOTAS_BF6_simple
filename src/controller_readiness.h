@@ -3,6 +3,7 @@
 #include "mapping_types.h"
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -22,6 +23,9 @@ struct PhysicalControllerCapabilities {
     // path. An empty value means automatic HidHide changes are unsafe.
     QString hidInstanceId;
     bool connected = false;
+    // A completed DirectInput poll is stronger evidence than a second handle
+    // acquisition attempt. The mapper publishes this outside its report path.
+    bool inputReportsReceived = false;
     std::array<bool, kPhysicalAxisCount> axes{};
     int buttons = 0;
     int povs = 0;
@@ -33,6 +37,10 @@ struct VJoyCapabilities {
     bool driverReady = false;
     bool devicePresent = false;
     bool busy = false;
+    // vJoyConfig only reports BUSY; the mapper already knows whether that
+    // owner is this HOTAS BF6 process. Own acquisition is a healthy state.
+    bool ownedByHotasBf6 = false;
+    bool outputReportsSucceeding = false;
     bool reportValid = false;
     int deviceId = 1;
     QList<int> availableDeviceIds;
@@ -79,8 +87,23 @@ enum class ControllerReadinessState {
     Applying,
     Verifying,
     Ready,
+    Attention,
     Failed,
     RollingBack,
+};
+
+enum class VerificationMode {
+    None,
+    Quick,
+    Full,
+};
+
+enum class VerificationSubsystemState {
+    Unknown,
+    Checking,
+    Ready,
+    Attention,
+    Error,
 };
 
 struct ControllerReadinessPlan {
@@ -97,6 +120,15 @@ struct ControllerReadinessPlan {
     QStringList findings;
     QStringList proposedChanges;
     QString status;
+    VerificationMode verificationMode = VerificationMode::None;
+    VerificationSubsystemState physicalStatus = VerificationSubsystemState::Unknown;
+    VerificationSubsystemState vjoyStatus = VerificationSubsystemState::Unknown;
+    VerificationSubsystemState hidhideStatus = VerificationSubsystemState::Unknown;
+    QString physicalSummary;
+    QString vjoySummary;
+    QString hidhideSummary;
+    QDateTime lastChecked;
+    bool isChecking = false;
 };
 
 struct SetupProcessResult {
@@ -149,16 +181,24 @@ public:
     static ControllerReadinessPlan planFor(const PhysicalControllerCapabilities &physical,
                                            const MapperOutputRequirements &requirements,
                                            const VJoyCapabilities &vjoy,
-                                           const HidHideCapabilities &hidhide);
+                                           const HidHideCapabilities &hidhide,
+                                           VerificationMode mode = VerificationMode::Full);
     static QString stateLabel(ControllerReadinessState state);
+    static QString subsystemStateLabel(VerificationSubsystemState state);
     static QString normalizeDeviceInstanceId(QString value);
+    static ControllerReadinessPlan checkingPlan(const PhysicalControllerCapabilities &physical,
+                                                VerificationMode mode);
 
     const ControllerReadinessPlan &inspect(const MapperConfiguration &configuration,
-                                           const PhysicalControllerCapabilities &physical);
+                                           const PhysicalControllerCapabilities &physical,
+                                           VerificationMode mode = VerificationMode::Full,
+                                           bool mapperOwnsVjoy = false,
+                                           bool outputReportsSucceeding = false);
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
 
     const ControllerReadinessPlan &plan() const { return m_plan; }
+    void adoptPlan(ControllerReadinessPlan plan) { m_plan = std::move(plan); }
     bool transactionActive() const { return m_transactionActive; }
     bool canUndo() const;
 

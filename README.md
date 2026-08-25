@@ -2,18 +2,18 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v1.9.0**
+**Current release: v1.9.1**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and an explicit Controller Setup readiness wizard.
+HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and HOTAS Setup & Verification.
 
 ## Product gallery
 
-**Capture follow-up required.** No authoritative release-aligned screenshots or safe deterministic offscreen capture backend were present in this source tree. v1.9.0 does not insert fabricated product images.
+**Capture follow-up required.** No authoritative release-aligned screenshots or safe deterministic offscreen capture backend were present in this source tree. v1.9.1 does not insert fabricated product images.
 
-Capture follow-up: Capture Top Gun Axes, Automation editor, and Controller Setup/Readiness from the signed or release-candidate build using a controlled documentation capture path; crop and optimize the resulting images for GitHub before adding them to the catalog.
+Capture follow-up: Capture Top Gun Axes, Automation editor, and HOTAS Setup & Verification from the signed or release-candidate build using a controlled documentation capture path; crop and optimize the resulting images for GitHub before adding them to the catalog.
 
 ## What it is
 
@@ -52,7 +52,7 @@ Rich editing, live graphs, readable automation summaries, and themes operate in 
 
 ### Capability-aware hardware integration
 
-Controller Setup inspects the selected physical controller plus vJoy and HidHide capabilities, computes only the mapper outputs required by current profiles, and keeps all driver work outside the mapping worker.
+HOTAS Setup & Verification combines passive startup checks with a user-requested full device check, uses mapper-owned evidence when available, and keeps all driver work outside the mapping worker.
 
 ### Conservative dependency handling
 
@@ -73,7 +73,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **User Interface and Themes** — The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.
 - **vJoy Integration** — vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.
 - **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
-- **Controller Readiness and Safe Setup** — A first-run and Settings-accessible Controller Setup wizard turns the Windows input stack into a short detect, explain, fix, verify flow without moving setup work into real-time mapping.
+- **HOTAS Setup & Verification** — Passive startup checks and Settings-accessible full verification explain the complete HOTAS chain without moving setup work into real-time mapping.
 - **Launcher, Installer, and Updates** — A native launcher owns stable update checks and installation handoff so network/update work never remains active during mapping.
 - **Configuration and Migration** — Persistent configuration evolves through explicit schema migrations while transient runtime state remains outside saved data.
 - **Build, Test, and Release Engineering** — The repository contains a reproducible Windows build and release pipeline intended to catch both correctness and packaging regressions.
@@ -83,32 +83,33 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 ## Installation and first use
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
-2. Open HOTAS BF6 and use Controller Setup to detect the physical controller, vJoy Device 1, and optional HidHide state.
-3. Review the exact proposed changes, then choose Apply Automatically only if they match your intent. HOTAS BF6 stops Mapping and asks Windows for approval before changing a driver configuration.
-4. Confirm READY FOR BF6 BINDING, then select or create a profile.
-5. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.
-6. Use Mapping On/Off controls and Diagnostics to confirm neutral behavior before binding controls in Battlefield 6.
-7. Add Automation only after the base mapping is behaving correctly; new rules begin as disabled drafts and must validate before they can run.
+2. Open HOTAS BF6. A healthy configuration starts without an interrupting setup dialog.
+3. Open Settings and choose VERIFY HOTAS SETUP to deeply verify the physical controller, vJoy Device 1, and HidHide configuration.
+4. Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 restores the Mapping On/Off state that preceded the repair.
+5. Confirm READY, then select or create a profile.
+6. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.
+7. Use Mapping On/Off controls and Diagnostics to confirm neutral behavior before binding controls in Battlefield 6.
+8. Add Automation only after the base mapping is behaving correctly; new rules begin as disabled drafts and must validate before they can run.
 
 The launcher performs stable-release update checks with short timeouts. Update failures fall back to the installed application, and no updater remains active while mapping.
 
 ## Troubleshooting
 
-### Controller Setup cannot find vJoyConfig or HidHideCLI
+### HOTAS Setup & Verification cannot find vJoyConfig or HidHideCLI
 
 Use the official dependency installer or complete the configuration manually. HOTAS BF6 will not download, update, or silently change an already-installed driver.
 
 ### vJoy Device 1 is busy, disabled, or lacks required outputs
 
-Keep Mapping Off, close the process holding the device, then recheck. Automatic setup refuses to overwrite a busy target and previews the exact minimal change before requesting elevation.
+When HOTAS BF6 already owns Device 1 while mapping, that is Ready. If another application owns it, close that application, then verify again. Automatic repair refuses to overwrite a busy target.
 
 ### A game sees both the physical controller and vJoy
 
-Review the selected physical controller and HidHide findings in Controller Setup. Only hide the exact selected HID instance after confirming the mapper is allowlisted; leave unrelated devices untouched.
+Review the selected physical controller and HidHide findings in HOTAS Setup & Verification. Only hide the exact selected HID instance after confirming the mapper is allowlisted; leave unrelated devices untouched.
 
 ### Mapping or game binding is still not behaving as expected
 
-Use Mapping Off to neutralize output, inspect Diagnostics and Controller Setup, then report the application version, Windows version, selected controller, vJoy summary, HidHide state, and reproducible steps.
+Use Mapping Off to neutralize output, inspect Diagnostics and HOTAS Setup & Verification, then report the application version, Windows version, selected controller, vJoy summary, HidHide state, and reproducible steps.
 
 ## Validated and targeted stack
 

@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
@@ -249,6 +250,9 @@ AppBackend::AppBackend(QObject *parent)
     if (m_configuration.startMappingOnLaunch) {
         m_worker.setMappingEnabled(true);
     }
+    // Startup verification is passive and runs on its own short-lived worker.
+    // It never stops mapping, releases either device, or opens a modal.
+    QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
@@ -257,6 +261,12 @@ AppBackend::AppBackend(QObject *parent)
 
 AppBackend::~AppBackend()
 {
+    if (m_verificationThread) {
+        QThread *thread = m_verificationThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
     m_worker.requestStop();
     m_worker.wait(1500);
 }
@@ -827,13 +837,20 @@ bool AppBackend::hidhideMapperAllowed() const
 QVariantList AppBackend::controllerReadinessChecks() const
 {
     QVariantList checks;
-    for (const QString &finding : m_readiness.plan().findings) {
-        const QString upper = finding.toUpper();
-        const QString severity = upper.contains(u"READY"_qs) || upper.contains(u"DETECTED"_qs)
-            ? u"ready"_qs : (upper.contains(u"MANUAL"_qs) || upper.contains(u"NOT DETECTED"_qs)
-            || upper.contains(u"UNAVAILABLE"_qs) ? u"warning"_qs : u"info"_qs);
-        checks.append(QVariantMap{{u"message"_qs, finding}, {u"severity"_qs, severity}});
-    }
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    const auto append = [&checks](const QString &name, VerificationSubsystemState state,
+                                  const QString &summary) {
+        const QString severity = state == VerificationSubsystemState::Ready ? u"ready"_qs
+            : state == VerificationSubsystemState::Error ? u"error"_qs
+            : state == VerificationSubsystemState::Attention ? u"warning"_qs : u"info"_qs;
+        checks.append(QVariantMap{{u"name"_qs, name},
+                                  {u"state"_qs, ControllerReadinessService::subsystemStateLabel(state)},
+                                  {u"message"_qs, summary},
+                                  {u"severity"_qs, severity}});
+    };
+    append(u"PHYSICAL HOTAS"_qs, plan.physicalStatus, plan.physicalSummary);
+    append(u"VJOY OUTPUT"_qs, plan.vjoyStatus, plan.vjoySummary);
+    append(u"HIDHIDE ISOLATION"_qs, plan.hidhideStatus, plan.hidhideSummary);
     return checks;
 }
 
@@ -854,10 +871,34 @@ QString AppBackend::controllerReadinessState() const
 QString AppBackend::controllerReadinessStatus() const
 {
     const QString status = m_readiness.plan().status;
-    return status.isEmpty() ? QStringLiteral("Open Controller Setup to inspect your system.") : status;
+    return status.isEmpty() ? QStringLiteral("Verify your HOTAS setup from Settings.") : status;
 }
-bool AppBackend::controllerSetupCanApply() const { return m_readiness.plan().canApplyAutomatically; }
-bool AppBackend::controllerSetupInProgress() const { return m_readiness.transactionActive(); }
+QString AppBackend::controllerReadinessLastChecked() const
+{
+    const QDateTime checked = m_readiness.plan().lastChecked;
+    return checked.isValid() ? checked.toString(QLocale().timeFormat(QLocale::ShortFormat))
+                             : QStringLiteral("Not yet verified");
+}
+QString AppBackend::controllerReadinessRecommendedAction() const
+{
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    if (plan.isChecking) return {};
+    if (plan.canApplyAutomatically) return QStringLiteral("FIX AUTOMATICALLY");
+    if (plan.state == ControllerReadinessState::Attention
+        && plan.verificationMode == VerificationMode::Quick) {
+        return QStringLiteral("RUN FULL VERIFICATION");
+    }
+    if (plan.state == ControllerReadinessState::NeedsChanges) return QStringLiteral("SHOW INSTRUCTIONS");
+    return {};
+}
+bool AppBackend::controllerSetupCanApply() const
+{
+    return m_readiness.plan().canApplyAutomatically && !m_verificationInProgress;
+}
+bool AppBackend::controllerSetupInProgress() const
+{
+    return m_verificationInProgress || m_readiness.transactionActive();
+}
 bool AppBackend::controllerSetupCanUndo() const { return m_readiness.canUndo(); }
 bool AppBackend::calibrationActive() const { return m_worker.calibrationRunning(); }
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
@@ -2278,7 +2319,7 @@ bool AppBackend::openVjoyConfiguration()
 
 void AppBackend::refreshHidHideStatus()
 {
-    inspectControllerReadiness();
+    startQuickVerification();
     appendEvent(hidhideAvailable()
         ? u"HidHide status refreshed"_qs
         : u"HidHide is not installed or its service is unavailable"_qs);
@@ -2305,45 +2346,133 @@ bool AppBackend::openHidHideConfiguration()
 
 void AppBackend::inspectControllerReadiness()
 {
-    const ControllerReadinessPlan &plan = m_readiness.inspect(m_configuration, currentPhysicalCapabilities());
-    appendEvent(QString(u"Controller readiness: %1"_qs).arg(plan.status));
+    verifyHotasSetup();
+}
+
+void AppBackend::verifyHotasSetup()
+{
+    startVerification(VerificationMode::Full);
+}
+
+void AppBackend::startQuickVerification()
+{
+    startVerification(VerificationMode::Quick);
+}
+
+void AppBackend::startVerification(VerificationMode mode)
+{
+    if (m_verificationInProgress) return;
+
+    const MapperConfiguration configuration = m_configuration;
+    const bool mappingWasRequested = m_worker.mappingRequested();
+    const bool mapperOwnsVjoy = m_worker.runtime().mappingActive.load();
+    const bool outputReportsSucceeding = mapperOwnsVjoy && m_worker.runtime().vjoyReady.load();
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+
+    m_verificationInProgress = true;
+    m_readiness.adoptPlan(ControllerReadinessService::checkingPlan(physical, mode));
     emit stateChanged();
+    appendEvent(mode == VerificationMode::Full
+        ? u"Full HOTAS verification started"_qs
+        : u"Quick HOTAS verification started"_qs);
+
+    QThread *thread = QThread::create([this, configuration, physical, mode, mappingWasRequested,
+                                       mapperOwnsVjoy, outputReportsSucceeding] {
+        ControllerReadinessPlan plan;
+        bool prepared = true;
+        bool restored = true;
+        if (mode == VerificationMode::Full) {
+            prepared = m_worker.prepareForDriverConfiguration();
+        }
+
+        if (prepared) {
+            ControllerReadinessService verifier;
+            plan = verifier.inspect(configuration, physical, mode,
+                                    mode == VerificationMode::Quick && mapperOwnsVjoy,
+                                    mode == VerificationMode::Quick && outputReportsSucceeding);
+        } else {
+            plan = ControllerReadinessService::checkingPlan(physical, mode);
+            plan.state = ControllerReadinessState::Failed;
+            plan.isChecking = false;
+            plan.vjoyStatus = VerificationSubsystemState::Error;
+            plan.vjoySummary = QStringLiteral("HOTAS BF6 could not safely release vJoy Device 1 for verification.");
+            plan.status = QStringLiteral("ACTION REQUIRED — Full verification could not safely prepare vJoy Device 1.");
+            plan.lastChecked = QDateTime::currentDateTime();
+        }
+
+        if (mode == VerificationMode::Full) {
+            restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+            if (prepared && restored && mappingWasRequested && m_worker.runtime().mappingActive.load()) {
+                plan.vjoy.ownedByHotasBf6 = true;
+                plan.vjoy.outputReportsSucceeding = m_worker.runtime().vjoyReady.load();
+                plan = ControllerReadinessService::planFor(plan.physical, plan.requirements,
+                                                           plan.vjoy, plan.hidhide, mode);
+            } else if (!restored) {
+                plan.state = ControllerReadinessState::Failed;
+                plan.vjoyStatus = VerificationSubsystemState::Error;
+                plan.vjoySummary = QStringLiteral("Verification completed, but HOTAS BF6 could not restore vJoy ownership.");
+                plan.status = QStringLiteral("ACTION REQUIRED — Mapping did not resume after verification.");
+            }
+        }
+
+        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored] () mutable {
+            m_readiness.adoptPlan(std::move(plan));
+            m_verificationInProgress = false;
+            appendEvent(restored
+                ? QString(u"HOTAS verification complete: %1"_qs).arg(m_readiness.plan().status)
+                : u"HOTAS verification complete, but mapping restoration failed"_qs);
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 bool AppBackend::applyControllerReadiness()
 {
     // The worker owns vJoy while mapping normally. Release it before the
-    // privileged control-plane transaction; it remains explicitly Off after.
+    // privileged control-plane transaction, then restore the prior user choice.
+    const bool mappingWasRequested = m_worker.mappingRequested();
     if (!m_worker.prepareForDriverConfiguration()) {
-        appendEvent(u"Controller setup could not release vJoy; Mapping remains Off"_qs);
+        appendEvent(u"HOTAS setup could not release vJoy for the requested repair"_qs);
         emit stateChanged();
         return false;
     }
     m_readiness.inspect(m_configuration, currentPhysicalCapabilities());
     if (!m_readiness.plan().canApplyAutomatically) {
-        appendEvent(u"Controller setup needs manual review before it can apply changes"_qs);
+        appendEvent(u"HOTAS setup requires a manual repair; no changes were applied"_qs);
         emit stateChanged();
         return false;
     }
     const bool completed = m_readiness.applyAutomatically();
-    appendEvent(completed ? u"Controller automatic setup verified; Mapping remains Off"_qs
-                          : m_readiness.plan().status);
+    const bool restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+    appendEvent(completed && restored ? u"Automatic HOTAS repair verified; previous mapping state restored"_qs
+                                     : restored ? m_readiness.plan().status
+                                                : u"Automatic HOTAS repair completed, but mapping restoration failed"_qs);
     emit stateChanged();
-    return completed;
+    return completed && restored;
 }
 
 bool AppBackend::undoControllerReadiness()
 {
+    const bool mappingWasRequested = m_worker.mappingRequested();
     if (!m_worker.prepareForDriverConfiguration()) {
-        appendEvent(u"Could not release vJoy for setup rollback; Mapping remains Off"_qs);
+        appendEvent(u"Could not release vJoy for HOTAS setup rollback"_qs);
         emit stateChanged();
         return false;
     }
     const bool restored = m_readiness.undoLastAutomaticSetup();
-    appendEvent(restored ? u"Automatic controller setup was undone; Mapping remains Off"_qs
-                         : m_readiness.plan().status);
+    const bool mappingStateRestored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+    appendEvent(restored && mappingStateRestored
+        ? u"Automatic HOTAS repair was undone; previous mapping state restored"_qs
+        : mappingStateRestored ? m_readiness.plan().status
+                               : u"HOTAS setup rollback completed, but mapping restoration failed"_qs);
     emit stateChanged();
-    return restored;
+    return restored && mappingStateRestored;
 }
 
 void AppBackend::acknowledgeControllerSetup()
@@ -2384,6 +2513,7 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
     physical.hidInstanceId = snapshot.hidInstanceId;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     physical.connected = runtime.physicalConnected.load();
+    physical.inputReportsReceived = runtime.inputReports.load() > 0;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         physical.axes[static_cast<size_t>(index)] = runtime.axisAvailable[index].load();
     }

@@ -316,7 +316,7 @@ function Build-HardwareCompatibility {
     Add-Line $lines
     Add-Line $lines '## Adding evidence'
     Add-Line $lines
-    Add-Line $lines 'Use Controller Setup to capture the selected controller''s capability summary. A hardware status may move to Validated only with a recorded Windows version, HOTAS BF6 version, controller identity, and a real controller-to-vJoy acceptance result. CI and synthetic tests do not establish that result.'
+    Add-Line $lines 'Use HOTAS Setup & Verification to capture the selected controller''s capability summary. A hardware status may move to Validated only with a recorded Windows version, HOTAS BF6 version, controller identity, and a real controller-to-vJoy acceptance result. CI and synthetic tests do not establish that result.'
     Add-Line $lines
     Add-Line $lines '## Maintenance'
     Add-Line $lines

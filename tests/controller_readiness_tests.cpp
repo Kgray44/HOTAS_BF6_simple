@@ -112,6 +112,11 @@ private slots:
     void missingDependenciesAreGuidedNotAutomatic();
     void exactControllerIdentityIsRequiredForHidHide();
     void busyVJoyBlocksAutomaticChange();
+    void mapperOwnedVJoyIsHealthy();
+    void externalVJoyConflictRequiresAction();
+    void passiveIdentityGapIsAttentionNotFailure();
+    void checkingPlanPublishesEverySubsystem();
+    void activeInputReportsArePhysicalHealthEvidence();
     void processRunnerRollbackOnlyReversesThisTransaction();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
 };
@@ -198,6 +203,62 @@ void ControllerReadinessTests::busyVJoyBlocksAutomaticChange()
         connectedController(), defaultRequirements(), vjoy, readyHidHide());
     QVERIFY(plan.vjoyNeedsChanges);
     QVERIFY(!plan.vjoyCanApply);
+}
+
+void ControllerReadinessTests::mapperOwnedVJoyIsHealthy()
+{
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.busy = true; // vJoyConfig cannot distinguish the current process.
+    vjoy.ownedByHotasBf6 = true;
+    vjoy.outputReportsSucceeding = true;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(plan.state, ControllerReadinessState::Ready);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("HOTAS BF6 currently owns")));
+}
+
+void ControllerReadinessTests::externalVJoyConflictRequiresAction()
+{
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.busy = true;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Error);
+    QCOMPARE(plan.state, ControllerReadinessState::NeedsChanges);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("another application")));
+}
+
+void ControllerReadinessTests::passiveIdentityGapIsAttentionNotFailure()
+{
+    HidHideCapabilities hidhide = readyHidHide();
+    hidhide.selectedControllerResolved = false;
+    hidhide.selectedControllerHidden = false;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), readyVJoy(), hidhide, VerificationMode::Quick);
+    QCOMPARE(plan.hidhideStatus, VerificationSubsystemState::Attention);
+    QCOMPARE(plan.state, ControllerReadinessState::Attention);
+}
+
+void ControllerReadinessTests::checkingPlanPublishesEverySubsystem()
+{
+    const ControllerReadinessPlan plan = ControllerReadinessService::checkingPlan(
+        connectedController(), VerificationMode::Full);
+    QVERIFY(plan.isChecking);
+    QCOMPARE(plan.state, ControllerReadinessState::Inspecting);
+    QCOMPARE(plan.physicalStatus, VerificationSubsystemState::Checking);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Checking);
+    QCOMPARE(plan.hidhideStatus, VerificationSubsystemState::Checking);
+}
+
+void ControllerReadinessTests::activeInputReportsArePhysicalHealthEvidence()
+{
+    PhysicalControllerCapabilities physical = connectedController();
+    physical.inputReportsReceived = true;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        physical, defaultRequirements(), readyVJoy(), readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.physicalStatus, VerificationSubsystemState::Ready);
+    QVERIFY(plan.physicalSummary.contains(QStringLiteral("input reports received")));
 }
 
 void ControllerReadinessTests::processRunnerRollbackOnlyReversesThisTransaction()

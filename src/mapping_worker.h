@@ -107,6 +107,9 @@ public:
     // touching vJoy. It is never called from a report and it never changes a
     // mapping profile.
     bool prepareForDriverConfiguration(int timeoutMs = 1500);
+    // Restores exactly the Mapping On/Off choice that preceded a deliberate
+    // verification or repair operation. This is control-plane work only.
+    bool restoreAfterDriverConfiguration(bool mappingWasRequested, int timeoutMs = 1500);
     void requestStop();
     void beginCalibration();
     void cancelCalibration();
