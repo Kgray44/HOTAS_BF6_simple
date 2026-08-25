@@ -48,6 +48,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_store.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/setup_repair_helper.h
+    src/setup_repair_helper.cpp
     src/theme_manager.h
     src/theme_manager.cpp
     src/event_log.h

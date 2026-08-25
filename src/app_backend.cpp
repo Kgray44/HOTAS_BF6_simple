@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace hotas {
 using namespace Qt::StringLiterals;
@@ -861,6 +862,27 @@ QVariantList AppBackend::controllerReadinessProposedChanges() const
         changes.append(QVariantMap{{u"message"_qs, change}});
     }
     return changes;
+}
+
+QVariantList AppBackend::controllerRepairOperationResults() const
+{
+    QVariantList operations;
+    for (const AutomaticRepairOperationResult &operation : m_readiness.lastAutomaticRepairResult().operations) {
+        QVariantMap item;
+        item.insert(u"name"_qs, operation.operationName);
+        item.insert(u"state"_qs, operation.rollback ? u"ROLLED BACK"_qs
+            : operation.succeeded ? u"COMPLETED"_qs : u"FAILED"_qs);
+        item.insert(u"severity"_qs, operation.rollback ? u"warning"_qs
+            : operation.succeeded ? u"ready"_qs : u"error"_qs);
+        QString message = operation.message.trimmed();
+        if (message.isEmpty()) message = operation.succeeded ? u"Completed."_qs : u"The operation did not complete."_qs;
+        if (!operation.succeeded && operation.exitCode >= 0) {
+            message += QString(u" Exit code %1."_qs).arg(operation.exitCode);
+        }
+        item.insert(u"message"_qs, message);
+        operations.append(std::move(item));
+    }
+    return operations;
 }
 
 QString AppBackend::controllerReadinessState() const
@@ -2434,27 +2456,108 @@ void AppBackend::startVerification(VerificationMode mode)
 
 bool AppBackend::applyControllerReadiness()
 {
+    if (m_verificationInProgress) return false;
     // The worker owns vJoy while mapping normally. Release it before the
     // privileged control-plane transaction, then restore the prior user choice.
     const bool mappingWasRequested = m_worker.mappingRequested();
-    if (!m_worker.prepareForDriverConfiguration()) {
-        appendEvent(u"HOTAS setup could not release vJoy for the requested repair"_qs);
-        emit stateChanged();
-        return false;
-    }
-    m_readiness.inspect(m_configuration, currentPhysicalCapabilities());
-    if (!m_readiness.plan().canApplyAutomatically) {
-        appendEvent(u"HOTAS setup requires a manual repair; no changes were applied"_qs);
-        emit stateChanged();
-        return false;
-    }
-    const bool completed = m_readiness.applyAutomatically();
-    const bool restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
-    appendEvent(completed && restored ? u"Automatic HOTAS repair verified; previous mapping state restored"_qs
-                                     : restored ? m_readiness.plan().status
-                                                : u"Automatic HOTAS repair completed, but mapping restoration failed"_qs);
+    const MapperConfiguration configuration = m_configuration;
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    ControllerReadinessPlan waiting = m_readiness.plan();
+    waiting.state = ControllerReadinessState::AwaitingPermission;
+    waiting.isChecking = true;
+    waiting.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Preparing the approved repair transaction.");
+    m_readiness.adoptPlan(std::move(waiting));
+    m_verificationInProgress = true;
+    appendEvent(u"Automatic HOTAS repair requested"_qs);
+    appendEvent(u"Repair plan will preserve unrelated HidHide rules and the previous Mapping state"_qs);
     emit stateChanged();
-    return completed && restored;
+
+    auto repair = std::make_shared<ControllerReadinessService>();
+    QThread *thread = QThread::create([this, repair, configuration, physical, mappingWasRequested] {
+        bool prepared = m_worker.prepareForDriverConfiguration();
+        bool completed = false;
+        if (prepared) {
+            repair->inspect(configuration, physical, VerificationMode::Full);
+            if (repair->plan().canApplyAutomatically) {
+                QMetaObject::invokeMethod(this, [this] {
+                    ControllerReadinessPlan applying = m_readiness.plan();
+                    applying.state = ControllerReadinessState::Applying;
+                    applying.status = QStringLiteral("APPLYING HIDHIDE CONFIGURATION — Waiting for the approved administrator repair transaction.");
+                    m_readiness.adoptPlan(std::move(applying));
+                    appendEvent(u"Administrator repair helper started"_qs);
+                    emit stateChanged();
+                }, Qt::QueuedConnection);
+                completed = repair->applyAutomatically();
+            }
+        }
+
+        bool restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        if (!prepared) {
+            ControllerReadinessPlan failed = ControllerReadinessService::checkingPlan(physical, VerificationMode::Full);
+            failed.state = ControllerReadinessState::Failed;
+            failed.isChecking = false;
+            failed.vjoyStatus = VerificationSubsystemState::Error;
+            failed.vjoySummary = QStringLiteral("HOTAS BF6 could not safely release vJoy Device 1 for repair.");
+            failed.status = QStringLiteral("REPAIR FAILED — HOTAS BF6 could not safely prepare vJoy Device 1.");
+            failed.lastChecked = QDateTime::currentDateTime();
+            repair->adoptPlan(std::move(failed));
+        } else if (!repair->plan().canApplyAutomatically && !completed
+                   && repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::None) {
+            // The repair plan was rebuilt immediately before elevation; a
+            // changed device state means no privileged action was performed.
+            repair->adoptPlan(repair->plan());
+        }
+        if (!restored) {
+            ControllerReadinessPlan failed = repair->plan();
+            failed.state = ControllerReadinessState::Failed;
+            failed.isChecking = false;
+            failed.vjoyStatus = VerificationSubsystemState::Error;
+            failed.vjoySummary = QStringLiteral("Repair completed, but HOTAS BF6 could not restore vJoy ownership.");
+            failed.status = QStringLiteral("REPAIR COMPLETED, BUT MAPPING COULD NOT BE RESTORED.");
+            repair->adoptPlan(std::move(failed));
+        } else if (completed && mappingWasRequested && m_worker.runtime().mappingActive.load()) {
+            ControllerReadinessPlan restoredPlan = repair->plan();
+            const QString repairStatus = restoredPlan.status;
+            restoredPlan.vjoy.ownedByHotasBf6 = true;
+            restoredPlan.vjoy.outputReportsSucceeding = m_worker.runtime().vjoyReady.load();
+            restoredPlan = ControllerReadinessService::planFor(restoredPlan.physical, restoredPlan.requirements,
+                                                               restoredPlan.vjoy, restoredPlan.hidhide,
+                                                               VerificationMode::Full);
+            if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Attention) {
+                restoredPlan.state = ControllerReadinessState::Attention;
+                restoredPlan.status = repairStatus;
+            } else if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Ready) {
+                restoredPlan.status = QStringLiteral("READY — HOTAS setup repaired successfully.");
+            }
+            repair->adoptPlan(std::move(restoredPlan));
+        }
+
+        QMetaObject::invokeMethod(this, [this, repair, completed, restored] {
+            m_readiness = std::move(*repair);
+            m_verificationInProgress = false;
+            if (!restored) {
+                appendEvent(u"Automatic HOTAS repair completed, but mapping restoration failed"_qs);
+            } else if (!completed && m_readiness.lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::None) {
+                appendEvent(u"HOTAS setup requires a manual repair; no changes were applied"_qs);
+            } else {
+                appendEvent(m_readiness.plan().status);
+                for (const AutomaticRepairOperationResult &operation : m_readiness.lastAutomaticRepairResult().operations) {
+                    if (!operation.succeeded && !operation.rollback) {
+                        appendEvent(QString(u"Repair operation failed: %1 (exit code %2)"_qs)
+                            .arg(operation.operationName).arg(operation.exitCode));
+                    }
+                }
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
+    return true;
 }
 
 bool AppBackend::undoControllerReadiness()

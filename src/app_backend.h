@@ -72,6 +72,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessChecks READ controllerReadinessChecks NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessProposedChanges READ controllerReadinessProposedChanges NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllerRepairOperationResults READ controllerRepairOperationResults NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessState READ controllerReadinessState NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessStatus READ controllerReadinessStatus NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessLastChecked READ controllerReadinessLastChecked NOTIFY stateChanged)
@@ -172,6 +173,7 @@ public:
     bool hidhideMapperAllowed() const;
     QVariantList controllerReadinessChecks() const;
     QVariantList controllerReadinessProposedChanges() const;
+    QVariantList controllerRepairOperationResults() const;
     QString controllerReadinessState() const;
     QString controllerReadinessStatus() const;
     QString controllerReadinessLastChecked() const;

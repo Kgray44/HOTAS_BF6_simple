@@ -1,5 +1,6 @@
 #include "app_backend.h"
 #include "hotas_build_version.h"
+#include "setup_repair_helper.h"
 #include "theme_manager.h"
 
 #include <QGuiApplication>
@@ -15,6 +16,9 @@ using namespace Qt::StringLiterals;
 
 int main(int argc, char *argv[])
 {
+    if (const std::optional<int> repairExit = hotas::runElevatedRepairTransaction(argc, argv)) {
+        return *repairExit;
+    }
     QGuiApplication application(argc, argv);
     // The executable resource covers shell identity; this runtime icon covers
     // the Qt title bar, taskbar, Alt+Tab, and task-switching surfaces.

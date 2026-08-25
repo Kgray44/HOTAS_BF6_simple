@@ -178,11 +178,11 @@
       "Inspects the selected DirectInput controller, axes, buttons, POVs, vJoy Device 1 capability, HidHide state, and current mapper output requirements.",
       "Computes required vJoy axes, buttons, and native POV capacity from current profiles and Automation rather than cloning the physical device.",
       "Recognizes HOTAS BF6's own acquired vJoy Device 1 as healthy while distinguishing a confirmed external-owner conflict.",
-      "Uses the installed vJoyConfig console utility for a single-device configuration snapshot, minimal change, re-query, verification, and rollback.",
-      "Uses the installed HidHideCLI for additive mapper allowlisting, exact HID-instance hiding, cloaking verification, and narrow rollback.",
+      "Builds an explicit repair plan and executes required vJoyConfig/HidHideCLI changes in one approved elevated transaction, with narrow in-transaction rollback for partial failures.",
+      "Uses the installed HidHideCLI for additive mapper allowlisting, exact HID-instance hiding, cloaking verification, and narrow rollback while preserving unrelated entries.",
       "Uses active DirectInput reports and the exact DirectInput HID/PnP path before treating identity as incomplete.",
       "Full verification and any driver repair restore the Mapping On/Off state that existed before the operation.",
-      "Shows checking progress, last-verified time, clear Physical HOTAS/vJoy/HidHide states, and only contextual repair actions.",
+      "Shows themed repair confirmation, low-frequency repair progress, structured operation outcomes, last-verified time, clear Physical HOTAS/vJoy/HidHide states, and only contextual repair actions.",
       "One shared verification model is presented through the existing Legacy, Standard, and Top Gun design systems."
     ]
   },

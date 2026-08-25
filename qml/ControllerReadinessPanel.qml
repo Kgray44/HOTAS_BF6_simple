@@ -148,6 +148,38 @@ Item {
             }
         }
 
+        Rectangle {
+            visible: root.backendObject && root.backendObject.controllerRepairOperationResults.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? Math.max(60, repairResults.implicitHeight + 22) : 0
+            color: root.insetColor
+            border.color: root.borderColor
+            radius: root.radius
+            ColumnLayout {
+                id: repairResults
+                anchors.fill: parent
+                anchors.margins: 11
+                spacing: 5
+                Text { text: "AUTOMATIC REPAIR DETAILS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                Repeater {
+                    model: root.backendObject ? root.backendObject.controllerRepairOperationResults : []
+                    delegate: RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 7
+                        Rectangle { implicitWidth: 6; implicitHeight: 6; radius: root.topGun ? 0 : 3; color: root.severityColor(modelData.severity) }
+                        ColumnLayout { Layout.fillWidth: true; spacing: 1
+                            RowLayout { Layout.fillWidth: true
+                                Text { text: modelData.name; color: root.textColor; font.pixelSize: 10; font.bold: true }
+                                Item { Layout.fillWidth: true }
+                                Text { text: modelData.state; color: root.severityColor(modelData.severity); font.pixelSize: 9; font.bold: true }
+                            }
+                            Text { Layout.fillWidth: true; text: modelData.message; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                        }
+                    }
+                }
+            }
+        }
+
         Text {
             Layout.fillWidth: true
             text: root.backendObject && root.backendObject.controllerSetupInProgress
@@ -195,7 +227,7 @@ Item {
                 text: root.backendObject ? root.backendObject.controllerReadinessRecommendedAction : ""
                 enabled: root.backendObject && !root.backendObject.controllerSetupInProgress
                 onClicked: {
-                    if (text === "FIX AUTOMATICALLY") applyDialog.open()
+                    if (text === "FIX AUTOMATICALLY") repairConfirmation.open()
                     else if (text === "RUN FULL VERIFICATION") root.backendObject.verifyHotasSetup()
                     else root.instructionsExpanded = true
                 }
@@ -215,21 +247,61 @@ Item {
         }
     }
 
-    Dialog {
-        id: applyDialog
+    Popup {
+        id: repairConfirmation
         parent: Overlay.overlay
         modal: true
-        title: "Fix HOTAS configuration automatically?"
-        standardButtons: Dialog.Cancel
         width: Math.min(560, root.width)
+        height: confirmationLayout.implicitHeight + 36
+        anchors.centerIn: parent
+        padding: 0
+        closePolicy: Popup.NoAutoClose
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: root.radius }
         contentItem: ColumnLayout {
-            spacing: 10
-            Text { Layout.fillWidth: true; text: "HOTAS BF6 will make only the changes shown above. Your prior Mapping On/Off state is restored afterward. Windows will ask for approval before a driver configuration command runs."; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11 }
-            Button { id: confirmApplyButton; text: "FIX AUTOMATICALLY"; Layout.alignment: Qt.AlignRight
-                onClicked: { applyDialog.close(); root.backendObject.applyControllerReadiness() }
+            id: confirmationLayout
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 12
+            Text { Layout.fillWidth: true; text: root.topGun ? "AUTOMATED CONFIGURATION REPAIR" : "AUTOMATIC HOTAS REPAIR"
+                color: root.textColor; font.pixelSize: 16; font.bold: true
+                font.family: root.topGun ? root.themeTokens.displayFont : undefined }
+            Text { Layout.fillWidth: true; text: "Detected issue"; color: root.warningColor; font.pixelSize: 10; font.bold: true
+                font.family: root.topGun ? root.themeTokens.telemetryFont : undefined }
+            Text { Layout.fillWidth: true; text: root.backendObject ? root.backendObject.controllerReadinessStatus : "A repairable HOTAS configuration issue was detected."
+                wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11 }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: repairPlan.implicitHeight + 22
+                color: root.insetColor; border.color: root.borderColor; radius: root.radius
+                ColumnLayout {
+                    id: repairPlan
+                    anchors.fill: parent; anchors.margins: 11; spacing: 5
+                    Text { text: root.topGun ? "PLANNED ACTIONS" : "HOTAS BF6 WILL:"; color: root.warningColor; font.pixelSize: 9; font.bold: true }
+                    Repeater {
+                        model: root.backendObject ? root.backendObject.controllerReadinessProposedChanges : []
+                        delegate: RowLayout {
+                            Layout.fillWidth: true; spacing: 7
+                            Text { text: root.topGun ? ">" : "•"; color: root.warningColor; font.bold: true }
+                            Text { Layout.fillWidth: true; text: modelData.message; color: root.textColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        }
+                    }
+                    Text { Layout.fillWidth: true; text: "• Preserve unrelated HidHide device and application rules."; color: root.textColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "• Restore your current Mapping state and verify the complete setup afterward."; color: root.textColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                }
+            }
+            Text { Layout.fillWidth: true; text: "Windows administrator approval will be requested once."; wrapMode: Text.WordWrap; color: root.mutedColor; font.pixelSize: 10 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                Item { Layout.fillWidth: true }
+                Button { id: cancelApplyButton; text: "CANCEL"
+                    onClicked: repairConfirmation.close()
+                    contentItem: Text { text: cancelApplyButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.borderColor } }
+                Button { id: confirmApplyButton; text: "FIX AUTOMATICALLY"
+                    onClicked: { repairConfirmation.close(); root.backendObject.applyControllerReadiness() }
                 contentItem: Text { text: confirmApplyButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: root.radius; color: root.buttonColor; border.color: root.readyColor } }
+            }
         }
     }
 

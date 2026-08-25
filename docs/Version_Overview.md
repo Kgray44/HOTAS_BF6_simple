@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v1.9.1**
+**Current release: v1.9.2**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v1.9.2 — Automatic repair verification and single-UAC flow
+
+Makes the scoped Automatic HOTAS Repair path cohesive, diagnosable, and authoritative without changing the mapper runtime.
+
+- Replaces the default-looking automatic-repair confirmation with a shared themed overlay for Legacy, Standard, and Top Gun.
+- Builds the exact approved vJoy/HidHide repair plan before one elevated transaction, including in-transaction rollback for partial failures.
+- Captures per-operation start, completion, exit-code, standard-output, and standard-error diagnostics without exposing raw command dumps in normal UI.
+- Distinguishes administrator cancellation, command failure, verified Ready, and completed-but-inconclusive Attention results.
+- Normalizes and uses the exact selected HID instance for HidHide changes while preserving unrelated device and application entries.
+- Runs bounded post-repair verification and restores the prior Mapping On/Off state outside the real-time report path.
 
 ## v1.9.1 — HOTAS Setup & Verification correctness update
 
