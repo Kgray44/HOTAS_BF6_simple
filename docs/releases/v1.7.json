@@ -1,0 +1,19 @@
+[
+  {
+    "version": "1.7.0",
+    "tag": "v1.7.0",
+    "releaseTitle": "v1.7.0",
+    "title": "Legacy, Standard, and Top Gun themes",
+    "summary": "Separated presentation from mapping and added three persistent visual systems.",
+    "status": "historical-stable",
+    "replacement": "v1.9.1",
+    "syncToGitHubRelease": true,
+    "statusNote": "Usable historical release. Recommended only for archival/testing purposes because later releases materially improve output safety, automation, and setup.",
+    "highlights": [
+      "Legacy preserves the v1.6.3 interface, Standard provides the modern general UI, and Top Gun adds the aviation treatment.",
+      "Theme state persists separately from profiles and mapper configuration.",
+      "Top Gun adds naval-instrument surfaces, fighter artwork, wing badge, technical lines/stripes, aviation typography, and themed footer/header details.",
+      "Theme switching remains UI-only and does not touch DirectInput, vJoy, mapping state, or profile semantics."
+    ]
+  }
+]
