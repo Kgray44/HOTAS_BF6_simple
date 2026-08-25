@@ -2,11 +2,33 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v1.9.0**
+**Current release: v1.9.2**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v1.9.2 — Automatic repair verification and single-UAC flow
+
+Makes the scoped Automatic HOTAS Repair path cohesive, diagnosable, and authoritative without changing the mapper runtime.
+
+- Replaces the default-looking automatic-repair confirmation with a shared themed overlay for Legacy, Standard, and Top Gun.
+- Builds the exact approved vJoy/HidHide repair plan before one elevated transaction, including in-transaction rollback for partial failures.
+- Captures per-operation start, completion, exit-code, standard-output, and standard-error diagnostics without exposing raw command dumps in normal UI.
+- Distinguishes administrator cancellation, command failure, verified Ready, and completed-but-inconclusive Attention results.
+- Normalizes and uses the exact selected HID instance for HidHide changes while preserving unrelated device and application entries.
+- Runs bounded post-repair verification and restores the prior Mapping On/Off state outside the real-time report path.
+
+## v1.9.1 — HOTAS Setup & Verification correctness update
+
+Corrects false readiness warnings and makes setup verification clear, passive at startup, and safe to run while preserving mapper performance.
+
+- Renames the feature to HOTAS Setup & Verification and removes the first-run setup modal from healthy startup.
+- Recognizes HOTAS BF6's own vJoy Device 1 acquisition as Ready while retaining a distinct external-owner conflict state.
+- Uses active DirectInput report evidence and the exact DIPROP_GUIDANDPATH HID identity already captured by the mapper.
+- Adds passive asynchronous startup checks plus visibly-progressing, user-requested full verification.
+- Restores the exact prior Mapping On/Off choice after full verification or a scoped automatic repair.
+- Presents one shared verification model through Legacy, Standard, and Top Gun visual systems.
 
 ## v1.9.0 — Public readiness and automatic controller setup
 

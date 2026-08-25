@@ -1,0 +1,74 @@
+[
+  {
+    "version": "1.6.0",
+    "tag": "v1.6.0",
+    "releaseTitle": "v1.6.0",
+    "title": "Installer, launcher, and automatic updates",
+    "summary": "Converted the project from a development executable into an installable application with a stable release pipeline.",
+    "status": "historical",
+    "replacement": "v1.9.1",
+    "syncToGitHubRelease": true,
+    "statusNote": "Usable historical release, but substantially superseded. Modern users should install the current recommended release.",
+    "highlights": [
+      "Native Win32 launcher and stable-release automatic update checks.",
+      "Single HOTAS_VERSION authority across app, launcher, installer, and release manifest.",
+      "Per-user Inno Setup installer with Start Menu/Desktop shortcuts.",
+      "GitHub Actions build, test, benchmark, packaging, checksum, manifest, and installer-smoke pipeline.",
+      "Optional Authenticode signing hooks."
+    ]
+  },
+  {
+    "version": "1.6.1",
+    "tag": "v1.6.1",
+    "releaseTitle": "v1.6.1",
+    "title": "POV diagnostics and profile controls",
+    "summary": "Brought physical POV hats into diagnostics and the same profile-control model used by buttons.",
+    "status": "historical",
+    "replacement": "v1.9.1",
+    "syncToGitHubRelease": true,
+    "statusNote": "Usable historical release. Later versions add native vJoy POV routing, broader safety controls, themes, Automation, and setup tooling.",
+    "highlights": [
+      "Support for up to four physical POV hats with raw values and logical directions.",
+      "Eight logical direction cards per hat.",
+      "POV-direction Profile Hold/Toggle controls.",
+      "Expanded bounded event log and POV diagnostics.",
+      "Safer center/disconnect behavior for newly exposed hat state."
+    ]
+  },
+  {
+    "version": "1.6.2",
+    "tag": "v1.6.2",
+    "releaseTitle": "v1.6.2",
+    "title": "Native vJoy POV and dependency bootstrap",
+    "summary": "Added direct POV-to-vJoy routing and made the installer more helpful around required controller dependencies.",
+    "status": "superseded",
+    "replacement": "v1.6.3",
+    "syncToGitHubRelease": true,
+    "statusNote": "Known issue: native vJoy POV target parsing and related profile-trigger schema behavior were corrected immediately in v1.6.3. Axis/button mapping may still be usable, but this release is superseded and should not be chosen over v1.6.3 or newer.",
+    "highlights": [
+      "Native continuous/discrete vJoy POV passthrough independent of direction-as-button routing.",
+      "POV-direction profile controls retained alongside native hat output.",
+      "Improved axis Output Min/Max controls and selector behavior.",
+      "Installer detection/offering of pinned vJoy and HidHide dependencies when missing.",
+      "Application icon package integrated across mapper, launcher, installer, and shortcuts."
+    ]
+  },
+  {
+    "version": "1.6.3",
+    "tag": "v1.6.3",
+    "releaseTitle": "v1.6.3",
+    "title": "POV, profile-control, and UI stabilization",
+    "summary": "Polished the v1.6 input stack into a stable visual and behavioral baseline.",
+    "status": "historical-stable",
+    "replacement": "v1.9.1",
+    "syncToGitHubRelease": true,
+    "statusNote": "Stable historical baseline for the v1.6 generation. Still superseded by newer releases with broader BF6 safety and usability features.",
+    "highlights": [
+      "Resolved native POV target parsing and profile-trigger schema issues.",
+      "Kept native hat output and direction routing visibly separate.",
+      "Improved dark selector/popup consistency and control presentation.",
+      "Strengthened icon/resource and dependency validation in CI.",
+      "Established the presentation later preserved as the Legacy theme."
+    ]
+  }
+]

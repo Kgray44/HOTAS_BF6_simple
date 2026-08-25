@@ -569,6 +569,24 @@ bool MappingWorker::prepareForDriverConfiguration(int timeoutMs)
     return false;
 }
 
+bool MappingWorker::restoreAfterDriverConfiguration(bool mappingWasRequested, int timeoutMs)
+{
+    if (!mappingWasRequested) {
+        m_mappingRequested = false;
+        return true;
+    }
+    setMappingEnabled(true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_runtime.mappingActive.load() && m_runtime.vjoyReady.load()) return true;
+        // A disconnected HOTAS cannot actively map, but preserving the user's
+        // request allows normal worker discovery to resume without surprise.
+        if (!m_runtime.physicalConnected.load()) return true;
+        QThread::msleep(10);
+    }
+    return false;
+}
+
 void MappingWorker::requestStop()
 {
     m_stopRequested = true;
@@ -1082,7 +1100,7 @@ void MappingWorker::run()
             quiesceVirtualController();
             vjoy.release();
             m_runtime.vjoyReady = false;
-            setVjoyStatus(u"vJoy released for controller setup"_qs);
+            setVjoyStatus(u"vJoy released for HOTAS verification"_qs);
             m_vjoyReleasedForControlPlane = true;
             emit hardwareStateChanged();
         }

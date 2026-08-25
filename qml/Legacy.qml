@@ -27,12 +27,6 @@ Page {
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
 
-    Component.onCompleted: {
-        if (backend.controllerSetupSuggested) {
-            Qt.callLater(function() { controllerSetupDialog.open() })
-        }
-    }
-
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
     function axisSelectorModel() {
@@ -1956,12 +1950,12 @@ Page {
                     color: "#182a30"; border.color: "#536975"
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "CONTROLLER SETUP"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Detect readiness, explain gaps, and apply only approved vJoy/HidHide changes."
+                            Text { text: "HOTAS SETUP & VERIFICATION"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Verify your physical HOTAS, vJoy, and HidHide configuration."
                                 color: "#9dafb4"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                            Text { text: backend.controllerReadinessStatus; color: "#8fd5c9"; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: backend.controllerReadinessStatus; color: backend.controllerReadinessState === "READY" ? "#8fd5c9" : backend.controllerReadinessState === "ACTION REQUIRED" ? "#ca9090" : "#d4ad69"; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
                         }
-                        CommandButton { label: "CONTROLLER SETUP"; onTriggered: controllerSetupDialog.open() }
+                        CommandButton { label: "VERIFY HOTAS SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
                     }
                 }
                 Panel { width: parent.width; height: 84
@@ -2169,11 +2163,12 @@ Page {
         modal: true
         width: Math.min(740, root.width - 36)
         title: ""
-        standardButtons: Dialog.Close
+        standardButtons: Dialog.NoButton
         padding: 18
-        onOpened: backend.inspectControllerReadiness()
         onClosed: backend.acknowledgeControllerSetup()
-        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; legacy: true }
+        background: Rectangle { color: "#182a30"; border.color: "#536975"; radius: 4 }
+        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; legacy: true
+            onCloseRequested: controllerSetupDialog.close() }
     }
 
     Dialog {

@@ -1,0 +1,118 @@
+[
+  {
+    "version": "1.0",
+    "tag": "v1.0",
+    "releaseTitle": "v1.0",
+    "title": "Initial functional mapper",
+    "summary": "Established the first usable DirectInput-to-vJoy application shell for Battlefield 6.",
+    "status": "milestone",
+    "replacement": null,
+    "syncToGitHubRelease": false,
+    "packagedAssets": false,
+    "statusNote": "Pre-repository milestone. The first Git commit is already v1.1 and only references migration from an earlier v1.0 configuration, so there is no exact v1.0 source snapshot in Git that can be tagged honestly.",
+    "highlights": [
+      "Qt Quick application shell and persistent configuration model.",
+      "DirectInput physical-controller acquisition and vJoy virtual-output worker.",
+      "Initial four-axis routing for roll, pitch, throttle, and yaw.",
+      "Basic mapping start/stop behavior and first-pass controller/vJoy status."
+    ]
+  },
+  {
+    "version": "1.1",
+    "tag": "v1.1",
+    "releaseTitle": "v1.1",
+    "title": "Diagnostics and vJoy stabilization",
+    "summary": "Made the first mapper easier to diagnose and more tolerant of real vJoy installation layouts.",
+    "status": "historical",
+    "replacement": "v1.9.2",
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": true,
+    "packagedAssets": false,
+    "statusNote": "Historical source release. The tag already exists, but no packaged installer was published for this early version; the retroactive GitHub Release documents the exact tagged source without inventing binaries.",
+    "highlights": [
+      "Improved vJoy readiness and capability reporting.",
+      "Automatic location/loading of the installed vJoy interface path.",
+      "Expanded live diagnostics for controller and virtual-output state.",
+      "Safer output reset behavior during stop/disconnect paths."
+    ]
+  },
+  {
+    "version": "1.2",
+    "tag": "v1.2",
+    "releaseTitle": "v1.2",
+    "title": "Per-axis configuration",
+    "summary": "Moved mapping from a simple global setup toward profile-ready, per-axis control.",
+    "status": "historical",
+    "replacement": "v1.9.2",
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": true,
+    "targetCommit": "c020e6b350ed43addf5a6090087f70c9701750f1",
+    "packagedAssets": false,
+    "statusNote": "Historical source release. v1.2 was not originally tagged, but commit c020e6b350ed43addf5a6090087f70c9701750f1 is the exact v1.2 baseline immediately preceding the v1.3 version bump; the retroactive Release/tag points there and contains no fabricated installer assets.",
+    "highlights": [
+      "Dedicated Axes workspace and selected-axis workflow.",
+      "Per-axis route, deadzone, hysteresis, inversion, and output-limit controls.",
+      "Live curve preview tied to the selected physical axis.",
+      "Persistent axis selection and richer input/output instrumentation."
+    ]
+  },
+  {
+    "version": "1.3",
+    "tag": "v1.3",
+    "releaseTitle": "v1.3",
+    "title": "Axes workspace and live visualization",
+    "summary": "Completed the richer axes workspace foundation and improved live transform visibility.",
+    "status": "historical",
+    "replacement": "v1.9.2",
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": true,
+    "packagedAssets": false,
+    "statusNote": "Historical tagged source release. No packaged installer was published for this milestone; the retroactive GitHub Release provides curated notes without inventing assets.",
+    "highlights": [
+      "Separate physical-input and transformed-output markers.",
+      "Dual input/output response visualization.",
+      "More complete axis status and instrumentation.",
+      "UI groundwork for the later curve editor and profile-aware pipeline."
+    ]
+  },
+  {
+    "version": "1.4",
+    "tag": "v1.4",
+    "releaseTitle": "v1.4",
+    "title": "Advanced response curve studio",
+    "summary": "Turned response shaping into a full editor rather than a handful of static curve choices.",
+    "status": "historical",
+    "replacement": "v1.9.2",
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": true,
+    "packagedAssets": false,
+    "statusNote": "Historical tagged source release. The curve architecture established here remains an important foundation, but no packaged installer was originally published for this version.",
+    "highlights": [
+      "Linear, J-Curve, and S-Curve families with multiple strengths.",
+      "Advanced evidence-informed presets and Personal Presets.",
+      "Point-based editing with Smooth/Linear interpolation and multiple point densities.",
+      "Large response graph with live markers, gain/reference views, comparison/audition tools, and signal-path display.",
+      "Immutable 4097-sample compiled lookup tables kept runtime evaluation fast."
+    ]
+  },
+  {
+    "version": "1.5",
+    "tag": "v1.5",
+    "releaseTitle": "v1.5",
+    "title": "Profiles and physical profile controls",
+    "summary": "Added instant profile switching and runtime Hold/Toggle controls without burdening the mapping loop.",
+    "status": "historical",
+    "replacement": "v1.9.2",
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": true,
+    "packagedAssets": false,
+    "statusNote": "Historical tagged source release immediately preceding the installer-based v1.6 line. The retroactive GitHub Release documents the tagged source and intentionally contains no fabricated installer assets.",
+    "highlights": [
+      "Persistent Normal/Precision-style profiles with create, clone, rename, delete, and activation.",
+      "Physical-button Profile Hold and Profile Toggle behavior.",
+      "Deterministic Hold → Toggle → manual base-profile precedence.",
+      "Profile switches compile complete mapping state before worker adoption.",
+      "Stop/disconnect clears runtime-only profile overrides safely."
+    ]
+  }
+]

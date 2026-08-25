@@ -213,5 +213,31 @@
       "Mapping is explicitly Off, neutralized, and released before setup changes; setup never runs in the DirectInput-to-vJoy report path.",
       "Adds normal development CI, MIT licensing, third-party notices, structured hardware compatibility documentation, and conservative BF6/anticheat guidance."
     ]
+  },
+  {
+    "version": "1.9.1",
+    "title": "HOTAS Setup & Verification correctness update",
+    "summary": "Corrects false readiness warnings and makes setup verification clear, passive at startup, and safe to run while preserving mapper performance.",
+    "highlights": [
+      "Renames the feature to HOTAS Setup & Verification and removes the first-run setup modal from healthy startup.",
+      "Recognizes HOTAS BF6's own vJoy Device 1 acquisition as Ready while retaining a distinct external-owner conflict state.",
+      "Uses active DirectInput report evidence and the exact DIPROP_GUIDANDPATH HID identity already captured by the mapper.",
+      "Adds passive asynchronous startup checks plus visibly-progressing, user-requested full verification.",
+      "Restores the exact prior Mapping On/Off choice after full verification or a scoped automatic repair.",
+      "Presents one shared verification model through Legacy, Standard, and Top Gun visual systems."
+    ]
+  },
+  {
+    "version": "1.9.2",
+    "title": "Automatic repair verification and single-UAC flow",
+    "summary": "Makes the scoped Automatic HOTAS Repair path cohesive, diagnosable, and authoritative without changing the mapper runtime.",
+    "highlights": [
+      "Replaces the default-looking automatic-repair confirmation with a shared themed overlay for Legacy, Standard, and Top Gun.",
+      "Builds the exact approved vJoy/HidHide repair plan before one elevated transaction, including in-transaction rollback for partial failures.",
+      "Captures per-operation start, completion, exit-code, standard-output, and standard-error diagnostics without exposing raw command dumps in normal UI.",
+      "Distinguishes administrator cancellation, command failure, verified Ready, and completed-but-inconclusive Attention results.",
+      "Normalizes and uses the exact selected HID instance for HidHide changes while preserving unrelated device and application entries.",
+      "Runs bounded post-repair verification and restores the prior Mapping On/Off state outside the real-time report path."
+    ]
   }
 ]
