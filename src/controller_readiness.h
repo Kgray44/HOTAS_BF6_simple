@@ -3,6 +3,7 @@
 #include "mapping_types.h"
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -22,6 +23,9 @@ struct PhysicalControllerCapabilities {
     // path. An empty value means automatic HidHide changes are unsafe.
     QString hidInstanceId;
     bool connected = false;
+    // A completed DirectInput poll is stronger evidence than a second handle
+    // acquisition attempt. The mapper publishes this outside its report path.
+    bool inputReportsReceived = false;
     std::array<bool, kPhysicalAxisCount> axes{};
     int buttons = 0;
     int povs = 0;
@@ -33,6 +37,10 @@ struct VJoyCapabilities {
     bool driverReady = false;
     bool devicePresent = false;
     bool busy = false;
+    // vJoyConfig only reports BUSY; the mapper already knows whether that
+    // owner is this HOTAS BF6 process. Own acquisition is a healthy state.
+    bool ownedByHotasBf6 = false;
+    bool outputReportsSucceeding = false;
     bool reportValid = false;
     int deviceId = 1;
     QList<int> availableDeviceIds;
@@ -79,8 +87,24 @@ enum class ControllerReadinessState {
     Applying,
     Verifying,
     Ready,
+    Attention,
     Failed,
+    Cancelled,
     RollingBack,
+};
+
+enum class VerificationMode {
+    None,
+    Quick,
+    Full,
+};
+
+enum class VerificationSubsystemState {
+    Unknown,
+    Checking,
+    Ready,
+    Attention,
+    Error,
 };
 
 struct ControllerReadinessPlan {
@@ -97,6 +121,15 @@ struct ControllerReadinessPlan {
     QStringList findings;
     QStringList proposedChanges;
     QString status;
+    VerificationMode verificationMode = VerificationMode::None;
+    VerificationSubsystemState physicalStatus = VerificationSubsystemState::Unknown;
+    VerificationSubsystemState vjoyStatus = VerificationSubsystemState::Unknown;
+    VerificationSubsystemState hidhideStatus = VerificationSubsystemState::Unknown;
+    QString physicalSummary;
+    QString vjoySummary;
+    QString hidhideSummary;
+    QDateTime lastChecked;
+    bool isChecking = false;
 };
 
 struct SetupProcessResult {
@@ -105,8 +138,47 @@ struct SetupProcessResult {
     int exitCode = -1;
     QString output;
     QString error;
+    int windowsErrorCode = 0;
+    bool cancelled = false;
+    QString errorOutput;
 
     bool succeeded() const { return started && finished && exitCode == 0; }
+};
+
+enum class AutomaticRepairOutcome {
+    None,
+    Ready,
+    Attention,
+    Failed,
+    Cancelled,
+};
+
+// Kept outside MappingWorker with the rest of the setup control plane.  The
+// complete result is retained for the verification UI and event log, while the
+// normal Settings card receives only the concise plan status.
+struct AutomaticRepairOperationResult {
+    QString operationName;
+    bool started = false;
+    bool finished = false;
+    bool succeeded = false;
+    bool rollback = false;
+    int exitCode = -1;
+    int windowsErrorCode = 0;
+    QString message;
+    QString output;
+    QString errorOutput;
+};
+
+struct AutomaticRepairResult {
+    AutomaticRepairOutcome outcome = AutomaticRepairOutcome::None;
+    QString message;
+    QList<AutomaticRepairOperationResult> operations;
+    bool requiresRestart = false;
+    bool requiresReboot = false;
+
+    bool completed() const {
+        return outcome == AutomaticRepairOutcome::Ready || outcome == AutomaticRepairOutcome::Attention;
+    }
 };
 
 // Production discovers these paths from the supported installations. Tests
@@ -149,20 +221,38 @@ public:
     static ControllerReadinessPlan planFor(const PhysicalControllerCapabilities &physical,
                                            const MapperOutputRequirements &requirements,
                                            const VJoyCapabilities &vjoy,
-                                           const HidHideCapabilities &hidhide);
+                                           const HidHideCapabilities &hidhide,
+                                           VerificationMode mode = VerificationMode::Full);
     static QString stateLabel(ControllerReadinessState state);
+    static QString subsystemStateLabel(VerificationSubsystemState state);
     static QString normalizeDeviceInstanceId(QString value);
+    static ControllerReadinessPlan checkingPlan(const PhysicalControllerCapabilities &physical,
+                                                VerificationMode mode);
 
     const ControllerReadinessPlan &inspect(const MapperConfiguration &configuration,
-                                           const PhysicalControllerCapabilities &physical);
+                                           const PhysicalControllerCapabilities &physical,
+                                           VerificationMode mode = VerificationMode::Full,
+                                           bool mapperOwnsVjoy = false,
+                                           bool outputReportsSucceeding = false);
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
 
     const ControllerReadinessPlan &plan() const { return m_plan; }
+    const AutomaticRepairResult &lastAutomaticRepairResult() const { return m_lastRepairResult; }
+    void adoptPlan(ControllerReadinessPlan plan) { m_plan = std::move(plan); }
     bool transactionActive() const { return m_transactionActive; }
     bool canUndo() const;
 
 private:
+    struct RepairOperation {
+        QString name;
+        QString program;
+        QStringList arguments;
+        QString rollbackName;
+        QStringList rollbackArguments;
+        QString failureSummary;
+    };
+
     struct Journal {
         bool available = false;
         bool vjoyChanged = false;
@@ -177,8 +267,9 @@ private:
 
     VJoyCapabilities inspectVJoy(int deviceId) const;
     HidHideCapabilities inspectHidHide(const PhysicalControllerCapabilities &physical) const;
-    bool applyVJoy(const ControllerReadinessPlan &plan, Journal *journal, QString *failure);
-    bool applyHidHide(const ControllerReadinessPlan &plan, Journal *journal, QString *failure);
+    QList<RepairOperation> repairOperationsFor(const ControllerReadinessPlan &plan, Journal *journal) const;
+    AutomaticRepairResult runRepairTransaction(const QList<RepairOperation> &operations) const;
+    bool verifyAfterRepair();
     bool rollback(Journal *journal, QString *failure);
     bool verifyReady();
     SetupProcessResult runHidHide(bool elevated, const QStringList &arguments) const;
@@ -210,6 +301,7 @@ private:
     PhysicalControllerCapabilities m_physical;
     bool m_transactionActive = false;
     Journal m_journal;
+    AutomaticRepairResult m_lastRepairResult;
     SetupUtilityPaths m_utilityPaths;
 };
 

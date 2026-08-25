@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QThread>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
@@ -71,8 +72,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessChecks READ controllerReadinessChecks NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessProposedChanges READ controllerReadinessProposedChanges NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllerRepairOperationResults READ controllerRepairOperationResults NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessState READ controllerReadinessState NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessStatus READ controllerReadinessStatus NOTIFY stateChanged)
+    Q_PROPERTY(QString controllerReadinessLastChecked READ controllerReadinessLastChecked NOTIFY stateChanged)
+    Q_PROPERTY(QString controllerReadinessRecommendedAction READ controllerReadinessRecommendedAction NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupCanApply READ controllerSetupCanApply NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupInProgress READ controllerSetupInProgress NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupCanUndo READ controllerSetupCanUndo NOTIFY stateChanged)
@@ -169,8 +173,11 @@ public:
     bool hidhideMapperAllowed() const;
     QVariantList controllerReadinessChecks() const;
     QVariantList controllerReadinessProposedChanges() const;
+    QVariantList controllerRepairOperationResults() const;
     QString controllerReadinessState() const;
     QString controllerReadinessStatus() const;
+    QString controllerReadinessLastChecked() const;
+    QString controllerReadinessRecommendedAction() const;
     bool controllerSetupCanApply() const;
     bool controllerSetupInProgress() const;
     bool controllerSetupCanUndo() const;
@@ -285,6 +292,7 @@ public:
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool openHidHideConfiguration();
     Q_INVOKABLE void inspectControllerReadiness();
+    Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
     Q_INVOKABLE void acknowledgeControllerSetup();
@@ -317,11 +325,17 @@ private:
     ControllerProfile &currentProfile();
     QString effectiveProfileId() const;
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
+    void startQuickVerification();
+    void startVerification(VerificationMode mode);
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;
     ControllerReadinessService m_readiness;
+    // Retained only for upgrade compatibility with the v1.9.0 preference.
+    // v1.9.1 never shows a first-run setup modal.
     bool m_controllerSetupSuggested = false;
+    bool m_verificationInProgress = false;
+    QPointer<QThread> m_verificationThread;
     QTimer m_snapshotTimer;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
