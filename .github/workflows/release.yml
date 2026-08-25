@@ -14,13 +14,12 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   package:
+    environment: release-signing
     runs-on: windows-2022
-    env:
-      SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
-      SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +48,29 @@ jobs:
             $tag = "v$version"
           }
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Reject unsigned stable tag publication
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.ARTIFACT_SIGNING_ENABLED != 'true'
+        shell: pwsh
+        run: |
+          throw @'
+          Stable release publication requires Artifact Signing.
+          Set ARTIFACT_SIGNING_ENABLED=true only after the configured Public Trust
+          certificate profile is available and a signed release dry run has passed.
+          '@
+
+      - name: Record unsigned dry run
+        if: github.event_name == 'workflow_dispatch' && vars.ARTIFACT_SIGNING_ENABLED != 'true'
+        shell: pwsh
+        run: |
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @'
+          ## UNSIGNED DRY RUN
+
+          Azure Artifact Signing is disabled. This manual run continues without Azure login,
+          signing, or signature-validity requirements while it validates build, tests, packaging,
+          installer smoke testing, manifests, checksums, and artifact upload. Stable tag
+          publication remains blocked until trusted signing is enabled and a signed dry run passes.
+          '@
 
       - name: Install Qt 6.5.3
         uses: jurplel/install-qt-action@v4
@@ -174,26 +196,38 @@ jobs:
         shell: pwsh
         run: .\scripts\stage-package.ps1 -BuildDir "$PWD\build" -StageDir "$PWD\release\stage" -WindeployQt $env:WINDEPLOYQT
 
-      - name: Report unsigned build status
-        if: env.SIGNING_PFX_BASE64 == '' || env.SIGNING_PFX_PASSWORD == ''
-        shell: pwsh
-        run: Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'Signing credentials are not configured; this build is unsigned.'
+      - name: Azure login for Artifact Signing
+        if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
+        uses: Azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Sign staged binaries when credentials are configured
-        if: env.SIGNING_PFX_BASE64 != '' && env.SIGNING_PFX_PASSWORD != ''
+      - name: Sign staged project executables with Artifact Signing
+        if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\release\stage\HOTAS BF6.exe
+            ${{ github.workspace }}\release\stage\HOTAS BF6 Launcher.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: HOTAS BF6 Simple
+          description-url: https://github.com/Kgray44/HOTAS_BF6_simple
+
+      - name: Verify staged project signatures
+        if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $certificate = Join-Path $env:RUNNER_TEMP 'hotas-bf6-signing.pfx'
-          [System.IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
-          try {
-            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\stage\HOTAS BF6.exe"
-            if ($LASTEXITCODE -ne 0) { throw 'Signing HOTAS BF6.exe failed.' }
-            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\stage\HOTAS BF6 Launcher.exe"
-            if ($LASTEXITCODE -ne 0) { throw 'Signing HOTAS BF6 Launcher.exe failed.' }
-          } finally {
-            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
-          }
+          .\scripts\verify-authenticode.ps1 -Path @(
+            "$PWD\release\stage\HOTAS BF6.exe",
+            "$PWD\release\stage\HOTAS BF6 Launcher.exe"
+          )
 
       - name: Install pinned Inno Setup 6.7.1 on CI
         shell: pwsh
@@ -202,20 +236,6 @@ jobs:
       - name: Compile installer
         shell: pwsh
         run: .\scripts\build-installer.ps1 -StageDir "$PWD\release\stage" -OutputDir "$PWD\release" -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-
-      - name: Sign installer when credentials are configured
-        if: env.SIGNING_PFX_BASE64 != '' && env.SIGNING_PFX_PASSWORD != ''
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $certificate = Join-Path $env:RUNNER_TEMP 'hotas-bf6-signing.pfx'
-          [System.IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
-          try {
-            & signtool sign /fd SHA256 /f $certificate /p $env:SIGNING_PFX_PASSWORD "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content HOTAS_VERSION -Raw).Trim()).exe"
-            if ($LASTEXITCODE -ne 0) { throw 'Signing installer failed.' }
-          } finally {
-            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
-          }
 
       - name: Smoke-test installer layout on CI
         shell: pwsh
@@ -235,6 +255,25 @@ jobs:
           if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Installer smoke test is missing uninstaller.' }
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Installer smoke uninstall failed: $($uninstall.ExitCode)" }
+
+      - name: Sign final installer with Artifact Signing
+        if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\release\HOTAS-BF6-Setup-${{ env.RELEASE_TAG }}.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: HOTAS BF6 Simple installer
+          description-url: https://github.com/Kgray44/HOTAS_BF6_simple
+
+      - name: Verify final installer signature
+        if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        run: .\scripts\verify-authenticode.ps1 -Path "$PWD\release\HOTAS-BF6-Setup-v$((Get-Content HOTAS_VERSION -Raw).Trim()).exe"
 
       - name: Generate release manifest and checksums
         shell: pwsh

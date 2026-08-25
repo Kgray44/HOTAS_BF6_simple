@@ -221,7 +221,7 @@
     "official": "Battlefield 6 uses EA Javelin anticheat. HOTAS BF6 does not claim EA endorsement, official approval, or guaranteed anticheat compatibility.",
     "utility": "HOTAS BF6 is an accessibility-style input-mapping utility: it reads a selected physical DirectInput controller and writes a vJoy virtual controller. It is not intended to create an unfair competitive advantage.",
     "verified": "Repository evidence verifies deterministic mapper behavior, headless tests, packaging gates, and the Controller Setup planner. It does not by itself verify a live Battlefield session, anticheat acceptance, a particular physical controller, installer interaction, or updater interaction.",
-    "windows": "Unsigned builds can be blocked by Windows Smart App Control or other reputation and policy controls. Optional Authenticode signing hooks remain available, but a certificate is not a release prerequisite.",
+    "windows": "Azure Artifact Signing with GitHub OIDC is prepared for trusted stable releases, but its Public Trust certificate profile is pending Microsoft identity validation. Until that profile exists, manual release runs are explicitly unsigned dry runs and stable tag publication is blocked. Local self-signing is development-only and never a public-release identity.",
     "reporting": "Report regressions with application version, Windows version, selected controller name and exact Controller Setup findings, vJoy capability summary, HidHide state, and steps to reproduce. Do not attach unrelated device lists or sensitive system data."
   },
   "license": {
@@ -254,6 +254,11 @@
       "name": "Dependencies",
       "path": "docs/dependencies.md",
       "description": "Pinned dependency bootstrap and verification details."
+    },
+    {
+      "name": "Release Signing",
+      "path": "docs/signing.md",
+      "description": "Azure Artifact Signing, GitHub OIDC, local development signing, and the pending Public Trust enablement procedure."
     },
     {
       "name": "Hardware Compatibility",

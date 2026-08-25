@@ -231,8 +231,9 @@ The repository contains a reproducible Windows build and release pipeline intend
 - Synthetic mapping hot-path benchmark in release validation.
 - QML linting and resource/icon checks.
 - Dependency metadata validation.
-- Qt deployment staging, installer compilation, install/uninstall smoke test, checksums, update manifest generation, and GitHub Release publication.
-- Optional Authenticode signing hooks when signing credentials are configured.
+- Qt deployment staging, installer compilation, install/uninstall smoke test, final signed-artifact verification, checksums, update manifest generation, and GitHub Release publication.
+- Azure Artifact Signing with GitHub OIDC signs and verifies the two project executables before installer compilation, then signs and verifies the final installer before release metadata is generated when trusted signing is enabled.
+- Manual unsigned release dry runs remain supported while Microsoft Public Trust identity validation is pending; stable tagged publication is blocked until trusted signing is enabled.
 
 ## Maintenance
 
