@@ -21,6 +21,11 @@ ApplicationWindow {
     Theme { id: shellTheme }
     color: shellTheme.background
     font.family: shellTheme.displayFont
+    Component.onCompleted: backend.setTrayTheme(themeManager.currentTheme)
+    Connections {
+        target: themeManager
+        function onCurrentThemeChanged() { backend.setTrayTheme(themeManager.currentTheme) }
+    }
 
     Component { id: legacySurface; Legacy { } }
     Component { id: standardSurface; Standard { } }

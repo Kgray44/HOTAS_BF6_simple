@@ -283,6 +283,18 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     return requirements;
 }
 
+MapperOutputRequirements ControllerReadinessService::requirementsFor(
+    const ControllerVJoyRequirements &requirements)
+{
+    MapperOutputRequirements result;
+    result.axes = requirements.axes;
+    result.buttons = std::clamp(requirements.buttons, 0, kMaximumVirtualButtons);
+    result.continuousPovs = std::max(0, requirements.continuousPovs);
+    result.discretePovs = std::max(0, requirements.discretePovs);
+    result.incompatiblePovMix = result.continuousPovs > 0 && result.discretePovs > 0;
+    return result;
+}
+
 bool ControllerReadinessService::isVJoySufficient(const VJoyCapabilities &vjoy,
                                                    const MapperOutputRequirements &requirements)
 {
@@ -758,12 +770,54 @@ const ControllerReadinessPlan &ControllerReadinessService::inspect(const MapperC
     m_configuration = configuration;
     m_physical = physical;
     const MapperOutputRequirements requirements = requirementsFor(configuration);
+    m_inspectedRequirements = requirements;
     VJoyCapabilities vjoy = inspectVJoy(configuration.vjoyDeviceId);
     vjoy.ownedByHotasBf6 = mapperOwnsVjoy;
     vjoy.outputReportsSucceeding = outputReportsSucceeding;
     const HidHideCapabilities hidhide = inspectHidHide(physical);
     m_plan = planFor(physical, requirements, vjoy, hidhide, mode);
     return m_plan;
+}
+
+const ControllerReadinessPlan &ControllerReadinessService::inspectForRequirements(
+    const MapperConfiguration &configuration, const PhysicalControllerCapabilities &physical,
+    const MapperOutputRequirements &requirements)
+{
+    if (m_transactionActive) return m_plan;
+    m_configuration = configuration;
+    m_physical = physical;
+    m_inspectedRequirements = requirements;
+    const VJoyCapabilities vjoy = inspectVJoy(configuration.vjoyDeviceId);
+    const HidHideCapabilities hidhide = inspectHidHide(physical);
+    m_plan = planFor(physical, requirements, vjoy, hidhide, VerificationMode::Full);
+    return m_plan;
+}
+
+bool ControllerReadinessService::applyVJoyConfiguration()
+{
+    if (m_transactionActive || !m_plan.vjoyNeedsChanges || !m_plan.vjoyCanApply) return false;
+    m_transactionActive = true;
+    m_plan.state = ControllerReadinessState::Applying;
+    m_plan.status = QStringLiteral("CONFIGURING VJOY — Applying the selected controller's output requirements.");
+    const SetupProcessResult result = runVJoy(true, vjoyConfigurationArguments(m_plan.vjoy, m_plan.requirements));
+    if (!result.succeeded()) {
+        m_plan.state = result.cancelled ? ControllerReadinessState::Cancelled : ControllerReadinessState::Failed;
+        m_plan.status = result.cancelled
+            ? QStringLiteral("vJoy configuration was cancelled.")
+            : QStringLiteral("vJoy configuration failed: %1").arg(result.error);
+        m_transactionActive = false;
+        return false;
+    }
+    const VJoyCapabilities after = inspectVJoy(m_configuration.vjoyDeviceId);
+    m_plan = planFor(m_physical, m_inspectedRequirements, after, m_plan.hidhide, VerificationMode::Full);
+    if (m_plan.vjoyNeedsChanges) {
+        m_plan.state = ControllerReadinessState::Failed;
+        m_plan.status = QStringLiteral("vJoy did not expose the selected controller's required capabilities after configuration.");
+        m_transactionActive = false;
+        return false;
+    }
+    m_transactionActive = false;
+    return true;
 }
 
 SetupProcessResult ControllerReadinessService::runHidHide(bool elevated, const QStringList &arguments) const

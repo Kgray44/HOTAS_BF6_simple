@@ -276,5 +276,18 @@
       "Validates the published v1.9.3 built-in updater chain, including download, SHA-256 verification, helper handoff, installer, updated launcher, and mapper startup logging.",
       "Keeps DirectInput-to-vJoy report processing and its hot-path performance contract unchanged."
     ]
+  },
+  {
+    "version": "2.0.2",
+    "title": "Dashboard & UX Polish",
+    "summary": "Gives the Universal Controller Update a dashboard-first interface while closing two bounded controller-management reliability gaps without changing mapper hot-path behavior.",
+    "highlights": [
+      "Rebuilds Overview as a visual physical input-to-HOTAS BF6-to-vJoy signal dashboard with setup health, compact capability modules, and smoothed mapper instrumentation.",
+      "Makes the header mapping state the one primary in-app Start or Stop Mapping control and removes the duplicate Axis-page action.",
+      "Standardizes Settings into responsive controller, mapping, application, device-hiding, and maintenance sections with confirmation-protected destructive actions.",
+      "Styles the reliable native QMenu tray surface to match Legacy, Standard, and Top Gun themes while preserving Open, mapping toggle, close-to-tray, and Exit behavior.",
+      "Enforces each verified controller's saved vJoy capability contract during active-device switching, reusing sufficient supersets and validating reconfiguration before mapping can resume.",
+      "Makes Set Up explicitly acquire and verify the selected new controller even when another physical controller remains connected."
+    ]
   }
 ]

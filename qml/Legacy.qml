@@ -1081,12 +1081,17 @@ Page {
                     background: Panel { color: "#151e23"; border.color: "#52717c" }
                     contentItem: Text { text: parent.text; color: "#dce7e8"; font.pixelSize: 10 } }
             }
-            Row { spacing: 7
-                StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
-                Text { text: backend.mappingStatus
- color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1")
- font.pixelSize: 10
- font.bold: true }
+            Rectangle {
+                id: globalMappingControl
+                implicitWidth: legacyMappingRow.implicitWidth + 18; implicitHeight: 30; radius: 3
+                color: legacyMappingMouse.pressed ? "#284751" : legacyMappingMouse.containsMouse ? "#263f49" : "#18242a"
+                border.color: backend.mappingActive ? "#91c4a4" : backend.mappingRequested ? "#d6bd78" : "#52717c"
+                Row { id: legacyMappingRow; anchors.centerIn: parent; spacing: 7
+                    StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
+                    Text { text: backend.mappingStatus; color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1"); font.pixelSize: 10; font.bold: true }
+                }
+                MouseArea { id: legacyMappingMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.toggleMapping() }
+                ToolTip { visible: legacyMappingMouse.containsMouse; delay: 350; text: backend.mappingRequested ? "Stop Mapping" : "Start Mapping" }
             }
         }
     }
@@ -1201,6 +1206,7 @@ Page {
         anchors.fill: parent
  anchors.margins: 24
         OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
+        SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1218,9 +1224,6 @@ Page {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: backend.mappingRequested ? "STOP MAPPING" : "START MAPPING"
-                        subdued: !backend.mappingRequested
-                        onTriggered: backend.toggleMapping() }
                 }
                 Panel { width: parent.width; height: 90
                     color: "#e51a2328"; border.color: "#46657980"
@@ -1952,7 +1955,9 @@ Page {
         Flickable {
             id: settingsPage
             anchors.fill: parent
- visible: root.currentPage === 4
+            // Replaced by the shared responsive SettingsPage above. Retaining
+            // the old tree dormant avoids unrelated editor-page churn.
+            visible: false
  contentWidth: width
  contentHeight: settingsContent.implicitHeight + 18
  clip: true

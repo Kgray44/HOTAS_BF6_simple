@@ -224,6 +224,10 @@ public:
                                         SetupUtilityPaths utilityPaths = {});
 
     static MapperOutputRequirements requirementsFor(const MapperConfiguration &configuration);
+    // Saved controller records capture an exact output contract at verified
+    // setup time. Convert it without consulting a live mapping profile so a
+    // switch can enforce the target controller's capability floor.
+    static MapperOutputRequirements requirementsFor(const ControllerVJoyRequirements &requirements);
     static ControllerReadinessPlan planFor(const PhysicalControllerCapabilities &physical,
                                            const MapperOutputRequirements &requirements,
                                            const VJoyCapabilities &vjoy,
@@ -243,6 +247,12 @@ public:
                                            VerificationMode mode = VerificationMode::Full,
                                            bool mapperOwnsVjoy = false,
                                            bool outputReportsSucceeding = false);
+    const ControllerReadinessPlan &inspectForRequirements(const MapperConfiguration &configuration,
+                                                          const PhysicalControllerCapabilities &physical,
+                                                          const MapperOutputRequirements &requirements);
+    // A controller switch may require only vJoy capability expansion. Keep
+    // HidHide untouched and verify the target output before mapping resumes.
+    bool applyVJoyConfiguration();
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
     // The mapper performs this proof after a forced DirectInput reopen. A
@@ -324,6 +334,7 @@ private:
     ControllerReadinessPlan m_plan;
     MapperConfiguration m_configuration;
     PhysicalControllerCapabilities m_physical;
+    MapperOutputRequirements m_inspectedRequirements;
     bool m_transactionActive = false;
     Journal m_journal;
     AutomaticRepairResult m_lastRepairResult;

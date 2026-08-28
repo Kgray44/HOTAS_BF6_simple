@@ -10,6 +10,7 @@
 #include <QNetworkReply>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 #include <QThread>
 #include <QTimer>
@@ -336,6 +337,9 @@ public:
     Q_INVOKABLE bool forgetController(const QString &recordId);
     Q_INVOKABLE void setAutoSwitchVerifiedController(bool enabled);
     Q_INVOKABLE void setKeepRunningInTray(bool enabled);
+    // QMenu remains the reliable native tray surface; this updates only its
+    // presentation tokens when the user changes the application theme.
+    Q_INVOKABLE void setTrayTheme(const QString &themeName);
     Q_INVOKABLE void forgetAllSavedControllers();
     Q_INVOKABLE void resetDeviceCalibration();
     Q_INVOKABLE bool launchUninstaller();
@@ -384,6 +388,7 @@ private:
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
     void startVerification(VerificationMode mode);
+    void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
     void sampleCalibrationControlPlane();
     void finishCalibration();
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
@@ -412,6 +417,8 @@ private:
     bool m_controllerSetupSuggested = false;
     bool m_physicalControllerWasConnected = false;
     QList<DiscoveredController> m_discoveredControllers;
+    QSet<QString> m_observedControllerIds;
+    bool m_controllerInventoryInitialized = false;
     QPointer<QWindow> m_mainWindow;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;
@@ -420,6 +427,8 @@ private:
     QString m_pendingControllerArrivalId;
     bool m_verificationInProgress = false;
     QPointer<QThread> m_verificationThread;
+    bool m_controllerSelectionInProgress = false;
+    QPointer<QThread> m_controllerSelectionThread;
     QTimer m_snapshotTimer;
     QTimer m_controllerDiscoveryTimer;
     QElapsedTimer m_rateClock;
