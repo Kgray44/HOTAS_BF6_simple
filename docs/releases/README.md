@@ -6,8 +6,9 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.0.0 | Current | Universal Controller Update; recommended published release |
-| v1.9.3 | Superseded | Upgrade to v2.0.0 for universal controller management and persistent device memory |
+| v2.0.1 | Current | Startup & Upgrade Hotfix; recommended published release |
+| v2.0.0 | Superseded | Universal Controller Update; upgrade to v2.0.1 for the startup and upgrade hotfix |
+| v1.9.3 | Superseded | Upgrade to v2.0.1 for universal controller management and persistent device memory |
 | v1.9.2 | **Deprecated** | **Do not use for new setup; upgrade to v2.0.0+** |
 | v1.9.1 | **Deprecated** | **Do not use Automatic Repair; upgrade to v2.0.0+** |
 | v1.9.0 | **Deprecated** | **Do not use; upgrade to v2.0.0+** |

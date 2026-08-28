@@ -1,0 +1,15 @@
+if (NOT DEFINED MAPPER_MAIN OR NOT EXISTS "${MAPPER_MAIN}")
+    message(FATAL_ERROR "MAPPER_MAIN must name src/main.cpp")
+endif()
+
+file(READ "${MAPPER_MAIN}" mapper_source)
+foreach (required_fragment IN ITEMS "#include <QApplication>" "QApplication application(argc, argv);")
+    string(FIND "${mapper_source}" "${required_fragment}" fragment_offset)
+    if (fragment_offset EQUAL -1)
+        message(FATAL_ERROR "Mapper startup must retain ${required_fragment} for QMenu/tray support")
+    endif()
+endforeach()
+
+if (mapper_source MATCHES "QGuiApplication[ \\t]+application")
+    message(FATAL_ERROR "Mapper startup must not construct QGuiApplication while it uses QMenu")
+endif()

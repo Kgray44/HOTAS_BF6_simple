@@ -33,6 +33,7 @@ $required = @(
     'HOTAS BF6 Launcher.exe',
     'VERSION',
     'Qt6Core.dll',
+    'Qt6Widgets.dll',
     'Qt6Quick.dll',
     'platforms\qwindows.dll',
     'qml'

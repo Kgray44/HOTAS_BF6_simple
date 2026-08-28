@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.0**
+**Current release: v2.0.1**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.1 — Startup & Upgrade Hotfix
+
+Fixes the v2.0.0 launch-blocking system-tray startup integration while preserving universal controller management, saved configuration, and the low-latency mapper architecture.
+
+- Uses QApplication for the shipped Qt Widgets system-tray menu and adds a deterministic Widgets startup contract test.
+- Requires Qt6Widgets.dll in the staged package instead of relying solely on automatic deployment discovery.
+- Adds clean-install, v1.9.3 schema-14 upgrade, and already-migrated schema-15 recovery acceptance coverage.
+- Validates the published v1.9.3 built-in updater chain, including download, SHA-256 verification, helper handoff, installer, updated launcher, and mapper startup logging.
+- Keeps DirectInput-to-vJoy report processing and its hot-path performance contract unchanged.
 
 ## v2.0.0 — Universal Controller Update
 
