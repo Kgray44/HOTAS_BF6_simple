@@ -1,0 +1,22 @@
+[
+  {
+    "version": "2.0.0",
+    "tag": "v2.0.0",
+    "releaseTitle": "v2.0.0",
+    "title": "Universal Controller Update",
+    "summary": "HOTAS BF6 v2.0.0 expands the mapper into a universal DirectInput controller platform. It introduces persistent multi-device management, automatic controller recognition and verification, intelligent device switching, per-device setup memory, improved HidHide handling, a new Overview dashboard, system-tray operation, improved uninstall/reset tools, and a standardized Settings experience while preserving the existing low-latency mapping engine.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Adds a persistent controller registry with layered identity matching, per-device calibration, remembered vJoy requirements, offline device memory, and ambiguity-safe selection.",
+      "Adds low-frequency DirectInput discovery and a coherent Input Controllers manager that excludes vJoy from physical input selection.",
+      "New controllers require themed Verify Setup; healthy remembered controllers reconnect quietly, while verified-device auto-switching remains unambiguous and opt-in configurable.",
+      "Adds an Overview landing page with controller, output, health, configuration, and presentation-smoothed performance metrics; Diagnostics remains raw and fast.",
+      "HidHide setup detects mapper self-access blocking even when no controller is visible, offers an allowlist-only repair, and the installer attempts to register the final mapper executable.",
+      "Adds system tray operation, safe close-to-tray behavior, a concise native tray menu, controller-only troubleshooting reset, and an in-app uninstaller entry that retains shared dependencies and data by default.",
+      "Controller discovery, registry persistence, readiness, HidHide inspection, tray behavior, and Overview smoothing remain outside the DirectInput-to-vJoy report path."
+    ]
+  }
+]
