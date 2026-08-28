@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v1.9.3**
+**Current release: v1.9.4**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -17,14 +17,15 @@ This document is the authoritative sectioned catalog of user-visible and enginee
 7. Response Curves
 8. Automation Engine
 9. Automation Editor UX
-10. Diagnostics and Observability
-11. User Interface and Themes
-12. vJoy Integration
-13. HidHide and Dependency Bootstrap
-14. HOTAS Setup & Verification
-15. Launcher, Installer, and Updates
-16. Configuration and Migration
-17. Build, Test, and Release Engineering
+10. Universal Controller Management
+11. Diagnostics and Observability
+12. User Interface and Themes
+13. vJoy Integration
+14. HidHide and Dependency Bootstrap
+15. HOTAS Setup & Verification
+16. Launcher, Installer, and Updates
+17. Configuration and Migration
+18. Build, Test, and Release Engineering
 
 ## Real-Time Mapping Runtime
 
@@ -137,6 +138,16 @@ Automation is edited as readable full-page rules rather than raw condition/actio
 - Overview cards show readable WHEN/DO summaries and Momentary/Toggle/Timed behavior labels.
 - Unsaved-change handling and delete confirmation.
 
+## Universal Controller Management
+
+HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.
+
+- Low-frequency inventory of attached DirectInput controllers with display name, DirectInput identity, HID path when available, capability counts, and virtual-device exclusion.
+- Persistent verified-device records use layered HID, DirectInput, product, vendor/product, and capability identity matching without silently choosing ambiguous identical hardware.
+- Controller Manager shows connected, verified, new, active, and offline devices together and supports setup, active selection, refresh, and forgetting a device.
+- Calibration and remembered vJoy capability requirements belong to the physical controller rather than leaking between unrelated hardware.
+- Known healthy controllers reconnect quietly; new controllers invoke themed verification, and optional automatic switching only uses one unambiguous verified device.
+
 ## Diagnostics and Observability
 
 The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
@@ -158,7 +169,7 @@ The app provides three persistent visual systems without allowing presentation s
 - Standard theme as the modern general-purpose interface.
 - Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.
 - Instant theme switching with theme state stored separately from mapper configuration.
-- Dedicated pages for Home, Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation.
+- Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
 - Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces.
 

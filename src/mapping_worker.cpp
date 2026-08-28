@@ -450,16 +450,22 @@ std::optional<DirectInputDevice> selectDevice(LPDIRECTINPUT8W directInput, const
             }
         }
     }
-    for (const auto &device : context.devices) {
-        const QString lower = device.name.toLower();
-        if (!isVirtualControllerName(device.name)
-            && (lower.contains(u"t.flight"_qs) || lower.contains(u"hotas one"_qs))) {
-            return device;
+    if (!configuration.activeControllerRecordId.isEmpty()) {
+        for (const SavedControllerRecord &record : configuration.savedControllers) {
+            if (record.id != configuration.activeControllerRecordId) continue;
+            for (const auto &device : context.devices) {
+                if (guidToString(device.guid) == record.lastDirectInputId
+                    && !isVirtualControllerName(device.name)) return device;
+            }
         }
     }
+    std::vector<DirectInputDevice> physical;
     for (const auto &device : context.devices) {
-        if (!isVirtualControllerName(device.name)) return device;
+        if (!isVirtualControllerName(device.name)) physical.push_back(device);
     }
+    // First-run auto selection is only safe when there is one candidate.  A
+    // user must explicitly choose between multiple physical controllers.
+    if (physical.size() == 1) return physical.front();
     // A mapper must never consume the vJoy controller it produces. Wait for a
     // real DirectInput device rather than creating a feedback loop.
     return std::nullopt;
@@ -606,6 +612,24 @@ bool MappingWorker::reacquirePhysicalController(const QString &expectedHidInstan
                 && m_runtime.physicalReportsSinceAcquisition.load() > 0) {
                 return true;
             }
+        }
+        QThread::msleep(25);
+    }
+    return false;
+}
+
+bool MappingWorker::selectPhysicalController(const QString &expectedDirectInputId, int timeoutMs)
+{
+    const QString expected = expectedDirectInputId.trimmed();
+    if (expected.isEmpty() || timeoutMs <= 0) return false;
+    const std::uint64_t request = m_reacquireInputRequested.fetch_add(1) + 1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_reacquireInputAcknowledged.load() >= request) {
+            const DeviceSnapshot snapshot = deviceSnapshot();
+            if (m_runtime.physicalConnected.load()
+                && snapshot.id.compare(expected, Qt::CaseInsensitive) == 0
+                && m_runtime.physicalReportsSinceAcquisition.load() > 0) return true;
         }
         QThread::msleep(25);
     }
@@ -1104,7 +1128,7 @@ void MappingWorker::run()
             handledReacquireRequest = requestedReacquire;
             m_reacquireInputAcknowledged = requestedReacquire;
             nextDiscovery = now;
-            emit workerEvent(u"Physical controller reacquisition requested by HOTAS setup"_qs);
+            emit workerEvent(u"Physical controller reacquisition requested by HOTAS control plane"_qs);
         }
         wasMappingRequested = mappingRequestedNow;
         if (!device && now >= nextDiscovery) {

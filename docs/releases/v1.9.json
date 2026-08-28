@@ -64,10 +64,10 @@
     "releaseTitle": "v1.9.3",
     "title": "Real-world setup and calibration reliability",
     "summary": "A focused external-machine reliability patch for controller arrival, two-stage calibration, calibrated-axis presentation, and fail-safe HidHide setup verification.",
-    "status": "current",
-    "replacement": null,
+    "status": "deprecated",
+    "replacement": "v1.9.4",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for first-use HOTAS setup and calibration.",
+    "statusNote": "Superseded by v1.9.4 universal controller management and persistent per-device memory.",
     "highlights": [
       "A newly acquired physical controller now triggers the shared themed setup experience only when readiness, selection, or calibration needs attention.",
       "Calibration uses a deliberate range step followed by a bounded robust center sample for self-centering axes; throttles and sliders retain range-only calibration.",
@@ -77,6 +77,26 @@
       "Session-scoped HidHide blacklisting is deferred: the project pins the signed 1.5.230 release, while the feeder-session API is only documented in newer upstream source and would require a driver compatibility change outside this patch.",
       "Failure and attention states expose a copyable privacy-sanitized diagnostic report with readiness, operation, rollback, and calibration evidence.",
       "The DirectInput-to-vJoy report path remains fixed-array and allocation-free; calibration statistics, setup, diagnostics, enumeration, and repair stay on the control plane."
+    ]
+  },
+  {
+    "version": "1.9.4",
+    "tag": "v1.9.4",
+    "releaseTitle": "v1.9.4",
+    "title": "Universal controller management and setup hardening",
+    "summary": "Extends HOTAS BF6 into a generic DirectInput mapper with persistent verified-controller memory, controller-aware setup, an Overview, and tray operation while preserving the real-time mapping architecture.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for supported DirectInput controllers.",
+    "highlights": [
+      "Adds a persistent controller registry with layered identity matching, per-device calibration, remembered vJoy requirements, offline device memory, and ambiguity-safe selection.",
+      "Adds low-frequency DirectInput discovery and a coherent Input Controllers manager that excludes vJoy from physical input selection.",
+      "New controllers require themed Verify Setup; healthy remembered controllers reconnect quietly, while verified-device auto-switching remains unambiguous and opt-in configurable.",
+      "Adds an Overview landing page with controller, output, health, configuration, and presentation-smoothed performance metrics; Diagnostics remains raw and fast.",
+      "HidHide setup detects mapper self-access blocking even when no controller is visible, offers an allowlist-only repair, and the installer attempts to register the final mapper executable.",
+      "Adds system tray operation, safe close-to-tray behavior, a concise native tray menu, controller-only troubleshooting reset, and an in-app uninstaller entry that retains shared dependencies and data by default.",
+      "Controller discovery, registry persistence, readiness, HidHide inspection, tray behavior, and Overview smoothing remain outside the DirectInput-to-vJoy report path."
     ]
   }
 ]

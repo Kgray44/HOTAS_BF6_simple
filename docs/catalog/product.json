@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and HOTAS Setup & Verification.",
+  "summary": "HOTAS BF6 Simple maps a selected physical DirectInput controller into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and HOTAS Setup & Verification.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {
@@ -41,8 +41,8 @@
   ],
   "usage": [
     "Install the latest HOTAS BF6 setup package from GitHub Releases.",
-    "Open HOTAS BF6. A healthy configuration starts without an interrupting setup dialog.",
-    "Open Settings and choose VERIFY HOTAS SETUP to deeply verify the physical controller, vJoy Device 1, and HidHide configuration.",
+    "Open HOTAS BF6 at Overview. Choose a connected controller in Settings when more than one is available; a new controller opens themed setup after selection.",
+    "Open Settings and choose VERIFY HOTAS SETUP to deeply verify the selected physical controller, vJoy Device 1, and HidHide configuration.",
     "Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 executes required vJoy/HidHide changes through one approved elevated transaction and restores the Mapping On/Off state that preceded the repair.",
     "Confirm READY, then select or create a profile.",
     "Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.",
@@ -72,7 +72,7 @@
       "category": "Physical controller",
       "item": "Thrustmaster T.Flight HOTAS One",
       "status": "Primary validation target",
-      "notes": "DirectInput axes, buttons, and POV input are the project's initial supported hardware path."
+      "notes": "The physical acceptance baseline; compatible DirectInput controllers use the same controller registry, setup, per-device calibration, and vJoy workflow."
     },
     {
       "category": "Virtual controller",

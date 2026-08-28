@@ -254,6 +254,9 @@ public:
     // Used only after the post-change DirectInput proof fails. It reverses
     // the narrow journal entries created by this automatic transaction.
     bool recoverFromPhysicalAccessFailure();
+    // Safe even when no controller is visible: it mutates only HOTAS BF6's
+    // own HidHide application entry and never changes device visibility.
+    bool allowlistMapperOnly();
     bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }
