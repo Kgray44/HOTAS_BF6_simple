@@ -264,5 +264,17 @@
       "HidHide self-access diagnostics and allowlist-only repair, plus installer-time registration of the installed mapper where permitted.",
       "System tray operation, controlled close behavior, controller-only reset tools, and an in-app uninstaller entry that retains shared dependencies by default."
     ]
+  },
+  {
+    "version": "2.0.1",
+    "title": "Startup & Upgrade Hotfix",
+    "summary": "Fixes the v2.0.0 launch-blocking system-tray startup integration while preserving universal controller management, saved configuration, and the low-latency mapper architecture.",
+    "highlights": [
+      "Uses QApplication for the shipped Qt Widgets system-tray menu and adds a deterministic Widgets startup contract test.",
+      "Requires Qt6Widgets.dll in the staged package instead of relying solely on automatic deployment discovery.",
+      "Adds clean-install, v1.9.3 schema-14 upgrade, and already-migrated schema-15 recovery acceptance coverage.",
+      "Validates the published v1.9.3 built-in updater chain, including download, SHA-256 verification, helper handoff, installer, updated launcher, and mapper startup logging.",
+      "Keeps DirectInput-to-vJoy report processing and its hot-path performance contract unchanged."
+    ]
   }
 ]

@@ -5,10 +5,10 @@
     "releaseTitle": "v2.0.0",
     "title": "Universal Controller Update",
     "summary": "HOTAS BF6 v2.0.0 expands the mapper into a universal DirectInput controller platform. It introduces persistent multi-device management, automatic controller recognition and verification, intelligent device switching, per-device setup memory, improved HidHide handling, a new Overview dashboard, system-tray operation, improved uninstall/reset tools, and a standardized Settings experience while preserving the existing low-latency mapping engine.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.1",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Universal Controller Update; upgrade to v2.0.1 for the startup and upgrade hotfix.",
     "highlights": [
       "Adds a persistent controller registry with layered identity matching, per-device calibration, remembered vJoy requirements, offline device memory, and ambiguity-safe selection.",
       "Adds low-frequency DirectInput discovery and a coherent Input Controllers manager that excludes vJoy from physical input selection.",
@@ -17,6 +17,24 @@
       "HidHide setup detects mapper self-access blocking even when no controller is visible, offers an allowlist-only repair, and the installer attempts to register the final mapper executable.",
       "Adds system tray operation, safe close-to-tray behavior, a concise native tray menu, controller-only troubleshooting reset, and an in-app uninstaller entry that retains shared dependencies and data by default.",
       "Controller discovery, registry persistence, readiness, HidHide inspection, tray behavior, and Overview smoothing remain outside the DirectInput-to-vJoy report path."
+    ]
+  },
+  {
+    "version": "2.0.1",
+    "tag": "v2.0.1",
+    "releaseTitle": "v2.0.1",
+    "title": "Startup & Upgrade Hotfix",
+    "summary": "Fixes a launch-blocking issue introduced in v2.0.0 where the system-tray menu could initialize under QGuiApplication instead of the required QApplication. v2.0.1 also strengthens packaged Qt Widgets validation and the v1.9.3 to v2 upgrade acceptance path while preserving existing configuration and mapper performance.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Replaces the mapper's QGuiApplication startup object with QApplication for the existing Qt Widgets tray menu.",
+      "Fails packaging when Qt6Widgets.dll is absent and adds deterministic Widgets/tray-menu startup coverage.",
+      "Validates clean install, v1.9.3 schema-14 upgrade, already-migrated schema-15 recovery, and the published built-in updater chain.",
+      "Logs an immediate mapper startup exit as a failed launch handoff rather than treating installer success as complete update success.",
+      "Preserves Universal Controller Update behavior, user profiles, curves, mappings, buttons, POVs, Automation, preferences, and the mapper hot path."
     ]
   }
 ]

@@ -158,11 +158,28 @@ bool startProcess(const std::filesystem::path &application, const std::vector<st
 bool launchMapper()
 {
     const auto mapper = modulePath().parent_path() / kMapperName;
-    if (!startProcess(mapper, {}, false)) {
+    HANDLE mapperProcess = nullptr;
+    if (!startProcess(mapper, {}, false, &mapperProcess)) {
         logEvent(L"fallback launch failed: mapper executable is unavailable");
         return false;
     }
-    logEvent(L"launching installed mapper");
+    // An installer exit code proves only that files were copied. Keep the
+    // launcher alive briefly so an immediate mapper abort is reported as an
+    // update-start failure instead of a misleading successful handoff.
+    const DWORD startupWait = WaitForSingleObject(mapperProcess, 1500);
+    if (startupWait == WAIT_OBJECT_0) {
+        DWORD exitCode = 1;
+        GetExitCodeProcess(mapperProcess, &exitCode);
+        CloseHandle(mapperProcess);
+        logEvent(L"mapper exited during startup with code " + std::to_wstring(exitCode));
+        return false;
+    }
+    CloseHandle(mapperProcess);
+    if (startupWait == WAIT_FAILED) {
+        logEvent(L"could not observe mapper startup after launch");
+        return false;
+    }
+    logEvent(L"mapper remained alive after initial startup");
     return true;
 }
 

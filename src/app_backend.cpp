@@ -318,7 +318,12 @@ AppBackend::AppBackend(QObject *parent)
 
 AppBackend::~AppBackend()
 {
-    if (m_trayIcon) m_trayIcon->hide();
+    if (m_trayIcon) {
+        m_trayIcon->hide();
+        // QSystemTrayIcon does not own the QMenu, so detach it before the
+        // backend releases the menu during application shutdown.
+        m_trayIcon->setContextMenu(nullptr);
+    }
     delete m_trayMenu;
     if (m_verificationThread) {
         QThread *thread = m_verificationThread;

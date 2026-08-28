@@ -237,6 +237,15 @@ jobs:
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Installer smoke uninstall failed: $($uninstall.ExitCode)" }
 
+      - name: Validate clean install, upgrade, and recovery startup
+        shell: pwsh
+        run: |
+          $version = (Get-Content HOTAS_VERSION -Raw).Trim()
+          .\scripts\verify-installer-upgrade.ps1 `
+            -CandidateInstaller "$PWD\release\HOTAS-BF6-Setup-v$version.exe" `
+            -FixtureTool "$PWD\build\upgrade_configuration_fixture.exe" `
+            -ExpectedVersion $version
+
       - name: Sign final installer with Artifact Signing
         if: vars.ARTIFACT_SIGNING_ENABLED == 'true'
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
@@ -281,3 +290,12 @@ jobs:
             release/HOTAS-BF6-Setup-v*.exe
             release/update-manifest.json
             release/SHA256SUMS.txt
+
+      - name: Validate published v1.9.3 updater chain
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+        shell: pwsh
+        run: |
+          $version = (Get-Content HOTAS_VERSION -Raw).Trim()
+          .\scripts\verify-published-updater.ps1 `
+            -FixtureTool "$PWD\build\upgrade_configuration_fixture.exe" `
+            -ExpectedVersion $version

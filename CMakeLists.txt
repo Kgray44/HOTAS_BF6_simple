@@ -252,6 +252,112 @@ if (BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
+    qt_add_executable(widgets_startup_contract_tests tests/widgets_startup_contract_tests.cpp)
+    target_link_libraries(widgets_startup_contract_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+    add_test(NAME widgets_startup_contract_tests COMMAND widgets_startup_contract_tests)
+    add_test(NAME mapper_widgets_application_contract
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMAPPER_MAIN=${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_widgets_startup_contract.cmake")
+    if (WIN32)
+        set_tests_properties(widgets_startup_contract_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
+    qt_add_executable(upgrade_configuration_fixture
+        tests/upgrade_configuration_fixture.cpp
+        src/mapping_types.h
+        src/axis_transform.h
+        src/axis_transform.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/button_mapping.h
+        src/button_mapping.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+        src/profile_model.h
+        src/profile_model.cpp
+        src/config_store.h
+        src/config_store.cpp
+    )
+    target_link_libraries(upgrade_configuration_fixture PRIVATE Qt6::Core)
+    target_include_directories(upgrade_configuration_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+    set(HOTAS_BACKEND_STARTUP_TEST_SOURCES ${HOTAS_MAPPER_SOURCES})
+    list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES src/main.cpp)
+    qt_add_executable(app_backend_startup_tests
+        tests/app_backend_startup_tests.cpp
+        ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}
+    )
+    target_link_libraries(app_backend_startup_tests PRIVATE
+        hotas_update_core
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Widgets
+    )
+    target_include_directories(app_backend_startup_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
+    )
+    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32)
+    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
+    if (WIN32)
+        set_tests_properties(app_backend_startup_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
+    qt_add_executable(app_qml_startup_tests
+        tests/app_qml_startup_tests.cpp
+        ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}
+    )
+    qt_add_qml_module(app_qml_startup_tests
+        URI HOTASMapperStartupTest
+        VERSION 1.0
+        QML_FILES
+            qml/AviationPanel.qml
+            qml/AutomationPage.qml
+            qml/LegacyAviationPanel.qml
+            qml/LegacyCurveEditor.qml
+            qml/Legacy.qml
+            qml/Theme.qml
+            qml/Main.qml
+            qml/OverviewPage.qml
+            qml/Standard.qml
+            qml/CurveEditor.qml
+            qml/ControllerReadinessPanel.qml
+    )
+    target_link_libraries(app_qml_startup_tests PRIVATE
+        hotas_update_core
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Widgets
+        dinput8
+        dxguid
+        advapi32
+        shell32
+    )
+    target_include_directories(app_qml_startup_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
+    )
+    target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
+    if (WIN32)
+        set_tests_properties(app_qml_startup_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
     qt_add_executable(theme_manager_tests
         tests/theme_manager_tests.cpp
         src/theme_manager.h
