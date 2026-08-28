@@ -34,16 +34,35 @@
     "releaseTitle": "v2.0.1",
     "title": "Startup & Upgrade Hotfix",
     "summary": "Fixes a launch-blocking issue introduced in v2.0.0 where the system-tray menu could initialize under QGuiApplication instead of the required QApplication. v2.0.1 also strengthens packaged Qt Widgets validation and the v1.9.3 to v2 upgrade acceptance path while preserving existing configuration and mapper performance.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.2",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Startup and upgrade hotfix; upgrade to v2.0.2 for dashboard, settings, tray, and controller-switching polish.",
     "highlights": [
       "Replaces the mapper's QGuiApplication startup object with QApplication for the existing Qt Widgets tray menu.",
       "Fails packaging when Qt6Widgets.dll is absent and adds deterministic Widgets/tray-menu startup coverage.",
       "Validates clean install, v1.9.3 schema-14 upgrade, already-migrated schema-15 recovery, and the published built-in updater chain.",
       "Logs an immediate mapper startup exit as a failed launch handoff rather than treating installer success as complete update success.",
       "Preserves Universal Controller Update behavior, user profiles, curves, mappings, buttons, POVs, Automation, preferences, and the mapper hot path."
+    ]
+  },
+  {
+    "version": "2.0.2",
+    "tag": "v2.0.2",
+    "releaseTitle": "v2.0.2",
+    "title": "Dashboard & UX Polish",
+    "summary": "v2.0.2 gives the Universal Controller Update the interface it deserves, with a redesigned Overview dashboard, standardized Settings experience, polished theme-aware tray controls, and a permanent global mapping control. It also completes per-controller vJoy requirement enforcement during device switching and hardens new-device verification when multiple controllers are connected.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Replaces the card-stack Overview with a signal-flow dashboard for physical input, HOTAS BF6 processing, vJoy output, health, capability, and smoothed performance state.",
+      "Places the theme-aware mapping state and Start or Stop action permanently in the main header and removes the Axis-page duplicate.",
+      "Reorganizes Settings into aligned responsive sections and separates maintenance from the confirmation-protected uninstaller.",
+      "Applies Legacy, Standard, and Top Gun visual tokens to the existing reliable Qt tray menu.",
+      "Validates saved target vJoy requirements during controller switching, preserves adequate existing output supersets, and blocks mapping restoration until valid output is available.",
+      "Explicitly acquires and verifies a selected new controller regardless of another controller's connection state."
     ]
   }
 ]

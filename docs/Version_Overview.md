@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.1**
+**Current release: v2.0.2**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.2 — Dashboard & UX Polish
+
+Gives the Universal Controller Update a dashboard-first interface while closing two bounded controller-management reliability gaps without changing mapper hot-path behavior.
+
+- Rebuilds Overview as a visual physical input-to-HOTAS BF6-to-vJoy signal dashboard with setup health, compact capability modules, and smoothed mapper instrumentation.
+- Makes the header mapping state the one primary in-app Start or Stop Mapping control and removes the duplicate Axis-page action.
+- Standardizes Settings into responsive controller, mapping, application, device-hiding, and maintenance sections with confirmation-protected destructive actions.
+- Styles the reliable native QMenu tray surface to match Legacy, Standard, and Top Gun themes while preserving Open, mapping toggle, close-to-tray, and Exit behavior.
+- Enforces each verified controller's saved vJoy capability contract during active-device switching, reusing sufficient supersets and validating reconfiguration before mapping can resume.
+- Makes Set Up explicitly acquire and verify the selected new controller even when another physical controller remains connected.
 
 ## v2.0.1 — Startup & Upgrade Hotfix
 

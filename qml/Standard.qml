@@ -1132,16 +1132,22 @@ Page {
                     background: Panel { color: theme.tooltip; border.color: theme.topGun ? theme.orange : theme.borderStrong }
                     contentItem: Text { text: parent.text; color: theme.text; font.pixelSize: 10 } }
             }
-            Row { spacing: 7
-                StatusDot { tone: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : (backend.vjoyReady ? theme.cyan : theme.textMuted)) }
-                Text { text: backend.mappingStatus
- color: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted)
- font.pixelSize: 10
- font.bold: true
- font.family: theme.topGun ? theme.displayFont : root.font.family
+            Rectangle {
+                id: globalMappingControl
+                implicitWidth: mappingControlRow.implicitWidth + 18; implicitHeight: 30
+                radius: theme.topGun ? 1 : theme.controlRadius
+                color: mappingControlMouse.pressed ? theme.controlPressed : mappingControlMouse.containsMouse ? theme.controlHover : theme.control
+                border.color: backend.mappingActive ? theme.ready : backend.mappingRequested ? theme.warning : theme.borderStrong
+                Row { id: mappingControlRow; anchors.centerIn: parent; spacing: 7
+                    StatusDot { tone: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : (backend.vjoyReady ? theme.cyan : theme.textMuted)) }
+                    Text { text: backend.mappingStatus
+                        color: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted)
+                        font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                    Rectangle { visible: theme.topGun; width: 30; height: 4; anchors.verticalCenter: parent.verticalCenter; color: theme.orange
+                        Repeater { model: 4; delegate: Rectangle { x: index * 8; width: 3; height: parent.height; color: theme.background } } }
                 }
-                Rectangle { visible: theme.topGun; width: 36; height: 4; anchors.verticalCenter: parent.verticalCenter; color: theme.orange
-                    Repeater { model: 4; delegate: Rectangle { x: index * 10; width: 4; height: parent.height; color: theme.background } } }
+                MouseArea { id: mappingControlMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.toggleMapping() }
+                ToolTip { visible: mappingControlMouse.containsMouse; delay: 350; text: backend.mappingRequested ? "Stop Mapping" : "Start Mapping" }
             }
             Item { visible: theme.topGun; Layout.preferredWidth: 26; Layout.preferredHeight: 44
                 Text { anchors.centerIn: parent; text: "✦"; color: theme.ivory; font.pixelSize: 28 }
@@ -1190,6 +1196,8 @@ Page {
                 Text { x: 85; y: 28; text: backend.mappingStatus; color: backend.mappingActive ? theme.orangeBright : theme.textMuted; font.family: theme.displayFont; font.pixelSize: 15; font.bold: true }
                 Rectangle { x: 0; y: 54; width: 238; height: 1; color: theme.orange }
                 Rectangle { x: 104; y: 58; width: 120; height: 2; color: "#8d291d" }
+                MouseArea { id: topGunMappingMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.toggleMapping() }
+                ToolTip { visible: topGunMappingMouse.containsMouse; text: backend.mappingRequested ? "Stop Mapping" : "Start Mapping" }
             }
         }
     }
@@ -1323,6 +1331,7 @@ Page {
         anchors.fill: parent
  anchors.margins: 24
         OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false }
+        SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1340,9 +1349,6 @@ Page {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: backend.mappingRequested ? "STOP MAPPING" : "START MAPPING"
-                        subdued: !backend.mappingRequested
-                        onTriggered: backend.toggleMapping() }
                 }
                 Panel { width: parent.width; height: 90
                     color: theme.topGun ? "#e4191714" : "#e51a2328"; border.color: theme.topGun ? theme.orange : "#46657980"
@@ -2109,7 +2115,10 @@ Page {
         Flickable {
             id: settingsPage
             anchors.fill: parent
- visible: root.currentPage === 4
+            // Replaced by the shared responsive SettingsPage above. Keep the
+            // former tree dormant during this release to avoid coupling its
+            // legacy page-local controls to the new shared visual grammar.
+            visible: false
  contentWidth: width
  contentHeight: settingsContent.implicitHeight + 18
  clip: true

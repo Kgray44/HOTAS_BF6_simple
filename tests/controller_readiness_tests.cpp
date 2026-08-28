@@ -222,6 +222,8 @@ private slots:
     void diagnosticsAreScopedSanitizedAndCopyable();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
+    void savedControllerVjoyRequirementsUseSupersetSemantics();
+    void savedControllerVjoyRequirementsDetectInsufficientOutput();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -601,6 +603,38 @@ void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxe
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(configuration);
     QVERIFY(requirements.axes[static_cast<int>(VirtualAxis::Slider1)]);
     QCOMPARE(requirements.buttons, 64);
+}
+
+void ControllerReadinessTests::savedControllerVjoyRequirementsUseSupersetSemantics()
+{
+    ControllerVJoyRequirements saved;
+    saved.deviceId = 1;
+    saved.axes[1] = saved.axes[2] = saved.axes[3] = saved.axes[6] = true;
+    saved.buttons = 15;
+    saved.continuousPovs = 1;
+    const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(saved);
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.axes[4] = vjoy.axes[5] = true; // Extra available axes remain valid.
+    vjoy.buttons = 32;                  // Extra button capacity remains valid.
+    vjoy.continuousPovs = 1;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), requirements, vjoy, readyHidHide());
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+}
+
+void ControllerReadinessTests::savedControllerVjoyRequirementsDetectInsufficientOutput()
+{
+    ControllerVJoyRequirements saved;
+    saved.axes[1] = saved.axes[2] = saved.axes[3] = saved.axes[6] = true;
+    saved.buttons = 15;
+    const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(saved);
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.buttons = 8;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), requirements, vjoy, readyHidHide());
+    QVERIFY(plan.vjoyNeedsChanges);
+    QVERIFY(plan.vjoyCanApply);
 }
 
 int main(int argc, char *argv[])

@@ -83,6 +83,7 @@ qt_add_qml_module(HOTASMapper
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
+        qml/SettingsPage.qml
         qml/Standard.qml
         qml/CurveEditor.qml
         qml/ControllerReadinessPanel.qml
@@ -252,6 +253,15 @@ if (BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
+    qt_add_executable(ui_release_contract_tests tests/ui_release_contract_tests.cpp)
+    target_link_libraries(ui_release_contract_tests PRIVATE Qt6::Core Qt6::Test)
+    target_compile_definitions(ui_release_contract_tests PRIVATE HOTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME ui_release_contract_tests COMMAND ui_release_contract_tests)
+    if (WIN32)
+        set_tests_properties(ui_release_contract_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
     qt_add_executable(widgets_startup_contract_tests tests/widgets_startup_contract_tests.cpp)
     target_link_libraries(widgets_startup_contract_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
     add_test(NAME widgets_startup_contract_tests COMMAND widgets_startup_contract_tests)
@@ -328,6 +338,7 @@ if (BUILD_TESTING)
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml
+            qml/SettingsPage.qml
             qml/Standard.qml
             qml/CurveEditor.qml
             qml/ControllerReadinessPanel.qml

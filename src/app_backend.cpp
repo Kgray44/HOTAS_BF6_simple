@@ -275,6 +275,7 @@ AppBackend::AppBackend(QObject *parent)
         m_trayMenu->addSeparator();
         QAction *exit = m_trayMenu->addAction(u"Exit HOTAS BF6"_qs);
         connect(exit, &QAction::triggered, this, &AppBackend::exitApplication);
+        setTrayTheme(u"Standard"_qs);
         m_trayIcon->setContextMenu(m_trayMenu);
         connect(m_trayIcon, &QSystemTrayIcon::activated, this,
                 [this](QSystemTrayIcon::ActivationReason reason) {
@@ -327,6 +328,12 @@ AppBackend::~AppBackend()
     delete m_trayMenu;
     if (m_verificationThread) {
         QThread *thread = m_verificationThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_controllerSelectionThread) {
+        QThread *thread = m_controllerSelectionThread;
         thread->disconnect(this);
         thread->wait(5000);
         delete thread;
@@ -1027,7 +1034,7 @@ bool AppBackend::controllerSetupCanApply() const
 }
 bool AppBackend::controllerSetupInProgress() const
 {
-    return m_verificationInProgress || m_readiness.transactionActive();
+    return m_verificationInProgress || m_controllerSelectionInProgress || m_readiness.transactionActive();
 }
 bool AppBackend::controllerSetupCanUndo() const { return m_readiness.canUndo(); }
 bool AppBackend::controllerDiagnosticsAvailable() const
@@ -3056,16 +3063,89 @@ bool AppBackend::setActiveController(const QString &recordId)
             break;
         }
     }
-    if (!target || !target->connected) {
+    if (!target || !target->connected || m_verificationInProgress || m_controllerSelectionInProgress) {
         appendEvent(u"Selected controller is offline; connect it before making it active"_qs);
         return false;
     }
-    m_configuration.activeControllerRecordId = recordId;
-    m_configuration.preferredDeviceId = target->directInputId;
-    m_configuration.calibration = record->calibration;
-    persistAndApply();
-    m_worker.requestPhysicalControllerSelection();
-    appendEvent(QString(u"Switching active controller to %1"_qs).arg(target->name));
+    const SavedControllerRecord targetRecord = *record;
+    const DiscoveredController selectedTarget = *target;
+    const MapperConfiguration previousConfiguration = m_configuration;
+    MapperConfiguration targetConfiguration = m_configuration;
+    targetConfiguration.activeControllerRecordId = recordId;
+    targetConfiguration.preferredDeviceId = selectedTarget.directInputId;
+    targetConfiguration.calibration = targetRecord.calibration;
+    targetConfiguration.vjoyDeviceId = std::clamp(targetRecord.vjoyRequirements.deviceId, 1, 16);
+    PhysicalControllerCapabilities targetPhysical;
+    targetPhysical.name = selectedTarget.name;
+    targetPhysical.directInputId = selectedTarget.directInputId;
+    targetPhysical.hidInstanceId = selectedTarget.hidInstanceId;
+    targetPhysical.connected = selectedTarget.connected;
+    targetPhysical.axes = selectedTarget.axes;
+    targetPhysical.buttons = selectedTarget.buttonCount;
+    targetPhysical.povs = selectedTarget.povCount;
+    const MapperOutputRequirements targetRequirements =
+        ControllerReadinessService::requirementsFor(targetRecord.vjoyRequirements);
+    const bool mappingWasRequested = m_worker.mappingRequested();
+    m_verificationInProgress = true;
+    m_readiness.adoptPlan(ControllerReadinessService::checkingPlan(targetPhysical, VerificationMode::Full));
+    appendEvent(QString(u"Switching active controller to %1; validating its saved vJoy requirements"_qs)
+        .arg(selectedTarget.name));
+    emit stateChanged();
+
+    QThread *thread = QThread::create([this, previousConfiguration, targetConfiguration, selectedTarget,
+                                        targetPhysical, targetRequirements, mappingWasRequested] {
+        ControllerReadinessService verifier;
+        ControllerReadinessPlan plan = ControllerReadinessService::checkingPlan(targetPhysical, VerificationMode::Full);
+        bool prepared = m_worker.prepareForDriverConfiguration();
+        bool outputValid = false;
+        bool reusedExistingVjoy = false;
+        bool selected = false;
+        bool restored = false;
+        if (prepared) {
+            verifier.inspectForRequirements(targetConfiguration, targetPhysical, targetRequirements);
+            plan = verifier.plan();
+            reusedExistingVjoy = !plan.vjoyNeedsChanges;
+            outputValid = reusedExistingVjoy || verifier.applyVJoyConfiguration();
+            plan = verifier.plan();
+            if (outputValid) {
+                // The new configuration is compiled before the worker may
+                // acquire the target device. This remains a control-plane
+                // configuration boundary, never a per-report lookup.
+                m_worker.updateConfiguration(targetConfiguration);
+                selected = m_worker.selectPhysicalController(selectedTarget.directInputId);
+                restored = selected && m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+            }
+        }
+        if (!prepared || !outputValid || !selected || !restored) {
+            m_worker.updateConfiguration(previousConfiguration);
+            m_worker.requestPhysicalControllerSelection();
+            if (prepared) m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        }
+        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), targetConfiguration, selectedTarget,
+                                         prepared, outputValid, reusedExistingVjoy, selected, restored] () mutable {
+            m_readiness.adoptPlan(std::move(plan));
+            m_verificationInProgress = false;
+            if (prepared && outputValid && selected && restored) {
+                m_configuration = targetConfiguration;
+                ConfigStore::save(m_configuration);
+                rebuildSelectedAxisCurve();
+                emit selectedAxisCurveChanged();
+                appendEvent(reusedExistingVjoy
+                    ? QString(u"Active controller switched to %1; existing vJoy capability superset was reused"_qs).arg(selectedTarget.name)
+                    : QString(u"Active controller switched to %1; vJoy was configured and verified before mapping resumed"_qs).arg(selectedTarget.name));
+            } else {
+                appendEvent(QString(u"Active controller switch to %1 was not completed; prior mapping configuration was restored"_qs)
+                    .arg(selectedTarget.name));
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
     return true;
 }
 
@@ -3078,9 +3158,41 @@ bool AppBackend::selectNewController(const QString &directInputId)
     m_configuration.activeControllerRecordId.clear();
     m_configuration.preferredDeviceId = target->directInputId;
     persistAndApply();
-    m_worker.requestPhysicalControllerSelection();
-    appendEvent(QString(u"Selected new controller for verification: %1"_qs).arg(target->name));
+    appendEvent(QString(u"Selected new controller for explicit verification: %1"_qs).arg(target->name));
+    startExplicitNewControllerVerification(target->directInputId, target->name);
     return true;
+}
+
+void AppBackend::startExplicitNewControllerVerification(const QString &directInputId,
+                                                        const QString &displayName)
+{
+    if (m_verificationInProgress || m_controllerSelectionInProgress) return;
+    m_controllerSelectionInProgress = true;
+    emit stateChanged();
+    QThread *thread = QThread::create([this, directInputId, displayName] {
+        // A user selected SET UP, so acquire that exact device and wait for a
+        // fresh report before beginning full verification. This never relies
+        // on a global disconnected-to-connected edge.
+        const bool selected = m_worker.selectPhysicalController(directInputId);
+        QMetaObject::invokeMethod(this, [this, selected, displayName] {
+            m_controllerSelectionInProgress = false;
+            if (selected) {
+                appendEvent(QString(u"New controller acquired for setup: %1; starting explicit verification"_qs)
+                    .arg(displayName));
+                verifyHotasSetup();
+            } else {
+                appendEvent(QString(u"Could not acquire %1 for setup; connect it and try Set Up again"_qs)
+                    .arg(displayName));
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_controllerSelectionThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_controllerSelectionThread == thread) m_controllerSelectionThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 bool AppBackend::forgetController(const QString &recordId)
@@ -3114,6 +3226,34 @@ void AppBackend::setKeepRunningInTray(bool enabled)
     if (m_configuration.keepRunningInTray == enabled) return;
     m_configuration.keepRunningInTray = enabled;
     persistAndApply();
+}
+
+void AppBackend::setTrayTheme(const QString &themeName)
+{
+    if (!m_trayMenu) return;
+    const QString normalized = themeName.trimmed().toLower();
+    if (normalized == u"top gun"_qs) {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #09151a; color: #ead7a3; border: 1px solid #c29a5b; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Arial Narrow'; }"
+            "QMenu::item:selected { background: #3b241c; color: #ff7b31; border: 1px solid #df6428; }"
+            "QMenu::item:disabled { color: #816f55; }"
+            "QMenu::separator { height: 1px; background: #765d37; margin: 5px 9px; }"));
+    } else if (normalized == u"legacy"_qs) {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #182126; color: #eef5f5; border: 1px solid #52717c; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Segoe UI'; }"
+            "QMenu::item:selected { background: #345864; color: #f0f4f5; border: 1px solid #78aab9; }"
+            "QMenu::item:disabled { color: #8da0a5; }"
+            "QMenu::separator { height: 1px; background: #3c5660; margin: 5px 9px; }"));
+    } else {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #14191d; color: #f3f7f7; border: 1px solid #78aab9; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Segoe UI Variable'; }"
+            "QMenu::item:selected { background: #244550; color: #dbe7e8; border: 1px solid #a8d1dc; }"
+            "QMenu::item:disabled { color: #77919a; }"
+            "QMenu::separator { height: 1px; background: #335268; margin: 5px 9px; }"));
+    }
 }
 
 void AppBackend::forgetAllSavedControllers()
@@ -3155,7 +3295,25 @@ bool AppBackend::launchUninstaller()
 void AppBackend::refreshControllerInventory()
 {
     m_discoveredControllers = ControllerDiscovery::enumerate();
+    bool newlyDiscoveredUnverified = false;
+    QString newlyDiscoveredName;
+    for (const DiscoveredController &controller : m_discoveredControllers) {
+        if (controller.virtualDevice || !controller.connected || controller.directInputId.isEmpty()) continue;
+        const bool firstSeen = !m_observedControllerIds.contains(controller.directInputId);
+        m_observedControllerIds.insert(controller.directInputId);
+        const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+        if (m_controllerInventoryInitialized && firstSeen && (match.recordId.isEmpty() || match.ambiguous)) {
+            newlyDiscoveredUnverified = true;
+            newlyDiscoveredName = controller.name;
+        }
+    }
+    m_controllerInventoryInitialized = true;
     tryAutoSwitchVerifiedController();
+    if (newlyDiscoveredUnverified && !m_verificationInProgress && !m_controllerSelectionInProgress) {
+        appendEvent(QString(u"New controller detected: %1. Select Set Up to explicitly verify it."_qs)
+            .arg(newlyDiscoveredName));
+        emit controllerSetupRequested();
+    }
     emit stateChanged();
 }
 
@@ -3170,12 +3328,9 @@ void AppBackend::tryAutoSwitchVerifiedController()
     if (!controller) return;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
     if (match.recordId.isEmpty() || match.ambiguous) return;
-    m_configuration.preferredDeviceId = candidate;
-    m_configuration.activeControllerRecordId = match.recordId;
-    if (const SavedControllerRecord *record = activeControllerRecord()) m_configuration.calibration = record->calibration;
-    persistAndApply();
-    m_worker.requestPhysicalControllerSelection();
-    appendEvent(QString(u"Automatically switching to verified controller: %1"_qs).arg(controller->name));
+    if (setActiveController(match.recordId)) {
+        appendEvent(QString(u"Automatically switching to verified controller: %1"_qs).arg(controller->name));
+    }
 }
 
 void AppBackend::attachMainWindow(QWindow *window)
