@@ -1,6 +1,7 @@
 #include "axis_transform.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "controller_manager.h"
 #include "event_log.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
@@ -120,6 +121,9 @@ private slots:
     void virtualControllersAreNeverEligibleAsPhysicalInput();
     void implicitButtonsDefaultToMatchingVjoyTargets();
     void configurationRoundTrips();
+    void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
+    void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
+    void vjoyRequirementSupersetsAreAccepted();
     void disabledAxisValueDefaultsMigratesAndPersistsGlobally();
     void disabledAxisValueClampsSafely();
     void disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes();
@@ -590,6 +594,90 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.calibration[2].center, 0.1F);
     QVERIFY(!restored.calibration[2].centered);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
+}
+
+void MappingCoreTests::controllerRegistryPersistsPerDeviceCalibrationAndRequirements()
+{
+    DiscoveredController controller;
+    controller.name = QStringLiteral("VKB Gladiator NXT EVO");
+    controller.directInputId = QStringLiteral("{INSTANCE-A}");
+    controller.productGuid = QStringLiteral("{PRODUCT-A}");
+    controller.hidInstanceId = QStringLiteral("HID\\VID_231D&PID_0200\\ONE");
+    controller.vendorId = 0x231D;
+    controller.productId = 0x0200;
+    controller.connected = true;
+    controller.axes[0] = true;
+    controller.axes[1] = true;
+    controller.axisCount = 2;
+    controller.buttonCount = 29;
+    controller.povCount = 1;
+    std::array<Calibration, kPhysicalAxisCount> calibration{};
+    calibration[0] = {true, -0.9F, 0.05F, 0.9F};
+    ControllerVJoyRequirements requirements;
+    requirements.axes[1] = true;
+    requirements.axes[2] = true;
+    requirements.buttons = 29;
+    requirements.continuousPovs = 1;
+    requirements.deviceId = 2;
+
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.savedControllers.push_back(ControllerManager::verifiedRecord(controller, calibration, requirements));
+    configuration.activeControllerRecordId = configuration.savedControllers.front().id;
+    configuration.calibration = calibration;
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(restored.savedControllers.size()), 1);
+    QCOMPARE(restored.activeControllerRecordId, configuration.activeControllerRecordId);
+    QCOMPARE(restored.savedControllers.front().displayName, controller.name);
+    QCOMPARE(restored.savedControllers.front().calibration[0].center, 0.05F);
+    QCOMPARE(restored.savedControllers.front().vjoyRequirements.buttons, 29);
+    QCOMPARE(restored.savedControllers.front().vjoyRequirements.deviceId, 2);
+}
+
+void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection()
+{
+    DiscoveredController first;
+    first.name = QStringLiteral("Identical Joystick");
+    first.directInputId = QStringLiteral("{INSTANCE-NEW}");
+    first.productGuid = QStringLiteral("{PRODUCT}");
+    first.vendorId = 1;
+    first.productId = 2;
+    first.axisCount = 4;
+    first.buttonCount = 12;
+    first.povCount = 1;
+    first.connected = true;
+    first.axes[0] = true;
+    SavedControllerRecord remembered = ControllerManager::verifiedRecord(first, {}, {});
+    remembered.lastDirectInputId = QStringLiteral("{INSTANCE-OLD}");
+    remembered.hidInstanceId.clear();
+
+    ControllerMatch changedInstance = ControllerManager::match(first, {remembered});
+    QCOMPARE(changedInstance.recordId, remembered.id);
+    QCOMPARE(changedInstance.strength, ControllerMatchStrength::Product);
+
+    SavedControllerRecord duplicate = remembered;
+    duplicate.id = QStringLiteral("other-record");
+    const ControllerMatch ambiguous = ControllerManager::match(first, {remembered, duplicate});
+    QVERIFY(ambiguous.ambiguous);
+    QVERIFY(ambiguous.recordId.isEmpty());
+    QVERIFY(ControllerManager::autoSelect({first}, {remembered, duplicate}, remembered.id).isEmpty());
+}
+
+void MappingCoreTests::vjoyRequirementSupersetsAreAccepted()
+{
+    ControllerVJoyRequirements available;
+    available.axes.fill(true);
+    available.buttons = 32;
+    available.continuousPovs = 2;
+    available.discretePovs = 1;
+    ControllerVJoyRequirements required;
+    required.axes[1] = true;
+    required.buttons = 15;
+    required.continuousPovs = 1;
+    QVERIFY(ControllerManager::isVjoySufficient(available, required));
+    required.buttons = 33;
+    QVERIFY(!ControllerManager::isVjoySufficient(available, required));
 }
 
 void MappingCoreTests::disabledAxisValueDefaultsMigratesAndPersistsGlobally()
@@ -1247,7 +1335,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 14);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 15);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1490,7 +1578,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 14);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 15);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

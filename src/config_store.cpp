@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 14;
+constexpr int kProfileSchemaVersion = 15;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -60,6 +60,90 @@ Calibration calibrationFromJson(const QJsonObject &json)
         calibration.centered = true;
     }
     return calibration;
+}
+
+QJsonObject controllerVjoyRequirementsToJson(const ControllerVJoyRequirements &requirements)
+{
+    QJsonArray axes;
+    for (const bool enabled : requirements.axes) axes.append(enabled);
+    return {{u"axes"_qs, axes}, {u"buttons"_qs, requirements.buttons},
+            {u"continuousPovs"_qs, requirements.continuousPovs},
+            {u"discretePovs"_qs, requirements.discretePovs}, {u"deviceId"_qs, requirements.deviceId}};
+}
+
+bool controllerVjoyRequirementsFromJson(const QJsonObject &json, ControllerVJoyRequirements *requirements)
+{
+    if (!requirements) return false;
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    if (axes.size() != kVirtualAxisSlotCount) return false;
+    for (int index = 0; index < kVirtualAxisSlotCount; ++index) {
+        requirements->axes[static_cast<size_t>(index)] = axes.at(index).toBool();
+    }
+    requirements->buttons = std::clamp(json.value(u"buttons"_qs).toInt(), 0, kMaximumVirtualButtons);
+    requirements->continuousPovs = std::clamp(json.value(u"continuousPovs"_qs).toInt(), 0, 32);
+    requirements->discretePovs = std::clamp(json.value(u"discretePovs"_qs).toInt(), 0, 32);
+    requirements->deviceId = std::clamp(json.value(u"deviceId"_qs).toInt(1), 1, 16);
+    return true;
+}
+
+QJsonObject savedControllerToJson(const SavedControllerRecord &record)
+{
+    QJsonArray axes;
+    QJsonArray calibration;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        axes.append(record.axes[static_cast<size_t>(index)]);
+        calibration.append(calibrationToJson(record.calibration[static_cast<size_t>(index)]));
+    }
+    QJsonArray ownedInstances;
+    for (const QString &instance : record.ownedHidHideDeviceInstances) ownedInstances.append(instance);
+    return {{u"id"_qs, record.id}, {u"displayName"_qs, record.displayName},
+            {u"lastDirectInputId"_qs, record.lastDirectInputId}, {u"productGuid"_qs, record.productGuid},
+            {u"hidInstanceId"_qs, record.hidInstanceId}, {u"vendorId"_qs, record.vendorId},
+            {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisCount"_qs, record.axisCount},
+            {u"buttonCount"_qs, record.buttonCount}, {u"povCount"_qs, record.povCount},
+            {u"capabilityFingerprint"_qs, record.capabilityFingerprint}, {u"lastSeen"_qs, record.lastSeen},
+            {u"lastVerified"_qs, record.lastVerified}, {u"verificationVersion"_qs, record.verificationVersion},
+            {u"calibration"_qs, calibration}, {u"vjoyRequirements"_qs, controllerVjoyRequirementsToJson(record.vjoyRequirements)},
+            {u"ownedHidHideDeviceInstances"_qs, ownedInstances}};
+}
+
+bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *record)
+{
+    if (!record) return false;
+    SavedControllerRecord parsed;
+    parsed.id = json.value(u"id"_qs).toString().trimmed();
+    parsed.displayName = json.value(u"displayName"_qs).toString().trimmed();
+    parsed.lastDirectInputId = json.value(u"lastDirectInputId"_qs).toString().trimmed();
+    parsed.productGuid = json.value(u"productGuid"_qs).toString().trimmed();
+    parsed.hidInstanceId = json.value(u"hidInstanceId"_qs).toString().trimmed();
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
+    if (parsed.id.isEmpty() || parsed.displayName.isEmpty() || axes.size() != kPhysicalAxisCount
+        || calibration.size() != kPhysicalAxisCount
+        || !controllerVjoyRequirementsFromJson(json.value(u"vjoyRequirements"_qs).toObject(), &parsed.vjoyRequirements)) {
+        return false;
+    }
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        parsed.axes[static_cast<size_t>(index)] = axes.at(index).toBool();
+        parsed.calibration[static_cast<size_t>(index)] = calibrationFromJson(calibration.at(index).toObject());
+    }
+    parsed.vendorId = std::max(0, json.value(u"vendorId"_qs).toInt());
+    parsed.productId = std::max(0, json.value(u"productId"_qs).toInt());
+    parsed.axisCount = std::clamp(json.value(u"axisCount"_qs).toInt(), 0, kPhysicalAxisCount);
+    parsed.buttonCount = std::clamp(json.value(u"buttonCount"_qs).toInt(), 0, kMaximumPhysicalButtons);
+    parsed.povCount = std::clamp(json.value(u"povCount"_qs).toInt(), 0, kMaximumPhysicalPovs);
+    parsed.capabilityFingerprint = json.value(u"capabilityFingerprint"_qs).toString();
+    parsed.lastSeen = json.value(u"lastSeen"_qs).toString();
+    parsed.lastVerified = json.value(u"lastVerified"_qs).toString();
+    parsed.verificationVersion = std::max(1, json.value(u"verificationVersion"_qs).toInt(1));
+    for (const QJsonValue &value : json.value(u"ownedHidHideDeviceInstances"_qs).toArray()) {
+        const QString instance = value.toString().trimmed();
+        if (!instance.isEmpty() && !parsed.ownedHidHideDeviceInstances.contains(instance, Qt::CaseInsensitive)) {
+            parsed.ownedHidHideDeviceInstances.append(instance);
+        }
+    }
+    *record = std::move(parsed);
+    return true;
 }
 
 QJsonObject axisMappingToJson(const AxisMapping &mapping)
@@ -735,10 +819,18 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     for (int index = 0; index < automationCount; ++index) {
         automations.append(automationToJson(configuration.automations[static_cast<size_t>(index)]));
     }
+    QJsonArray savedControllers;
+    for (const SavedControllerRecord &record : configuration.savedControllers) {
+        savedControllers.append(savedControllerToJson(record));
+    }
 
     return {
         {u"version"_qs, kProfileSchemaVersion},
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
+        {u"savedControllers"_qs, savedControllers},
+        {u"activeControllerRecordId"_qs, configuration.activeControllerRecordId},
+        {u"autoSwitchVerifiedController"_qs, configuration.autoSwitchVerifiedController},
+        {u"keepRunningInTray"_qs, configuration.keepRunningInTray},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
         {u"startMappingOnLaunch"_qs, configuration.startMappingOnLaunch},
         {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
@@ -761,7 +853,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     const int version = json.value(u"version"_qs).toInt();
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
-        && version != 9 && version != 10 && version != 11 && version != 12 && version != 13
+        && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -781,6 +873,29 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             return fallbackWithGlobalSettings(json);
         }
         configuration.calibration[index] = calibrationFromJson(axis);
+    }
+    if (version >= 15) {
+        const QJsonArray savedControllers = json.value(u"savedControllers"_qs).toArray();
+        if (savedControllers.size() > 64) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        QSet<QString> savedControllerIds;
+        for (const QJsonValue &value : savedControllers) {
+            SavedControllerRecord record;
+            if (!savedControllerFromJson(value.toObject(), &record) || savedControllerIds.contains(record.id)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            savedControllerIds.insert(record.id);
+            configuration.savedControllers.push_back(std::move(record));
+        }
+        configuration.activeControllerRecordId = json.value(u"activeControllerRecordId"_qs).toString().trimmed();
+        if (!savedControllerIds.contains(configuration.activeControllerRecordId)) {
+            configuration.activeControllerRecordId.clear();
+        }
+        configuration.autoSwitchVerifiedController = json.value(u"autoSwitchVerifiedController"_qs).toBool(true);
+        configuration.keepRunningInTray = json.value(u"keepRunningInTray"_qs).toBool(true);
     }
 
     configuration.profiles.clear();

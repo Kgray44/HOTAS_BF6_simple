@@ -4,7 +4,9 @@
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "controller_discovery.h"
 #include "controller_diagnostics.h"
+#include "controller_manager.h"
 #include "hotas_build_version.h"
 #include "launcher_core.h"
 #include "profile_model.h"
@@ -20,11 +22,16 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QSettings>
+#include <QSet>
+#include <QSystemTrayIcon>
 #include <QSysInfo>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
 #include <QVariantMap>
+#include <QAction>
+#include <QIcon>
+#include <QMenu>
 
 #include <algorithm>
 #include <cmath>
@@ -239,15 +246,50 @@ AppBackend::AppBackend(QObject *parent)
         m_readiness.adoptPlan(std::move(pending));
     }
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
+    connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::buttonConfigurationSuggested, this,
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
     m_snapshotTimer.setInterval(16); // UI-only latest-state projection, never the mapping cadence.
     m_snapshotTimer.start();
+    // DirectInput enumeration is an independent, low-frequency control-plane
+    // snapshot.  The report loop neither waits for it nor reads its results.
+    m_controllerDiscoveryTimer.setInterval(1000);
+    m_controllerDiscoveryTimer.start();
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
+        m_trayMenu = new QMenu();
+        m_trayStatusAction = m_trayMenu->addAction(u"HOTAS BF6 — Starting"_qs);
+        m_trayStatusAction->setEnabled(false);
+        m_trayMenu->addSeparator();
+        QAction *open = m_trayMenu->addAction(u"Open HOTAS BF6"_qs);
+        connect(open, &QAction::triggered, this, [this] {
+            if (!m_mainWindow) return;
+            m_mainWindow->showNormal();
+            m_mainWindow->raise();
+            m_mainWindow->requestActivate();
+        });
+        m_trayToggleAction = m_trayMenu->addAction(u"Start Mapping"_qs);
+        connect(m_trayToggleAction, &QAction::triggered, this, &AppBackend::toggleMapping);
+        m_trayMenu->addSeparator();
+        QAction *exit = m_trayMenu->addAction(u"Exit HOTAS BF6"_qs);
+        connect(exit, &QAction::triggered, this, &AppBackend::exitApplication);
+        m_trayIcon->setContextMenu(m_trayMenu);
+        connect(m_trayIcon, &QSystemTrayIcon::activated, this,
+                [this](QSystemTrayIcon::ActivationReason reason) {
+                    if (reason == QSystemTrayIcon::Trigger && m_mainWindow) {
+                        m_mainWindow->showNormal();
+                        m_mainWindow->raise();
+                        m_mainWindow->requestActivate();
+                    }
+                });
+        m_trayIcon->show();
+    }
     m_rateClock.start();
     m_physicalUpdateClock.start();
     m_latencyPercentileClock.start();
+    m_overviewMetricsClock.start();
     m_updateTimeout.setSingleShot(true);
     connect(&m_updateTimeout, &QTimer::timeout, this, [this] {
         if (!m_updateReply) return;
@@ -267,6 +309,7 @@ AppBackend::AppBackend(QObject *parent)
     // Startup verification is passive and runs on its own short-lived worker.
     // It never stops mapping, releases either device, or opens a modal.
     QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
+    QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
@@ -275,6 +318,8 @@ AppBackend::AppBackend(QObject *parent)
 
 AppBackend::~AppBackend()
 {
+    if (m_trayIcon) m_trayIcon->hide();
+    delete m_trayMenu;
     if (m_verificationThread) {
         QThread *thread = m_verificationThread;
         thread->disconnect(this);
@@ -802,6 +847,41 @@ int AppBackend::activeProfileIndex() const
 
 QString AppBackend::deviceName() const { return m_worker.deviceSnapshot().name; }
 QString AppBackend::deviceId() const { return m_worker.deviceSnapshot().id; }
+QVariantList AppBackend::controllers() const
+{
+    QVariantList result;
+    QSet<QString> represented;
+    const QString liveId = deviceId();
+    for (const DiscoveredController &controller : m_discoveredControllers) {
+        if (controller.virtualDevice) continue;
+        const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+        QVariantMap item{{u"id"_qs, match.recordId}, {u"directInputId"_qs, controller.directInputId},
+                         {u"name"_qs, controller.name}, {u"connected"_qs, controller.connected},
+                         {u"verified"_qs, !match.recordId.isEmpty() && !match.ambiguous},
+                         {u"ambiguous"_qs, match.ambiguous}, {u"active"_qs, controller.directInputId == liveId},
+                         {u"axisCount"_qs, controller.axisCount}, {u"buttonCount"_qs, controller.buttonCount},
+                         {u"povCount"_qs, controller.povCount}};
+        item.insert(u"state"_qs, match.ambiguous ? u"Connected · Selection required"_qs
+            : match.recordId.isEmpty() ? u"Connected · New device"_qs
+            : controller.directInputId == liveId ? u"Connected · Verified · Active"_qs
+                                               : u"Connected · Verified"_qs);
+        represented.insert(match.recordId);
+        result.append(item);
+    }
+    for (const SavedControllerRecord &record : m_configuration.savedControllers) {
+        if (represented.contains(record.id)) continue;
+        result.append(QVariantMap{{u"id"_qs, record.id}, {u"directInputId"_qs, record.lastDirectInputId},
+            {u"name"_qs, record.displayName}, {u"connected"_qs, false}, {u"verified"_qs, true},
+            {u"ambiguous"_qs, false}, {u"active"_qs, record.id == m_configuration.activeControllerRecordId},
+            {u"axisCount"_qs, record.axisCount}, {u"buttonCount"_qs, record.buttonCount},
+            {u"povCount"_qs, record.povCount}, {u"state"_qs, u"Offline · Verified"_qs}});
+    }
+    return result;
+}
+QString AppBackend::activeControllerRecordId() const { return m_configuration.activeControllerRecordId; }
+bool AppBackend::autoSwitchVerifiedController() const { return m_configuration.autoSwitchVerifiedController; }
+bool AppBackend::keepRunningInTray() const { return m_configuration.keepRunningInTray; }
+bool AppBackend::trayAvailable() const { return m_trayIcon && m_trayIcon->isVisible(); }
 bool AppBackend::physicalConnected() const { return m_worker.runtime().physicalConnected.load(); }
 int AppBackend::axisCount() const { return m_worker.runtime().axisCount.load(); }
 int AppBackend::buttonCount() const { return m_worker.runtime().buttonCount.load(); }
@@ -2481,6 +2561,19 @@ void AppBackend::refreshHidHideStatus()
         : u"HidHide is not installed or its service is unavailable"_qs);
 }
 
+bool AppBackend::repairHidHideAccess()
+{
+    const bool repaired = m_readiness.allowlistMapperOnly();
+    appendEvent(repaired ? u"HOTAS BF6 HidHide self-access was repaired; re-enumerating controllers"_qs
+                         : u"HidHide self-access repair was unavailable or not approved"_qs);
+    if (repaired) {
+        m_worker.requestPhysicalControllerSelection();
+        QTimer::singleShot(250, this, &AppBackend::refreshControllerInventory);
+    }
+    emit stateChanged();
+    return repaired;
+}
+
 bool AppBackend::openHidHideConfiguration()
 {
     const QStringList roots{
@@ -2594,15 +2687,28 @@ void AppBackend::startVerification(VerificationMode mode)
             appendEvent(restored
                 ? QString(u"HOTAS verification complete: %1"_qs).arg(m_readiness.plan().status)
                 : u"HOTAS verification complete, but mapping restoration failed"_qs);
+            if (mode == VerificationMode::Full && restored
+                && m_readiness.plan().state == ControllerReadinessState::Ready
+                && currentPhysicalCapabilities().connected) {
+                rememberCurrentController();
+            }
             if (mode == VerificationMode::Quick && !arrivalId.isEmpty()
                 && arrivalId == m_pendingControllerArrivalId) {
                 m_pendingControllerArrivalId.clear();
                 const PhysicalControllerCapabilities current = currentPhysicalCapabilities();
+                const bool known = std::any_of(m_configuration.savedControllers.cbegin(),
+                    m_configuration.savedControllers.cend(), [&current](const SavedControllerRecord &record) {
+                        return (!current.hidInstanceId.isEmpty()
+                                && record.hidInstanceId.compare(current.hidInstanceId, Qt::CaseInsensitive) == 0)
+                            || (!current.directInputId.isEmpty()
+                                && record.lastDirectInputId.compare(current.directInputId, Qt::CaseInsensitive) == 0);
+                    });
                 const bool actionable = ControllerReadinessService::needsSetupAfterControllerArrival(
                     true, m_readiness.plan());
                 if (current.connected && current.directInputId == arrivalId
-                    && (actionable || calibrationNeedsSetup(current) || m_readiness.hasPendingRecovery())) {
-                    appendEvent(u"HOTAS setup needs attention after controller arrival"_qs);
+                    && (!known || actionable || calibrationNeedsSetup(current) || m_readiness.hasPendingRecovery())) {
+                    appendEvent(known ? u"HOTAS setup needs attention after controller arrival"_qs
+                                      : u"New controller detected; Verify Setup is required"_qs);
                     emit controllerSetupRequested();
                 }
             }
@@ -2851,14 +2957,246 @@ void AppBackend::acknowledgeControllerSetup()
 
 void AppBackend::useConnectedDevice()
 {
-    const QString id = deviceId();
-    if (id.isEmpty()) {
+    const DiscoveredController *controller = discoveredController(deviceId());
+    if (!controller) {
         appendEvent(u"Connect a controller before selecting it"_qs);
         return;
     }
-    m_configuration.preferredDeviceId = id;
+    const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
+    if (!match.recordId.isEmpty() && !match.ambiguous) {
+        setActiveController(match.recordId);
+        return;
+    }
+    m_configuration.preferredDeviceId = controller->directInputId;
     persistAndApply();
-    appendEvent(u"Connected controller saved as preferred device"_qs);
+    appendEvent(u"Connected controller selected; complete Verify Setup to remember it"_qs);
+}
+
+void AppBackend::refreshControllers()
+{
+    refreshControllerInventory();
+}
+
+const DiscoveredController *AppBackend::discoveredController(const QString &directInputId) const
+{
+    const auto found = std::find_if(m_discoveredControllers.cbegin(), m_discoveredControllers.cend(),
+        [&directInputId](const DiscoveredController &controller) {
+            return controller.directInputId.compare(directInputId, Qt::CaseInsensitive) == 0;
+        });
+    return found == m_discoveredControllers.cend() ? nullptr : &*found;
+}
+
+SavedControllerRecord *AppBackend::activeControllerRecord()
+{
+    const auto found = std::find_if(m_configuration.savedControllers.begin(), m_configuration.savedControllers.end(),
+        [this](const SavedControllerRecord &record) { return record.id == m_configuration.activeControllerRecordId; });
+    return found == m_configuration.savedControllers.end() ? nullptr : &*found;
+}
+
+const SavedControllerRecord *AppBackend::activeControllerRecord() const
+{
+    const auto found = std::find_if(m_configuration.savedControllers.cbegin(), m_configuration.savedControllers.cend(),
+        [this](const SavedControllerRecord &record) { return record.id == m_configuration.activeControllerRecordId; });
+    return found == m_configuration.savedControllers.cend() ? nullptr : &*found;
+}
+
+ControllerVJoyRequirements AppBackend::currentVjoyRequirements() const
+{
+    const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(m_configuration);
+    ControllerVJoyRequirements result;
+    result.axes = requirements.axes;
+    result.buttons = requirements.buttons;
+    result.continuousPovs = requirements.continuousPovs;
+    result.discretePovs = requirements.discretePovs;
+    result.deviceId = m_configuration.vjoyDeviceId;
+    return result;
+}
+
+void AppBackend::rememberCurrentController()
+{
+    const DiscoveredController *controller = discoveredController(deviceId());
+    if (!controller || controller->virtualDevice) return;
+    const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
+    const QString existingId = match.ambiguous ? QString{} : match.recordId;
+    SavedControllerRecord record = ControllerManager::verifiedRecord(*controller, m_configuration.calibration,
+                                                                      currentVjoyRequirements(), existingId);
+    if (!existingId.isEmpty()) {
+        for (SavedControllerRecord &existing : m_configuration.savedControllers) {
+            if (existing.id != existingId) continue;
+            record.ownedHidHideDeviceInstances = existing.ownedHidHideDeviceInstances;
+            existing = std::move(record);
+            m_configuration.activeControllerRecordId = existingId;
+            break;
+        }
+    } else {
+        m_configuration.savedControllers.push_back(std::move(record));
+        m_configuration.activeControllerRecordId = m_configuration.savedControllers.back().id;
+    }
+    m_configuration.preferredDeviceId = controller->directInputId;
+    ConfigStore::save(m_configuration);
+    m_worker.updateConfiguration(m_configuration);
+    appendEvent(QString(u"Verified controller remembered: %1"_qs).arg(controller->name));
+}
+
+bool AppBackend::setActiveController(const QString &recordId)
+{
+    const auto record = std::find_if(m_configuration.savedControllers.cbegin(), m_configuration.savedControllers.cend(),
+        [&recordId](const SavedControllerRecord &candidate) { return candidate.id == recordId; });
+    if (record == m_configuration.savedControllers.cend()) return false;
+    const DiscoveredController *target = nullptr;
+    for (const DiscoveredController &controller : m_discoveredControllers) {
+        const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+        if (!match.ambiguous && match.recordId == recordId) {
+            target = &controller;
+            break;
+        }
+    }
+    if (!target || !target->connected) {
+        appendEvent(u"Selected controller is offline; connect it before making it active"_qs);
+        return false;
+    }
+    m_configuration.activeControllerRecordId = recordId;
+    m_configuration.preferredDeviceId = target->directInputId;
+    m_configuration.calibration = record->calibration;
+    persistAndApply();
+    m_worker.requestPhysicalControllerSelection();
+    appendEvent(QString(u"Switching active controller to %1"_qs).arg(target->name));
+    return true;
+}
+
+bool AppBackend::selectNewController(const QString &directInputId)
+{
+    const DiscoveredController *target = discoveredController(directInputId);
+    if (!target || !target->connected || target->virtualDevice) return false;
+    const ControllerMatch match = ControllerManager::match(*target, m_configuration.savedControllers);
+    if (!match.recordId.isEmpty() && !match.ambiguous) return setActiveController(match.recordId);
+    m_configuration.activeControllerRecordId.clear();
+    m_configuration.preferredDeviceId = target->directInputId;
+    persistAndApply();
+    m_worker.requestPhysicalControllerSelection();
+    appendEvent(QString(u"Selected new controller for verification: %1"_qs).arg(target->name));
+    return true;
+}
+
+bool AppBackend::forgetController(const QString &recordId)
+{
+    const auto found = std::find_if(m_configuration.savedControllers.cbegin(), m_configuration.savedControllers.cend(),
+        [&recordId](const SavedControllerRecord &record) { return record.id == recordId; });
+    if (found == m_configuration.savedControllers.cend()) return false;
+    const bool active = found->id == m_configuration.activeControllerRecordId;
+    const QString name = found->displayName;
+    m_configuration.savedControllers.erase(m_configuration.savedControllers.begin()
+        + static_cast<std::ptrdiff_t>(std::distance(m_configuration.savedControllers.cbegin(), found)));
+    if (active) {
+        m_configuration.activeControllerRecordId.clear();
+        m_configuration.preferredDeviceId.clear();
+    }
+    persistAndApply();
+    if (active) m_worker.requestPhysicalControllerSelection();
+    appendEvent(QString(u"Forgot saved controller: %1"_qs).arg(name));
+    return true;
+}
+
+void AppBackend::setAutoSwitchVerifiedController(bool enabled)
+{
+    if (m_configuration.autoSwitchVerifiedController == enabled) return;
+    m_configuration.autoSwitchVerifiedController = enabled;
+    persistAndApply();
+}
+
+void AppBackend::setKeepRunningInTray(bool enabled)
+{
+    if (m_configuration.keepRunningInTray == enabled) return;
+    m_configuration.keepRunningInTray = enabled;
+    persistAndApply();
+}
+
+void AppBackend::forgetAllSavedControllers()
+{
+    m_configuration.savedControllers.clear();
+    m_configuration.activeControllerRecordId.clear();
+    m_configuration.preferredDeviceId.clear();
+    persistAndApply();
+    m_worker.requestPhysicalControllerSelection();
+    appendEvent(u"All saved controllers were forgotten; profiles and automation were preserved"_qs);
+}
+
+void AppBackend::resetDeviceCalibration()
+{
+    for (Calibration &calibration : m_configuration.calibration) calibration = Calibration{};
+    if (SavedControllerRecord *record = activeControllerRecord()) {
+        for (Calibration &calibration : record->calibration) calibration = Calibration{};
+    }
+    persistAndApply();
+    appendEvent(u"Active controller calibration reset; profiles and curves were preserved"_qs);
+}
+
+bool AppBackend::launchUninstaller()
+{
+    const QString uninstaller = QDir(QCoreApplication::applicationDirPath()).filePath(u"unins000.exe"_qs);
+    if (!QFileInfo(uninstaller).isExecutable()) {
+        appendEvent(u"Installed HOTAS BF6 uninstaller was not found"_qs);
+        return false;
+    }
+    if (!QProcess::startDetached(uninstaller)) {
+        appendEvent(u"Could not start the HOTAS BF6 uninstaller"_qs);
+        return false;
+    }
+    appendEvent(u"Started the HOTAS BF6 uninstaller; shared vJoy and HidHide components are retained by default"_qs);
+    exitApplication();
+    return true;
+}
+
+void AppBackend::refreshControllerInventory()
+{
+    m_discoveredControllers = ControllerDiscovery::enumerate();
+    tryAutoSwitchVerifiedController();
+    emit stateChanged();
+}
+
+void AppBackend::tryAutoSwitchVerifiedController()
+{
+    if (!m_configuration.autoSwitchVerifiedController || m_worker.runtime().physicalConnected.load()
+        || m_configuration.activeControllerRecordId.isEmpty()) return;
+    const QString candidate = ControllerManager::autoSelect(m_discoveredControllers,
+        m_configuration.savedControllers, m_configuration.activeControllerRecordId);
+    if (candidate.isEmpty() || candidate.compare(m_configuration.preferredDeviceId, Qt::CaseInsensitive) == 0) return;
+    const DiscoveredController *controller = discoveredController(candidate);
+    if (!controller) return;
+    const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
+    if (match.recordId.isEmpty() || match.ambiguous) return;
+    m_configuration.preferredDeviceId = candidate;
+    m_configuration.activeControllerRecordId = match.recordId;
+    if (const SavedControllerRecord *record = activeControllerRecord()) m_configuration.calibration = record->calibration;
+    persistAndApply();
+    m_worker.requestPhysicalControllerSelection();
+    appendEvent(QString(u"Automatically switching to verified controller: %1"_qs).arg(controller->name));
+}
+
+void AppBackend::attachMainWindow(QWindow *window)
+{
+    m_mainWindow = window;
+}
+
+void AppBackend::hideToTray()
+{
+    if (m_mainWindow) m_mainWindow->hide();
+}
+
+void AppBackend::exitApplication()
+{
+    m_worker.setMappingEnabled(false);
+    QTimer::singleShot(100, QCoreApplication::instance(), [] { QCoreApplication::quit(); });
+}
+
+void AppBackend::refreshTrayStatus()
+{
+    if (!m_trayStatusAction || !m_trayToggleAction) return;
+    const QString controller = physicalConnected() ? deviceName() : u"Controller disconnected"_qs;
+    const QString mapping = mappingRequested() ? (mappingActive() ? u"Mapping active"_qs : u"Mapping suspended"_qs)
+                                             : u"Mapping off"_qs;
+    m_trayStatusAction->setText(controller + u" · "_qs + mapping);
+    m_trayToggleAction->setText(mappingRequested() ? u"Stop Mapping"_qs : u"Start Mapping"_qs);
 }
 
 void AppBackend::resetApplicationConfiguration()
@@ -2866,7 +3204,7 @@ void AppBackend::resetApplicationConfiguration()
     m_worker.setMappingEnabled(false);
     m_configuration = defaultConfiguration();
     persistAndApply();
-    appendEvent(u"Configuration reset to v1.3 defaults"_qs);
+    appendEvent(u"Application settings, saved controllers, and calibration reset to safe defaults"_qs);
 }
 
 PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
@@ -2920,6 +3258,22 @@ void AppBackend::refreshUiSnapshot()
             m_lastPhysicalUpdateAgeMs = -1;
         }
     }
+    // Overview intentionally consumes already-published metrics at a human
+    // cadence.  The EWMA is presentation-only and is never visible to the
+    // DirectInput-to-vJoy report path or its timing measurements.
+    if (m_overviewMetricsClock.elapsed() >= 250) {
+        constexpr double alpha = 0.32;
+        const double rawLatency = static_cast<double>(m_worker.runtime().latencyAverageUs.load());
+        if (!m_worker.runtime().physicalConnected.load() || !mappingRequested()) {
+            m_overviewInputRate = 0.0;
+            m_overviewOutputRate = 0.0;
+        } else {
+            m_overviewInputRate += alpha * (m_inputReportsPerSecond - m_overviewInputRate);
+            m_overviewOutputRate += alpha * (m_vjoyWritesPerSecond - m_overviewOutputRate);
+        }
+        m_overviewMapperLatencyUs += alpha * (rawLatency - m_overviewMapperLatencyUs);
+        m_overviewMetricsClock.restart();
+    }
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
@@ -2932,6 +3286,7 @@ void AppBackend::refreshUiSnapshot()
         m_pendingControllerArrivalId.clear();
     }
     m_physicalControllerWasConnected = connected;
+    refreshTrayStatus();
     emit stateChanged();
 }
 
@@ -2978,6 +3333,10 @@ const AxisMapping *AppBackend::selectedAxisMapping() const
 
 void AppBackend::persistAndApply()
 {
+    if (SavedControllerRecord *record = activeControllerRecord()) {
+        record->calibration = m_configuration.calibration;
+        record->vjoyRequirements = currentVjoyRequirements();
+    }
     ConfigStore::save(m_configuration);
     m_worker.updateConfiguration(m_configuration);
     rebuildSelectedAxisCurve();

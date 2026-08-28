@@ -64,10 +64,10 @@
     "releaseTitle": "v1.9.3",
     "title": "Real-world setup and calibration reliability",
     "summary": "A focused external-machine reliability patch for controller arrival, two-stage calibration, calibrated-axis presentation, and fail-safe HidHide setup verification.",
-    "status": "current",
-    "replacement": null,
+    "status": "deprecated",
+    "replacement": "v2.0.0",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for first-use HOTAS setup and calibration.",
+    "statusNote": "Superseded by v2.0.0 Universal Controller Update and persistent per-device memory.",
     "highlights": [
       "A newly acquired physical controller now triggers the shared themed setup experience only when readiness, selection, or calibration needs attention.",
       "Calibration uses a deliberate range step followed by a bounded robust center sample for self-centering axes; throttles and sliders retain range-only calibration.",

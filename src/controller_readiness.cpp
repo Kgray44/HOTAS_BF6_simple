@@ -378,9 +378,14 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
     const bool hideRequired = physical.connected;
     plan.hidhideNeedsChanges = hideRequired && (!hidhide.cloakKnown || !hidhide.cloaked
         || !hidhide.mapperAllowlisted || !hidhide.selectedControllerHidden);
-    if (!hideRequired) {
+    if (!hideRequired && hidhide.installed && hidhide.cloakKnown && hidhide.cloaked
+        && !hidhide.mapperAllowlisted) {
+        plan.hidhideStatus = VerificationSubsystemState::Error;
+        plan.hidhideSummary = QStringLiteral("HOTAS BF6 may be blocked by HidHide; its executable is not allowlisted.");
+        plan.findings.append(QStringLiteral("HIDHIDE SELF-ACCESS BLOCKED — safely allowlist HOTAS BF6, then re-enumerate controllers."));
+    } else if (!hideRequired) {
         plan.hidhideStatus = VerificationSubsystemState::Unknown;
-        plan.hidhideSummary = QStringLiteral("HidHide will be checked after a physical HOTAS is connected.");
+        plan.hidhideSummary = QStringLiteral("No physical DirectInput devices detected. HidHide will be checked again when one is connected.");
         plan.findings.append(QStringLiteral("HIDHIDE WAITING — connect and select a physical controller before hiding an exact device instance."));
     } else if (!hidhide.installed || !hidhide.cliAvailable || !hidhide.serviceReady) {
         plan.hidhideStatus = VerificationSubsystemState::Attention;
@@ -861,7 +866,7 @@ QList<ControllerReadinessService::RepairOperation> ControllerReadinessService::r
         operations.append(std::move(operation));
         journal->mapperWasAdded = true;
     }
-    if (!plan.hidhide.selectedControllerHidden) {
+    if (plan.physical.connected && !plan.hidhide.selectedControllerHidden) {
         RepairOperation operation;
         operation.name = QStringLiteral("Hide the selected physical HOTAS");
         operation.program = hidhideCli;
@@ -872,7 +877,7 @@ QList<ControllerReadinessService::RepairOperation> ControllerReadinessService::r
         operations.append(std::move(operation));
         journal->controllerWasHidden = true;
     }
-    if (!plan.hidhide.cloaked) {
+    if (plan.physical.connected && !plan.hidhide.cloaked) {
         RepairOperation operation;
         operation.name = QStringLiteral("Enable HidHide cloaking");
         operation.program = hidhideCli;
@@ -1083,6 +1088,19 @@ bool ControllerReadinessService::recoverFromPhysicalAccessFailure()
     }
     m_transactionActive = false;
     return restored;
+}
+
+bool ControllerReadinessService::allowlistMapperOnly()
+{
+    if (m_transactionActive || !m_plan.hidhide.installed || m_plan.hidhide.mapperAllowlisted) return false;
+    const SetupProcessResult operation = runHidHide(true,
+        {QStringLiteral("--app-reg"), mapperExecutablePath()});
+    if (!operation.succeeded()) return false;
+    m_plan.hidhide.mapperAllowlisted = true;
+    m_plan.hidhideStatus = VerificationSubsystemState::Attention;
+    m_plan.hidhideSummary = QStringLiteral("HOTAS BF6 is now allowlisted. Re-enumerating physical controllers.");
+    m_plan.status = QStringLiteral("HIDHIDE ACCESS REPAIRED — Connect or replug a physical controller to continue setup.");
+    return true;
 }
 
 void ControllerReadinessService::completePhysicalAccessVerification(bool reacquired, bool reportsReceived,

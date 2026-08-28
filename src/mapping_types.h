@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <QString>
+#include <QStringList>
 #include <QUuid>
 
 namespace hotas {
@@ -406,8 +407,61 @@ struct ControllerProfile {
     std::array<QString, kVirtualAxisSlotCount> virtualAxisAliases{};
 };
 
+// Controller identity lives with the durable configuration rather than the
+// DirectInput worker.  These snapshots are created by the low-frequency
+// discovery service and are never consulted while processing an input report.
+struct ControllerVJoyRequirements {
+    std::array<bool, kVirtualAxisSlotCount> axes{};
+    int buttons = 0;
+    int continuousPovs = 0;
+    int discretePovs = 0;
+    int deviceId = 1;
+};
+
+struct DiscoveredController {
+    QString name;
+    QString directInputId;
+    QString productGuid;
+    QString hidInstanceId;
+    int vendorId = 0;
+    int productId = 0;
+    std::array<bool, kPhysicalAxisCount> axes{};
+    int axisCount = 0;
+    int buttonCount = 0;
+    int povCount = 0;
+    bool connected = false;
+    bool virtualDevice = false;
+};
+
+struct SavedControllerRecord {
+    QString id;
+    QString displayName;
+    QString lastDirectInputId;
+    QString productGuid;
+    QString hidInstanceId;
+    int vendorId = 0;
+    int productId = 0;
+    std::array<bool, kPhysicalAxisCount> axes{};
+    int axisCount = 0;
+    int buttonCount = 0;
+    int povCount = 0;
+    QString capabilityFingerprint;
+    QString lastSeen;
+    QString lastVerified;
+    int verificationVersion = 1;
+    std::array<Calibration, kPhysicalAxisCount> calibration{};
+    ControllerVJoyRequirements vjoyRequirements;
+    // Only exact instances HOTAS BF6 has explicitly configured belong here;
+    // unrelated HidHide entries are intentionally never represented.
+    QStringList ownedHidHideDeviceInstances;
+};
+
 struct MapperConfiguration {
     QString preferredDeviceId;
+    std::vector<SavedControllerRecord> savedControllers;
+    QString activeControllerRecordId;
+    bool autoSwitchVerifiedController = true;
+    bool keepRunningInTray = true;
     int vjoyDeviceId = 1;
     bool startMappingOnLaunch = false;
     // Global safety value for physical routes with no active virtual target,

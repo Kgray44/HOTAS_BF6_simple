@@ -12,6 +12,12 @@ ApplicationWindow {
     minimumHeight: 650
     visible: true
     title: "HOTAS BF6"
+    onClosing: function(close) {
+        if (backend.keepRunningInTray && backend.trayAvailable) {
+            close.accepted = false
+            backend.hideToTray()
+        }
+    }
     Theme { id: shellTheme }
     color: shellTheme.background
     font.family: shellTheme.displayFont

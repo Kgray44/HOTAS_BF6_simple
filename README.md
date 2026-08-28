@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v1.9.3**
+**Current release: v2.0.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a physical DirectInput controller, initially the Thrustmaster T.Flight HOTAS One, into the virtual controls Battlefield 6 can reliably bind through vJoy. It combines deterministic real-time input processing with profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and HOTAS Setup & Verification.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into the virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.0 is the first major architecture expansion of HOTAS BF6: it generalizes the physical-input layer from a T.Flight-oriented workflow into persistent universal DirectInput device management while preserving the existing high-performance mapping engine. It combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and HOTAS Setup & Verification.
 
 ## Product gallery
 
@@ -69,6 +69,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **Response Curves** — Each profile/axis can use compiled response curves with both preset-based and point-based editing.
 - **Automation Engine** — A deterministic, fixed-capacity Automation subsystem evaluates rules inside the mapper using data compiled before report processing.
 - **Automation Editor UX** — Automation is edited as readable full-page rules rather than raw condition/action arrays.
+- **Universal Controller Management** — HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.
 - **Diagnostics and Observability** — The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
 - **User Interface and Themes** — The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.
 - **vJoy Integration** — vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.
@@ -83,8 +84,8 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 ## Installation and first use
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
-2. Open HOTAS BF6. A healthy configuration starts without an interrupting setup dialog.
-3. Open Settings and choose VERIFY HOTAS SETUP to deeply verify the physical controller, vJoy Device 1, and HidHide configuration.
+2. Open HOTAS BF6 at Overview. Choose a connected controller in Settings when more than one is available; a new controller opens themed setup after selection.
+3. Open Settings and choose VERIFY HOTAS SETUP to deeply verify the selected physical controller, vJoy Device 1, and HidHide configuration.
 4. Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 executes required vJoy/HidHide changes through one approved elevated transaction and restores the Mapping On/Off state that preceded the repair.
 5. Confirm READY, then select or create a profile.
 6. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.
@@ -115,7 +116,7 @@ Use Mapping Off to neutralize output, inspect Diagnostics and HOTAS Setup & Veri
 
 | Category | Hardware / software | Status | Notes |
 | --- | --- | --- | --- |
-| Physical controller | Thrustmaster T.Flight HOTAS One | Primary validation target | DirectInput axes, buttons, and POV input are the project's initial supported hardware path. |
+| Physical controller | Thrustmaster T.Flight HOTAS One | Primary validation target | The physical acceptance baseline; compatible DirectInput controllers use the same controller registry, setup, per-device calibration, and vJoy workflow. |
 | Virtual controller | vJoy Device 1 | Primary output target | Runtime capability discovery supports X, Y, Z, Rx, Ry, Rz, Slider 0, Slider 1, buttons, and continuous/discrete POVs when exposed. |
 | Game | Battlefield 6 | Primary game target | The mapper exists to present bindable vJoy inputs and safe centered/one-sided axis behavior to BF6. |
 | Input hiding | HidHide | Optional / recommended | Used to hide the physical controller from games while keeping it visible to the mapper when configured correctly. |

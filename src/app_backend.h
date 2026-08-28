@@ -15,8 +15,13 @@
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QWindow>
 
 #include <array>
+
+class QAction;
+class QMenu;
+class QSystemTrayIcon;
 
 namespace hotas {
 
@@ -50,6 +55,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceId READ deviceId NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllers READ controllers NOTIFY stateChanged)
+    Q_PROPERTY(QString activeControllerRecordId READ activeControllerRecordId NOTIFY stateChanged)
+    Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
+    Q_PROPERTY(bool keepRunningInTray READ keepRunningInTray NOTIFY stateChanged)
+    Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool physicalConnected READ physicalConnected NOTIFY stateChanged)
     Q_PROPERTY(int axisCount READ axisCount NOTIFY stateChanged)
     Q_PROPERTY(int buttonCount READ buttonCount NOTIFY stateChanged)
@@ -99,6 +109,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY stateChanged)
     Q_PROPERTY(qint64 lastPhysicalUpdateAgeMs READ lastPhysicalUpdateAgeMs NOTIFY stateChanged)
     Q_PROPERTY(double vjoyWritesPerSecond READ vjoyWritesPerSecond NOTIFY stateChanged)
+    Q_PROPERTY(double overviewInputRate READ overviewInputRate NOTIFY stateChanged)
+    Q_PROPERTY(double overviewMapperLatencyUs READ overviewMapperLatencyUs NOTIFY stateChanged)
+    Q_PROPERTY(double overviewOutputRate READ overviewOutputRate NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY stateChanged)
     Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY stateChanged)
@@ -154,6 +167,11 @@ public:
     int activeProfileIndex() const;
     QString deviceName() const;
     QString deviceId() const;
+    QVariantList controllers() const;
+    QString activeControllerRecordId() const;
+    bool autoSwitchVerifiedController() const;
+    bool keepRunningInTray() const;
+    bool trayAvailable() const;
     bool physicalConnected() const;
     int axisCount() const;
     int buttonCount() const;
@@ -203,6 +221,9 @@ public:
     double inputReportsPerSecond() const { return m_inputReportsPerSecond; }
     qint64 lastPhysicalUpdateAgeMs() const { return m_lastPhysicalUpdateAgeMs; }
     double vjoyWritesPerSecond() const { return m_vjoyWritesPerSecond; }
+    double overviewInputRate() const { return m_overviewInputRate; }
+    double overviewMapperLatencyUs() const { return m_overviewMapperLatencyUs; }
+    double overviewOutputRate() const { return m_overviewOutputRate; }
     qulonglong latencyCurrentUs() const;
     qulonglong latencyAverageUs() const;
     qulonglong latencyPeakUs() const;
@@ -300,6 +321,7 @@ public:
     Q_INVOKABLE bool handoffToLauncher();
     Q_INVOKABLE bool openVjoyConfiguration();
     Q_INVOKABLE void refreshHidHideStatus();
+    Q_INVOKABLE bool repairHidHideAccess();
     Q_INVOKABLE bool openHidHideConfiguration();
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
@@ -308,7 +330,19 @@ public:
     Q_INVOKABLE bool copyControllerDiagnostics();
     Q_INVOKABLE void acknowledgeControllerSetup();
     Q_INVOKABLE void useConnectedDevice();
+    Q_INVOKABLE void refreshControllers();
+    Q_INVOKABLE bool setActiveController(const QString &recordId);
+    Q_INVOKABLE bool selectNewController(const QString &directInputId);
+    Q_INVOKABLE bool forgetController(const QString &recordId);
+    Q_INVOKABLE void setAutoSwitchVerifiedController(bool enabled);
+    Q_INVOKABLE void setKeepRunningInTray(bool enabled);
+    Q_INVOKABLE void forgetAllSavedControllers();
+    Q_INVOKABLE void resetDeviceCalibration();
+    Q_INVOKABLE bool launchUninstaller();
     Q_INVOKABLE void resetApplicationConfiguration();
+    void attachMainWindow(QWindow *window);
+    Q_INVOKABLE void hideToTray();
+    Q_INVOKABLE void exitApplication();
 
 signals:
     void stateChanged();
@@ -328,6 +362,14 @@ private slots:
 
 private:
     void persistAndApply();
+    void refreshControllerInventory();
+    const DiscoveredController *discoveredController(const QString &directInputId) const;
+    SavedControllerRecord *activeControllerRecord();
+    const SavedControllerRecord *activeControllerRecord() const;
+    ControllerVJoyRequirements currentVjoyRequirements() const;
+    void rememberCurrentController();
+    void tryAutoSwitchVerifiedController();
+    void refreshTrayStatus();
     void rebuildSelectedAxisCurve();
     CurveDefinition comparisonCurveDefinition() const;
     bool fallBackToAvailableAxis();
@@ -369,13 +411,21 @@ private:
     // v1.9.1 never shows a first-run setup modal.
     bool m_controllerSetupSuggested = false;
     bool m_physicalControllerWasConnected = false;
+    QList<DiscoveredController> m_discoveredControllers;
+    QPointer<QWindow> m_mainWindow;
+    QSystemTrayIcon *m_trayIcon = nullptr;
+    QMenu *m_trayMenu = nullptr;
+    QAction *m_trayStatusAction = nullptr;
+    QAction *m_trayToggleAction = nullptr;
     QString m_pendingControllerArrivalId;
     bool m_verificationInProgress = false;
     QPointer<QThread> m_verificationThread;
     QTimer m_snapshotTimer;
+    QTimer m_controllerDiscoveryTimer;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
+    QElapsedTimer m_overviewMetricsClock;
     QElapsedTimer m_calibrationFinalizationClock;
     CalibrationStageState m_calibrationStage = CalibrationStageState::Idle;
     std::array<CalibrationCaptureAxis, kPhysicalAxisCount> m_calibrationCapture{};
@@ -386,6 +436,9 @@ private:
     qint64 m_lastPhysicalUpdateAgeMs = -1;
     bool m_havePhysicalReport = false;
     double m_vjoyWritesPerSecond = 0.0;
+    double m_overviewInputRate = 0.0;
+    double m_overviewMapperLatencyUs = 0.0;
+    double m_overviewOutputRate = 0.0;
     qulonglong m_latencyP95Us = 0;
     qulonglong m_latencyP99Us = 0;
     QVariantList m_selectedAxisCurve;

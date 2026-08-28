@@ -7,7 +7,7 @@ Page {
     anchors.fill: parent
     padding: 0
 
-    property int currentPage: 0
+    property int currentPage: 8
     property bool menuOpen: false
     property var allAxes: backend.axes
     property var allButtons: backend.buttons
@@ -1101,7 +1101,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 382
+        height: 417
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1147,7 +1147,7 @@ Page {
             }
             Repeater {
                 model: [
-                    { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
+                    { label: "OVERVIEW", page: 8, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
                     { label: "AUTOMATION", page: 7, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
@@ -1200,6 +1200,7 @@ Page {
         id: pageHost
         anchors.fill: parent
  anchors.margins: 24
+        OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1975,6 +1976,65 @@ Page {
                         CommandButton { label: "VERIFY HOTAS SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
                     }
                 }
+                Panel { width: parent.width; height: Math.max(138, 80 + legacyControllerManagerRepeater.count * 64)
+                    color: "#182a30"; border.color: "#536975"
+                    ColumnLayout { anchors.fill: parent; anchors.margins: 16; spacing: 7
+                        RowLayout { Layout.fillWidth: true
+                            ColumnLayout { Layout.fillWidth: true; spacing: 3
+                                Text { text: "INPUT CONTROLLERS"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                                Text { text: "Connected controllers, saved devices, active input, and setup state."; color: "#9dafb4"; font.pixelSize: 10 }
+                            }
+                            CommandButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshControllers() }
+                        }
+                        Repeater { id: legacyControllerManagerRepeater; model: backend.controllers
+                            delegate: Rectangle { Layout.fillWidth: true; implicitHeight: 56; radius: 4
+                                color: modelData.active ? "#244650" : "#10171b"; border.color: modelData.active ? "#78aab9" : "#435660"
+                                RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 1
+                                        Text { text: modelData.name; color: "#e8eeee"; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                        Text { text: modelData.state + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.povCount + " POV"; color: "#9dafb4"; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    }
+                                    CommandButton { visible: !modelData.verified && modelData.connected; label: "SET UP"; onTriggered: backend.selectNewController(modelData.directInputId) }
+                                    CommandButton { visible: modelData.verified && modelData.connected && !modelData.active; label: "SET ACTIVE"; subdued: true; onTriggered: backend.setActiveController(modelData.id) }
+                                    CommandButton { visible: modelData.verified; label: "FORGET"; subdued: true; onTriggered: backend.forgetController(modelData.id) }
+                                }
+                            }
+                        }
+                        Text { visible: legacyControllerManagerRepeater.count === 0; text: "No physical DirectInput controllers detected. vJoy is excluded from this list."; color: "#9dafb4"; font.pixelSize: 10 }
+                    }
+                }
+                Panel { width: parent.width; height: 70
+                    RowLayout { anchors.fill: parent; anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 3
+                            Text { text: "AUTO-SWITCH VERIFIED CONTROLLER"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Switch only to one unambiguous remembered controller when the active one is unavailable."; color: "#9dafb4"; font.pixelSize: 10 }
+                        }
+                        Switch { checked: backend.autoSwitchVerifiedController; onToggled: backend.setAutoSwitchVerifiedController(checked) }
+                    }
+                }
+                Panel { width: parent.width; height: 70
+                    RowLayout { anchors.fill: parent; anchors.margins: 16
+                        ColumnLayout { Layout.fillWidth: true; spacing: 3
+                            Text { text: "KEEP RUNNING IN SYSTEM TRAY"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is not available in this Windows session."; color: "#9dafb4"; font.pixelSize: 10 }
+                        }
+                        Switch { enabled: backend.trayAvailable; checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
+                    }
+                }
+                Panel { width: parent.width; height: 92
+                    color: "#2c2223"; border.color: "#ca9090"
+                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 12
+                        ColumnLayout { Layout.fillWidth: true; spacing: 3
+                            Text { text: "TROUBLESHOOTING & UNINSTALL"; color: "#f0d7d5"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Forget controllers or reset only this device calibration without touching profiles. The normal uninstaller retains vJoy, HidHide, and user data by default."; color: "#ab999d"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Column { spacing: 5
+                            CommandButton { label: "FORGET CONTROLLERS"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "forget"; legacyDeviceActionDialog.open() } }
+                            CommandButton { label: "RESET CALIBRATION"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "calibration"; legacyDeviceActionDialog.open() } }
+                            CommandButton { label: "UNINSTALL HOTAS BF6"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "uninstall"; legacyDeviceActionDialog.open() } }
+                        }
+                    }
+                }
                 Panel { width: parent.width; height: 84
                     RowLayout { anchors.fill: parent; anchors.margins: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
@@ -2173,6 +2233,20 @@ Page {
         AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
     }
 
+    Dialog {
+        id: legacyDeviceActionDialog
+        modal: true
+        property string action: ""
+        title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget all saved controllers?" : "Reset active-controller calibration?"
+        standardButtons: Dialog.Cancel
+        contentItem: ColumnLayout { spacing: 12; implicitWidth: 390
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#e8eeee"
+                text: legacyDeviceActionDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, automation, and saved data remain by default." : legacyDeviceActionDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles, curves, automation, and other settings stay intact." : "This removes calibration only for the active controller. Profiles, curves, and mappings stay intact." }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
+                Button { text: "Confirm"; onClicked: { if (legacyDeviceActionDialog.action === "uninstall") backend.launchUninstaller(); else if (legacyDeviceActionDialog.action === "forget") backend.forgetAllSavedControllers(); else backend.resetDeviceCalibration(); legacyDeviceActionDialog.close() } }
+            }
+        }
+    }
     Connections {
         target: backend
         function onControllerSetupRequested() {

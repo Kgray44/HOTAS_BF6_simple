@@ -120,6 +120,17 @@
     ]
   },
   {
+    "name": "Universal Controller Management",
+    "description": "HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.",
+    "subfeatures": [
+      "Low-frequency inventory of attached DirectInput controllers with display name, DirectInput identity, HID path when available, capability counts, and virtual-device exclusion.",
+      "Persistent verified-device records use layered HID, DirectInput, product, vendor/product, and capability identity matching without silently choosing ambiguous identical hardware.",
+      "Controller Manager shows connected, verified, new, active, and offline devices together and supports setup, active selection, refresh, and forgetting a device.",
+      "Calibration and remembered vJoy capability requirements belong to the physical controller rather than leaking between unrelated hardware.",
+      "Known healthy controllers reconnect quietly; new controllers invoke themed verification, and optional automatic switching only uses one unambiguous verified device."
+    ]
+  },
+  {
     "name": "Diagnostics and Observability",
     "description": "The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.",
     "subfeatures": [
@@ -141,7 +152,7 @@
       "Standard theme as the modern general-purpose interface.",
       "Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.",
       "Instant theme switching with theme state stored separately from mapper configuration.",
-      "Dedicated pages for Home, Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation.",
+      "Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.",
       "Shared themed selectors, numeric inputs, dialogs, cards, and status controls.",
       "Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces."
     ]

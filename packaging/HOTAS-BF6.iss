@@ -58,6 +58,12 @@ Type: filesandordirs; Name: "{app}\*"
 Name: "{group}\HOTAS BF6"; Filename: "{app}\HOTAS BF6 Launcher.exe"; IconFilename: "{app}\HOTAS BF6 Launcher.exe"
 Name: "{autodesktop}\HOTAS BF6"; Filename: "{app}\HOTAS BF6 Launcher.exe"; IconFilename: "{app}\HOTAS BF6 Launcher.exe"; Tasks: desktopicon
 
+; Shared drivers are deliberately retained. The only HidHide cleanup performed
+; by normal uninstall is this application's own allowlist entry; no global
+; lists or physical-device rules from other software are touched.
+[UninstallRun]
+Filename: "{code:HidHideCliPath}"; Parameters: "--app-unreg ""{app}\HOTAS BF6.exe"""; Flags: runhidden; Check: HidHideCliAvailable
+
 [Code]
 var
   DependencyPage: TWizardPage;
@@ -118,6 +124,36 @@ begin
   Result := RegValueExists(HKCR, 'Installer\Dependencies\NSS.Drivers.HidHide.x64', 'Version') or
     (RegKeyExists(HKLM64, 'SYSTEM\CurrentControlSet\Services\HidHide') and
      FindUninstallProduct('HidHide', Version));
+end;
+
+function HidHideCliPath(Param: String): String;
+begin
+  Result := ExpandConstant('{pf}\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe');
+  if not FileExists(Result) then
+    Result := ExpandConstant('{pf32}\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe');
+end;
+
+function HidHideCliAvailable(): Boolean;
+begin
+  Result := FileExists(HidHideCliPath(''));
+end;
+
+procedure AllowHotasBf6ThroughHidHide();
+var
+  ResultCode: Integer;
+  MapperPath: String;
+begin
+  if not HidHideDetected() or not HidHideCliAvailable() then Exit;
+  MapperPath := ExpandConstant('{app}\HOTAS BF6.exe');
+  if not FileExists(MapperPath) then begin
+    Log('HOTAS BF6 HidHide allowlist was skipped because the installed mapper executable is missing.');
+    Exit;
+  end;
+  if Exec(HidHideCliPath(''), '--app-reg "' + MapperPath + '"', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Log('HOTAS BF6 executable was allowlisted in HidHide.')
+  else
+    Log('HOTAS BF6 HidHide allowlist could not be applied during install (exit ' + IntToStr(ResultCode) + '). The app offers a safe retry.');
 end;
 
 procedure UpdateDependencyStatus();
@@ -278,6 +314,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
+    AllowHotasBf6ThroughHidHide();
     if RestartRequired then
       Log('HOTAS BF6 installed. vJoy: ' + VJoyResult + '; HidHide: ' + HidHideResult +
         '; Restart required: yes')

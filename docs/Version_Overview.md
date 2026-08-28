@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v1.9.3**
+**Current release: v2.0.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.0 — Universal Controller Update
+
+The first major HOTAS BF6 architecture expansion: it generalizes the physical-input layer from a T.Flight-oriented workflow into persistent universal DirectInput device management while preserving the existing high-performance mapping engine.
+
+- Persistent verified-device registry with layered identities, offline memory, per-device calibration, and remembered vJoy requirements.
+- Low-frequency DirectInput controller inventory and an ambiguity-safe Controller Manager that always excludes vJoy input.
+- Overview landing page with physical/output/setup/configuration summaries and presentation-smoothed performance metrics.
+- HidHide self-access diagnostics and allowlist-only repair, plus installer-time registration of the installed mapper where permitted.
+- System tray operation, controlled close behavior, controller-only reset tools, and an in-app uninstaller entry that retains shared dependencies by default.
 
 ## v1.9.3 — Real-world setup and calibration reliability
 

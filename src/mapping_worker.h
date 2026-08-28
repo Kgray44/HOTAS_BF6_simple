@@ -118,6 +118,11 @@ public:
     // plane for the exact expected HID instance plus a newly received report.
     // It is never called by the report path.
     bool reacquirePhysicalController(const QString &expectedHidInstanceId, int timeoutMs = 3500);
+    // Changes the already-persisted preferred DirectInput device at a safe
+    // acquisition boundary.  It clears old input state before discovery and
+    // never performs device enumeration from a report callback.
+    bool selectPhysicalController(const QString &expectedDirectInputId, int timeoutMs = 3500);
+    void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
     DeviceSnapshot deviceSnapshot() const;

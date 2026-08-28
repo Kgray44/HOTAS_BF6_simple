@@ -15,7 +15,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -46,6 +46,10 @@ set(HOTAS_MAPPER_SOURCES
     src/automation_engine.cpp
     src/config_store.h
     src/config_store.cpp
+    src/controller_manager.h
+    src/controller_manager.cpp
+    src/controller_discovery.h
+    src/controller_discovery.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
     src/controller_diagnostics.h
@@ -78,6 +82,7 @@ qt_add_qml_module(HOTASMapper
         qml/Legacy.qml
         qml/Theme.qml
         qml/Main.qml
+        qml/OverviewPage.qml
         qml/Standard.qml
         qml/CurveEditor.qml
         qml/ControllerReadinessPanel.qml
@@ -99,6 +104,7 @@ target_link_libraries(HOTASMapper PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Widgets
 )
 target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set_target_properties(HOTASMapper PROPERTIES
@@ -184,6 +190,8 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/config_store.h
         src/config_store.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
         src/event_log.h
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)

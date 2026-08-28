@@ -46,5 +46,8 @@ int main(int argc, char *argv[])
         [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
     if (engine.rootObjects().isEmpty()) return -1;
+    if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
+        backend.attachMainWindow(window);
+    }
     return application.exec();
 }
