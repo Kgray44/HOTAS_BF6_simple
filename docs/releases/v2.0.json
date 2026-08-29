@@ -71,10 +71,10 @@
     "releaseTitle": "v2.0.3",
     "title": "Multi-Controller Setup & vJoy Reliability Hotfix",
     "summary": "HOTAS BF6 v2.0.3 hardens the Universal Controller workflow using real multi-controller hardware testing. It fixes incorrect setup targeting when a new controller is connected, completes NEW-to-VERIFIED persistence after automatic repair, ensures vJoy capacity is actually sufficient for each verified controller, makes disconnected devices visually unmistakable, cleans generic controller terminology, and fixes remaining Settings layout and styling regressions.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.4",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Multi-controller reliability hotfix; upgrade to v2.0.4 for the UI responsiveness fix.",
     "highlights": [
       "Removes the mapper-ownership shortcut that treated a BUSY vJoy device with successful reports as sufficient without validating axes, buttons, and POV capacity.",
       "Configures and reinspects the actual selected vJoy device before setup can become Ready, including the safe first-time physical button-capacity floor and saved controller-specific requirements.",
@@ -83,6 +83,24 @@
       "Distinguishes active connected, selected offline, verified, new, and offline saved controllers; adds an intentional zero-connected state and clear automatic-switch feedback.",
       "Repairs compact Settings-row text layout, fully themes the vJoy +/- selector and theme menu controls, and uses Controller or Device terminology for generic physical inputs.",
       "Keeps Universal Controller discovery, registry persistence, readiness inspection, verification, driver transactions, UI rendering, and all new state handling outside the DirectInput-to-vJoy report loop."
+    ]
+  },
+  {
+    "version": "2.0.4",
+    "tag": "v2.0.4",
+    "releaseTitle": "v2.0.4",
+    "title": "UI Responsiveness Hotfix",
+    "summary": "Fixes a severe UI responsiveness regression where broad high-frequency state notifications caused expensive controller and device presentation work to be repeatedly reevaluated. v2.0.4 separates telemetry from controller and configuration state, caches controller presentation data, and restores smooth responsiveness without changing the mapper hot path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Replaces the 16 ms broad state notification with dedicated input and telemetry notifications, so slow Settings and controller bindings stay idle while live metrics remain responsive.",
+      "Caches the controller presentation model behind a dedicated controllersChanged notification and only publishes a replacement after a material change.",
+      "Compares low-frequency DirectInput inventory snapshots before matching or rebuilding the controller model, leaving unchanged discovery ticks quiet.",
+      "Uses one Settings-page controller-model reference and a cached connected-controller count rather than repeatedly calling the C++ controller property in QML loops.",
+      "Adds focused notification/cache contract coverage and a ten-second steady-state controller-model validation while preserving DirectInput discovery cadence and mapper behavior."
     ]
   }
 ]
