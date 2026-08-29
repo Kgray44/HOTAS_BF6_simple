@@ -2,11 +2,19 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.6**
+**Current release: v2.0.7**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.7 — Published Manifest Transport Hotfix
+
+Corrects the GitHub-hosted runner's public-manifest decoding in the v1.9.3 updater acceptance without changing the shipped mapper, launcher, installer, or real-time input path.
+
+- Uses PowerShell's JSON-aware REST client for the exact public latest-manifest endpoint consumed by the shipped launcher.
+- Retains the bounded expected-version/tag readiness check before the unchanged legacy updater starts.
+- Keeps the full public download, SHA-256 verification, helper, silent installer, mapper startup, and configuration-migration acceptance intact.
 
 ## v2.0.6 — Published Manifest Readiness Hotfix
 

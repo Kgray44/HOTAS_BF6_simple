@@ -125,14 +125,30 @@
     "releaseTitle": "v2.0.6",
     "title": "Published Manifest Readiness Hotfix",
     "summary": "HOTAS BF6 v2.0.6 fixes a release-acceptance race in which GitHub could publish a release before its public latest-manifest alias advanced. The v1.9.3 updater acceptance now waits for the exact latest endpoint that the shipped launcher consumes to identify the expected release before exercising the unchanged full update path.",
+    "status": "superseded",
+    "replacement": "v2.0.7",
+    "syncToGitHubRelease": true,
+    "statusNote": "Published manifest readiness hotfix; upgrade to v2.0.7 for correct hosted-runner manifest decoding.",
+    "highlights": [
+      "Waits for the public latest update manifest to report the candidate version and tag before launching the unchanged v1.9.3 updater.",
+      "Bounds that wait to five minutes and records the last observed public manifest state if GitHub release metadata does not become ready.",
+      "Preserves all packaged mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, and configuration-migration behavior from v2.0.5."
+    ]
+  },
+  {
+    "version": "2.0.7",
+    "tag": "v2.0.7",
+    "releaseTitle": "v2.0.7",
+    "title": "Published Manifest Transport Hotfix",
+    "summary": "HOTAS BF6 v2.0.7 corrects a GitHub Actions-only manifest-decoding flaw exposed by the v2.0.6 readiness gate. The acceptance now obtains the JSON manifest through PowerShell's REST client, which decodes GitHub release assets correctly on hosted Windows while still querying the exact latest URL consumed by the shipped v1.9.3 launcher.",
     "status": "current",
     "replacement": null,
     "syncToGitHubRelease": true,
     "statusNote": "Current recommended release for compatible DirectInput controllers.",
     "highlights": [
-      "Waits for the public latest update manifest to report the candidate version and tag before launching the unchanged v1.9.3 updater.",
-      "Bounds that wait to five minutes and records the last observed public manifest state if GitHub release metadata does not become ready.",
-      "Preserves all packaged mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, and configuration-migration behavior from v2.0.5."
+      "Uses Invoke-RestMethod to decode the public latest update-manifest JSON correctly on the GitHub-hosted Windows runner.",
+      "Retains v2.0.6's bounded exact-version and exact-tag readiness guard before launching the unchanged v1.9.3 updater.",
+      "Preserves all mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, startup, and configuration-migration behavior from v2.0.6."
     ]
   }
 ]

@@ -32,8 +32,10 @@ function Wait-PublishedLatestManifest([string] $expectedVersion, [string] $manif
     $lastObservation = 'the latest manifest was not yet available'
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
-            $response = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing
-            $manifest = $response.Content | ConvertFrom-Json
+            # Invoke-WebRequest exposes GitHub release assets as bytes on the
+            # hosted runner. Invoke-RestMethod decodes and parses this JSON
+            # asset consistently while requesting the same shipped endpoint.
+            $manifest = Invoke-RestMethod -Uri $manifestUrl
             $version = [string]$manifest.version
             $tag = [string]$manifest.tag
             $lastObservation = "version '$version', tag '$tag'"
