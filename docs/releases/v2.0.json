@@ -109,14 +109,30 @@
     "releaseTitle": "v2.0.5",
     "title": "Published Updater Acceptance Hotfix",
     "summary": "HOTAS BF6 v2.0.5 fixes the headless GitHub Actions environment used to validate the public v1.9.3 built-in updater path. It preserves v2.0.4 UI responsiveness behavior and all shipped mapper code while making the isolated acceptance launch the updated Qt application with the same offscreen platform used by existing installer smoke tests.",
+    "status": "superseded",
+    "replacement": "v2.0.6",
+    "syncToGitHubRelease": true,
+    "statusNote": "Published updater acceptance hotfix; upgrade to v2.0.6 for public latest-manifest readiness validation.",
+    "highlights": [
+      "Sets the Qt offscreen platform only inside the isolated published-updater acceptance so the v1.9.3 launcher, helper, installer, updated launcher, and updated mapper can be exercised on a non-interactive GitHub-hosted Windows runner.",
+      "Leaves user installs, normal desktop mapper startup, controller input, vJoy output, and the DirectInput-to-vJoy report path unchanged.",
+      "Emits the updater log on an acceptance startup failure, making a future public-update handoff failure diagnosable from its CI receipt."
+    ]
+  },
+  {
+    "version": "2.0.6",
+    "tag": "v2.0.6",
+    "releaseTitle": "v2.0.6",
+    "title": "Published Manifest Readiness Hotfix",
+    "summary": "HOTAS BF6 v2.0.6 fixes a release-acceptance race in which GitHub could publish a release before its public latest-manifest alias advanced. The v1.9.3 updater acceptance now waits for the exact latest endpoint that the shipped launcher consumes to identify the expected release before exercising the unchanged full update path.",
     "status": "current",
     "replacement": null,
     "syncToGitHubRelease": true,
     "statusNote": "Current recommended release for compatible DirectInput controllers.",
     "highlights": [
-      "Sets the Qt offscreen platform only inside the isolated published-updater acceptance so the v1.9.3 launcher, helper, installer, updated launcher, and updated mapper can be exercised on a non-interactive GitHub-hosted Windows runner.",
-      "Leaves user installs, normal desktop mapper startup, controller input, vJoy output, and the DirectInput-to-vJoy report path unchanged.",
-      "Emits the updater log on an acceptance startup failure, making a future public-update handoff failure diagnosable from its CI receipt."
+      "Waits for the public latest update manifest to report the candidate version and tag before launching the unchanged v1.9.3 updater.",
+      "Bounds that wait to five minutes and records the last observed public manifest state if GitHub release metadata does not become ready.",
+      "Preserves all packaged mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, and configuration-migration behavior from v2.0.5."
     ]
   }
 ]

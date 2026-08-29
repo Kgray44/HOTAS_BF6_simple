@@ -269,6 +269,10 @@ if (BUILD_TESTING)
         COMMAND "${CMAKE_COMMAND}"
             "-DMAPPER_MAIN=${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_widgets_startup_contract.cmake")
+    add_test(NAME published_updater_manifest_readiness_contract
+        COMMAND "${CMAKE_COMMAND}"
+            "-DUPDATER_ACCEPTANCE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-published-updater.ps1"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_published_updater_manifest_readiness_contract.cmake")
     if (WIN32)
         set_tests_properties(widgets_startup_contract_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
