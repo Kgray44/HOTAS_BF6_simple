@@ -215,11 +215,11 @@ Flickable {
             }
         }
 
-        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.activeProfileName; accent: root.primaryColor
+        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.activeProfileDisplayName; accent: root.primaryColor
             RowLayout { Layout.fillWidth: true; spacing: 22
                 Column { spacing: 3
                     Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.activeProfileName; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    Text { text: backend.activeProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
                 }
                 Column { spacing: 3
                     Text { text: "MAPPED AXES"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }

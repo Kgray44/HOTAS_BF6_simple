@@ -10,6 +10,7 @@
 #include "hotas_build_version.h"
 #include "launcher_core.h"
 #include "profile_model.h"
+#include "profile_portability.h"
 #include "response_curve.h"
 
 #include <QCoreApplication>
@@ -38,6 +39,10 @@
 #include <limits>
 #include <memory>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace hotas {
 using namespace Qt::StringLiterals;
 
@@ -60,8 +65,27 @@ bool sameControllerInventory(const QList<DiscoveredController> &left,
 
 QString automationProfileName(const MapperConfiguration &configuration, const QString &id)
 {
-    if (const ControllerProfile *profile = findProfile(configuration, id)) return profile->name;
+    if (findProfile(configuration, id)) return categoryProfileLabel(configuration, id);
     return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
+}
+
+QString foregroundExecutableName()
+{
+#ifdef Q_OS_WIN
+    const HWND window = GetForegroundWindow();
+    DWORD processId = 0;
+    if (!window || GetWindowThreadProcessId(window, &processId) == 0) return {};
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return {};
+    std::array<wchar_t, 32768> path{};
+    DWORD length = static_cast<DWORD>(path.size());
+    const bool read = QueryFullProcessImageNameW(process, 0, path.data(), &length) != FALSE;
+    CloseHandle(process);
+    return read ? QFileInfo(QString::fromWCharArray(path.data(), static_cast<qsizetype>(length))).fileName()
+                : QString{};
+#else
+    return {};
+#endif
 }
 
 QString automationBehaviorLabel(AutomationActivationMode mode)
@@ -263,6 +287,7 @@ AppBackend::AppBackend(QObject *parent)
     }
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
+    connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] {
         // A generic hardware change also covers vJoy readiness and status.
@@ -287,6 +312,11 @@ AppBackend::AppBackend(QObject *parent)
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(1000);
     m_controllerDiscoveryTimer.start();
+    // Foreground-process sampling is low-frequency control-plane work. It is
+    // intentionally independent from the 16 ms presentation snapshot and
+    // the DirectInput worker's report loop.
+    m_gameDetectionTimer.setInterval(1000);
+    m_gameDetectionTimer.start();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -344,6 +374,7 @@ AppBackend::AppBackend(QObject *parent)
     // It never stops mapping, releases either device, or opens a modal.
     QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
     QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
+    QTimer::singleShot(1000, this, &AppBackend::evaluateGameDetection);
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
@@ -862,16 +893,45 @@ QVariantList AppBackend::profiles() const
         for (const ButtonBinding &binding : profile.buttons) {
             if (binding.type == ButtonActionType::VirtualButton) ++mappedButtons;
         }
+        int mappedPovs = 0;
+        for (const auto &hat : profile.povs) {
+            for (const ButtonBinding &binding : hat) {
+                if (binding.type == ButtonActionType::VirtualButton) ++mappedPovs;
+            }
+        }
+        int customCurves = 0;
+        for (const AxisMapping &axis : profile.axes) {
+            if (axis.curve.family != CurveFamily::Linear) ++customCurves;
+        }
+        int automationCount = 0;
+        for (const AutomationDefinition &automation : m_configuration.automations) {
+            bool associated = false;
+            for (const AutomationConditionDefinition &condition : automation.conditions) {
+                if (condition.profileId == profile.id) { associated = true; break; }
+            }
+            if (!associated) for (const AutomationActionDefinition &action : automation.actions) {
+                if (action.profileId == profile.id) { associated = true; break; }
+            }
+            if (associated) ++automationCount;
+        }
         QVariantMap item;
         item.insert(u"id"_qs, profile.id);
         item.insert(u"name"_qs, profile.name);
+        const ProfileCategory *category = findProfileCategory(m_configuration, profile.categoryId);
+        item.insert(u"categoryId"_qs, profile.categoryId);
+        item.insert(u"categoryName"_qs, category ? category->name : u"General"_qs);
+        item.insert(u"displayName"_qs, category ? QString(u"%1 / %2"_qs).arg(category->name, profile.name) : profile.name);
         item.insert(u"active"_qs, profile.id == m_configuration.activeProfileId);
+        item.insert(u"enabled"_qs, profile.enabled);
         item.insert(u"effective"_qs, profile.id == effectiveProfileId());
         item.insert(u"effectiveSource"_qs, profile.id == effectiveProfileId()
             ? profileSourceLabel() : QString{});
         item.insert(u"protected"_qs, profile.id == normalProfileId());
         item.insert(u"mappedAxes"_qs, mappedAxes);
         item.insert(u"mappedButtons"_qs, mappedButtons);
+        item.insert(u"mappedPovs"_qs, mappedPovs);
+        item.insert(u"customCurves"_qs, customCurves);
+        item.insert(u"automationCount"_qs, automationCount);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
         item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
         item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
@@ -881,8 +941,41 @@ QVariantList AppBackend::profiles() const
     return result;
 }
 
+QVariantList AppBackend::profileCategories() const
+{
+    QVariantList result;
+    for (const ProfileCategory &category : m_configuration.profileCategories) {
+        QVariantMap item;
+        item.insert(u"id"_qs, category.id);
+        item.insert(u"name"_qs, category.name);
+        item.insert(u"icon"_qs, category.icon);
+        item.insert(u"profileCount"_qs, static_cast<int>(category.profileIds.size()));
+        item.insert(u"defaultProfileId"_qs, category.defaultProfileId);
+        item.insert(u"lastActiveProfileId"_qs, category.lastActiveProfileId);
+        item.insert(u"defaultProfileName"_qs, categoryProfileLabel(m_configuration, category.defaultProfileId));
+        item.insert(u"lastActiveProfileName"_qs, categoryProfileLabel(m_configuration, category.lastActiveProfileId));
+        item.insert(u"active"_qs, category.id == activeCategoryId());
+        item.insert(u"enabled"_qs, category.enabled);
+        item.insert(u"restoreLastProfile"_qs, category.restoreLastProfile);
+        item.insert(u"executableRules"_qs, category.executableRules);
+        result.append(item);
+    }
+    return result;
+}
+
 QString AppBackend::activeProfileId() const { return m_configuration.activeProfileId; }
 QString AppBackend::activeProfileName() const { return currentProfile().name; }
+QString AppBackend::profileDisplayName(const QString &profileId) const
+{
+    return categoryProfileLabel(m_configuration, profileId);
+}
+QString AppBackend::activeProfileDisplayName() const { return profileDisplayName(activeProfileId()); }
+QString AppBackend::activeCategoryId() const { return currentProfile().categoryId; }
+QString AppBackend::activeCategoryName() const
+{
+    if (const ProfileCategory *category = findProfileCategory(m_configuration, activeCategoryId())) return category->name;
+    return u"General"_qs;
+}
 QString AppBackend::effectiveProfileName() const
 {
     const int index = m_worker.runtime().effectiveProfileIndex.load();
@@ -890,6 +983,12 @@ QString AppBackend::effectiveProfileName() const
         return m_configuration.profiles[static_cast<size_t>(index)].name;
     }
     return currentProfile().name;
+}
+QString AppBackend::effectiveProfileDisplayName() const { return profileDisplayName(effectiveProfileId()); }
+
+QVariantMap AppBackend::portableImportPreview() const
+{
+    return m_portableImportPreview;
 }
 
 QString AppBackend::effectiveProfileId() const
@@ -1451,7 +1550,8 @@ QVariantList AppBackend::profileTriggerChoices() const
     QVariantList choices;
     choices.append(QVariantMap{{u"id"_qs, QString{}}, {u"label"_qs, u"None"_qs}});
     for (const ControllerProfile &profile : m_configuration.profiles) {
-        choices.append(QVariantMap{{u"id"_qs, profile.id}, {u"label"_qs, profile.name}});
+        choices.append(QVariantMap{{u"id"_qs, profile.id},
+            {u"label"_qs, categoryProfileLabel(m_configuration, profile.id)}});
     }
     return choices;
 }
@@ -2290,11 +2390,23 @@ bool AppBackend::createProfile(const QString &name, const QString &startFromId)
 {
     const QString trimmedName = name.trimmed();
     if (!hotas::createProfile(m_configuration, trimmedName, startFromId)) {
-        appendEvent(u"Profile name must be unique and between 1 and 48 characters"_qs);
+        appendEvent(u"Profile name must be unique within its category and between 1 and 48 characters"_qs);
         return false;
     }
     persistAndApply();
     appendEvent(u"Created profile: "_qs + trimmedName);
+    return true;
+}
+
+bool AppBackend::createProfileInCategory(const QString &name, const QString &categoryId,
+                                         const QString &startFromId)
+{
+    if (!hotas::createProfileInCategory(m_configuration, name.trimmed(), categoryId, startFromId)) {
+        appendEvent(u"Choose a category and a profile name unique within that category"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(QString(u"Created profile: %1"_qs).arg(name.trimmed()));
     return true;
 }
 
@@ -2306,6 +2418,18 @@ bool AppBackend::cloneProfile(const QString &profileId)
     if (!hotas::cloneProfile(m_configuration, profileId)) return false;
     persistAndApply();
     appendEvent(u"Cloned profile: "_qs + sourceName);
+    return true;
+}
+
+bool AppBackend::duplicateProfileToCategory(const QString &profileId, const QString &name,
+                                            const QString &categoryId)
+{
+    if (!hotas::duplicateProfileToCategory(m_configuration, profileId, name, categoryId)) {
+        appendEvent(u"Could not duplicate the profile into the selected category"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(QString(u"Duplicated profile as %1"_qs).arg(name.trimmed()));
     return true;
 }
 
@@ -2326,6 +2450,33 @@ bool AppBackend::renameProfile(const QString &profileId, const QString &name)
     return true;
 }
 
+bool AppBackend::moveProfileToCategory(const QString &profileId, const QString &categoryId)
+{
+    const QString label = profileDisplayName(profileId);
+    if (!hotas::moveProfileToCategory(m_configuration, profileId, categoryId)) {
+        appendEvent(u"Could not move the profile; names must be unique within the destination category"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Moved profile: "_qs + label + u" → "_qs + profileDisplayName(profileId));
+    return true;
+}
+
+bool AppBackend::setProfileEnabled(const QString &profileId, bool enabled)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile || profile->enabled == enabled) return profile != nullptr;
+    if (!enabled && profileId == m_configuration.activeProfileId) {
+        appendEvent(u"Select another profile before disabling the active one"_qs);
+        return false;
+    }
+    profile->enabled = enabled;
+    persistAndApply();
+    appendEvent(QString(u"Profile %1: %2"_qs).arg(profile->name,
+        enabled ? u"enabled"_qs : u"disabled"_qs));
+    return true;
+}
+
 bool AppBackend::deleteProfile(const QString &profileId)
 {
     const ControllerProfile *profile = findProfile(m_configuration, profileId);
@@ -2343,7 +2494,7 @@ bool AppBackend::deleteProfile(const QString &profileId)
 bool AppBackend::activateProfile(const QString &profileId)
 {
     const ControllerProfile *profile = findProfile(m_configuration, profileId);
-    if (!profile) return false;
+    if (!profile || !profile->enabled) return false;
     if (profileId == m_configuration.activeProfileId) return true;
     const bool outputChanges = profile->outputLayoutId != currentProfile().outputLayoutId;
     const bool mappingWasRequested = outputChanges && m_worker.mappingRequested();
@@ -2370,6 +2521,308 @@ bool AppBackend::activateProfile(const QString &profileId)
         appendEvent(u"Profile was selected, but mapping could not reacquire its virtual output"_qs);
     }
     appendEvent(u"Activated profile: "_qs + name + u" · "_qs + activeOutputLayoutName());
+    return true;
+}
+
+bool AppBackend::createProfileCategory(const QString &name)
+{
+    QString id;
+    if (!hotas::createProfileCategory(m_configuration, name, &id)) {
+        appendEvent(u"Category names must be unique and between 1 and 64 characters"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Created category: "_qs + name.trimmed());
+    return true;
+}
+
+bool AppBackend::renameProfileCategory(const QString &categoryId, const QString &name)
+{
+    const ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    const QString previous = category ? category->name : QString{};
+    if (!hotas::renameProfileCategory(m_configuration, categoryId, name)) return false;
+    persistAndApply();
+    appendEvent(QString(u"Renamed category: %1 → %2"_qs).arg(previous, name.trimmed()));
+    return true;
+}
+
+bool AppBackend::deleteProfileCategory(const QString &categoryId)
+{
+    const ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    const QString name = category ? category->name : QString{};
+    if (!hotas::deleteProfileCategory(m_configuration, categoryId)) {
+        appendEvent(u"Move or delete all profiles before deleting a category"_qs);
+        return false;
+    }
+    persistAndApply();
+    appendEvent(u"Deleted empty category: "_qs + name);
+    return true;
+}
+
+bool AppBackend::activateProfileCategory(const QString &categoryId)
+{
+    QString profileId;
+    MapperConfiguration candidate = m_configuration;
+    if (!hotas::activateCategoryProfile(candidate, categoryId, &profileId)) return false;
+    // Route category selection through the existing safe profile activation;
+    // it retains vJoy layout release/reacquire behavior.
+    return activateProfile(profileId);
+}
+
+bool AppBackend::setProfileCategoryEnabled(const QString &categoryId, bool enabled)
+{
+    ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    if (!category || category->enabled == enabled) return category != nullptr;
+    if (!enabled && categoryId == activeCategoryId()) {
+        appendEvent(u"Select another category before disabling the active category"_qs);
+        return false;
+    }
+    category->enabled = enabled;
+    persistAndApply();
+    appendEvent(QString(u"Category %1: %2"_qs).arg(category->name,
+        enabled ? u"enabled"_qs : u"disabled"_qs));
+    return true;
+}
+
+bool AppBackend::setCategoryDefaultProfile(const QString &categoryId, const QString &profileId)
+{
+    ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    const ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!category || !profile || profile->categoryId != categoryId) return false;
+    category->defaultProfileId = profileId;
+    persistAndApply();
+    return true;
+}
+
+bool AppBackend::setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile)
+{
+    ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    if (!category || category->restoreLastProfile == restoreLastProfile) return category != nullptr;
+    category->restoreLastProfile = restoreLastProfile;
+    persistAndApply();
+    return true;
+}
+
+bool AppBackend::setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules)
+{
+    ProfileCategory *category = findProfileCategory(m_configuration, categoryId);
+    if (!category || rules.size() > 32) return false;
+    QStringList normalized;
+    for (const QString &raw : rules) {
+        const QString rule = QFileInfo(raw.trimmed()).fileName().left(260);
+        if (rule.isEmpty()) continue;
+        if (!normalized.contains(rule, Qt::CaseInsensitive)) normalized.append(rule);
+    }
+    category->executableRules = normalized;
+    persistAndApply();
+    return true;
+}
+
+void AppBackend::setAutomaticGameDetection(bool enabled)
+{
+    if (m_configuration.automaticGameDetection == enabled) return;
+    m_configuration.automaticGameDetection = enabled;
+    m_lastDetectedExecutable.clear();
+    persistAndApply();
+    appendEvent(enabled ? u"Automatic game category detection enabled"_qs
+                        : u"Automatic game category detection disabled"_qs);
+}
+
+QVariantMap AppBackend::profileDetail(const QString &profileId) const
+{
+    QVariantMap detail;
+    const ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile) return detail;
+    const ProfileCategory *category = findProfileCategory(m_configuration, profile->categoryId);
+    detail.insert(u"id"_qs, profile->id);
+    detail.insert(u"name"_qs, profile->name);
+    detail.insert(u"categoryId"_qs, profile->categoryId);
+    detail.insert(u"category"_qs, category ? category->name : u"General"_qs);
+    detail.insert(u"displayName"_qs, profileDisplayName(profileId));
+    detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
+    detail.insert(u"enabled"_qs, profile->enabled);
+    QVariantList axes;
+    QVariantList curves;
+    int mappedAxes = 0;
+    int customCurves = 0;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const AxisMapping &axis = profile->axes[static_cast<size_t>(index)];
+        if (axis.target == VirtualAxis::Disabled) continue;
+        ++mappedAxes;
+        QVariantMap item;
+        item.insert(u"physical"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(index)));
+        item.insert(u"virtual"_qs, virtualAxisLabel(axis.target));
+        item.insert(u"inverted"_qs, axis.inverted);
+        item.insert(u"deadzone"_qs, axis.deadzone * 100.0);
+        item.insert(u"minimum"_qs, axis.outputMinimum * 100.0);
+        item.insert(u"maximum"_qs, axis.outputMaximum * 100.0);
+        item.insert(u"curve"_qs, curveDefinitionSummary(axis.curve));
+        axes.append(item);
+        if (axis.curve.family != CurveFamily::Linear) {
+            ++customCurves;
+            curves.append(QVariantMap{{u"axis"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(index))},
+                {u"summary"_qs, curveDefinitionSummary(axis.curve)},
+                {u"points"_qs, static_cast<int>(axis.curve.points.size())}});
+        }
+    }
+    QVariantList buttons;
+    int mappedButtons = 0;
+    for (int index = 0; index < static_cast<int>(profile->buttons.size()); ++index) {
+        const ButtonBinding &binding = profile->buttons[static_cast<size_t>(index)];
+        if (binding.type != ButtonActionType::VirtualButton) continue;
+        ++mappedButtons;
+        buttons.append(QVariantMap{{u"input"_qs, QString(u"Button %1"_qs).arg(index + 1)},
+            {u"output"_qs, QString(u"vJoy Button %1"_qs).arg(binding.target)}});
+    }
+    QVariantList povs;
+    int mappedPovs = 0;
+    for (int hat = 0; hat < static_cast<int>(profile->povs.size()); ++hat) {
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            const ButtonBinding &binding = profile->povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
+            if (binding.type != ButtonActionType::VirtualButton) continue;
+            ++mappedPovs;
+            povs.append(QVariantMap{{u"input"_qs, QString(u"POV %1 %2"_qs).arg(hat + 1)
+                .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)))},
+                {u"output"_qs, QString(u"vJoy Button %1"_qs).arg(binding.target)}});
+        }
+    }
+    QVariantList automations;
+    for (const AutomationDefinition &automation : m_configuration.automations) {
+        bool related = false;
+        for (const AutomationConditionDefinition &condition : automation.conditions) {
+            related = related || condition.profileId == profileId;
+        }
+        for (const AutomationActionDefinition &action : automation.actions) {
+            related = related || action.profileId == profileId;
+        }
+        if (related) automations.append(QVariantMap{{u"id"_qs, automation.id}, {u"name"_qs, automation.name},
+            {u"enabled"_qs, automation.enabled}});
+    }
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile->outputLayoutId);
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const int availableAxes = static_cast<int>(std::count(physical.axes.cbegin(), physical.axes.cend(), true));
+    const bool compatible = !physical.connected || (availableAxes >= mappedAxes
+        && physical.buttons >= mappedButtons && physical.povs >= (mappedPovs > 0 ? 1 : 0));
+    detail.insert(u"mappedAxes"_qs, mappedAxes);
+    detail.insert(u"mappedButtons"_qs, mappedButtons);
+    detail.insert(u"mappedPovs"_qs, mappedPovs);
+    detail.insert(u"customCurves"_qs, customCurves);
+    detail.insert(u"axes"_qs, axes);
+    detail.insert(u"buttons"_qs, buttons);
+    detail.insert(u"povs"_qs, povs);
+    detail.insert(u"curves"_qs, curves);
+    detail.insert(u"automations"_qs, automations);
+    detail.insert(u"outputName"_qs, layout ? layout->name : u"Output unavailable"_qs);
+    detail.insert(u"vjoyDevice"_qs, layout ? layout->requirements.deviceId : 0);
+    detail.insert(u"vjoyReady"_qs, layout && m_worker.runtime().vjoyReady.load());
+    detail.insert(u"compatibility"_qs, !physical.connected ? u"Review recommended — no current controller"_qs
+        : compatible ? u"Fully compatible"_qs : u"Partial compatibility — review missing controls"_qs);
+    detail.insert(u"controllerName"_qs, physical.name);
+    detail.insert(u"relationships"_qs, profileRelationships(profileId));
+    return detail;
+}
+
+QVariantMap AppBackend::profileRelationships(const QString &profileId) const
+{
+    QVariantMap result;
+    QVariantList references;
+    QVariantList referencedBy;
+    for (int index = 0; index < static_cast<int>(m_configuration.profileTriggers.size()); ++index) {
+        const ProfileTriggerBinding &binding = m_configuration.profileTriggers[static_cast<size_t>(index)];
+        if (binding.targetProfileId == profileId) {
+            referencedBy.append(QVariantMap{{u"profile"_qs, u"Global profile control"_qs},
+                {u"via"_qs, QString(u"Button %1 · %2"_qs).arg(index + 1)
+                    .arg(profileTriggerModeLabel(binding.mode))}});
+        }
+    }
+    for (const AutomationDefinition &automation : m_configuration.automations) {
+        bool source = false;
+        for (const AutomationConditionDefinition &condition : automation.conditions) source = source || condition.profileId == profileId;
+        for (const AutomationActionDefinition &action : automation.actions) {
+            if (action.profileId == profileId) {
+                referencedBy.append(QVariantMap{{u"profile"_qs, automation.name}, {u"via"_qs, u"Automation target"_qs}});
+            } else if (source && !action.profileId.isEmpty()) {
+                references.append(QVariantMap{{u"profile"_qs, profileDisplayName(action.profileId)},
+                    {u"via"_qs, QString(u"Automation: %1"_qs).arg(automation.name)}});
+            }
+        }
+    }
+    result.insert(u"references"_qs, references);
+    result.insert(u"referencedBy"_qs, referencedBy);
+    return result;
+}
+
+bool AppBackend::exportPortableProfile(const QString &profileId, const QString &fileName)
+{
+    QString error;
+    if (!ProfilePortability::exportProfile(m_configuration, profileId, fileName, &error)) {
+        m_portableImportStatus = error;
+        emit stateChanged();
+        return false;
+    }
+    m_portableImportStatus = u"Profile exported successfully"_qs;
+    appendEvent(u"Exported portable profile: "_qs + profileDisplayName(profileId));
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::exportPortablePack(const QStringList &categoryIds, const QStringList &profileIds,
+                                    const QString &name, const QString &description, bool includeDevices,
+                                    bool includeCalibration, const QString &fileName)
+{
+    QString error;
+    if (!ProfilePortability::exportPack(m_configuration, categoryIds, profileIds, name, description,
+                                        includeDevices, includeCalibration, fileName, &error)) {
+        m_portableImportStatus = error;
+        emit stateChanged();
+        return false;
+    }
+    m_portableImportStatus = u"Pack exported successfully"_qs;
+    appendEvent(u"Exported portable Pack: "_qs + name.trimmed());
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::loadPortableImportPreview(const QString &fileName)
+{
+    auto bundle = std::make_unique<PortableConfigurationBundle>();
+    QString error;
+    if (!ProfilePortability::inspect(fileName, bundle.get(), &error)) {
+        m_pendingPortableImport.reset();
+        m_portableImportPreview.clear();
+        m_portableImportStatus = error;
+        emit stateChanged();
+        return false;
+    }
+    m_portableImportPreview = ProfilePortability::preview(*bundle, m_configuration);
+    m_pendingPortableImport = std::move(bundle);
+    m_portableImportStatus = u"Review the import preview before applying changes"_qs;
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::applyPortableImport(const QString &destinationCategoryId, bool replaceMatchingProfiles,
+                                     bool mergeCategories)
+{
+    if (!m_pendingPortableImport) return false;
+    PortableImportOptions options;
+    options.destinationCategoryId = destinationCategoryId;
+    options.replaceMatchingProfiles = replaceMatchingProfiles;
+    options.mergeCategories = mergeCategories;
+    QStringList warnings;
+    QString error;
+    if (!ProfilePortability::apply(&m_configuration, *m_pendingPortableImport, options, &warnings, &error)) {
+        m_portableImportStatus = error;
+        emit stateChanged();
+        return false;
+    }
+    persistAndApply();
+    m_portableImportStatus = warnings.isEmpty() ? u"Import completed successfully"_qs
+                                                 : warnings.join(u"\n"_qs);
+    m_pendingPortableImport.reset();
+    m_portableImportPreview.clear();
+    appendEvent(u"Imported portable "_qs + (m_portableImportStatus.isEmpty() ? u"configuration"_qs : u"configuration"_qs));
+    emit stateChanged();
     return true;
 }
 
@@ -3742,6 +4195,34 @@ bool AppBackend::launchUninstaller()
     appendEvent(u"Started the HOTAS BF6 uninstaller; shared vJoy and HidHide components are retained by default"_qs);
     exitApplication();
     return true;
+}
+
+void AppBackend::evaluateGameDetection()
+{
+    if (!m_configuration.automaticGameDetection) return;
+    const QString executable = foregroundExecutableName().trimmed();
+    // Only a material foreground executable change can trigger category
+    // selection. Manual category/profile choices therefore remain in effect
+    // until the foreground game actually changes.
+    if (executable.compare(m_lastDetectedExecutable, Qt::CaseInsensitive) == 0) return;
+    m_lastDetectedExecutable = executable;
+    if (executable.isEmpty()) return;
+    const ProfileCategory *match = nullptr;
+    for (const ProfileCategory &category : m_configuration.profileCategories) {
+        if (!category.enabled) continue;
+        const bool matches = std::any_of(category.executableRules.cbegin(), category.executableRules.cend(),
+            [&executable](const QString &rule) { return rule.compare(executable, Qt::CaseInsensitive) == 0; });
+        if (!matches) continue;
+        if (match) {
+            appendEvent(u"Game detection found more than one matching category; no automatic switch was made"_qs);
+            return;
+        }
+        match = &category;
+    }
+    if (!match || match->id == activeCategoryId()) return;
+    if (activateProfileCategory(match->id)) {
+        appendEvent(QString(u"Game detection selected category: %1 (%2)"_qs).arg(match->name, executable));
+    }
 }
 
 void AppBackend::refreshControllerInventory()

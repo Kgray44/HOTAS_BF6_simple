@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 18;
+constexpr int kProfileSchemaVersion = 19;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -831,6 +831,8 @@ QJsonObject profileToJson(const ControllerProfile &profile)
     return {
         {u"id"_qs, profile.id},
         {u"name"_qs, profile.name},
+        {u"categoryId"_qs, profile.categoryId},
+        {u"enabled"_qs, profile.enabled},
         {u"outputLayoutId"_qs, profile.outputLayoutId},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
@@ -853,6 +855,8 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     ControllerProfile restored;
     restored.id = id;
     restored.name = name;
+    restored.categoryId = json.value(u"categoryId"_qs).toString().trimmed().left(96);
+    restored.enabled = json.value(u"enabled"_qs).toBool(true);
     restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
@@ -872,6 +876,58 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
             .toString().trimmed().left(48);
     }
     *profile = std::move(restored);
+    return true;
+}
+
+QJsonObject profileCategoryToJson(const ProfileCategory &category)
+{
+    QJsonArray profileIds;
+    for (const QString &profileId : category.profileIds) profileIds.append(profileId);
+    QJsonArray executableRules;
+    for (const QString &rule : category.executableRules) executableRules.append(rule);
+    return {
+        {u"id"_qs, category.id},
+        {u"name"_qs, category.name},
+        {u"icon"_qs, category.icon.left(64)},
+        {u"profileIds"_qs, profileIds},
+        {u"defaultProfileId"_qs, category.defaultProfileId},
+        {u"lastActiveProfileId"_qs, category.lastActiveProfileId},
+        {u"executableRules"_qs, executableRules},
+        {u"enabled"_qs, category.enabled},
+        {u"restoreLastProfile"_qs, category.restoreLastProfile},
+    };
+}
+
+bool profileCategoryFromJson(const QJsonObject &json, ProfileCategory *category)
+{
+    if (!category) return false;
+    ProfileCategory restored;
+    restored.id = json.value(u"id"_qs).toString().trimmed();
+    restored.name = json.value(u"name"_qs).toString().trimmed();
+    restored.icon = json.value(u"icon"_qs).toString().trimmed().left(64);
+    restored.defaultProfileId = json.value(u"defaultProfileId"_qs).toString().trimmed().left(96);
+    restored.lastActiveProfileId = json.value(u"lastActiveProfileId"_qs).toString().trimmed().left(96);
+    restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    restored.restoreLastProfile = json.value(u"restoreLastProfile"_qs).toBool(true);
+    const QJsonArray profileIds = json.value(u"profileIds"_qs).toArray();
+    const QJsonArray rules = json.value(u"executableRules"_qs).toArray();
+    if (restored.id.isEmpty() || restored.id.size() > 96 || restored.name.isEmpty()
+        || restored.name.size() > 64 || profileIds.size() > 256 || rules.size() > 32) return false;
+    QSet<QString> seenProfileIds;
+    for (const QJsonValue &value : profileIds) {
+        const QString profileId = value.toString().trimmed().left(96);
+        if (profileId.isEmpty() || seenProfileIds.contains(profileId)) return false;
+        seenProfileIds.insert(profileId);
+        restored.profileIds.push_back(profileId);
+    }
+    QSet<QString> seenRules;
+    for (const QJsonValue &value : rules) {
+        const QString rule = value.toString().trimmed().left(260);
+        if (rule.isEmpty() || seenRules.contains(rule.toCaseFolded())) return false;
+        seenRules.insert(rule.toCaseFolded());
+        restored.executableRules.push_back(rule);
+    }
+    *category = std::move(restored);
     return true;
 }
 
@@ -1074,6 +1130,11 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     QJsonArray profiles;
     for (const ControllerProfile &profile : configuration.profiles) profiles.append(profileToJson(profile));
 
+    QJsonArray profileCategories;
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        profileCategories.append(profileCategoryToJson(category));
+    }
+
     QJsonArray outputLayouts;
     for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
         outputLayouts.append(outputLayoutToJson(layout));
@@ -1110,6 +1171,8 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"calibrationHistory"_qs, calibrationHistory},
         {u"outputLayouts"_qs, outputLayouts},
         {u"profiles"_qs, profiles},
+        {u"profileCategories"_qs, profileCategories},
+        {u"automaticGameDetection"_qs, configuration.automaticGameDetection},
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
@@ -1128,7 +1191,8 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != 15 && version != 16 && version != 17 && version != kProfileSchemaVersion) {
+        && version != 15 && version != 16 && version != 17 && version != 18
+        && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1196,17 +1260,88 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 
     configuration.profiles.clear();
     QSet<QString> ids;
-    QSet<QString> names;
     for (const QJsonValue &value : profiles) {
         ControllerProfile profile;
-        if (!profileFromJson(value.toObject(), &profile, version < kProfileSchemaVersion)
-            || ids.contains(profile.id) || names.contains(profile.name.toCaseFolded())) {
+        if (!profileFromJson(value.toObject(), &profile, version < 18)
+            || ids.contains(profile.id)) {
             if (valid) *valid = false;
             return fallbackWithGlobalSettings(json);
         }
         ids.insert(profile.id);
-        names.insert(profile.name.toCaseFolded());
         configuration.profiles.push_back(std::move(profile));
+    }
+
+    if (version >= 19) {
+        const QJsonArray categories = json.value(u"profileCategories"_qs).toArray();
+        if (categories.empty() || categories.size() > 64) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        configuration.profileCategories.clear();
+        QSet<QString> categoryIds;
+        QSet<QString> categoryNames;
+        for (const QJsonValue &value : categories) {
+            ProfileCategory category;
+            if (!profileCategoryFromJson(value.toObject(), &category)
+                || categoryIds.contains(category.id)
+                || categoryNames.contains(category.name.toCaseFolded())) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            categoryIds.insert(category.id);
+            categoryNames.insert(category.name.toCaseFolded());
+            configuration.profileCategories.push_back(std::move(category));
+        }
+        QSet<QString> orderedProfileIds;
+        for (const ProfileCategory &category : configuration.profileCategories) {
+            for (const QString &profileId : category.profileIds) {
+                const ControllerProfile *profile = findProfile(configuration, profileId);
+                if (!profile || profile->categoryId != category.id || orderedProfileIds.contains(profileId)) {
+                    if (valid) *valid = false;
+                    return fallbackWithGlobalSettings(json);
+                }
+                orderedProfileIds.insert(profileId);
+            }
+            if ((!category.defaultProfileId.isEmpty()
+                    && (!findProfile(configuration, category.defaultProfileId)
+                        || findProfile(configuration, category.defaultProfileId)->categoryId != category.id))
+                || (!category.lastActiveProfileId.isEmpty()
+                    && (!findProfile(configuration, category.lastActiveProfileId)
+                        || findProfile(configuration, category.lastActiveProfileId)->categoryId != category.id))) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+        }
+        QSet<QString> namesByCategory;
+        for (const ControllerProfile &profile : configuration.profiles) {
+            if (!categoryIds.contains(profile.categoryId) || !orderedProfileIds.contains(profile.id)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            const QString scopedName = profile.categoryId + u"\x1f"_qs + profile.name.toCaseFolded();
+            if (namesByCategory.contains(scopedName)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            namesByCategory.insert(scopedName);
+        }
+        configuration.automaticGameDetection = json.value(u"automaticGameDetection"_qs).toBool(true);
+    } else {
+        // v2.1.0 deliberately performs no name-based game inference. Every
+        // existing profile enters the neutral General category unchanged.
+        ProfileCategory general;
+        general.id = generalProfileCategoryId();
+        general.name = u"General"_qs;
+        for (ControllerProfile &profile : configuration.profiles) {
+            profile.categoryId = general.id;
+            profile.enabled = true;
+            general.profileIds.push_back(profile.id);
+        }
+        general.defaultProfileId = findProfile(configuration, normalProfileId())
+            ? normalProfileId() : general.profileIds.front();
+        general.lastActiveProfileId = general.defaultProfileId;
+        configuration.profileCategories = {std::move(general)};
+        configuration.automaticGameDetection = true;
     }
 
     const QJsonArray personalPresets = json.value(u"personalCurvePresets"_qs).toArray();
@@ -1398,6 +1533,76 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     }
     if (valid) *valid = true;
     return configuration;
+}
+
+QJsonObject ConfigStore::portableProfileToJson(const ControllerProfile &profile)
+{
+    return profileToJson(profile);
+}
+
+bool ConfigStore::portableProfileFromJson(const QJsonObject &json, ControllerProfile *profile)
+{
+    return profileFromJson(json, profile, false);
+}
+
+QJsonObject ConfigStore::portableCategoryToJson(const ProfileCategory &category)
+{
+    return profileCategoryToJson(category);
+}
+
+bool ConfigStore::portableCategoryFromJson(const QJsonObject &json, ProfileCategory *category)
+{
+    return profileCategoryFromJson(json, category);
+}
+
+QJsonObject ConfigStore::portableCurveToJson(const PersonalCurvePreset &preset)
+{
+    return personalCurvePresetToJson(preset);
+}
+
+bool ConfigStore::portableCurveFromJson(const QJsonObject &json, PersonalCurvePreset *preset)
+{
+    return personalCurvePresetFromJson(json, preset);
+}
+
+QJsonObject ConfigStore::portableAutomationToJson(const AutomationDefinition &automation)
+{
+    return automationToJson(automation);
+}
+
+bool ConfigStore::portableAutomationFromJson(const QJsonObject &json, AutomationDefinition *automation)
+{
+    return automationFromJson(json, automation);
+}
+
+QJsonObject ConfigStore::portableOutputLayoutToJson(const VirtualOutputLayout &layout)
+{
+    return outputLayoutToJson(layout);
+}
+
+bool ConfigStore::portableOutputLayoutFromJson(const QJsonObject &json, VirtualOutputLayout *layout)
+{
+    return outputLayoutFromJson(json, layout);
+}
+
+QJsonArray ConfigStore::portableProfileTriggersToJson(const ProfileTriggerBindings &bindings)
+{
+    return profileTriggersToJson(bindings);
+}
+
+ProfileTriggerBindings ConfigStore::portableProfileTriggersFromJson(const QJsonValue &value)
+{
+    return profileTriggersFromJson(value);
+}
+
+QJsonArray ConfigStore::portablePovProfileTriggersToJson(const PovProfileTriggerBindings &bindings)
+{
+    return povProfileTriggersToJson(bindings);
+}
+
+PovProfileTriggerBindings ConfigStore::portablePovProfileTriggersFromJson(const QJsonValue &value)
+{
+    return povProfileTriggersFromJson(value);
 }
 
 } // namespace hotas

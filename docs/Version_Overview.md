@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.12**
+**Current release: v2.1.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.0 — Profile Library & Portable Configuration
+
+Adds game-aware profile categories, a dedicated Profile Library, and validated portable configuration files while retaining the compiled, allocation-free DirectInput-to-vJoy mapper architecture.
+
+- Profiles now live in durable categories with default/last-active behavior, scoped unique naming, stable-ID moves and duplicates, relationship-aware deletion, and optional enable state.
+- The new Profile Library offers browse, category, and profile-detail views across Legacy, Standard, and Top Gun, including mapping summaries, curves, Automation relationships, output-layout readiness, and compatibility context.
+- Optional low-frequency foreground executable rules select a matching category only on a material process transition; no polling, process work, persistence, or UI rebuilding was added to report processing.
+- Portable .hbf6profile and .hbf6pack exports use a versioned bounded JSON format, preview before atomic import, remap imported IDs safely, preserve local data by default, and leave device descriptors/calibration opt-in and non-applied.
+- Schema 19 migrates existing profiles into a General category without rewriting mappings, curves, Automation, vJoy output layouts, controller records, or physical device state.
 
 ## v2.0.12 — Automation Editor Interaction Qualification
 

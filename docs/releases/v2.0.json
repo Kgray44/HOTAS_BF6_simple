@@ -228,15 +228,34 @@
     "releaseTitle": "v2.0.12",
     "title": "Automation Editor Interaction Qualification",
     "summary": "HOTAS BF6 v2.0.12 locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification. It preserves v2.0.11 virtual-output visibility behavior, the v2.0.9 stable-index editor correction, and the allocation-free DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.1.0",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.0.12 adds automated interaction coverage for the Automation editor; physical controller, installer, and game acceptance remain machine-specific checks.",
+    "statusNote": "Superseded by v2.1.0 Profile Library & Portable Configuration. v2.0.12 adds automated interaction coverage for the Automation editor; physical controller, installer, and game acceptance remain machine-specific checks.",
     "highlights": [
       "Executes the real AutomationPage QML draft logic for each of the fourteen available action types and verifies the resulting action draft type.",
       "Exercises independent edits across multiple action and condition rows, preserving the explicit stable-delegate-index contract that prevents nested signal-index collisions.",
       "Retains the parameter-editor contract for virtual buttons, profiles, sensitivity, output adjustments, limits, forced values, mixes, follows, taps, and mapping controls.",
       "Does not change MappingWorker, DirectInput polling, vJoy writes, driver configuration, persistence, or the v2.0.11 exact-HID virtual-output visibility implementation."
+    ]
+  },
+  {
+    "version": "2.1.0",
+    "tag": "v2.1.0",
+    "releaseTitle": "v2.1.0",
+    "title": "Profile Library & Portable Configuration",
+    "summary": "HOTAS BF6 v2.1.0 adds a game-aware Profile Library and validated portable Profile/Pack configuration exchange without changing the DirectInput-to-vJoy report path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.0 has local/CI validation for configuration migration, Profile/Pack round-trip, application startup, QML startup, and synthetic mapper behavior. Physical controller, game, installer, signing, and public updater acceptance remain machine- or release-specific checks.",
+    "highlights": [
+      "Introduces category-aware profiles with scoped names, defaults, restore-last behavior, safe moves/duplicates/deletes, optional enable state, and stable references for mapping controls and Automation.",
+      "Adds a shared Profile Library across Legacy, Standard, and Top Gun for cards, category behavior, profile detail, curve/Automation/output context, and direct navigation to existing editors.",
+      "Offers optional foreground executable category selection at a low control-plane cadence; it is disabled/enabled in Settings and does not alter DirectInput polling or report processing.",
+      "Exports and imports versioned .hbf6profile and .hbf6pack files with strict bounds, preview-before-apply, atomic validation, collision-safe ID remapping, and conservative local-data preservation. Device descriptors and calibration are off by default, and imported calibration is retained only for review.",
+      "Schema 19 migrates existing user profiles into General without guessing game names or changing mappings, curves, buttons, POVs, Automation, output layouts, controller memory, vJoy configuration, or hardware drivers.",
+      "No mapper report-loop work was added: profile category management, portability, UI details, detection, persistence, and device/calibration handling remain on control/configuration paths."
     ]
   }
 ]

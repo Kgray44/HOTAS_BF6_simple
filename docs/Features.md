@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.0.12**
+**Current release: v2.1.0**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -13,7 +13,7 @@ This document is the authoritative sectioned catalog of user-visible and enginee
 3. Mapping Safety Controls
 4. Button Mapping
 5. POV / Hat Support
-6. Profiles
+6. Profiles and Profile Library
 7. Response Curves
 8. Automation Engine
 9. Automation Editor UX
@@ -83,11 +83,14 @@ DirectInput POV hats can act as discrete logical directions, profile controls, o
 - POV directions can trigger global Profile Hold or Profile Toggle controls.
 - Native POV targets are kept separate from direction-as-button routing to avoid accidental overlap.
 
-## Profiles
+## Profiles and Profile Library
 
-Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations.
+Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations, organized in game-aware categories.
 
 - Persistent base profiles with create, clone/start-from, rename, delete, and live activation.
+- Profile Library cards and detail views show category, mapped axes/buttons/POVs, curves, Automation links, active state, output layout, and controller compatibility without using live mapper telemetry as a rebuild trigger.
+- User-managed categories support defaults, last-active restoration, enable state, case-insensitive unique names within a category, and explicit profile move or duplicate actions that retain stable profile IDs and references.
+- Optional foreground executable matching evaluates at a low control-plane cadence and only changes a category when a configured executable transition occurs.
 - New profiles are deep copies with no live parent link.
 - Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, custom names, and virtual-output layout selection.
 - Same-layout Profile Hold/Toggle changes use compiled runtime state; changing layouts is an explicit neutral/release/reacquire control-plane transition.
@@ -95,6 +98,7 @@ Profiles package gameplay mapping and a selected reusable virtual-output layout 
 - Deterministic precedence: newest active Hold, then newest active Toggle, then manual base profile.
 - Manual profile selection clears Toggle overrides while currently held Hold controls remain until release.
 - Stop Mapping and disconnect clear runtime-only profile overrides.
+- Portable .hbf6profile and .hbf6pack files validate bounded versioned JSON before preview and atomic import; hardware descriptors and calibration are excluded by default, and imported calibration is never applied automatically.
 
 ## Response Curves
 

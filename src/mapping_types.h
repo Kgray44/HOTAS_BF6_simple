@@ -432,6 +432,11 @@ using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
 struct ControllerProfile {
     QString id;
     QString name;
+    // Category identity is durable presentation/control-plane metadata. The
+    // DirectInput worker receives the profile selected at a configuration
+    // boundary and never reads categories while processing a report.
+    QString categoryId;
+    bool enabled = true;
     // A profile chooses a reusable pre-provisioned virtual controller.  The
     // report loop receives only the already-resolved device ID at a
     // configuration boundary; it never looks this string up.
@@ -444,6 +449,22 @@ struct ControllerProfile {
     // Aliases are profile-local user-facing labels; VirtualAxis remains the
     // immutable vJoy HID identity used by the worker.
     std::array<QString, kVirtualAxisSlotCount> virtualAxisAliases{};
+};
+
+// Categories organise profiles without changing their mapping ownership.
+// `profileIds` is an ordered presentation list; profile.categoryId remains
+// the authoritative relationship so a damaged order list can be rebuilt
+// conservatively during configuration load.
+struct ProfileCategory {
+    QString id;
+    QString name;
+    QString icon;
+    QStringList executableRules;
+    std::vector<QString> profileIds;
+    QString defaultProfileId;
+    QString lastActiveProfileId;
+    bool enabled = true;
+    bool restoreLastProfile = true;
 };
 
 // Controller identity lives with the durable configuration rather than the
@@ -543,6 +564,10 @@ struct MapperConfiguration {
     std::vector<CalibrationHistoryEntry> calibrationHistory;
     std::vector<VirtualOutputLayout> outputLayouts;
     std::vector<ControllerProfile> profiles;
+    std::vector<ProfileCategory> profileCategories;
+    // Detection is control-plane work sampled at a low frequency by
+    // AppBackend. It is deliberately absent from RuntimeProfileCache.
+    bool automaticGameDetection = true;
     std::vector<PersonalCurvePreset> personalCurvePresets;
     // Global physical-input profile controls. Runtime activation/latch state
     // is deliberately not persisted here.
@@ -831,6 +856,16 @@ inline QString precisionProfileId()
     return u"profile-precision"_qs;
 }
 
+inline QString generalProfileCategoryId()
+{
+    return u"category-general"_qs;
+}
+
+inline QString newProfileCategoryId()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
 inline bool isProfileNameValid(const QString &name)
 {
     const QString trimmed = name.trimmed();
@@ -840,6 +875,23 @@ inline bool isProfileNameValid(const QString &name)
 inline QString newProfileId()
 {
     return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+inline const ProfileCategory *findProfileCategory(const MapperConfiguration &configuration,
+                                                  const QString &id)
+{
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (category.id == id) return &category;
+    }
+    return nullptr;
+}
+
+inline ProfileCategory *findProfileCategory(MapperConfiguration &configuration, const QString &id)
+{
+    for (ProfileCategory &category : configuration.profileCategories) {
+        if (category.id == id) return &category;
+    }
+    return nullptr;
 }
 
 inline AxisMappings defaultAxisMappings()
@@ -911,6 +963,30 @@ inline bool isProfileNameAvailable(const MapperConfiguration &configuration, con
     return true;
 }
 
+inline bool isProfileNameAvailableInCategory(const MapperConfiguration &configuration,
+                                             const QString &name, const QString &categoryId,
+                                             const QString &exceptId = {})
+{
+    const QString desired = name.trimmed().toCaseFolded();
+    if (!isProfileNameValid(name) || !findProfileCategory(configuration, categoryId)) return false;
+    for (const ControllerProfile &profile : configuration.profiles) {
+        if (profile.id != exceptId && profile.categoryId == categoryId
+            && profile.name.toCaseFolded() == desired) return false;
+    }
+    return true;
+}
+
+inline bool isProfileCategoryNameAvailable(const MapperConfiguration &configuration,
+                                           const QString &name, const QString &exceptId = {})
+{
+    const QString desired = name.trimmed().toCaseFolded();
+    if (desired.isEmpty() || desired.size() > 64) return false;
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (category.id != exceptId && category.name.toCaseFolded() == desired) return false;
+    }
+    return true;
+}
+
 // Implemented by the response-curve subsystem so every active profile is
 // compiled to immutable LUTs before the mapping worker accepts it.
 RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration);
@@ -942,12 +1018,20 @@ inline bool profileTriggerBindingEnabled(const ProfileTriggerBinding &binding)
 inline MapperConfiguration defaultConfiguration()
 {
     MapperConfiguration configuration;
+    ProfileCategory general;
+    general.id = generalProfileCategoryId();
+    general.name = u"General"_qs;
     ControllerProfile normal = defaultProfile(normalProfileId(), u"Normal"_qs);
     normal.outputLayoutId = defaultOutputLayoutId();
+    normal.categoryId = general.id;
     ControllerProfile precision = normal;
     precision.id = precisionProfileId();
     precision.name = u"Precision"_qs;
     configuration.profiles = {std::move(normal), std::move(precision)};
+    general.profileIds = {normalProfileId(), precisionProfileId()};
+    general.defaultProfileId = normalProfileId();
+    general.lastActiveProfileId = normalProfileId();
+    configuration.profileCategories = {std::move(general)};
     configuration.outputLayouts = {defaultBf6OutputLayout()};
     configuration.vjoyDeviceId = configuration.outputLayouts.front().requirements.deviceId;
     configuration.activeProfileId = normalProfileId();

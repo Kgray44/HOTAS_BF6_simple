@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.0.12**
+**Current release: v2.1.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.12 locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification across every action type and independent editor rows, while retaining v2.0.11's exact-vJoy HID adoption, non-elevated inactive-output isolation, and concise output diagnostics. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.1.0 adds a game-aware Profile Library with durable categories, safe profile lifecycle actions, optional low-frequency foreground-game detection, and validated portable Profile and Pack files while preserving v2.0.12's Automation editor qualification and the allocation-free DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
 
 ## Product gallery
 
@@ -65,7 +65,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **Mapping Safety Controls** — Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.
 - **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit ownership.
 - **POV / Hat Support** — DirectInput POV hats can act as discrete logical directions, profile controls, or native vJoy POV outputs.
-- **Profiles** — Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations.
+- **Profiles and Profile Library** — Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations, organized in game-aware categories.
 - **Response Curves** — Each profile/axis can use compiled response curves with both preset-based and point-based editing.
 - **Automation Engine** — A deterministic, fixed-capacity Automation subsystem evaluates rules inside the mapper using data compiled before report processing.
 - **Automation Editor UX** — Automation is edited as readable full-page rules rather than raw condition/action arrays.

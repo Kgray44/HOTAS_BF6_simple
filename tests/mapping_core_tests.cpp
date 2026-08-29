@@ -5,12 +5,14 @@
 #include "event_log.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
+#include "profile_portability.h"
 #include "profile_trigger_runtime.h"
 #include "response_curve.h"
 
 #include <QtTest>
 
 #include <QJsonArray>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cmath>
@@ -158,6 +160,10 @@ private slots:
     void physicalMonitorRecoversAfterReconnect();
     void legacyConfigurationMigratesToNormalAndPrecision();
     void profileMigrationIsIdempotent();
+    void categoryMigrationPreservesExistingProfiles();
+    void categoryScopedNamesAndStableReferencesSurviveMove();
+    void portableProfileRoundTripIsAtomicAndRemapsIds();
+    void portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault();
     void profileCrudValidatesNamesAndProtectsNormal();
     void newProfileClonesRequestedSourceIndependently();
     void profilesRemainIsolatedAndPersist();
@@ -1431,6 +1437,126 @@ void MappingCoreTests::profileMigrationIsIdempotent()
     QVERIFY(findProfile(reread, precisionProfileId()));
 }
 
+void MappingCoreTests::categoryMigrationPreservesExistingProfiles()
+{
+    MapperConfiguration source = defaultConfiguration();
+    QVERIFY(activateProfile(source, precisionProfileId()));
+    QJsonObject legacy = ConfigStore::toJson(source);
+    legacy.insert(QStringLiteral("version"), 18);
+    legacy.remove(QStringLiteral("profileCategories"));
+    legacy.remove(QStringLiteral("automaticGameDetection"));
+    QJsonArray profiles = legacy.value(QStringLiteral("profiles")).toArray();
+    for (int index = 0; index < profiles.size(); ++index) {
+        QJsonObject profile = profiles.at(index).toObject();
+        profile.remove(QStringLiteral("categoryId"));
+        profile.remove(QStringLiteral("enabled"));
+        profiles[index] = profile;
+    }
+    legacy.insert(QStringLiteral("profiles"), profiles);
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    QCOMPARE(migrated.profileCategories.size(), size_t{1});
+    QCOMPARE(migrated.profileCategories.front().name, QStringLiteral("General"));
+    QCOMPARE(migrated.profileCategories.front().profileIds.size(), source.profiles.size());
+    QCOMPARE(migrated.activeProfileId, precisionProfileId());
+    for (const ControllerProfile &profile : migrated.profiles) {
+        QCOMPARE(profile.categoryId, generalProfileCategoryId());
+        QVERIFY(profile.enabled);
+    }
+}
+
+void MappingCoreTests::categoryScopedNamesAndStableReferencesSurviveMove()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString flightCategory;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Battlefield 6"), &flightCategory));
+    QString copiedNormal;
+    QVERIFY(duplicateProfileToCategory(configuration, normalProfileId(), QStringLiteral("Normal"),
+                                       flightCategory, &copiedNormal));
+    QVERIFY(findProfile(configuration, copiedNormal));
+    setProfileTrigger(configuration, 7, precisionProfileId(), ProfileTriggerMode::Hold);
+    QVERIFY(moveProfileToCategory(configuration, precisionProfileId(), flightCategory));
+    QCOMPARE(configuration.profileTriggers[6].targetProfileId, precisionProfileId());
+    QVERIFY(renameProfile(configuration, precisionProfileId(), QStringLiteral("Precision")));
+    QCOMPARE(categoryProfileLabel(configuration, precisionProfileId()),
+             QStringLiteral("Battlefield 6 / Precision"));
+    findProfileCategory(configuration, flightCategory)->defaultProfileId = precisionProfileId();
+    QVERIFY(activateCategoryProfile(configuration, flightCategory));
+    QCOMPARE(configuration.activeProfileId, precisionProfileId());
+    QCOMPARE(findProfileCategory(configuration, flightCategory)->lastActiveProfileId, precisionProfileId());
+}
+
+void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MapperConfiguration source = defaultConfiguration();
+    QString category;
+    QVERIFY(createProfileCategory(source, QStringLiteral("Battlefield 6"), &category));
+    QString profileId;
+    QVERIFY(createProfileInCategory(source, QStringLiteral("Helicopter"), category, precisionProfileId(), &profileId));
+    findProfile(source, profileId)->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.21F;
+    const QString fileName = temporary.filePath(QStringLiteral("helicopter.hbf6profile"));
+    QString error;
+    QVERIFY2(ProfilePortability::exportProfile(source, profileId, fileName, &error), qPrintable(error));
+
+    PortableConfigurationBundle bundle;
+    QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
+    QVERIFY(bundle.kind == PortableConfigurationKind::Profile);
+    QCOMPARE(bundle.profiles.size(), size_t{1});
+    MapperConfiguration target = defaultConfiguration();
+    QStringList warnings;
+    QVERIFY2(ProfilePortability::apply(&target, bundle, {}, &warnings, &error), qPrintable(error));
+    QCOMPARE(target.profiles.size(), size_t{3});
+    const auto imported = std::find_if(target.profiles.cbegin(), target.profiles.cend(),
+        [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Helicopter"); });
+    QVERIFY(imported != target.profiles.cend());
+    QVERIFY(imported->id != profileId);
+    QCOMPARE(imported->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.21F);
+    bool valid = false;
+    QVERIFY(ConfigStore::fromJson(ConfigStore::toJson(target), &valid).profiles.size() == target.profiles.size());
+    QVERIFY(valid);
+}
+
+void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MapperConfiguration source = defaultConfiguration();
+    QString categoryId;
+    QVERIFY(createProfileCategory(source, QStringLiteral("Battlefield 6"), &categoryId));
+    QString profileId;
+    QVERIFY(createProfileInCategory(source, QStringLiteral("Vehicle"), categoryId,
+                                    normalProfileId(), &profileId));
+    findProfileCategory(source, categoryId)->executableRules = {QStringLiteral("bf6.exe")};
+    source.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum = -0.91F;
+
+    const QString fileName = temporary.filePath(QStringLiteral("bf6.hbf6pack"));
+    QString error;
+    QVERIFY2(ProfilePortability::exportPack(source, {categoryId}, {}, QStringLiteral("BF6 Pack"),
+                                             QStringLiteral("Portable vehicle setup"), false, false,
+                                             fileName, &error), qPrintable(error));
+    PortableConfigurationBundle bundle;
+    QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
+    QVERIFY(bundle.kind == PortableConfigurationKind::Pack);
+    QVERIFY(!bundle.includesDevices);
+    QVERIFY(!bundle.includesCalibration);
+    QCOMPARE(bundle.categories.size(), size_t{1});
+    QCOMPARE(bundle.profiles.size(), size_t{1});
+
+    MapperConfiguration target = defaultConfiguration();
+    const float originalMinimum = target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum;
+    QStringList warnings;
+    QVERIFY2(ProfilePortability::apply(&target, bundle, {}, &warnings, &error), qPrintable(error));
+    const auto category = std::find_if(target.profileCategories.cbegin(), target.profileCategories.cend(),
+        [](const ProfileCategory &item) { return item.name == QStringLiteral("Battlefield 6"); });
+    QVERIFY(category != target.profileCategories.cend());
+    QCOMPARE(category->executableRules, QStringList{QStringLiteral("bf6.exe")});
+    QCOMPARE(target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum, originalMinimum);
+}
+
 void MappingCoreTests::profileCrudValidatesNamesAndProtectsNormal()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -1588,7 +1714,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 18);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 19);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1760,7 +1886,7 @@ void MappingCoreTests::missingAndRenamedProfileTriggerTargetsAreSafe()
     QVERIFY(activateProfile(configuration, normalProfileId()));
     QVERIFY(deleteProfile(configuration, precisionProfileId()));
     cache = compileRuntimeProfileCache(configuration);
-    QVERIFY(cache.profileTriggers[4].consumesInput);
+    QVERIFY(!cache.profileTriggers[4].consumesInput);
     QCOMPARE(cache.profileTriggers[4].targetProfileIndex, -1);
     runtime.reconcileConfiguration(cache, buttons, false);
     QCOMPARE(runtime.effectiveProfile(cache).profileIndex, cache.baseProfileIndex);
@@ -1831,7 +1957,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 18);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 19);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
