@@ -390,5 +390,16 @@
       "Controller Diagnostics reports advertised, active, and fixed physical-axis counts plus active profile, virtual-output descriptors, and adopted output visibility state.",
       "Documents the real HidHide boundary: it affects enumeration, but a game that already opened a controller handle may need to be restarted after switching outputs."
     ]
+  },
+  {
+    "version": "2.0.12",
+    "title": "Automation Editor Interaction Qualification",
+    "summary": "Locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification while preserving v2.0.11 virtual-output visibility behavior and the allocation-free DirectInput-to-vJoy report path.",
+    "highlights": [
+      "Executes the real AutomationPage QML draft logic for every action type, confirming the intended action type is stored after each selection.",
+      "Proves independent edits of multiple action and condition rows, protecting the explicit stable-index fix from a future nested-handler regression.",
+      "Retains the required parameter-editor contract for virtual buttons, profiles, sensitivity, output adjustments, limits, forced values, mixes, follows, taps, and mapping controls.",
+      "Adds no mapper, driver, vJoy capability, configuration, allocation, or UI-notification work to the DirectInput-to-vJoy report path."
+    ]
   }
 ]

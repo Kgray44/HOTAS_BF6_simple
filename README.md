@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.0.11**
+**Current release: v2.0.12**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.11 completes the virtual-output visibility path with explicit exact-vJoy HID adoption, non-elevated inactive-output isolation, and concise output diagnostics while retaining v2.0.10's reusable layouts, exact-axis descriptor verification, safe neutral/reacquire transitions, and phantom-axis isolation outside the DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.12 locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification across every action type and independent editor rows, while retaining v2.0.11's exact-vJoy HID adoption, non-elevated inactive-output isolation, and concise output diagnostics. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
 
 ## Product gallery
 

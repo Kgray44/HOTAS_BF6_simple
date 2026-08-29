@@ -210,16 +210,33 @@
     "releaseTitle": "v2.0.11",
     "title": "Virtual Output Visibility Completion",
     "summary": "HOTAS BF6 v2.0.11 completes the safe practical HidHide isolation path for reusable virtual-output layouts. It adds an explicit exact-vJoy HID adoption step, preserves v2.0.10's neutral/release/acquire transition, and reports physical/output capability state concisely without adding work to the DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.12",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. Prepare an exact vJoy identity in Settings before relying on automatic inactive-output visibility, and restart a game that was already running when its controller handle was opened.",
+    "statusNote": "Superseded by v2.0.12 Automation Editor Interaction Qualification. Prepare an exact vJoy identity in Settings before relying on automatic inactive-output visibility, and restart a game that was already running when its controller handle was opened.",
     "highlights": [
       "A layout can be marked visibility-managed only after HidHide confirms the exact user-selected HID\\VID_1234&PID_BEAD vJoy instance is currently enumerated; display names, inferred ownership, and unrelated devices are never accepted.",
       "Normal cross-layout switching stays non-elevated: it neutralizes and releases the old output, hides only adopted inactive layouts, exposes the selected adopted layout, acquires it, and publishes a neutral baseline before mapping resumes. A failed visibility command rolls back completed visibility changes.",
       "Settings exposes one compact preparation action for the selected layout, and Controller Diagnostics now reports advertised/active/fixed physical axes, active profile/output descriptor, and managed output visibility without exposing arbitrary device inventories.",
       "HidHide changes game-device enumeration, not already-open game handles. Switch layouts before launching a game, or restart a game that retains an older controller handle after the switch.",
       "Configuration schema 18 remains compatible: existing layouts stay untouched and un-managed until their exact virtual HID identities are explicitly adopted."
+    ]
+  },
+  {
+    "version": "2.0.12",
+    "tag": "v2.0.12",
+    "releaseTitle": "v2.0.12",
+    "title": "Automation Editor Interaction Qualification",
+    "summary": "HOTAS BF6 v2.0.12 locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification. It preserves v2.0.11 virtual-output visibility behavior, the v2.0.9 stable-index editor correction, and the allocation-free DirectInput-to-vJoy report path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.0.12 adds automated interaction coverage for the Automation editor; physical controller, installer, and game acceptance remain machine-specific checks.",
+    "highlights": [
+      "Executes the real AutomationPage QML draft logic for each of the fourteen available action types and verifies the resulting action draft type.",
+      "Exercises independent edits across multiple action and condition rows, preserving the explicit stable-delegate-index contract that prevents nested signal-index collisions.",
+      "Retains the parameter-editor contract for virtual buttons, profiles, sensitivity, output adjustments, limits, forced values, mixes, follows, taps, and mapping controls.",
+      "Does not change MappingWorker, DirectInput polling, vJoy writes, driver configuration, persistence, or the v2.0.11 exact-HID virtual-output visibility implementation."
     ]
   }
 ]

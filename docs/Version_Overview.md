@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.11**
+**Current release: v2.0.12**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.12 — Automation Editor Interaction Qualification
+
+Locks down the final v2 Automation-editor reliability path with an offscreen QML interaction qualification while preserving v2.0.11 virtual-output visibility behavior and the allocation-free DirectInput-to-vJoy report path.
+
+- Executes the real AutomationPage QML draft logic for every action type, confirming the intended action type is stored after each selection.
+- Proves independent edits of multiple action and condition rows, protecting the explicit stable-index fix from a future nested-handler regression.
+- Retains the required parameter-editor contract for virtual buttons, profiles, sensitivity, output adjustments, limits, forced values, mixes, follows, taps, and mapping controls.
+- Adds no mapper, driver, vJoy capability, configuration, allocation, or UI-notification work to the DirectInput-to-vJoy report path.
 
 ## v2.0.11 — Virtual Output Visibility Completion
 
