@@ -219,15 +219,20 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(backendHeader.contains(QStringLiteral("virtualOutputLayouts READ virtualOutputLayouts")));
     QVERIFY(backendHeader.contains(QStringLiteral("assignProfileOutputLayout")));
     QVERIFY(backendHeader.contains(QStringLiteral("createFiveAxisOutputLayout")));
+    QVERIFY(backendHeader.contains(QStringLiteral("adoptVirtualOutputVisibility")));
     QVERIFY(backend.contains(QStringLiteral("physicalAxisActivityForObservedSpan")));
     QVERIFY(backend.contains(QStringLiteral("No meaningful movement observed during completed calibration")));
     QVERIFY(readiness.contains(QStringLiteral("capabilityAxesMatch")));
     QVERIFY(readiness.contains(QStringLiteral("exact descriptor")));
     QVERIFY(readiness.contains(QStringLiteral("applyManagedOutputVisibility")));
+    QVERIFY(readiness.contains(QStringLiteral("validateManagedVirtualOutputIdentity")));
+    QVERIFY(readiness.contains(QStringLiteral("VID_1234&PID_BEAD")));
     QVERIFY(worker.contains(QStringLiteral("outputLayoutAxes")));
     QVERIFY(worker.contains(QStringLiteral("&& outputLayoutAxes[static_cast<size_t>(target)]")));
     QVERIFY(settings.contains(QStringLiteral("Virtual Outputs")));
     QVERIFY(settings.contains(QStringLiteral("CREATE 5-AXIS OUTPUT")));
+    QVERIFY(settings.contains(QStringLiteral("PREPARE VISIBILITY")));
+    QVERIFY(settings.contains(QStringLiteral("already-open controller handle")));
     for (const QString &page : {standard, legacy}) {
         QVERIFY(page.contains(QStringLiteral("NOT ROUTED")));
         QVERIFY(page.contains(QStringLiteral("UNMAPPED VJOY AXES PARKED")));

@@ -637,6 +637,9 @@ void MappingCoreTests::configurationRoundTrips()
     configuration.preferredDeviceId = QStringLiteral("{0D15EA5E-0000-0000-0000-000000000001}");
     configuration.vjoyDeviceId = 2;
     configuration.outputLayouts.front().requirements.deviceId = 2;
+    configuration.outputLayouts.front().hidHideDeviceInstanceId =
+        QStringLiteral("HID\\VID_1234&PID_BEAD\\OWNED-VJOY-2");
+    configuration.outputLayouts.front().hidhideManaged = true;
     configuration.startMappingOnLaunch = true;
     configuration.disabledAxisValue = -0.25F;
     normal.axes[0].inverted = true;
@@ -669,6 +672,9 @@ void MappingCoreTests::configurationRoundTrips()
     QVERIFY(valid);
     QCOMPARE(restored.preferredDeviceId, configuration.preferredDeviceId);
     QCOMPARE(restored.vjoyDeviceId, 2);
+    QCOMPARE(restored.outputLayouts.front().hidHideDeviceInstanceId,
+             QStringLiteral("HID\\VID_1234&PID_BEAD\\OWNED-VJOY-2"));
+    QVERIFY(restored.outputLayouts.front().hidhideManaged);
     QVERIFY(restored.startMappingOnLaunch);
     QCOMPARE(restored.disabledAxisValue, -0.25F);
     QCOMPARE(static_cast<int>(restored.profiles.size()), 3);

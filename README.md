@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.0.10**
+**Current release: v2.0.11**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.10 adds reusable profile-owned virtual-output layouts, exact-axis descriptor verification, safe neutral/reacquire transitions, and calibration-backed phantom-axis isolation without adding work to the DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.11 completes the virtual-output visibility path with explicit exact-vJoy HID adoption, non-elevated inactive-output isolation, and concise output diagnostics while retaining v2.0.10's reusable layouts, exact-axis descriptor verification, safe neutral/reacquire transitions, and phantom-axis isolation outside the DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
 
 ## Product gallery
 
@@ -106,7 +106,7 @@ When HOTAS BF6 already owns the active layout's device while mapping, that is Re
 
 ### A game sees both the physical controller and vJoy
 
-Review the selected physical controller and HidHide findings in HOTAS Setup & Verification. Only hide the exact selected HID instance after confirming the mapper is allowlisted; leave unrelated devices untouched.
+Review the selected physical controller and HidHide findings in HOTAS Setup & Verification. For virtual-output layouts, adopt only an exact vJoy HID instance already enumerated by HidHide; leave unrelated devices untouched. HidHide changes future enumeration, so restart a game that already holds an older controller handle.
 
 ### Mapping or game binding is still not behaving as expected
 

@@ -379,5 +379,16 @@
       "Completed calibration records Active versus Fixed physical axes from observed travel; Fixed axes cannot route or feed Automation while the application still reports every advertised DirectInput slot.",
       "Schema 18 migrates prior profiles, routes, buttons, POVs, calibration, controller memory, and Automation into a data-only preserved output layout without touching installed vJoy configuration."
     ]
+  },
+  {
+    "version": "2.0.11",
+    "title": "Virtual Output Visibility Completion",
+    "summary": "Completes safe practical HidHide isolation for reusable virtual-output layouts without changing the DirectInput-to-vJoy report path or rewriting the v2.0.10 layout model.",
+    "highlights": [
+      "Settings now validates and adopts an exact currently enumerated vJoy HID instance for each layout before it may be visibility-managed; display-name matching and broad device rules remain forbidden.",
+      "Cross-layout transitions keep the existing neutralize/release/acquire protocol and now use only adopted identities for non-elevated inactive-output hiding, with bounded rollback if a visibility command fails.",
+      "Controller Diagnostics reports advertised, active, and fixed physical-axis counts plus active profile, virtual-output descriptors, and adopted output visibility state.",
+      "Documents the real HidHide boundary: it affects enumeration, but a game that already opened a controller handle may need to be restarted after switching outputs."
+    ]
   }
 ]

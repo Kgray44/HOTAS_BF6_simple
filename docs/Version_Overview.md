@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.10**
+**Current release: v2.0.11**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.11 — Virtual Output Visibility Completion
+
+Completes safe practical HidHide isolation for reusable virtual-output layouts without changing the DirectInput-to-vJoy report path or rewriting the v2.0.10 layout model.
+
+- Settings now validates and adopts an exact currently enumerated vJoy HID instance for each layout before it may be visibility-managed; display-name matching and broad device rules remain forbidden.
+- Cross-layout transitions keep the existing neutralize/release/acquire protocol and now use only adopted identities for non-elevated inactive-output hiding, with bounded rollback if a visibility command fails.
+- Controller Diagnostics reports advertised, active, and fixed physical-axis counts plus active profile, virtual-output descriptors, and adopted output visibility state.
+- Documents the real HidHide boundary: it affects enumeration, but a game that already opened a controller handle may need to be restarted after switching outputs.
 
 ## v2.0.10 — Virtual Output Layouts & Phantom-Axis Safety
 

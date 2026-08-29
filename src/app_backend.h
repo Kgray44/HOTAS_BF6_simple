@@ -337,6 +337,8 @@ public:
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
     Q_INVOKABLE bool assignProfileOutputLayout(const QString &profileId, const QString &layoutId);
     Q_INVOKABLE QString createFiveAxisOutputLayout(const QString &name, int deviceId);
+    Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
+                                                  const QString &deviceInstanceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
     // These return the newly-created stable ID so the presentation can open a
     // full-page draft editor without ever deriving identity from list order.
