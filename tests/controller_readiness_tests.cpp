@@ -209,6 +209,7 @@ private slots:
     void exactControllerIdentityIsRequiredForHidHide();
     void busyVJoyBlocksAutomaticChange();
     void mapperOwnedVJoyIsHealthy();
+    void mapperOwnedVJoyStillRequiresCapacity();
     void externalVJoyConflictRequiresAction();
     void passiveIdentityGapIsAttentionNotFailure();
     void checkingPlanPublishesEverySubsystem();
@@ -323,6 +324,21 @@ void ControllerReadinessTests::mapperOwnedVJoyIsHealthy()
     QVERIFY(plan.vjoySummary.contains(QStringLiteral("HOTAS BF6 currently owns")));
 }
 
+void ControllerReadinessTests::mapperOwnedVJoyStillRequiresCapacity()
+{
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.buttons = 8;
+    vjoy.busy = true;
+    vjoy.ownedByHotasBf6 = true;
+    vjoy.outputReportsSucceeding = true;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QVERIFY(plan.vjoyNeedsChanges);
+    QVERIFY(plan.vjoyCanApply);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Error);
+    QVERIFY(plan.proposedChanges.join(u' ').contains(QStringLiteral("15 buttons")));
+}
+
 void ControllerReadinessTests::externalVJoyConflictRequiresAction()
 {
     VJoyCapabilities vjoy = readyVJoy();
@@ -433,7 +449,7 @@ void ControllerReadinessTests::repairCompletesInOneElevationAndVerifies()
     QCOMPARE(probe->elevatedTransactions, 1);
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Ready);
     QCOMPARE(service.plan().state, ControllerReadinessState::Ready);
-    QCOMPARE(service.plan().status, QStringLiteral("READY — HOTAS setup repaired successfully and physical input was reacquired."));
+    QCOMPARE(service.plan().status, QStringLiteral("READY — Controller setup repaired successfully and physical input was reacquired."));
 }
 
 void ControllerReadinessTests::selfAccessFailureRollsBackBeforeReportingReady()

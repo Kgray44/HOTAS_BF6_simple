@@ -376,7 +376,7 @@ Page {
             }
             Text {
                 Layout.fillWidth: true
-                text: "The mapper is idle. Connect the HOTAS whenever you are ready and its live controls will appear here automatically."
+                text: "The mapper is idle. Connect a controller whenever you are ready and its live controls will appear here automatically."
                 color: "#9fa9ad"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -1973,12 +1973,12 @@ Page {
                     color: "#182a30"; border.color: "#536975"
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "HOTAS SETUP & VERIFICATION"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Verify your physical HOTAS, vJoy, and HidHide configuration."
+                            Text { text: "CONTROLLER SETUP & VERIFICATION"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
+                            Text { text: "Verify your selected controller, vJoy, and HidHide configuration."
                                 color: "#9dafb4"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             Text { text: backend.controllerReadinessStatus; color: backend.controllerReadinessState === "READY" ? "#8fd5c9" : backend.controllerReadinessState === "ACTION REQUIRED" ? "#ca9090" : "#d4ad69"; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
                         }
-                        CommandButton { label: "VERIFY HOTAS SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
+                        CommandButton { label: "VERIFY CONTROLLER SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
                     }
                 }
                 Panel { width: parent.width; height: Math.max(138, 80 + legacyControllerManagerRepeater.count * 64)
@@ -2252,13 +2252,6 @@ Page {
             }
         }
     }
-    Connections {
-        target: backend
-        function onControllerSetupRequested() {
-            if (!controllerSetupDialog.opened) controllerSetupDialog.open()
-        }
-    }
-
     Dialog {
         id: controllerSetupDialog
         parent: Overlay.overlay

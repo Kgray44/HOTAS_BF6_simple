@@ -289,5 +289,18 @@
       "Enforces each verified controller's saved vJoy capability contract during active-device switching, reusing sufficient supersets and validating reconfiguration before mapping can resume.",
       "Makes Set Up explicitly acquire and verify the selected new controller even when another physical controller remains connected."
     ]
+  },
+  {
+    "version": "2.0.3",
+    "title": "Multi-Controller Setup & vJoy Reliability Hotfix",
+    "summary": "Hardens the Universal Controller workflow from real multi-controller hardware testing while preserving the mapper's low-latency report path.",
+    "highlights": [
+      "Validates actual vJoy axes, buttons, and POV capacity even when HOTAS BF6 already owns the output device and reports are succeeding.",
+      "Reinspects vJoy after automatic configuration and persists the verified controller-specific capability contract, including first-time physical button capacity.",
+      "Carries an explicit controller identity from new-device discovery through the shared setup selector and verification workflow, never falling back to the current active controller.",
+      "Completes successful first-time automatic repair by immediately saving the controller and transitioning NEW to VERIFIED without a redundant Verify Again pass.",
+      "Makes saved offline controllers, zero-connected state, selected-offline state, and automatic verified-controller switching visually clear across Legacy, Standard, and Top Gun.",
+      "Repairs shared Settings row layout and fully themes the vJoy device SpinBox controls while applying generic Controller and Device wording to universal-controller UI."
+    ]
   }
 ]

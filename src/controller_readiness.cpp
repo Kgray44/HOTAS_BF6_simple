@@ -298,10 +298,9 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(
 bool ControllerReadinessService::isVJoySufficient(const VJoyCapabilities &vjoy,
                                                    const MapperOutputRequirements &requirements)
 {
-    // An active mapper has already acquired the selected device and is writing
-    // through the same vJoy API used for normal output. vJoyConfig's coarse
-    // BUSY result cannot distinguish that healthy ownership from a conflict.
-    if (vjoy.ownedByHotasBf6 && vjoy.outputReportsSucceeding) return true;
+    // An active mapper can safely own a BUSY device, but ownership and
+    // successful reports never prove the device has enough axes, buttons, or
+    // POV capacity for the selected controller.
     return vjoy.installed && vjoy.configurationUtilityAvailable && vjoy.driverReady
         && vjoy.devicePresent && (!vjoy.busy || vjoy.ownedByHotasBf6)
         && capabilityAxesSatisfy(vjoy.axes, requirements.axes)
@@ -341,14 +340,14 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
 
     if (!physical.connected) {
         plan.physicalStatus = VerificationSubsystemState::Error;
-        plan.physicalSummary = QStringLiteral("Selected physical HOTAS is not connected.");
+        plan.physicalSummary = QStringLiteral("Selected physical controller is not connected.");
         plan.findings.append(QStringLiteral("No physical DirectInput controller is detected."));
     } else {
         plan.physicalStatus = VerificationSubsystemState::Ready;
         plan.physicalSummary = physical.inputReportsReceived
             ? QStringLiteral("%1 — Connected · input reports received.").arg(physical.name)
             : QStringLiteral("%1 — Connected · mapper has the selected device open.").arg(physical.name);
-        plan.findings.append(QStringLiteral("PHYSICAL HOTAS READY — %1 · %2 axes · %3 buttons · %4 POV%5")
+        plan.findings.append(QStringLiteral("PHYSICAL CONTROLLER READY — %1 · %2 axes · %3 buttons · %4 POV%5")
             .arg(physical.name).arg(std::count(physical.axes.begin(), physical.axes.end(), true))
             .arg(physical.buttons).arg(physical.povs)
             .arg(physical.inputReportsReceived ? QStringLiteral(" · reports received") : QString{}));
@@ -406,7 +405,7 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
     } else if (hidhide.cloakKnown && hidhide.cloaked && hidhide.mapperAllowlisted
                && hidhide.selectedControllerHidden) {
         plan.hidhideStatus = VerificationSubsystemState::Ready;
-        plan.hidhideSummary = QStringLiteral("HidHide — Configured · physical HOTAS is hidden and HOTAS BF6 is permitted.");
+        plan.hidhideSummary = QStringLiteral("HidHide — Configured · physical controller is hidden and HOTAS BF6 is permitted.");
         plan.findings.append(QStringLiteral("HIDHIDE READY — HOTAS BF6 is allowed and the selected physical controller is hidden from ordinary applications."));
     } else if (!hidhide.selectedControllerResolved) {
         plan.hidhideStatus = VerificationSubsystemState::Attention;
@@ -422,7 +421,7 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         plan.findings.append(plan.hidhideSummary);
     } else {
         plan.hidhideStatus = VerificationSubsystemState::Attention;
-        plan.hidhideSummary = QStringLiteral("HidHide needs configuration for the selected physical HOTAS.");
+        plan.hidhideSummary = QStringLiteral("HidHide needs configuration for the selected physical controller.");
         plan.hidhideCanApply = true;
         plan.findings.append(QStringLiteral("PHYSICAL CONTROLLER STILL VISIBLE TO GAMES — HOTAS BF6 can allow itself, hide only this controller, then enable cloaking."));
         if (!hidhide.mapperAllowlisted) plan.proposedChanges.append(QStringLiteral("Allow HOTAS BF6 through HidHide before changing device visibility."));
@@ -446,7 +445,7 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         || plan.hidhideStatus == VerificationSubsystemState::Attention;
     if (!hasActionRequired && !hasAttention && physical.connected) {
         plan.state = ControllerReadinessState::Ready;
-        plan.status = QStringLiteral("READY — Your HOTAS configuration is working correctly.");
+        plan.status = QStringLiteral("READY — Your controller configuration is working correctly.");
     } else if (!hasActionRequired) {
         plan.state = ControllerReadinessState::Attention;
         plan.status = mode == VerificationMode::Quick
@@ -502,11 +501,11 @@ ControllerReadinessPlan ControllerReadinessService::checkingPlan(const PhysicalC
     plan.physicalStatus = VerificationSubsystemState::Checking;
     plan.vjoyStatus = VerificationSubsystemState::Checking;
     plan.hidhideStatus = VerificationSubsystemState::Checking;
-    plan.physicalSummary = QStringLiteral("Checking physical HOTAS…");
+    plan.physicalSummary = QStringLiteral("Checking physical controller…");
     plan.vjoySummary = QStringLiteral("Checking vJoy Device 1…");
     plan.hidhideSummary = QStringLiteral("Checking HidHide…");
     plan.status = mode == VerificationMode::Full
-        ? QStringLiteral("VERIFYING — HOTAS BF6 is checking the complete HOTAS chain.")
+        ? QStringLiteral("VERIFYING — HOTAS BF6 is checking the complete controller chain.")
         : QStringLiteral("VERIFYING — Performing a passive startup check.");
     return plan;
 }
@@ -922,10 +921,10 @@ QList<ControllerReadinessService::RepairOperation> ControllerReadinessService::r
     }
     if (plan.physical.connected && !plan.hidhide.selectedControllerHidden) {
         RepairOperation operation;
-        operation.name = QStringLiteral("Hide the selected physical HOTAS");
+        operation.name = QStringLiteral("Hide the selected physical controller");
         operation.program = hidhideCli;
         operation.arguments = {QStringLiteral("--dev-hide"), journal->controllerInstanceId};
-        operation.rollbackName = QStringLiteral("Unhide the selected physical HOTAS");
+        operation.rollbackName = QStringLiteral("Unhide the selected physical controller");
         operation.rollbackArguments = {QStringLiteral("--dev-unhide"), journal->controllerInstanceId};
         operation.failureSummary = QStringLiteral("HidHide device repair failed");
         operations.append(std::move(operation));
@@ -1099,7 +1098,7 @@ bool ControllerReadinessService::rollback(Journal *journal, QString *failure)
                QStringLiteral("could not disable newly enabled cloaking"));
     }
     if (journal->controllerWasHidden) {
-        record(QStringLiteral("Restore physical HOTAS visibility"), runHidHide(true,
+        record(QStringLiteral("Restore physical controller visibility"), runHidHide(true,
                {QStringLiteral("--dev-unhide"), journal->controllerInstanceId}),
                QStringLiteral("could not unhide the selected controller"));
     }
@@ -1129,7 +1128,7 @@ bool ControllerReadinessService::recoverFromPhysicalAccessFailure()
     m_lastRepairResult.rollbackAttempted = true;
     m_plan.state = ControllerReadinessState::RollingBack;
     m_plan.isChecking = true;
-    m_plan.status = QStringLiteral("RESTORING PHYSICAL HOTAS VISIBILITY — HOTAS BF6 could not safely reopen the controller.");
+    m_plan.status = QStringLiteral("RESTORING PHYSICAL CONTROLLER VISIBILITY — HOTAS BF6 could not safely reopen the controller.");
     QString failure;
     const bool restored = rollback(&m_journal, &failure);
     m_lastRepairResult.rollbackSucceeded = restored;
@@ -1175,9 +1174,9 @@ void ControllerReadinessService::completePhysicalAccessVerification(bool reacqui
         m_plan.physicalSummary = QStringLiteral("%1 — reacquired after HidHide changes; live reports confirmed.")
             .arg(m_plan.physical.name);
         m_plan.state = ControllerReadinessState::Ready;
-        m_plan.status = QStringLiteral("READY — HOTAS setup repaired successfully and physical input was reacquired.");
+        m_plan.status = QStringLiteral("READY — Controller setup repaired successfully and physical input was reacquired.");
         m_lastRepairResult.outcome = AutomaticRepairOutcome::Ready;
-        m_lastRepairResult.message = QStringLiteral("HOTAS setup repaired successfully after physical-controller verification.");
+        m_lastRepairResult.message = QStringLiteral("Controller setup repaired successfully after physical-controller verification.");
         m_journal = {};
         clearRecoveryJournal();
         return;
@@ -1187,7 +1186,7 @@ void ControllerReadinessService::completePhysicalAccessVerification(bool reacqui
     m_plan.physicalStatus = VerificationSubsystemState::Error;
     m_plan.hidhideStatus = VerificationSubsystemState::Error;
     if (rollbackSucceeded && reportsReceivedAfterRollback) {
-        m_plan.physicalSummary = QStringLiteral("Physical HOTAS visibility was restored and live reports resumed after automatic setup was reverted.");
+        m_plan.physicalSummary = QStringLiteral("Physical controller visibility was restored and live reports resumed after automatic setup was reverted.");
         m_plan.hidhideSummary = QStringLiteral("Automatic HidHide configuration was reverted because HOTAS BF6 could not safely retain controller access.");
         m_plan.state = ControllerReadinessState::Attention;
         m_plan.status = QStringLiteral("HIDHIDE SELF-ACCESS FAILURE — Automatic setup was reverted; physical input is available again.");
@@ -1195,11 +1194,11 @@ void ControllerReadinessService::completePhysicalAccessVerification(bool reacqui
     } else {
         m_plan.physicalSummary = QStringLiteral("HOTAS BF6 could not reacquire the selected physical controller after HidHide changes.");
         m_plan.hidhideSummary = rollbackSucceeded
-            ? QStringLiteral("Visibility was restored, but reconnect the HOTAS and use Copy Diagnostics if reports do not return.")
+            ? QStringLiteral("Visibility was restored, but reconnect the controller and use Copy Diagnostics if reports do not return.")
             : QStringLiteral("Automatic rollback could not fully restore controller visibility; use Copy Diagnostics before manual recovery.");
         m_plan.state = ControllerReadinessState::Failed;
         m_plan.status = rollbackSucceeded
-            ? QStringLiteral("PHYSICAL CONTROLLER LOST — Visibility was restored; reconnect your HOTAS to complete recovery.")
+            ? QStringLiteral("PHYSICAL CONTROLLER LOST — Visibility was restored; reconnect your controller to complete recovery.")
             : QStringLiteral("ROLLBACK FAILURE — HOTAS BF6 could not safely restore physical controller access.");
         m_lastRepairResult.message = m_plan.status;
     }
@@ -1243,7 +1242,7 @@ bool ControllerReadinessService::applyAutomatically()
     persistRecoveryJournal();
 
     m_plan.state = ControllerReadinessState::Verifying;
-    m_plan.status = QStringLiteral("VERIFYING REPAIR — HOTAS BF6 is checking the complete HOTAS chain.");
+    m_plan.status = QStringLiteral("VERIFYING REPAIR — HOTAS BF6 is checking the complete controller chain.");
     if (!verifyAfterRepair()) {
         m_lastRepairResult.outcome = AutomaticRepairOutcome::Attention;
         const QString unresolved = !m_plan.hidhideSummary.isEmpty() ? m_plan.hidhideSummary
@@ -1258,7 +1257,7 @@ bool ControllerReadinessService::applyAutomatically()
         m_lastRepairResult.outcome = AutomaticRepairOutcome::Ready;
         m_lastRepairResult.message = QStringLiteral("Configuration applied; waiting for physical-controller verification.");
         m_plan.state = ControllerReadinessState::Verifying;
-        m_plan.status = QStringLiteral("VERIFYING PHYSICAL CONTROLLER — Reacquiring the HOTAS after HidHide changes.");
+        m_plan.status = QStringLiteral("VERIFYING PHYSICAL CONTROLLER — Reacquiring the controller after HidHide changes.");
     }
     m_transactionActive = false;
     return true;
@@ -1274,7 +1273,7 @@ bool ControllerReadinessService::undoLastAutomaticSetup()
         m_journal = {};
         clearRecoveryJournal();
         inspect(m_configuration, m_physical);
-        m_plan.status = QStringLiteral("Automatic HOTAS repair changes were undone.");
+        m_plan.status = QStringLiteral("Automatic controller repair changes were undone.");
     } else {
         m_plan.state = ControllerReadinessState::Failed;
         m_plan.status = QStringLiteral("Undo needs manual review: %1").arg(failure);

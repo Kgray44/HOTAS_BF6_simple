@@ -352,10 +352,9 @@ signals:
     void stateChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
-    // An actual no-controller -> acquired-controller transition completed a
-    // quick readiness check with a user-actionable result. Presentation opens
-    // the existing shared setup dialog in response to this signal.
-    void controllerSetupRequested();
+    // Setup presentation must keep the discovered controller identity instead
+    // of inferring a target from whichever controller is currently active.
+    void controllerSetupRequested(const QStringList &targetDirectInputIds);
 
 private slots:
     void refreshUiSnapshot();

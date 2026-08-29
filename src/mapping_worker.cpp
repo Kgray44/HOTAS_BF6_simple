@@ -531,7 +531,9 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
 MappingWorker::~MappingWorker()
 {
     requestStop();
-    wait(1500);
+    // QThread must never reach its base destructor while run() still owns
+    // DirectInput/vJoy state. The report loop wakes on a bounded interval.
+    wait();
 }
 
 void MappingWorker::updateConfiguration(const MapperConfiguration &configuration)
@@ -1116,7 +1118,7 @@ void MappingWorker::run()
             quiesceVirtualController();
             vjoy.release();
             m_runtime.vjoyReady = false;
-            setVjoyStatus(u"vJoy released for HOTAS verification"_qs);
+            setVjoyStatus(u"vJoy released for controller verification"_qs);
             m_vjoyReleasedForControlPlane = true;
             emit hardwareStateChanged();
         }
