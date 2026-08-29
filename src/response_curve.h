@@ -72,6 +72,12 @@ void normalizeCurveDefinition(CurveDefinition &definition, bool unipolar);
 bool curveDefinitionIsValid(const CurveDefinition &definition, bool unipolar);
 CurveDefinition materializeCurveDefinition(const CurveDefinition &definition, bool unipolar,
                                            int density = 0);
+// Converts explicit points by preserving the meaningful half of the source
+// response. Centered -> one-sided starts at the former 0 origin; no -1..1
+// curve is compressed into a fake 0..1 center. Generated families remain
+// parameterized and are evaluated in their selected domain.
+CurveDefinition convertCurveDefinitionDomain(const CurveDefinition &definition,
+                                             bool sourceUnipolar, bool targetUnipolar);
 bool updateCurvePoint(CurveDefinition &definition, bool unipolar, int index,
                       float input, float output);
 bool setCurvePointLocked(CurveDefinition &definition, bool unipolar, int index, bool locked);

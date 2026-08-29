@@ -273,6 +273,7 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
 {
     hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
     hotas::ControllerProfile &profile = hotas::activeProfile(configuration);
+    const bool oneSided = name == "One-Sided Linear";
     profile.buttons = hotas::defaultButtonMappings(15, 32);
     profile.povs.resize(1);
     profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Right))] =
@@ -281,6 +282,9 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
     configuration.nativePovBindings[0] = {true, hotas::NativePovTargetType::Continuous, 1};
     for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
         const bool unipolar = hotas::isUnipolarAxis(static_cast<hotas::PhysicalAxis>(index));
+        if (oneSided) {
+            profile.axes[static_cast<size_t>(index)].rangeMode = hotas::AxisRangeMode::OneSided;
+        }
         if (name == "J-Curve") {
             profile.axes[static_cast<size_t>(index)].curve = hotas::standardCurveDefinition(
                 hotas::CurveFamily::JCurve, 1.0F);
@@ -701,7 +705,7 @@ void runSuite(std::string_view condition, const std::vector<SyntheticReport> &re
     std::atomic_bool stop{false};
     std::thread uiThread;
     if (runUiStress) uiThread = std::thread(runUiModelStress, std::ref(stop));
-    for (const std::string_view name : {"Linear", "J-Curve", "S-Curve", "Advanced", "Shooter-Flight", "Personal", "Custom-25"}) {
+    for (const std::string_view name : {"Linear", "One-Sided Linear", "J-Curve", "S-Curve", "Advanced", "Shooter-Flight", "Personal", "Custom-25"}) {
         printResult(condition, benchmark(name, reports));
     }
     if (runUiStress) {

@@ -276,6 +276,26 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
             }
         }
     }
+    // A verified controller's stored requirement is a floor, not a competing
+    // definition. Keep it when temporary profile edits happen to require less
+    // than the output configuration that was successfully verified for this
+    // selected device.
+    const auto activeRecord = std::find_if(configuration.savedControllers.cbegin(),
+        configuration.savedControllers.cend(), [&configuration](const SavedControllerRecord &record) {
+            return record.id == configuration.activeControllerRecordId;
+        });
+    if (activeRecord != configuration.savedControllers.cend()) {
+        requirements.buttons = std::max(requirements.buttons, activeRecord->vjoyRequirements.buttons);
+        requirements.continuousPovs = std::max(requirements.continuousPovs,
+                                                activeRecord->vjoyRequirements.continuousPovs);
+        requirements.discretePovs = std::max(requirements.discretePovs,
+                                              activeRecord->vjoyRequirements.discretePovs);
+        for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+            requirements.axes[static_cast<size_t>(index)] =
+                requirements.axes[static_cast<size_t>(index)]
+                || activeRecord->vjoyRequirements.axes[static_cast<size_t>(index)];
+        }
+    }
     requirements.buttons = std::clamp(requirements.buttons, 0, kMaximumVirtualButtons);
     requirements.continuousPovs = std::clamp(requirements.continuousPovs, 0, 4);
     requirements.discretePovs = std::clamp(requirements.discretePovs, 0, 4);
@@ -323,12 +343,13 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
                                                               VerificationMode mode)
 {
     MapperOutputRequirements effectiveRequirements = requirements;
-    // Empty button routes are not equivalent to zero output capacity: the
-    // established mapper safely creates its bounded 1:1 defaults when it sees
-    // a controller. Plan for that current default rather than surprising a
-    // new user with an eight-button virtual device for a fifteen-button HOTAS.
-    if (effectiveRequirements.buttons == 0 && physical.connected) {
-        effectiveRequirements.buttons = std::clamp(physical.buttons, 0, kMaximumVirtualButtons);
+    // The physical controller's exposed buttons are always part of the output
+    // contract. Applying this only to an empty mapping let Verify Setup accept
+    // an eight-button vJoy device while runtime correctly rejected it for a
+    // fifteen-button HOTAS.
+    if (physical.connected) {
+        effectiveRequirements.buttons = std::max(effectiveRequirements.buttons,
+            std::clamp(physical.buttons, 0, kMaximumVirtualButtons));
     }
     ControllerReadinessPlan plan;
     plan.physical = physical;

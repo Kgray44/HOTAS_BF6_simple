@@ -29,6 +29,9 @@ namespace hotas {
 class AppBackend final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
+    // Curve Editor keeps this structural selector model separate from the
+    // high-frequency axes telemetry list.
+    Q_PROPERTY(QVariantList curveAxisChoices READ curveAxisChoices NOTIFY stateChanged)
     Q_PROPERTY(int selectedAxisIndex READ selectedAxisIndex NOTIFY stateChanged)
     Q_PROPERTY(QVariantList selectedAxisCurve READ selectedAxisCurve NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantList curveEditorResponseCurve READ curveEditorResponseCurve NOTIFY selectedAxisCurveChanged)
@@ -37,6 +40,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curvePreviewCurve READ curvePreviewCurve NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantList selectedCurvePoints READ selectedCurvePoints NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantMap curveEditorState READ curveEditorState NOTIFY selectedAxisCurveChanged)
+    Q_PROPERTY(QVariantMap curveEditorTelemetry READ curveEditorTelemetry NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantMap curveAnalysis READ curveAnalysis NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantMap curveComparisonState READ curveComparisonState NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantList curveStandardPresets READ curveStandardPresets CONSTANT)
@@ -100,6 +104,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool calibrationActive READ calibrationActive NOTIFY stateChanged)
     Q_PROPERTY(QString calibrationStage READ calibrationStage NOTIFY stateChanged)
     Q_PROPERTY(QString calibrationStatus READ calibrationStatus NOTIFY stateChanged)
+    Q_PROPERTY(bool calibrationSuccess READ calibrationSuccess NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList calibrationHistory READ calibrationHistory NOTIFY stateChanged)
+    Q_PROPERTY(QString legacyControlMigrationWarning READ legacyControlMigrationWarning NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
     Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
@@ -142,6 +149,7 @@ public:
     ~AppBackend() override;
 
     QVariantList axes() const;
+    QVariantList curveAxisChoices() const;
     int selectedAxisIndex() const;
     QVariantList selectedAxisCurve() const;
     QVariantList curveEditorResponseCurve() const;
@@ -150,6 +158,7 @@ public:
     QVariantList curvePreviewCurve() const;
     QVariantList selectedCurvePoints() const;
     QVariantMap curveEditorState() const;
+    QVariantMap curveEditorTelemetry() const;
     QVariantMap curveAnalysis() const;
     QVariantMap curveComparisonState() const;
     QVariantList curveStandardPresets() const;
@@ -213,6 +222,9 @@ public:
     bool calibrationActive() const;
     QString calibrationStage() const;
     QString calibrationStatus() const { return m_calibrationStatus; }
+    bool calibrationSuccess() const { return m_calibrationSuccess; }
+    QVariantList calibrationHistory() const;
+    QString legacyControlMigrationWarning() const { return m_configuration.legacyControlMigrationWarning; }
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
     double disabledAxisValue() const;
@@ -376,6 +388,7 @@ private:
     void persistAndApply();
     void refreshControllerInventory();
     bool rebuildControllerUiModel();
+    void rebuildCurveAxisChoices();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
     SavedControllerRecord *activeControllerRecord();
     const SavedControllerRecord *activeControllerRecord() const;
@@ -400,6 +413,8 @@ private:
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
     void sampleCalibrationControlPlane();
     void finishCalibration();
+    void appendCalibrationHistory(const std::array<Calibration, kPhysicalAxisCount> &calibration,
+                                  int calibratedAxisCount);
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
     ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
 
@@ -420,6 +435,10 @@ private:
 
     MapperConfiguration m_configuration;
     MappingWorker m_worker;
+    // Canonical GUI-side desired Mapping state. It is updated synchronously
+    // for every user click and reconciled from worker-side Automation changes.
+    bool m_mappingDesired = false;
+    int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.
     // v1.9.1 never shows a first-run setup modal.
@@ -451,6 +470,7 @@ private:
     CalibrationStageState m_calibrationStage = CalibrationStageState::Idle;
     std::array<CalibrationCaptureAxis, kPhysicalAxisCount> m_calibrationCapture{};
     QString m_calibrationStatus = u"Move each control through its complete range before capturing center."_qs;
+    bool m_calibrationSuccess = false;
     quint64 m_previousInputReports = 0;
     quint64 m_previousVjoyWrites = 0;
     double m_inputReportsPerSecond = 0.0;
@@ -463,6 +483,7 @@ private:
     qulonglong m_latencyP95Us = 0;
     qulonglong m_latencyP99Us = 0;
     QVariantList m_selectedAxisCurve;
+    QVariantList m_curveAxisChoices;
     QVariantList m_curveEditorResponseCurve;
     QVariantList m_curveGainSamples;
     QVariantList m_curveComparisonCurve;

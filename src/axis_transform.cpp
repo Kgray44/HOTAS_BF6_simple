@@ -61,26 +61,47 @@ float applyRescaledDeadzone(float value, float deadzone)
     return std::copysign(std::min(rescaled, 1.0F), value);
 }
 
+float applyRescaledUnipolarDeadzone(float value, float deadzone)
+{
+    value = std::clamp(value, 0.0F, 1.0F);
+    deadzone = std::clamp(deadzone, 0.0F, 0.95F);
+    if (value <= deadzone) return 0.0F;
+    return std::min((value - deadzone) / (1.0F - deadzone), 1.0F);
+}
+
 void normalizeAxisProcessing(AxisMapping &mapping)
 {
     mapping.deadzone = std::clamp(mapping.deadzone, 0.0F, 0.95F);
     mapping.hysteresis = std::clamp(mapping.hysteresis, 0.0F, 0.25F);
-    mapping.outputMinimum = clampUnit(mapping.outputMinimum);
-    mapping.outputMaximum = clampUnit(mapping.outputMaximum);
+    const float domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
+    mapping.outputMinimum = std::clamp(mapping.outputMinimum, domainMinimum, 1.0F);
+    mapping.outputMaximum = std::clamp(mapping.outputMaximum, domainMinimum, 1.0F);
     if (mapping.outputMinimum >= mapping.outputMaximum) {
-        mapping.outputMinimum = -1.0F;
+        mapping.outputMinimum = domainMinimum;
         mapping.outputMaximum = 1.0F;
     }
 }
 
 float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping)
 {
-    return applyRescaledDeadzone(normalizeCalibrated(raw, mapping.calibration),
-                                 mapping.profile.deadzone);
+    const float calibrated = normalizeCalibrated(raw, mapping.calibration);
+    if (mapping.profile.rangeMode == AxisRangeMode::OneSided) {
+        return applyRescaledUnipolarDeadzone(std::max(0.0F, calibrated),
+                                             mapping.profile.deadzone);
+    }
+    return applyRescaledDeadzone(calibrated, mapping.profile.deadzone);
 }
 
 float evaluateResponseCurve(float value, const RuntimeAxisMapping &mapping)
 {
+    if (mapping.profile.rangeMode == AxisRangeMode::OneSided) {
+        // The immutable LUT retains a compact -1..1 storage encoding. The
+        // report path deliberately crosses that representation only at the
+        // curve boundary; every surrounding transform remains 0..1.
+        const float encoded = evaluateCompiledResponseCurve(value * 2.0F - 1.0F,
+                                                             mapping.responseCurve);
+        return std::clamp((encoded + 1.0F) * 0.5F, 0.0F, 1.0F);
+    }
     return evaluateCompiledResponseCurve(value, mapping.responseCurve);
 }
 
@@ -103,16 +124,18 @@ float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &sta
 float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping, float *curveResponse,
                                  AxisSignalPath *signalPath)
 {
-    const float normalized = normalizeCalibrated(raw, mapping.calibration);
-    float transformed = applyRescaledDeadzone(normalized, mapping.profile.deadzone);
+    const float calibrated = normalizeCalibrated(raw, mapping.calibration);
+    const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
+    const float normalized = oneSided ? std::max(0.0F, calibrated) : calibrated;
+    float transformed = oneSided
+        ? applyRescaledUnipolarDeadzone(normalized, mapping.profile.deadzone)
+        : applyRescaledDeadzone(normalized, mapping.profile.deadzone);
     if (signalPath) {
         signalPath->normalized = normalized;
         signalPath->afterDeadzone = transformed;
         signalPath->afterHysteresis = transformed;
     }
-    if (mapping.profile.inverted) {
-        transformed = -transformed;
-    }
+    if (mapping.profile.inverted) transformed = oneSided ? 1.0F - transformed : -transformed;
     if (signalPath) signalPath->afterInversion = transformed;
     transformed = evaluateResponseCurve(transformed, mapping);
     if (curveResponse) *curveResponse = transformed;
@@ -126,17 +149,19 @@ float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
                         AxisHysteresisState &hysteresisState, float *curveResponse,
                         AxisSignalPath *signalPath)
 {
-    const float normalized = normalizeCalibrated(raw, mapping.calibration);
-    const float afterDeadzone = applyRescaledDeadzone(normalized, mapping.profile.deadzone);
+    const float calibrated = normalizeCalibrated(raw, mapping.calibration);
+    const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
+    const float normalized = oneSided ? std::max(0.0F, calibrated) : calibrated;
+    const float afterDeadzone = oneSided
+        ? applyRescaledUnipolarDeadzone(normalized, mapping.profile.deadzone)
+        : applyRescaledDeadzone(normalized, mapping.profile.deadzone);
     float transformed = applyAxisHysteresis(afterDeadzone, mapping.profile.hysteresis, hysteresisState);
     if (signalPath) {
         signalPath->normalized = normalized;
         signalPath->afterDeadzone = afterDeadzone;
         signalPath->afterHysteresis = transformed;
     }
-    if (mapping.profile.inverted) {
-        transformed = -transformed;
-    }
+    if (mapping.profile.inverted) transformed = oneSided ? 1.0F - transformed : -transformed;
     if (signalPath) signalPath->afterInversion = transformed;
     transformed = evaluateResponseCurve(transformed, mapping);
     if (curveResponse) *curveResponse = transformed;

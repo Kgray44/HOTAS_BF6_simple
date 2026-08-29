@@ -60,6 +60,7 @@ float clampUnit(float value);
 float robustCalibrationCenter(const std::array<float, 32> &values, int count);
 float normalizeCalibrated(float raw, const Calibration &calibration);
 float applyRescaledDeadzone(float value, float deadzone);
+float applyRescaledUnipolarDeadzone(float value, float deadzone);
 float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping);
 float evaluateResponseCurve(float value, const RuntimeAxisMapping &mapping);
 float applyOutputLimits(float value, const AxisMapping &mapping);

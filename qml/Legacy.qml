@@ -64,7 +64,7 @@ Page {
         return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%"
     }
     function controlValue(info, value) {
-        if (info && info.unipolar) return ((Number(value) + 1) * 50).toFixed(1) + "%"
+        if (info && info.unipolar) return (Math.max(0, Math.min(1, Number(value))) * 100).toFixed(1) + "%"
         return valuePercent(value)
     }
     function outputState(info) {
@@ -106,17 +106,18 @@ Page {
         property string label: "ACTION"
         property bool commandEnabled: true
         property bool subdued: false
+        property bool destructive: false
         signal triggered()
         implicitWidth: Math.max(110, labelText.implicitWidth + 30)
         implicitHeight: 36
         radius: 3
-        color: !commandEnabled ? "#151a1e" : commandMouse.containsMouse ? (subdued ? "#303d44" : "#456c78") : (subdued ? "#222c32" : "#324f5a")
-        border.color: !commandEnabled ? "#182f3539" : (subdued ? "#536975" : "#78aab9")
+        color: !commandEnabled ? "#151a1e" : destructive ? (commandMouse.containsMouse ? "#4f3439" : "#35272b") : commandMouse.containsMouse ? (subdued ? "#303d44" : "#456c78") : (subdued ? "#222c32" : "#324f5a")
+        border.color: !commandEnabled ? "#182f3539" : (destructive ? "#ca9090" : (subdued ? "#536975" : "#78aab9"))
         opacity: commandEnabled ? 1.0 : 0.45
         Text { id: labelText
  anchors.centerIn: parent
  text: parent.label
- color: parent.commandEnabled ? "#f0f4f5" : "#879196"
+ color: !parent.commandEnabled ? "#879196" : (parent.destructive ? "#ca9090" : "#f0f4f5")
  font.pixelSize: 11
  font.bold: true }
         MouseArea { id: commandMouse
@@ -456,7 +457,7 @@ Page {
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
- value: Number(axisModule.info.calibrated)
+                value: axisModule.info.unipolar ? Number(axisModule.info.calibrated) * 2 - 1 : Number(axisModule.info.calibrated)
  tone: "#8eb5c1" }
                 Text { text: root.controlValue(axisModule.info, axisModule.info.calibrated)
  color: "#c6dce1"
@@ -474,7 +475,7 @@ Page {
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
- value: Number(axisModule.info.virtualValue)
+                value: axisModule.info.unipolar ? Number(axisModule.info.virtualValue) * 2 - 1 : Number(axisModule.info.virtualValue)
  offline: !backend.vjoyReady
  valid: axisModule.info.virtualValid
  tone: "#b7d7bf" }
@@ -607,8 +608,9 @@ Page {
                 property var curveSamples: curveViewer.samples
                 property real physicalInput: curveViewer.info ? Number(curveViewer.info.calibrated) : 0
                 property real transformedOutput: curveViewer.info ? Number(curveViewer.info.transformed) : 0
-                function xFor(value, left, plotWidth) { return left + ((value + 1) * 0.5) * plotWidth }
-                function yFor(value, top, plotHeight) { return top + (1 - ((value + 1) * 0.5)) * plotHeight }
+                property real domainMinimum: curveViewer.info && curveViewer.info.unipolar ? 0 : -1
+                function xFor(value, left, plotWidth) { return left + (value - domainMinimum) / (1 - domainMinimum) * plotWidth }
+                function yFor(value, top, plotHeight) { return top + (1 - (value - domainMinimum) / (1 - domainMinimum)) * plotHeight }
                 onCurveSamplesChanged: requestPaint()
                 onPhysicalInputChanged: requestPaint()
                 onTransformedOutputChanged: requestPaint()
@@ -630,15 +632,17 @@ Page {
                         ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotHeight); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotWidth, y); ctx.stroke()
                     }
-                    ctx.strokeStyle = "#5677848c"
-                    ctx.beginPath()
-                    ctx.moveTo(left, yFor(0, top, plotHeight))
-                    ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
-                    ctx.stroke()
-                    ctx.beginPath()
-                    ctx.moveTo(xFor(0, left, plotWidth), top)
-                    ctx.lineTo(xFor(0, left, plotWidth), top + plotHeight)
-                    ctx.stroke()
+                    if (domainMinimum < 0) {
+                        ctx.strokeStyle = "#5677848c"
+                        ctx.beginPath()
+                        ctx.moveTo(left, yFor(0, top, plotHeight))
+                        ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(xFor(0, left, plotWidth), top)
+                        ctx.lineTo(xFor(0, left, plotWidth), top + plotHeight)
+                        ctx.stroke()
+                    }
                     const trace = function(key, color, widthValue) {
                         if (!curveSamples || curveSamples.length === 0) return
                         ctx.strokeStyle = color
@@ -656,7 +660,7 @@ Page {
                     trace("output", "#69aeb8", 2.0)
                     if (curveViewer.info && Number(curveViewer.info.hysteresis) > 0) {
                         const halfBand = Number(curveViewer.info.hysteresis)
-                        const x0 = xFor(Math.max(-1, physicalInput - halfBand), left, plotWidth)
+                        const x0 = xFor(Math.max(domainMinimum, physicalInput - halfBand), left, plotWidth)
                         const x1 = xFor(Math.min(1, physicalInput + halfBand), left, plotWidth)
                         ctx.fillStyle = "#377da38c"
                         ctx.fillRect(x0, top, Math.max(1, x1 - x0), plotHeight)
@@ -690,15 +694,9 @@ Page {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 344
-        color: info && (info.pressed || info.profileControlActive) ? "#ec263e48" : "#ed182128"
-        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.pressed ? "#93a3cfda" : "#43546770")
-        function triggerChoiceIndex(targetId) {
-            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
-                if (root.profileTriggerChoices[index].id === targetId) return index
-            }
-            return 0
-        }
+        Layout.preferredHeight: 204
+        color: info && info.pressed ? "#ec263e48" : "#ed182128"
+        border.color: info && info.pressed ? "#93a3cfda" : "#43546770"
         ColumnLayout {
             id: buttonContent
             anchors.fill: parent
@@ -755,87 +753,6 @@ Page {
                 FlightTextInput { Layout.fillWidth: true; text: buttonCard.info.customName || ""; placeholderText: buttonCard.info.hardwareLabel || "Controller button"
                     onEditingFinished: backend.setButtonCustomName(buttonCard.info.index, text) }
             }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "MAPPING CTRL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 108 }
-                FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 29; model: backend.mappingControlActionChoices
-                    currentIndex: Math.max(0, backend.mappingControlActionChoices.indexOf(buttonCard.info.mappingControl))
-                    onActivated: backend.setMappingControl(buttonCard.info.index, currentText) }
-            }
-            Text { visible: buttonCard.info.mappingControl !== "None"; text: "This control is consumed before game output and uses press edges only."
-                color: "#d4ad69"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            FineLine { Layout.fillWidth: true }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                FlightComboBox {
-                    id: profileControlTarget
-                    Layout.preferredWidth: 146; Layout.preferredHeight: 29
-                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
-                    currentIndex: buttonCard.triggerChoiceIndex(buttonCard.info.profileControlTargetId)
-                    onActivated: backend.setProfileTrigger(buttonCard.info.index, currentValue,
-                        buttonCard.info.profileControlEnabled ? buttonCard.info.profileControlMode : "Hold")
-                    background: Rectangle { radius: 5; color: "#0c1013"; border.color: "#435660" }
-                    contentItem: Text { leftPadding: 8; text: profileControlTarget.displayText; color: "#dce4e4"
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
-                }
-            }
-            ColumnLayout { Layout.fillWidth: true; visible: buttonCard.info.profileControlEnabled; spacing: 6
-                RowLayout { Layout.fillWidth: true
-                    Text { text: "TARGET PROFILE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                    Text { text: buttonCard.info.profileControlTargetName.toUpperCase()
-                        color: buttonCard.info.profileControlTargetAvailable ? "#b8d8dc" : "#d49b62"
-                        font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 150 }
-                }
-            }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "MODE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                Rectangle {
-                    id: profileControlMode
-                    Layout.preferredWidth: 150; Layout.preferredHeight: 28
-                    radius: 5
-                    color: "#0c1013"
-                    border.color: buttonCard.info.profileControlEnabled ? "#435660" : "#263137"
-                    opacity: buttonCard.info.profileControlEnabled ? 1.0 : 0.55
-                    Row {
-                        anchors.fill: parent
-                        Repeater {
-                            model: ["Hold", "Toggle"]
-                            delegate: Rectangle {
-                                width: profileControlMode.width / 2
-                                height: profileControlMode.height
-                                radius: 4
-                                color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
-                                border.color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? "#78aab9" : "transparent"
-                                Text { anchors.centerIn: parent; text: modelData.toUpperCase()
-                                    color: buttonCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"
-                                    font.pixelSize: 9; font.bold: true }
-                                MouseArea {
-                                    id: modeMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    enabled: buttonCard.info.profileControlEnabled
-                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: backend.setProfileTrigger(buttonCard.info.index,
-                                        buttonCard.info.profileControlTargetId, modelData)
-                                }
-                                ToolTip.visible: modeMouse.containsMouse
-                                ToolTip.text: modelData === "Hold"
-                                    ? "Target profile is active only while this button is held."
-                                    : "Press once to activate; press again to release."
-                            }
-                        }
-                    }
-                }
-            }
-            Text { visible: buttonCard.info.profileControlEnabled
-                text: buttonCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · "
-                    + buttonCard.info.profileControlMode.toUpperCase() : "Profile control consumes this button."
-                color: buttonCard.info.profileControlActive ? "#a8d9b4" : "#819297"
-                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.profileControlActive }
         }
     }
 
@@ -890,15 +807,9 @@ Page {
         id: povCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 246
-        color: info && (info.active || info.profileControlActive) ? "#ec263e48" : "#ed182128"
-        border.color: info && info.profileControlActive ? "#9dcdb0" : (info && info.active ? "#93a3cfda" : "#43546770")
-        function triggerChoiceIndex(targetId) {
-            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
-                if (root.profileTriggerChoices[index].id === targetId) return index
-            }
-            return 0
-        }
+        Layout.preferredHeight: 152
+        color: info && info.active ? "#ec263e48" : "#ed182128"
+        border.color: info && info.active ? "#93a3cfda" : "#43546770"
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 7
             RowLayout { Layout.fillWidth: true
@@ -922,37 +833,6 @@ Page {
             }
             Text { text: povCard.info.target > 0 ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
                 color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
-            FineLine { Layout.fillWidth: true }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                FlightComboBox { id: povProfileTarget; Layout.preferredWidth: 150
-                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
-                    currentIndex: povCard.triggerChoiceIndex(povCard.info.profileControlTargetId)
-                    onActivated: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, currentValue,
-                        povCard.info.profileControlEnabled ? povCard.info.profileControlMode : "Hold") }
-            }
-            RowLayout { Layout.fillWidth: true
-                Text { text: povCard.info.profileControlEnabled ? povCard.info.profileControlTargetName.toUpperCase() : "NONE"
-                    color: povCard.info.profileControlTargetAvailable || !povCard.info.profileControlEnabled ? "#b8d8dc" : "#d49b62"
-                    font.pixelSize: 9; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                Rectangle { id: povProfileMode; Layout.preferredWidth: 126; Layout.preferredHeight: 26; radius: 4
-                    color: "#0c1013"; border.color: povCard.info.profileControlEnabled ? "#435660" : "#263137"; opacity: povCard.info.profileControlEnabled ? 1 : 0.55
-                    Row { anchors.fill: parent
-                        Repeater { model: ["Hold", "Toggle"]
-                            delegate: Rectangle { width: povProfileMode.width / 2; height: povProfileMode.height; radius: 3
-                                color: povCard.info.profileControlEnabled && povCard.info.profileControlMode === modelData ? "#37626a" : "transparent"
-                                Text { anchors.centerIn: parent; text: modelData.toUpperCase(); color: povCard.info.profileControlEnabled ? "#dce7e6" : "#7b8589"; font.pixelSize: 8; font.bold: true }
-                                MouseArea { anchors.fill: parent; enabled: povCard.info.profileControlEnabled
-                                    onClicked: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, povCard.info.profileControlTargetId, modelData) }
-                            }
-                        }
-                    }
-                }
-            }
-            Text { visible: povCard.info.profileControlEnabled
-                text: povCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · " + povCard.info.profileControlMode.toUpperCase() : "Profile control consumes this direction route."
-                color: povCard.info.profileControlActive ? "#a8d9b4" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.profileControlActive }
         }
     }
 
@@ -1398,19 +1278,19 @@ Page {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightNumericStepper { id: outputMinimum; from: -100; to: 99
+                                    FlightNumericStepper { id: outputMinimum; from: processingPanel.info.unipolar ? 0 : -100; to: 99
                                         value: Number(processingPanel.info.outputMinimum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightNumericStepper { id: outputMaximum; from: -99; to: 100
+                                    FlightNumericStepper { id: outputMaximum; from: processingPanel.info.unipolar ? 1 : -99; to: 100
                                         value: Number(processingPanel.info.outputMaximum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
-                                Text { text: "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2
@@ -1447,6 +1327,9 @@ Page {
  subdued: true
  onTriggered: backend.resetButtonMappings() }
                 }
+                Text { visible: backend.legacyControlMigrationWarning.length > 0; width: parent.width
+                    text: backend.legacyControlMigrationWarning + " Configure a replacement in Automation."
+                    color: "#d4ad69"; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 Panel { width: parent.width
  height: 62
                     RowLayout { anchors.fill: parent
@@ -1542,6 +1425,14 @@ Page {
                     width: parent.width
                     text: "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Do not touch the stick, twist, rudder, or paddles. Throttles and sliders do not need to be centered."
                     color: "#9dafb4"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                Panel { visible: backend.calibrationSuccess; width: parent.width; height: calibrationSuccessContent.implicitHeight + 24
+                    color: "#172a2f"; border.color: "#78aab9"
+                    Column { id: calibrationSuccessContent; anchors.fill: parent; anchors.margins: 12; spacing: 4
+                        Text { text: "CALIBRATION SUCCESSFUL"; color: "#abd7e2"; font.pixelSize: 13; font.bold: true }
+                        Text { text: backend.calibrationStatus; color: "#c9d6d9"; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                        Text { text: "You can start a new calibration whenever you are ready."; color: "#8fa1a7"; font.pixelSize: 10 }
+                    }
+                }
                 Text { text: "AXIS RANGE STATUS"
  color: "#94a1a6"
  font.pixelSize: 10
@@ -1582,6 +1473,21 @@ Page {
  font.pixelSize: 13
  font.family: "Consolas" }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+                Panel { width: parent.width; height: calibrationHistoryContent.implicitHeight + 24
+                    color: "#121d22"; border.color: "#415467"
+                    Column { id: calibrationHistoryContent; anchors.fill: parent; anchors.margins: 12; spacing: 8
+                        Text { text: "CALIBRATION HISTORY"; color: "#abd7e2"; font.pixelSize: 11; font.bold: true }
+                        Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for this and other saved controllers appear here."; color: "#89979d"; font.pixelSize: 10 }
+                        Repeater { model: backend.calibrationHistory
+                            delegate: Rectangle { width: calibrationHistoryContent.width; height: 44; color: modelData.currentDevice ? "#20363d" : "#182429"; border.color: "#3a505a"; radius: 3
+                                Column { anchors.left: parent.left; anchors.leftMargin: 9; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 18; spacing: 2
+                                    Text { text: modelData.name + (modelData.currentDevice ? "  ·  CURRENT DEVICE" : ""); color: "#eaf0f1"; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; width: parent.width }
+                                    Text { text: modelData.when + "  ·  " + modelData.axes + " axes calibrated"; color: "#9dafb4"; font.pixelSize: 9 }
                                 }
                             }
                         }
@@ -1724,7 +1630,7 @@ Page {
  color: "#aebcc0"
  font.pixelSize: 9
  font.bold: true }
-                                Text { text: "RAW       " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.raw)
+                                Text { text: "RAW       " + root.valuePercent(diagnosticAxisCard.info.raw)
  color: "#dfeaec"
  font.pixelSize: 12
  font.family: "Consolas" }
@@ -1919,16 +1825,21 @@ Page {
                                         background: Rectangle { radius: 3; color: parent.hovered ? "#2b393f" : "transparent" }
                                         onClicked: profileActionMenu.open()
                                         Menu { id: profileActionMenu
-                                            MenuItem { text: "Rename"; enabled: !modelData.protected
-                                                onTriggered: { renameProfileDialog.profileId = modelData.id
-                                                    renameProfileDialog.profileName = modelData.name
-                                                    renameProfileDialog.open() } }
-                                            MenuItem { text: "Clone"; onTriggered: backend.cloneProfile(modelData.id) }
-                                            MenuSeparator { }
-                                            MenuItem { text: "Delete"; enabled: !modelData.protected && !modelData.active
-                                                onTriggered: { deleteProfileDialog.profileId = modelData.id
-                                                    deleteProfileDialog.profileName = modelData.name
-                                                    deleteProfileDialog.open() } }
+                                            y: parent.height + 4; x: parent.width - width; implicitWidth: 174; padding: 6
+                                            background: Rectangle { color: "#182a30"; border.color: "#78aab9"; radius: 4 }
+                                            MenuItem { id: renameProfileMenuItem; text: "Rename"; enabled: !modelData.protected; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: renameProfileMenuItem.text; color: !renameProfileMenuItem.enabled ? "#71848b" : "#e7f0f1"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
+                                                background: Rectangle { radius: 3; color: renameProfileMenuItem.pressed ? "#37626a" : (renameProfileMenuItem.highlighted ? "#2b454c" : "transparent"); border.color: renameProfileMenuItem.highlighted && renameProfileMenuItem.enabled ? "#78aab9" : "transparent" }
+                                                onTriggered: { renameProfileDialog.profileId = modelData.id; renameProfileDialog.profileName = modelData.name; renameProfileDialog.open() } }
+                                            MenuItem { id: cloneProfileMenuItem; text: "Clone"; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: cloneProfileMenuItem.text; color: "#e7f0f1"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
+                                                background: Rectangle { radius: 3; color: cloneProfileMenuItem.pressed ? "#37626a" : (cloneProfileMenuItem.highlighted ? "#2b454c" : "transparent"); border.color: cloneProfileMenuItem.highlighted ? "#78aab9" : "transparent" }
+                                                onTriggered: backend.cloneProfile(modelData.id) }
+                                            MenuSeparator { topPadding: 5; bottomPadding: 5; contentItem: Rectangle { implicitHeight: 1; color: "#435660" } }
+                                            MenuItem { id: deleteProfileMenuItem; text: "Delete"; enabled: !modelData.protected && !modelData.active; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: deleteProfileMenuItem.text; color: !deleteProfileMenuItem.enabled ? "#71848b" : "#ca9090"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
+                                                background: Rectangle { radius: 3; color: deleteProfileMenuItem.pressed ? "#5a3539" : (deleteProfileMenuItem.highlighted ? "#432c32" : "transparent"); border.color: deleteProfileMenuItem.highlighted && deleteProfileMenuItem.enabled ? "#ca9090" : "transparent" }
+                                                onTriggered: { deleteProfileDialog.profileId = modelData.id; deleteProfileDialog.profileName = modelData.name; deleteProfileDialog.open() } }
                                         }
                                     }
                                 }
@@ -2328,7 +2239,8 @@ Page {
         onOpened: { renameProfileField.text = profileName; renameProfileField.forceActiveFocus(); renameProfileField.selectAll() }
         contentItem: Column { width: 338; spacing: 12
             Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-            TextField { id: renameProfileField; width: parent.width; color: "#e7f0f1"; selectByMouse: true }
+            TextField { id: renameProfileField; width: parent.width; color: "#e7f0f1"; selectByMouse: true
+                background: Rectangle { radius: 4; color: "#0c1013"; border.color: renameProfileField.activeFocus ? "#78aab9" : "#435660" } }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: renameProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: renameProfileDialog.close() }
@@ -2357,7 +2269,7 @@ Page {
                 CommandButton { id: deleteProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: deleteProfileDialog.close() }
                 Item { width: parent.width - deleteProfileCancelButton.width - deleteProfileButton.width - 16; height: 1 }
-                CommandButton { id: deleteProfileButton; label: "DELETE"; subdued: true
+                CommandButton { id: deleteProfileButton; label: "DELETE"; destructive: true
                     onTriggered: { if (backend.deleteProfile(deleteProfileDialog.profileId)) deleteProfileDialog.close() } }
             }
         }

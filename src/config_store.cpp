@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 15;
+constexpr int kProfileSchemaVersion = 16;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -60,6 +60,41 @@ Calibration calibrationFromJson(const QJsonObject &json)
         calibration.centered = true;
     }
     return calibration;
+}
+
+QJsonObject calibrationHistoryEntryToJson(const CalibrationHistoryEntry &entry)
+{
+    QJsonArray calibration;
+    for (const Calibration &axis : entry.calibration) calibration.append(calibrationToJson(axis));
+    return {{u"controllerRecordId"_qs, entry.controllerRecordId},
+            {u"controllerDisplayName"_qs, entry.controllerDisplayName},
+            {u"controllerIdentity"_qs, entry.controllerIdentity},
+            {u"completedAtUtc"_qs, entry.completedAtUtc},
+            {u"applicationVersion"_qs, entry.applicationVersion},
+            {u"calibratedAxisCount"_qs, entry.calibratedAxisCount},
+            {u"calibration"_qs, calibration}};
+}
+
+bool calibrationHistoryEntryFromJson(const QJsonObject &json, CalibrationHistoryEntry *entry)
+{
+    if (!entry) return false;
+    const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
+    CalibrationHistoryEntry restored;
+    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    restored.controllerDisplayName = json.value(u"controllerDisplayName"_qs).toString().trimmed().left(128);
+    restored.controllerIdentity = json.value(u"controllerIdentity"_qs).toString().trimmed().left(256);
+    restored.completedAtUtc = json.value(u"completedAtUtc"_qs).toString().trimmed().left(64);
+    restored.applicationVersion = json.value(u"applicationVersion"_qs).toString().trimmed().left(32);
+    restored.calibratedAxisCount = std::clamp(json.value(u"calibratedAxisCount"_qs).toInt(), 0,
+                                               kPhysicalAxisCount);
+    if (restored.controllerDisplayName.isEmpty() || restored.completedAtUtc.isEmpty()
+        || calibration.size() != kPhysicalAxisCount) return false;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        restored.calibration[static_cast<size_t>(index)] =
+            calibrationFromJson(calibration.at(index).toObject());
+    }
+    *entry = std::move(restored);
+    return true;
 }
 
 QJsonObject controllerVjoyRequirementsToJson(const ControllerVJoyRequirements &requirements)
@@ -148,7 +183,7 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
 
 QJsonObject axisMappingToJson(const AxisMapping &mapping)
 {
-    return {
+    QJsonObject json{
         {u"target"_qs, virtualAxisLabel(mapping.target)},
         {u"rangeMode"_qs, axisRangeModeKey(mapping.rangeMode)},
         {u"customName"_qs, mapping.customName.trimmed().left(48)},
@@ -159,6 +194,13 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
         {u"outputMaximum"_qs, mapping.outputMaximum},
         {u"curve"_qs, curveDefinitionToJson(mapping.curve)},
     };
+    if (mapping.hasCenteredCurveBackup) {
+        json.insert(u"centeredCurveBackup"_qs, curveDefinitionToJson(mapping.centeredCurveBackup));
+    }
+    if (mapping.hasOneSidedCurveBackup) {
+        json.insert(u"oneSidedCurveBackup"_qs, curveDefinitionToJson(mapping.oneSidedCurveBackup));
+    }
+    return json;
 }
 
 AxisMapping axisMappingFromJson(const QJsonObject &json, AxisRangeMode legacyRangeMode)
@@ -175,6 +217,16 @@ AxisMapping axisMappingFromJson(const QJsonObject &json, AxisRangeMode legacyRan
     mapping.outputMaximum = std::clamp(float(json.value(u"outputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
     mapping.curve = curveDefinitionFromJson(json.value(u"curve"_qs).toObject(),
                                              mapping.rangeMode == AxisRangeMode::OneSided);
+    const QJsonObject centeredBackup = json.value(u"centeredCurveBackup"_qs).toObject();
+    if (!centeredBackup.isEmpty()) {
+        mapping.centeredCurveBackup = curveDefinitionFromJson(centeredBackup, false);
+        mapping.hasCenteredCurveBackup = curveDefinitionIsValid(mapping.centeredCurveBackup, false);
+    }
+    const QJsonObject oneSidedBackup = json.value(u"oneSidedCurveBackup"_qs).toObject();
+    if (!oneSidedBackup.isEmpty()) {
+        mapping.oneSidedCurveBackup = curveDefinitionFromJson(oneSidedBackup, true);
+        mapping.hasOneSidedCurveBackup = curveDefinitionIsValid(mapping.oneSidedCurveBackup, true);
+    }
     normalizeAxisProcessing(mapping);
     return mapping;
 }
@@ -730,6 +782,118 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     return true;
 }
 
+bool appendMigratedAutomation(MapperConfiguration &configuration, const QString &id,
+                              const QString &name, AutomationConditionDefinition condition,
+                              AutomationActionDefinition action)
+{
+    const auto existing = std::find_if(configuration.automations.cbegin(), configuration.automations.cend(),
+        [&id](const AutomationDefinition &automation) { return automation.id == id; });
+    if (existing != configuration.automations.cend()) return true;
+    if (static_cast<int>(configuration.automations.size()) >= kMaximumAutomationRules) return false;
+    AutomationDefinition automation;
+    automation.id = id;
+    automation.name = name;
+    automation.conditions = {std::move(condition)};
+    automation.actions = {std::move(action)};
+    configuration.automations.push_back(std::move(automation));
+    return true;
+}
+
+void appendLegacyMigrationWarning(MapperConfiguration &configuration, const QString &message)
+{
+    if (configuration.legacyControlMigrationWarning.isEmpty()) {
+        configuration.legacyControlMigrationWarning = message;
+    }
+}
+
+void migrateLegacyControlsToAutomation(MapperConfiguration &configuration)
+{
+    for (int source = 0; source < static_cast<int>(configuration.mappingControls.size()); ++source) {
+        MappingControlAction &legacy = configuration.mappingControls[static_cast<size_t>(source)];
+        if (legacy == MappingControlAction::None) continue;
+        AutomationActionDefinition action;
+        action.type = legacy == MappingControlAction::MappingOn ? AutomationActionType::MappingOn
+            : legacy == MappingControlAction::MappingOff ? AutomationActionType::MappingOff
+            : AutomationActionType::ToggleMapping;
+        AutomationConditionDefinition condition;
+        condition.type = AutomationConditionType::ButtonPressed;
+        condition.button = source + 1;
+        const QString label = mappingControlActionLabel(legacy);
+        if (appendMigratedAutomation(configuration,
+                QString(u"migration-v16-mapping-button-%1"_qs).arg(source + 1),
+                QString(u"Migrated: Button %1 %2"_qs).arg(source + 1).arg(label), condition, action)) {
+            legacy = MappingControlAction::None;
+        } else {
+            appendLegacyMigrationWarning(configuration,
+                u"Some legacy mapping controls remain active because Automation is at its 64-rule limit."_qs);
+        }
+    }
+
+    for (int source = 0; source < static_cast<int>(configuration.profileTriggers.size()); ++source) {
+        ProfileTriggerBinding &legacy = configuration.profileTriggers[static_cast<size_t>(source)];
+        if (!profileTriggerBindingEnabled(legacy)) continue;
+        const ControllerProfile *target = findProfile(configuration, legacy.targetProfileId);
+        if (!target) {
+            legacy = {};
+            appendLegacyMigrationWarning(configuration,
+                u"A legacy profile control referenced a missing profile and was disabled; no hidden behavior remains."_qs);
+            continue;
+        }
+        AutomationConditionDefinition condition;
+        condition.type = legacy.mode == ProfileTriggerMode::Hold
+            ? AutomationConditionType::ButtonHeld : AutomationConditionType::ButtonPressed;
+        condition.button = source + 1;
+        AutomationActionDefinition action;
+        action.type = legacy.mode == ProfileTriggerMode::Hold
+            ? AutomationActionType::ProfileHold : AutomationActionType::ProfileToggle;
+        action.profileId = target->id;
+        const QString mode = legacy.mode == ProfileTriggerMode::Hold ? u"Hold"_qs : u"Toggle"_qs;
+        if (appendMigratedAutomation(configuration,
+                QString(u"migration-v16-profile-button-%1"_qs).arg(source + 1),
+                QString(u"Migrated: Button %1 %2 %3"_qs).arg(source + 1).arg(mode).arg(target->name),
+                condition, action)) {
+            legacy = {};
+        } else {
+            appendLegacyMigrationWarning(configuration,
+                u"Some legacy profile controls remain active because Automation is at its 64-rule limit."_qs);
+        }
+    }
+
+    for (int hat = 0; hat < static_cast<int>(configuration.povProfileTriggers.size()); ++hat) {
+        auto &directions = configuration.povProfileTriggers[static_cast<size_t>(hat)];
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            ProfileTriggerBinding &legacy = directions[static_cast<size_t>(direction)];
+            if (!profileTriggerBindingEnabled(legacy)) continue;
+            const ControllerProfile *target = findProfile(configuration, legacy.targetProfileId);
+            if (!target) {
+                legacy = {};
+                appendLegacyMigrationWarning(configuration,
+                    u"A legacy POV profile control referenced a missing profile and was disabled; no hidden behavior remains."_qs);
+                continue;
+            }
+            AutomationConditionDefinition condition;
+            condition.type = AutomationConditionType::PovActive;
+            condition.povHat = hat + 1;
+            condition.povDirection = static_cast<PovDirection>(direction + 1);
+            AutomationActionDefinition action;
+            action.type = legacy.mode == ProfileTriggerMode::Hold
+                ? AutomationActionType::ProfileHold : AutomationActionType::ProfileToggle;
+            action.profileId = target->id;
+            const QString mode = legacy.mode == ProfileTriggerMode::Hold ? u"Hold"_qs : u"Toggle"_qs;
+            const QString directionName = povDirectionLabel(condition.povDirection);
+            if (appendMigratedAutomation(configuration,
+                    QString(u"migration-v16-profile-pov-%1-%2"_qs).arg(hat + 1).arg(direction + 1),
+                    QString(u"Migrated: POV %1 %2 %3 %4"_qs)
+                        .arg(hat + 1).arg(directionName).arg(mode).arg(target->name), condition, action)) {
+                legacy = {};
+            } else {
+                appendLegacyMigrationWarning(configuration,
+                    u"Some legacy POV profile controls remain active because Automation is at its 64-rule limit."_qs);
+            }
+        }
+    }
+}
+
 MapperConfiguration migrateLegacyConfiguration(const QJsonObject &json, int version, bool *valid)
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -806,6 +970,14 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     QJsonArray calibration;
     for (const Calibration &axis : configuration.calibration) calibration.append(calibrationToJson(axis));
 
+    QJsonArray calibrationHistory;
+    const int historyCount = std::min(static_cast<int>(configuration.calibrationHistory.size()),
+                                      kMaximumCalibrationHistoryEntries);
+    for (int index = 0; index < historyCount; ++index) {
+        calibrationHistory.append(calibrationHistoryEntryToJson(
+            configuration.calibrationHistory[static_cast<size_t>(index)]));
+    }
+
     QJsonArray profiles;
     for (const ControllerProfile &profile : configuration.profiles) profiles.append(profileToJson(profile));
 
@@ -836,11 +1008,13 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
+        {u"calibrationHistory"_qs, calibrationHistory},
         {u"profiles"_qs, profiles},
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
         {u"mappingControls"_qs, mappingControlsToJson(configuration.mappingControls)},
+        {u"legacyControlMigrationWarning"_qs, configuration.legacyControlMigrationWarning},
         {u"nativePovBindings"_qs, nativePovBindingsToJson(configuration.nativePovBindings)},
         {u"automationEnabled"_qs, configuration.automationEnabled},
         {u"automations"_qs, automations},
@@ -854,7 +1028,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != kProfileSchemaVersion) {
+        && version != 15 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -873,6 +1047,23 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             return fallbackWithGlobalSettings(json);
         }
         configuration.calibration[index] = calibrationFromJson(axis);
+    }
+    if (version >= 16) {
+        const QJsonArray history = json.value(u"calibrationHistory"_qs).toArray();
+        if (history.size() > kMaximumCalibrationHistoryEntries) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        for (const QJsonValue &value : history) {
+            CalibrationHistoryEntry entry;
+            if (!calibrationHistoryEntryFromJson(value.toObject(), &entry)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            configuration.calibrationHistory.push_back(std::move(entry));
+        }
+        configuration.legacyControlMigrationWarning =
+            json.value(u"legacyControlMigrationWarning"_qs).toString().trimmed().left(256);
     }
     if (version >= 15) {
         const QJsonArray savedControllers = json.value(u"savedControllers"_qs).toArray();
@@ -991,6 +1182,8 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         configuration.automationEnabled = true;
         configuration.automations.clear();
     }
+
+    if (version < 16) migrateLegacyControlsToAutomation(configuration);
 
     // Normal is the durable, protected recovery profile. A malformed/manual
     // file that removes it falls back safely instead of leaving no known base.

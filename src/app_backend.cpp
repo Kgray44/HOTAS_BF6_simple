@@ -327,6 +327,7 @@ AppBackend::AppBackend(QObject *parent)
         m_updateReply->abort();
     });
     rebuildSelectedAxisCurve();
+    rebuildCurveAxisChoices();
     rebuildControllerUiModel();
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
@@ -334,7 +335,8 @@ AppBackend::AppBackend(QObject *parent)
     // TimeCriticalPriority: it favors real input responsiveness without
     // starving normal system or rendering work on a constrained CPU.
     m_worker.start(QThread::HighPriority);
-    if (m_configuration.startMappingOnLaunch) {
+    m_mappingDesired = m_configuration.startMappingOnLaunch;
+    if (m_mappingDesired) {
         m_worker.setMappingEnabled(true);
     }
     // Startup verification is passive and runs on its own short-lived worker.
@@ -436,6 +438,11 @@ QVariantList AppBackend::axes() const
     return result;
 }
 
+QVariantList AppBackend::curveAxisChoices() const
+{
+    return m_curveAxisChoices;
+}
+
 int AppBackend::selectedAxisIndex() const
 {
     return m_configuration.selectedAxisIndex;
@@ -491,8 +498,9 @@ QVariantMap AppBackend::curveEditorState() const
     const bool unipolar = mapping->rangeMode == AxisRangeMode::OneSided;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const float raw = runtime.raw[m_configuration.selectedAxisIndex].load();
+    const float domainInput = runtime.normalized[m_configuration.selectedAxisIndex].load();
     const float afterInversion = runtime.afterInversion[m_configuration.selectedAxisIndex].load();
-    const float curveInput = unipolar ? (afterInversion + 1.0F) * 0.5F : afterInversion;
+    const float curveInput = afterInversion;
     state.insert(u"family"_qs, curveFamilyLabel(mapping->curve.family));
     state.insert(u"familyId"_qs, static_cast<int>(mapping->curve.family));
     state.insert(u"presetId"_qs, mapping->curve.presetId);
@@ -507,8 +515,9 @@ QVariantMap AppBackend::curveEditorState() const
     state.insert(u"pointDensity"_qs, mapping->curve.pointDensity);
     state.insert(u"pointCount"_qs, static_cast<int>(mapping->curve.points.size()));
     state.insert(u"unipolar"_qs, unipolar);
-    state.insert(u"physicalInput"_qs, raw);
-    state.insert(u"normalized"_qs, runtime.normalized[m_configuration.selectedAxisIndex].load());
+    state.insert(u"rawPhysicalInput"_qs, raw);
+    state.insert(u"physicalInput"_qs, domainInput);
+    state.insert(u"normalized"_qs, domainInput);
     state.insert(u"afterDeadzone"_qs, runtime.afterDeadzone[m_configuration.selectedAxisIndex].load());
     state.insert(u"afterHysteresis"_qs, runtime.afterHysteresis[m_configuration.selectedAxisIndex].load());
     state.insert(u"afterInversion"_qs, afterInversion);
@@ -537,6 +546,25 @@ QVariantMap AppBackend::curveAnalysis() const
     return m_curveAnalysis;
 }
 
+QVariantMap AppBackend::curveEditorTelemetry() const
+{
+    QVariantMap telemetry;
+    const AxisMapping *mapping = selectedAxisMapping();
+    if (!mapping) return telemetry;
+    const int index = m_configuration.selectedAxisIndex;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const bool oneSided = mapping->rangeMode == AxisRangeMode::OneSided;
+    const float afterInversion = runtime.afterInversion[index].load();
+    telemetry.insert(u"physicalInput"_qs, runtime.normalized[index].load());
+    telemetry.insert(u"afterDeadzone"_qs, runtime.afterDeadzone[index].load());
+    telemetry.insert(u"afterHysteresis"_qs, runtime.afterHysteresis[index].load());
+    telemetry.insert(u"afterInversion"_qs, afterInversion);
+    telemetry.insert(u"curveResponse"_qs, runtime.curveResponse[index].load());
+    telemetry.insert(u"finalOutput"_qs, runtime.transformed[index].load());
+    telemetry.insert(u"localGain"_qs, evaluateCurveGain(afterInversion, mapping->curve, oneSided));
+    return telemetry;
+}
+
 QVariantMap AppBackend::curveComparisonState() const
 {
     QVariantMap state;
@@ -545,8 +573,7 @@ QVariantMap AppBackend::curveComparisonState() const
     if (!mapping) return state;
     const bool unipolar = mapping->rangeMode == AxisRangeMode::OneSided;
     const CurveDefinition comparison = comparisonCurveDefinition();
-    const float raw = m_worker.runtime().raw[m_configuration.selectedAxisIndex].load();
-    const float input = unipolar ? (raw + 1.0F) * 0.5F : raw;
+    const float input = m_worker.runtime().normalized[m_configuration.selectedAxisIndex].load();
     const float current = evaluateCurveDefinition(input, mapping->curve, unipolar);
     const float reference = evaluateCurveDefinition(input, comparison, unipolar);
     state.insert(u"label"_qs, m_curveComparisonLabel);
@@ -945,6 +972,21 @@ bool AppBackend::rebuildControllerUiModel()
     emit controllersChanged();
     return true;
 }
+
+void AppBackend::rebuildCurveAxisChoices()
+{
+    QVariantList choices;
+    const ControllerProfile &profile = currentProfile();
+    choices.reserve(kPhysicalAxisCount);
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
+        const QString customName = profile.axes[static_cast<size_t>(index)].customName.trimmed();
+        choices.append(QVariantMap{{u"index"_qs, index},
+            {u"label"_qs, customName.isEmpty() ? physicalAxisLabel(axis) : customName}});
+    }
+    m_curveAxisChoices = std::move(choices);
+}
+
 QString AppBackend::activeControllerRecordId() const { return m_configuration.activeControllerRecordId; }
 bool AppBackend::autoSwitchVerifiedController() const { return m_configuration.autoSwitchVerifiedController; }
 bool AppBackend::keepRunningInTray() const { return m_configuration.keepRunningInTray; }
@@ -965,7 +1007,7 @@ int AppBackend::vjoyDiscretePovCount() const
 }
 int AppBackend::vjoyRequiredButtonCount() const
 {
-    return requiredVirtualButtonCount(currentProfile().buttons, currentProfile().povs, buttonCount());
+    return currentVjoyRequirements().buttons;
 }
 bool AppBackend::vjoyCapacitySufficient() const
 {
@@ -974,15 +1016,18 @@ bool AppBackend::vjoyCapacitySufficient() const
 int AppBackend::lastPhysicalButton() const { return m_worker.runtime().lastPhysicalButton.load(); }
 int AppBackend::lastPhysicalButtonTarget() const { return m_worker.runtime().lastPhysicalButtonTarget.load(); }
 bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive.load(); }
-bool AppBackend::mappingRequested() const { return m_worker.mappingRequested(); }
+bool AppBackend::mappingRequested() const { return m_mappingDesired; }
 QString AppBackend::mappingStatus() const
 {
-    switch (static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load())) {
-    case MappingEffectiveState::Active: return u"MAPPING ACTIVE"_qs;
-    case MappingEffectiveState::Suspended: return u"DEVICE MISSING / MAPPING SUSPENDED"_qs;
-    case MappingEffectiveState::Off: return u"MAPPING OFF"_qs;
+    const bool active = m_worker.runtime().mappingActive.load();
+    const MappingEffectiveState effective =
+        static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load());
+    if (!m_mappingDesired) return active ? u"STOPPING MAPPING"_qs : u"MAPPING OFF"_qs;
+    if (active) return u"MAPPING ACTIVE"_qs;
+    if (effective == MappingEffectiveState::Suspended) {
+        return u"MAPPING SUSPENDED"_qs;
     }
-    return u"MAPPING OFF"_qs;
+    return u"STARTING MAPPING"_qs;
 }
 bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
@@ -1339,11 +1384,13 @@ QStringList AppBackend::profileTriggerBehaviorChoices() const
 
 void AppBackend::toggleMapping()
 {
-    setMappingActive(!m_worker.mappingRequested());
+    setMappingActive(!m_mappingDesired);
 }
 
 void AppBackend::setMappingActive(bool active)
 {
+    if (m_mappingDesired == active && m_worker.mappingRequested() == active) return;
+    m_mappingDesired = active;
     m_worker.setMappingEnabled(active);
     appendEvent(active ? u"Starting mapping…"_qs : u"Stopping mapping…"_qs);
     emit stateChanged();
@@ -1390,10 +1437,24 @@ void AppBackend::setAxisRangeMode(int physicalAxis, const QString &mode)
     AxisMapping &mapping = currentProfile().axes[static_cast<size_t>(physicalAxis)];
     const AxisRangeMode normalized = axisRangeModeFromString(mode, mapping.rangeMode);
     if (mapping.rangeMode == normalized) return;
+    const bool wasOneSided = mapping.rangeMode == AxisRangeMode::OneSided;
+    const bool willBeOneSided = normalized == AxisRangeMode::OneSided;
+    if (wasOneSided) {
+        mapping.oneSidedCurveBackup = mapping.curve;
+        mapping.hasOneSidedCurveBackup = true;
+        mapping.curve = mapping.hasCenteredCurveBackup
+            ? mapping.centeredCurveBackup
+            : convertCurveDefinitionDomain(mapping.curve, true, false);
+    } else {
+        mapping.centeredCurveBackup = mapping.curve;
+        mapping.hasCenteredCurveBackup = true;
+        mapping.curve = mapping.hasOneSidedCurveBackup
+            ? mapping.oneSidedCurveBackup
+            : convertCurveDefinitionDomain(mapping.curve, false, true);
+    }
     mapping.rangeMode = normalized;
-    // Keep existing limits and curve data intact; only curve-domain metadata
-    // is normalized at the configuration boundary.
-    normalizeCurveDefinition(mapping.curve, normalized == AxisRangeMode::OneSided);
+    normalizeCurveDefinition(mapping.curve, willBeOneSided);
+    normalizeAxisProcessing(mapping);
     persistAndApply();
 }
 
@@ -1441,13 +1502,14 @@ void AppBackend::setAxisHysteresis(int physicalAxis, double hysteresis)
 bool AppBackend::setAxisOutputLimits(int physicalAxis, double minimum, double maximum)
 {
     if (!validAxis(physicalAxis)) return false;
-    const float boundedMinimum = std::clamp(static_cast<float>(minimum), -1.0F, 1.0F);
-    const float boundedMaximum = std::clamp(static_cast<float>(maximum), -1.0F, 1.0F);
+    AxisMapping &mapping = currentProfile().axes[physicalAxis];
+    const float domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
+    const float boundedMinimum = std::clamp(static_cast<float>(minimum), domainMinimum, 1.0F);
+    const float boundedMaximum = std::clamp(static_cast<float>(maximum), domainMinimum, 1.0F);
     if (boundedMinimum >= boundedMaximum) {
         appendEvent(u"Output minimum must remain below output maximum"_qs);
         return false;
     }
-    AxisMapping &mapping = currentProfile().axes[physicalAxis];
     mapping.outputMinimum = boundedMinimum;
     mapping.outputMaximum = boundedMaximum;
     persistAndApply();
@@ -2183,6 +2245,7 @@ bool AppBackend::activateProfile(const QString &profileId)
 void AppBackend::beginCalibration()
 {
     if (m_calibrationStage != CalibrationStageState::Idle) return;
+    m_calibrationSuccess = false;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
@@ -2224,6 +2287,7 @@ void AppBackend::resetCalibration()
 {
     m_calibrationStage = CalibrationStageState::Idle;
     m_calibrationCapture = {};
+    m_calibrationSuccess = false;
     for (Calibration &calibration : m_configuration.calibration) calibration = Calibration{};
     persistAndApply();
     m_calibrationStatus = u"Calibration reset. Raw input is shown until you calibrate again."_qs;
@@ -2261,6 +2325,7 @@ void AppBackend::finishCalibration()
     QStringList problems;
     std::array<Calibration, kPhysicalAxisCount> captured = m_configuration.calibration;
     bool savedAny = false;
+    int calibratedAxisCount = 0;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
         if (!capture.available) continue;
@@ -2300,19 +2365,63 @@ void AppBackend::finishCalibration()
         }
         captured[static_cast<size_t>(index)] = calibration;
         savedAny = true;
+        ++calibratedAxisCount;
     }
     if (savedAny && problems.isEmpty()) {
         m_configuration.calibration = captured;
         m_calibrationStage = CalibrationStageState::Idle;
+        m_calibrationCapture = {};
+        m_calibrationSuccess = true;
+        appendCalibrationHistory(captured, calibratedAxisCount);
         persistAndApply();
-        m_calibrationStatus = u"Calibration complete. Centered axes now use measured neutral as 0.0%."_qs;
+        m_calibrationStatus = u"CALIBRATION SUCCESSFUL — Calibration saved. Centered axes now use measured neutral as 0.0%."_qs;
         appendEvent(u"Two-stage calibration saved"_qs);
     } else {
         m_calibrationStage = CalibrationStageState::Center;
+        m_calibrationSuccess = false;
         m_calibrationStatus = QStringLiteral("Calibration needs attention: %1.").arg(problems.join(QStringLiteral("; ")));
         appendEvent(m_calibrationStatus);
     }
     emit stateChanged();
+}
+
+void AppBackend::appendCalibrationHistory(
+    const std::array<Calibration, kPhysicalAxisCount> &calibration, int calibratedAxisCount)
+{
+    const DeviceSnapshot snapshot = m_worker.deviceSnapshot();
+    const SavedControllerRecord *record = activeControllerRecord();
+    CalibrationHistoryEntry entry;
+    entry.controllerRecordId = record ? record->id : m_configuration.activeControllerRecordId;
+    entry.controllerDisplayName = record ? record->displayName : snapshot.name;
+    if (entry.controllerDisplayName.isEmpty()) entry.controllerDisplayName = u"Connected controller"_qs;
+    entry.controllerIdentity = record ? (!record->hidInstanceId.isEmpty() ? record->hidInstanceId
+                                                                           : record->lastDirectInputId)
+                                      : (!snapshot.hidInstanceId.isEmpty() ? snapshot.hidInstanceId : snapshot.id);
+    entry.completedAtUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    entry.applicationVersion = QString::fromLatin1(HOTAS_BF6_VERSION);
+    entry.calibratedAxisCount = std::clamp(calibratedAxisCount, 0, kPhysicalAxisCount);
+    entry.calibration = calibration;
+    m_configuration.calibrationHistory.insert(m_configuration.calibrationHistory.begin(), std::move(entry));
+    if (static_cast<int>(m_configuration.calibrationHistory.size()) > kMaximumCalibrationHistoryEntries) {
+        m_configuration.calibrationHistory.resize(kMaximumCalibrationHistoryEntries);
+    }
+}
+
+QVariantList AppBackend::calibrationHistory() const
+{
+    QVariantList history;
+    history.reserve(static_cast<qsizetype>(m_configuration.calibrationHistory.size()));
+    for (const CalibrationHistoryEntry &entry : m_configuration.calibrationHistory) {
+        const QDateTime utc = QDateTime::fromString(entry.completedAtUtc, Qt::ISODateWithMs);
+        const QString localTime = utc.isValid() ? utc.toLocalTime().toString(u"MMM d, yyyy · h:mm AP"_qs)
+                                                : entry.completedAtUtc;
+        history.append(QVariantMap{{u"controllerRecordId"_qs, entry.controllerRecordId},
+            {u"name"_qs, entry.controllerDisplayName}, {u"when"_qs, localTime},
+            {u"axes"_qs, entry.calibratedAxisCount},
+            {u"currentDevice"_qs, !entry.controllerRecordId.isEmpty()
+                && entry.controllerRecordId == m_configuration.activeControllerRecordId}});
+    }
+    return history;
 }
 
 void AppBackend::setStartMappingOnLaunch(bool enabled)
@@ -3079,7 +3188,8 @@ ControllerVJoyRequirements AppBackend::currentVjoyRequirements() const
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(m_configuration);
     ControllerVJoyRequirements result;
     result.axes = requirements.axes;
-    result.buttons = requirements.buttons;
+    result.buttons = std::max(requirements.buttons,
+        std::clamp(buttonCount(), 0, kMaximumVirtualButtons));
     result.continuousPovs = requirements.continuousPovs;
     result.discretePovs = requirements.discretePovs;
     result.deviceId = m_configuration.vjoyDeviceId;
@@ -3503,10 +3613,12 @@ void AppBackend::refreshUiSnapshot()
         }
     }
     // Overview intentionally consumes already-published metrics at a human
-    // cadence.  The EWMA is presentation-only and is never visible to the
-    // DirectInput-to-vJoy report path or its timing measurements.
-    if (m_overviewMetricsClock.elapsed() >= 250) {
-        constexpr double alpha = 0.32;
+    // cadence. The time-aware filter is presentation-only and is never
+    // visible to the DirectInput-to-vJoy report path or its timing metrics.
+    if (m_overviewMetricsClock.elapsed() >= 75) {
+        constexpr double kSmoothingTimeConstantMs = 325.0;
+        const double elapsedMs = std::max(1.0, static_cast<double>(m_overviewMetricsClock.restart()));
+        const double alpha = 1.0 - std::exp(-elapsedMs / kSmoothingTimeConstantMs);
         const double rawLatency = static_cast<double>(m_worker.runtime().latencyAverageUs.load());
         if (!m_worker.runtime().physicalConnected.load() || !mappingRequested()) {
             m_overviewInputRate = 0.0;
@@ -3516,7 +3628,6 @@ void AppBackend::refreshUiSnapshot()
             m_overviewOutputRate += alpha * (m_vjoyWritesPerSecond - m_overviewOutputRate);
         }
         m_overviewMapperLatencyUs += alpha * (rawLatency - m_overviewMapperLatencyUs);
-        m_overviewMetricsClock.restart();
     }
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
@@ -3533,7 +3644,13 @@ void AppBackend::refreshUiSnapshot()
     m_physicalControllerWasConnected = connected;
     if (connectionChanged) rebuildControllerUiModel();
     refreshTrayStatus();
-    if (selectedAxisChanged || connectionChanged) emit stateChanged();
+    const bool workerRequested = m_worker.mappingRequested();
+    const bool mappingIntentChanged = workerRequested != m_mappingDesired;
+    if (mappingIntentChanged) m_mappingDesired = workerRequested;
+    const int effectiveMappingState = m_worker.runtime().mappingEffectiveState.load();
+    const bool mappingEffectiveChanged = effectiveMappingState != m_presentedMappingEffectiveState;
+    if (mappingEffectiveChanged) m_presentedMappingEffectiveState = effectiveMappingState;
+    if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();
     emit inputTelemetryChanged();
     emit telemetryChanged();
 }
@@ -3610,6 +3727,7 @@ void AppBackend::persistAndApply()
     ConfigStore::save(m_configuration);
     m_worker.updateConfiguration(m_configuration);
     rebuildSelectedAxisCurve();
+    rebuildCurveAxisChoices();
     emit selectedAxisCurveChanged();
     emit stateChanged();
 }
@@ -3634,9 +3752,11 @@ void AppBackend::rebuildSelectedAxisCurve()
     mapping.calibration = {};
     mapping.responseCurve = compileResponseCurve(axis.curve, unipolar);
     constexpr int kSamples = 101;
+    const float graphMinimum = unipolar ? 0.0F : -1.0F;
     m_selectedAxisCurve.reserve(kSamples);
     for (int sample = 0; sample < kSamples; ++sample) {
-        const float input = -1.0F + 2.0F * static_cast<float>(sample) / static_cast<float>(kSamples - 1);
+        const float input = graphMinimum + (1.0F - graphMinimum) * static_cast<float>(sample)
+            / static_cast<float>(kSamples - 1);
         QVariantMap point;
         point.insert(u"input"_qs, input);
         // Reuse the mapping engine's static evaluator so the graph cannot

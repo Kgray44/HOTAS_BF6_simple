@@ -141,14 +141,31 @@
     "releaseTitle": "v2.0.7",
     "title": "Published Manifest Transport Hotfix",
     "summary": "HOTAS BF6 v2.0.7 corrects a GitHub Actions-only manifest-decoding flaw exposed by the v2.0.6 readiness gate. The acceptance now obtains the JSON manifest through PowerShell's REST client, which decodes GitHub release assets correctly on hosted Windows while still querying the exact latest URL consumed by the shipped v1.9.3 launcher.",
+    "status": "superseded",
+    "replacement": "v2.0.8",
+    "syncToGitHubRelease": true,
+    "statusNote": "Published manifest transport hotfix; upgrade to v2.0.8 for corrected One-Sided transfer semantics and workflow reliability fixes.",
+    "highlights": [
+      "Uses Invoke-RestMethod to decode the public latest update-manifest JSON correctly on the GitHub-hosted Windows runner.",
+      "Retains v2.0.6's bounded exact-version and exact-tag readiness guard before launching the unchanged v1.9.3 updater.",
+      "Preserves all mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, startup, and configuration-migration behavior from v2.0.6."
+    ]
+  },
+  {
+    "version": "2.0.8",
+    "tag": "v2.0.8",
+    "releaseTitle": "v2.0.8",
+    "title": "Runtime and Workflow Reliability Hotfix",
+    "summary": "HOTAS BF6 v2.0.8 corrects the real runtime semantics of One-Sided axes and restores reliable selected-axis Curve Editor telemetry while applying narrow Profiles, calibration, vJoy-capacity, and Automation workflow fixes. The DirectInput-to-vJoy report path remains compiled and allocation-free.",
     "status": "current",
     "replacement": null,
     "syncToGitHubRelease": true,
     "statusNote": "Current recommended release for compatible DirectInput controllers.",
     "highlights": [
-      "Uses Invoke-RestMethod to decode the public latest update-manifest JSON correctly on the GitHub-hosted Windows runner.",
-      "Retains v2.0.6's bounded exact-version and exact-tag readiness guard before launching the unchanged v1.9.3 updater.",
-      "Preserves all mapper, controller, vJoy, DirectInput-to-vJoy report-path, installer, helper, startup, and configuration-migration behavior from v2.0.6."
+      "One-Sided axes now run from the former bipolar midpoint at 0% to the positive endpoint at 100%, with below-origin clamping, a low-end deadzone, and unipolar inversion.",
+      "Axes and Curve Editor share the same one-sided domain for curves, custom points, effective traces, labels, and live telemetry without recompiling curves on movement.",
+      "Profiles use a fully themed overflow menu and themed rename/delete controls in Legacy, Standard, and Top Gun; legacy direct controls migrate to visible Automation rules.",
+      "Calibration records bounded durable success history, and vJoy readiness uses complete profile and Automation requirements."
     ]
   }
 ]

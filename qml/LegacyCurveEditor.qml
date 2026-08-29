@@ -9,6 +9,7 @@ Item {
     component AviationPanel: LegacyAviationPanel {}
     property var backendObject
     property var editorState: backendObject ? backendObject.curveEditorState : ({})
+    property var liveTelemetry: backendObject ? backendObject.curveEditorTelemetry : ({})
     property var analysis: backendObject ? backendObject.curveAnalysis : ({})
     property var comparison: backendObject ? backendObject.curveComparisonState : ({})
     property int selectedPoint: -1
@@ -25,6 +26,10 @@ Item {
     property real dragOutput: 0
     property real graphContextInput: 0
     property real graphContextOutput: 0
+
+    onLiveTelemetryChanged: graph.requestPaint()
+    onResponseViewChanged: graph.requestPaint()
+    onShowEffectiveChanged: graph.requestPaint()
     property int contextPoint: -1
 
     focus: true
@@ -197,7 +202,7 @@ Item {
     }
     function rawPercent(value) {
         const n = Number(value)
-        if (editorState.unipolar) return ((n + 1) * 50).toFixed(1) + "%"
+        if (editorState.unipolar) return (Math.max(0, Math.min(1, n)) * 100).toFixed(1) + "%"
         return (n >= 0 ? "+" : "") + (n * 100).toFixed(1) + "%"
     }
     function recordHistory() {
@@ -271,6 +276,7 @@ Item {
         target: backendObject
         function onStateChanged() {
             editor.editorState = backendObject.curveEditorState
+            editor.liveTelemetry = backendObject.curveEditorTelemetry
             editor.comparison = backendObject.curveComparisonState
             graph.requestPaint()
         }
@@ -279,6 +285,10 @@ Item {
             editor.analysis = backendObject.curveAnalysis
             editor.comparison = backendObject.curveComparisonState
             graph.requestPaint()
+        }
+        function onInputTelemetryChanged() {
+            if (!editor.visible) return
+            editor.liveTelemetry = backendObject.curveEditorTelemetry
         }
     }
 
@@ -351,7 +361,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 4
                         FieldCaption { text: "AXIS" }
-                        AviationCombo { id: axisSelector; Layout.fillWidth: true; model: backendObject ? backendObject.axes : []; textRole: "label"; valueRole: "index"; currentIndex: backendObject ? backendObject.selectedAxisIndex : 0; onActivated: backendObject.setSelectedAxis(Number(currentValue)) }
+                        AviationCombo { id: axisSelector; Layout.fillWidth: true; model: backendObject ? backendObject.curveAxisChoices : []; textRole: "label"; valueRole: "index"; currentIndex: backendObject ? backendObject.selectedAxisIndex : 0; onActivated: backendObject.setSelectedAxis(Number(currentValue)) }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -410,10 +420,10 @@ Item {
                 spacing: 10
                 FieldCaption { text: "VIEW" }
                 Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: "#d6e5e7"; font.pixelSize: 13; font.bold: true }
-                AviationToggle { checked: !responseView; onToggled: responseView = !checked; ToolTip.text: "Switch between response output and local gain." }
-                Text { text: responseView ? "Input + active output" : "Local dy/dx"; color: "#a6bbc0"; font.pixelSize: 12 }
+                AviationToggle { checked: !responseView; onToggled: { responseView = !checked; graph.requestPaint() } ToolTip.text: "Switch between response output and local gain." }
+                Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: "#a6bbc0"; font.pixelSize: 12 }
                 Item { Layout.preferredWidth: 16 }
-                AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: showEffective = checked; ToolTip.text: "Overlay the effective axis response after the full signal path." }
+                AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: { showEffective = checked; graph.requestPaint() } ToolTip.text: "Overlay the effective axis response after the full signal path." }
                 Item { Layout.fillWidth: true }
                 Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: "#91adb4"; font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
             }
@@ -524,17 +534,16 @@ Item {
                         trace(ctx, responseSamples, "#6ec3cf", 2.3, "output", false)
                         const identity = []
                         for (let i = 0; i < 2; ++i) identity.push({ input: i === 0 ? domainMin : 1, output: i === 0 ? domainMin : 1 })
-                        trace(ctx, identity, "#bac7ca", 1.15, "output", false)
+                        trace(ctx, identity, "#bac7ca", 1.15, "output", true)
                         trace(ctx, comparisonSamples, "#8a9ba1", 1.2, "output", true)
                         trace(ctx, previewSamples, "#d4b36e", 1.3, "output", true)
                         if (showEffective && effectiveSamples && effectiveSamples.length) {
                             const effective = []
                             for (let i = 0; i < effectiveSamples.length; ++i) {
                                 const p = effectiveSamples[i]
-                                effective.push({ input: editorState.unipolar ? (Number(p.input) + 1) * .5 : Number(p.input),
-                                                 output: editorState.unipolar ? (Number(p.output) + 1) * .5 : Number(p.output) })
+                                effective.push({ input: Number(p.input), output: Number(p.output) })
                             }
-                            trace(ctx, effective, "#3b7584", 1.0, "output", true)
+                            trace(ctx, effective, "#3b7584", 1.8, "output", false)
                         }
                         if (editorState.pointEditing) {
                             for (let i = 0; i < points.length; ++i) {
@@ -557,11 +566,11 @@ Item {
                         ctx.beginPath(); ctx.moveTo(plotLeft, cy); ctx.lineTo(plotLeft + pw, cy); ctx.stroke(); ctx.setLineDash([])
                     }
                     if (responseView) {
-                        const raw = Number(editorState.physicalInput || 0)
-                        const finalValue = Number(editorState.finalOutput || 0)
-                        const markerX = xFor(editorState.unipolar ? (raw + 1) * .5 : raw)
-                        const inputY = yFor(editorState.unipolar ? (raw + 1) * .5 : raw)
-                        const outputY = yFor(editorState.unipolar ? (finalValue + 1) * .5 : finalValue)
+                        const raw = Number(liveTelemetry.physicalInput || 0)
+                        const finalValue = Number(liveTelemetry.finalOutput || 0)
+                        const markerX = xFor(raw)
+                        const inputY = yFor(raw)
+                        const outputY = yFor(finalValue)
                         ctx.fillStyle = "#e1eeee"; ctx.strokeStyle = "#587682"; ctx.lineWidth = 2
                         ctx.beginPath(); ctx.arc(markerX, inputY, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
                         ctx.fillStyle = "#8fcfc0"; ctx.strokeStyle = "#e6f5ef"
@@ -652,10 +661,10 @@ Item {
                 rowSpacing: 8
                 Repeater {
                     model: [
-                        { label: "PHYSICAL INPUT", value: rawPercent(editorState.physicalInput), tone: "#dce9ea" },
-                        { label: "CURVE RESPONSE", value: rawPercent(editorState.curveResponse), tone: "#9fdad3" },
-                        { label: "FINAL OUTPUT", value: rawPercent(editorState.finalOutput), tone: "#b7ddc2" },
-                        { label: "LOCAL GAIN", value: Number(editorState.localGain || 0).toFixed(2) + "×", tone: "#e4c97f" }
+                        { label: "PHYSICAL INPUT", value: rawPercent(liveTelemetry.physicalInput), tone: "#dce9ea" },
+                        { label: "CURVE RESPONSE", value: rawPercent(liveTelemetry.curveResponse), tone: "#9fdad3" },
+                        { label: "FINAL OUTPUT", value: rawPercent(liveTelemetry.finalOutput), tone: "#b7ddc2" },
+                        { label: "LOCAL GAIN", value: Number(liveTelemetry.localGain || 0).toFixed(2) + "×", tone: "#e4c97f" }
                     ]
                     delegate: ColumnLayout {
                         Layout.fillWidth: true
@@ -834,7 +843,7 @@ Item {
                     anchors.margins: 16
                     spacing: 7
                     CardHeading { text: "SIGNAL PATH" }
-                    Repeater { model: [{n:"RAW",v:editorState.physicalInput},{n:"NORMALIZED",v:editorState.normalized},{n:"DEADZONE",v:editorState.afterDeadzone},{n:"HYSTERESIS",v:editorState.afterHysteresis},{n:"INVERT",v:editorState.afterInversion},{n:"CURVE",v:editorState.curveResponse},{n:"LIMITS",v:editorState.finalOutput},{n:"VJOY",v:editorState.finalOutput}]
+                    Repeater { model: [{n:"INPUT",v:liveTelemetry.physicalInput},{n:"DEADZONE",v:liveTelemetry.afterDeadzone},{n:"HYSTERESIS",v:liveTelemetry.afterHysteresis},{n:"INVERT",v:liveTelemetry.afterInversion},{n:"CURVE",v:liveTelemetry.curveResponse},{n:"LIMITS",v:liveTelemetry.finalOutput},{n:"VJOY",v:liveTelemetry.finalOutput}]
                         delegate: RowLayout { Layout.fillWidth: true
                             Text { text: modelData.n; color: "#abc0c5"; font.pixelSize: 12; Layout.fillWidth: true }
                             Text { text: rawPercent(modelData.v); color: "#d9e9eb"; font.family: "Consolas"; font.pixelSize: 13; font.bold: true }
