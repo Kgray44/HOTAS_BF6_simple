@@ -24,6 +24,7 @@ private slots:
     void controllerPresentationIsCachedAndTelemetryIsIsolated();
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
+    void installerUpgradeAcceptanceTracksSchema16();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -164,6 +165,18 @@ void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
         QVERIFY(page.contains(QStringLiteral("id: deleteProfileDialog")));
         QVERIFY(page.contains(QStringLiteral("id: renameProfileField")));
     }
+}
+
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema16()
+{
+    const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
+    const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
+    const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 16")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v16")));
+    QVERIFY(!fixture.contains(QStringLiteral("--assert-v15")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v16")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v16")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)
