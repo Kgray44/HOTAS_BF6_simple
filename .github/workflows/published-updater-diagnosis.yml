@@ -1,0 +1,42 @@
+name: Published updater diagnosis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6.5.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: 'win64_msvc2019_64'
+      - name: Locate Qt CMake package
+        shell: pwsh
+        run: |
+          $config = Get-ChildItem -LiteralPath $env:QT_ROOT_DIR -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          if (-not $config) { throw 'Qt6Config.cmake was not found.' }
+          "QT_PREFIX=$($config.Directory.Parent.Parent.Parent.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build only the configuration fixture
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_PREFIX"
+          cmake --build build --config Release --target upgrade_configuration_fixture --parallel
+      - name: Collect v1.9.3 to public v2.0.2 updater evidence
+        shell: pwsh
+        run: |
+          $version = (Get-Content HOTAS_VERSION -Raw).Trim()
+          .\scripts\diagnose-published-updater.ps1 -FixtureTool "$PWD\build\upgrade_configuration_fixture.exe" -ExpectedVersion $version
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-updater-diagnosis-v2.0.2
+          path: ${{ runner.temp }}/hotas-updater-diagnosis-*/evidence
+          if-no-files-found: error
