@@ -801,7 +801,10 @@ void ControllerReadinessTests::managedVirtualOutputsSwitchWithoutElevationAndRol
     QVERIFY(!failed.succeeded);
     QVERIFY(failed.status.contains(QStringLiteral("rolled back"), Qt::CaseInsensitive));
     QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-hide ") + bf6Instance));
-    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-hide ") + starInstance));
+    // The selected output was already hidden when its unhide command failed;
+    // only the completed hide of the old output needs reversal.
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-unhide ") + bf6Instance));
+    QVERIFY(!failingProbe->calls.contains(QStringLiteral("--dev-hide ") + starInstance));
 }
 
 int main(int argc, char *argv[])
