@@ -26,6 +26,10 @@ jobs:
           $config = Get-ChildItem -LiteralPath $env:QT_ROOT_DIR -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
           if (-not $config) { throw 'Qt6Config.cmake was not found.' }
           "QT_PREFIX=$($config.Directory.Parent.Parent.Parent.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Enable the matching MSVC x64 toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Build only the configuration fixture
         shell: pwsh
         run: |
