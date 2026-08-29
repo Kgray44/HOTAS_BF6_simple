@@ -2,11 +2,19 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.4**
+**Current release: v2.0.5**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.5 — Published Updater Acceptance Hotfix
+
+Repairs the isolated CI acceptance environment for the published v1.9.3 updater chain without changing the shipped mapper or its real-time input path.
+
+- Runs the inherited updated Qt mapper with the same offscreen platform used by the existing headless installer startup smoke, matching GitHub-hosted runner constraints.
+- Keeps the public v1.9.3 launcher, manifest download, SHA-256 verification, temporary helper, installer, updated launcher, and mapper handoff unchanged.
+- Prints the updater log if the accepted post-update mapper is not observed, preserving actionable failure evidence without touching user installations.
 
 ## v2.0.4 — UI Responsiveness Hotfix
 

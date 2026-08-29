@@ -314,5 +314,15 @@
       "Uses a cached connected-controller count and one Settings-page controller-model reference instead of repeatedly reconstructing the C++ property in QML loops.",
       "Adds a focused ten-second steady-state UI/control-plane performance contract while leaving the DirectInput-to-vJoy mapper hot path unchanged."
     ]
+  },
+  {
+    "version": "2.0.5",
+    "title": "Published Updater Acceptance Hotfix",
+    "summary": "Repairs the isolated CI acceptance environment for the published v1.9.3 updater chain without changing the shipped mapper or its real-time input path.",
+    "highlights": [
+      "Runs the inherited updated Qt mapper with the same offscreen platform used by the existing headless installer startup smoke, matching GitHub-hosted runner constraints.",
+      "Keeps the public v1.9.3 launcher, manifest download, SHA-256 verification, temporary helper, installer, updated launcher, and mapper handoff unchanged.",
+      "Prints the updater log if the accepted post-update mapper is not observed, preserving actionable failure evidence without touching user installations."
+    ]
   }
 ]
