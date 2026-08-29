@@ -1,6 +1,9 @@
 name: Published updater diagnosis
 
 on:
+  push:
+    branches:
+      - codex/v2.0.2-updater-diagnosis
   workflow_dispatch:
 
 permissions:
