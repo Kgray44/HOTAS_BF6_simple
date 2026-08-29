@@ -75,7 +75,7 @@ Page {
     function capacityState() {
         if (!backend.vjoyReady) return "VJOY OFFLINE"
         if (!backend.vjoyCapacitySufficient) return "CAPACITY INSUFFICIENT"
-        return backend.vjoyButtonCount >= backend.vjoyRecommendedButtonCount ? "READY" : "CONFIGURATION LIMITED"
+        return "READY"
     }
     function capacityColor() {
         if (backend.vjoyStatusSeverity === "error") return "#ca9090"

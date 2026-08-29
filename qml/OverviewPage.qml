@@ -173,18 +173,18 @@ Flickable {
                     Capability { value: backend.povCount; label: "POVS" }
                 }
             }
-            Panel { Layout.fillWidth: true; eyebrow: "VIRTUAL OUTPUT"; title: "vJoy Device " + backend.vjoyDeviceId; accent: backend.vjoyReady ? root.readyColor : root.warningColor
+            Panel { Layout.fillWidth: true; eyebrow: "VIRTUAL OUTPUT"; title: "vJoy Device " + backend.vjoyDeviceId; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
                 RowLayout { Layout.fillWidth: true
-                    StatusBadge { label: backend.vjoyReady ? "READY" : "LIMITED"; tone: backend.vjoyReady ? root.readyColor : root.warningColor }
+                    StatusBadge { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "ACTION REQUIRED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
                     Item { Layout.fillWidth: true }
-                    Text { text: backend.vjoyStatusSeverity.toUpperCase(); color: backend.vjoyReady ? root.readyColor : root.warningColor; font.pixelSize: 9; font.bold: true }
+                    Text { text: backend.vjoyStatusSeverity.toUpperCase(); color: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor; font.pixelSize: 9; font.bold: true }
                 }
                 Text { Layout.fillWidth: true; text: backend.virtualAxisStatus; color: root.textColor; font.pixelSize: 10; font.family: theme.telemetryFont; elide: Text.ElideRight }
                 RowLayout { Layout.fillWidth: true
                     Capability { value: backend.vjoyButtonCount; label: "BUTTON CAPACITY" }
                     Capability { value: backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount; label: "POV CAPACITY" }
                 }
-                Text { Layout.fillWidth: true; text: backend.vjoyReady ? "Output capability is available to the mapper." : backend.vjoyStatus; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: backend.vjoyStatusSeverity === "ready" ? "Output capability is available to the mapper." : backend.vjoyStatus; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
             }
         }
 

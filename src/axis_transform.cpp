@@ -82,6 +82,31 @@ void normalizeAxisProcessing(AxisMapping &mapping)
     }
 }
 
+void switchAxisOutputLimitDomain(AxisMapping &mapping, AxisRangeMode rangeMode)
+{
+    if (mapping.rangeMode == rangeMode) return;
+    if (mapping.rangeMode == AxisRangeMode::OneSided) {
+        mapping.oneSidedOutputMinimum = mapping.outputMinimum;
+        mapping.oneSidedOutputMaximum = mapping.outputMaximum;
+        mapping.outputMinimum = mapping.centeredOutputMinimum;
+        mapping.outputMaximum = mapping.centeredOutputMaximum;
+    } else {
+        mapping.centeredOutputMinimum = mapping.outputMinimum;
+        mapping.centeredOutputMaximum = mapping.outputMaximum;
+        mapping.outputMinimum = mapping.oneSidedOutputMinimum;
+        mapping.outputMaximum = mapping.oneSidedOutputMaximum;
+    }
+    mapping.rangeMode = rangeMode;
+    normalizeAxisProcessing(mapping);
+    if (rangeMode == AxisRangeMode::OneSided) {
+        mapping.oneSidedOutputMinimum = mapping.outputMinimum;
+        mapping.oneSidedOutputMaximum = mapping.outputMaximum;
+    } else {
+        mapping.centeredOutputMinimum = mapping.outputMinimum;
+        mapping.centeredOutputMaximum = mapping.outputMaximum;
+    }
+}
+
 float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping)
 {
     const float calibrated = normalizeCalibrated(raw, mapping.calibration);

@@ -75,8 +75,8 @@ bool assertMigratedFixture()
 {
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
-    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 16) {
-        std::cerr << "Expected the installed mapper to persist schema 16.\n";
+    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 17) {
+        std::cerr << "Expected the installed mapper to persist schema 17.\n";
         return false;
     }
 
@@ -122,8 +122,8 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v16"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v17"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v16.\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v17.\n";
     return 2;
 }

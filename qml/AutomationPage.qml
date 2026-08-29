@@ -453,10 +453,12 @@ Item {
                     Repeater {
                         model: root.isAlwaysActive(root.draft) ? [] : (root.draft.conditions || [])
                         delegate: ColumnLayout {
+                            id: conditionCard
                             required property int index
                             required property var modelData
+                            property int conditionIndex: index
                             Layout.fillWidth: true; spacing: 8
-                            RowLayout { visible: index > 0; Layout.fillWidth: true
+                            RowLayout { visible: conditionCard.conditionIndex > 0; Layout.fillWidth: true
                                 Item { Layout.fillWidth: true }
                                 EditorCombo { width: 120; model: ["AND", "OR"]; currentIndex: Number(root.draft.matchMode) === 1 ? 1 : 0; onActivated: root.setMatchMode(currentIndex) }
                                 Item { Layout.fillWidth: true }
@@ -467,35 +469,35 @@ Item {
                                     id: requirementContent
                                     anchors.fill: parent; anchors.margins: 12; spacing: 9
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: (index + 1) + " · " + root.requirementSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeCondition(index) }
+                                        Text { text: (conditionCard.conditionIndex + 1) + " · " + root.requirementSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeCondition(conditionCard.conditionIndex) }
                                     }
                                     Flow {
                                         id: requirementFlow
                                         Layout.fillWidth: true; spacing: 8
-                                        EditorCombo { width: 144; model: root.requirementKinds; currentIndex: root.requirementKind(modelData); onActivated: root.setRequirementKind(index, currentIndex) }
-                                        EditorSpin { visible: root.requirementKind(modelData) === 1; width: 108; from: 1; to: 128; value: modelData.button; onValueModified: root.updateCondition(index, "button", value) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 1; width: 168; model: root.buttonStates; currentIndex: root.buttonStateIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.buttonStateTypes[currentIndex]) }
-                                        EditorSpin { visible: root.isMultiPress(modelData); width: 78; from: 2; to: 5; value: modelData.pressCount; onValueModified: root.updateCondition(index, "pressCount", value) }
+                                        EditorCombo { width: 144; model: root.requirementKinds; currentIndex: root.requirementKind(modelData); onActivated: function(choiceIndex) { root.setRequirementKind(conditionCard.conditionIndex, choiceIndex) } }
+                                        EditorSpin { visible: root.requirementKind(modelData) === 1; width: 108; from: 1; to: 128; value: modelData.button; onValueModified: root.updateCondition(conditionCard.conditionIndex, "button", value) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 1; width: 168; model: root.buttonStates; currentIndex: root.buttonStateIndex(modelData.type); onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "type", root.buttonStateTypes[choiceIndex]) } }
+                                        EditorSpin { visible: root.isMultiPress(modelData); width: 78; from: 2; to: 5; value: modelData.pressCount; onValueModified: root.updateCondition(conditionCard.conditionIndex, "pressCount", value) }
                                         Text { visible: root.isMultiPress(modelData); text: "times"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                        EditorSpin { visible: root.isMultiPress(modelData); width: 92; from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(index, "multiPressWindowMs", value) }
+                                        EditorSpin { visible: root.isMultiPress(modelData); width: 92; from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(conditionCard.conditionIndex, "multiPressWindowMs", value) }
                                         Text { visible: root.isMultiPress(modelData); text: "ms window"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                        EditorSpin { visible: root.isLongPress(modelData); width: 92; from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(index, "longPressDurationMs", value) }
+                                        EditorSpin { visible: root.isLongPress(modelData); width: 92; from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(conditionCard.conditionIndex, "longPressDurationMs", value) }
                                         Text { visible: root.isLongPress(modelData); text: "ms hold"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 148; model: root.axisChoices; currentIndex: modelData.axis; onActivated: root.updateCondition(index, "axis", currentIndex) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 142; model: root.axisComparisons; currentIndex: root.axisComparisonIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.axisComparisonTypes[currentIndex]) }
-                                        EditorTextField { visible: root.requirementKind(modelData) === 2; width: 94; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "minimum", root.conditionValue(text, modelData.axis)) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 148; model: root.axisChoices; currentIndex: modelData.axis; onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "axis", choiceIndex) } }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 2; width: 142; model: root.axisComparisons; currentIndex: root.axisComparisonIndex(modelData.type); onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "type", root.axisComparisonTypes[choiceIndex]) } }
+                                        EditorTextField { visible: root.requirementKind(modelData) === 2; width: 94; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateCondition(conditionCard.conditionIndex, "minimum", root.conditionValue(text, modelData.axis)) } }
                                         Text { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; text: Number(modelData.type) === 3 ? "and" : "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                        EditorTextField { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; width: 94; text: root.conditionPercent(modelData.maximum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "maximum", root.conditionValue(text, modelData.axis)) }
-                                        EditorSpin { visible: root.requirementKind(modelData) === 3; width: 90; from: 1; to: 4; value: modelData.povHat; onValueModified: root.updateCondition(index, "povHat", value) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 144; model: root.povStates; currentIndex: Number(modelData.type) === 8 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 8 : 7) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 124; model: root.directions; currentIndex: Number(modelData.povDirection) - 1; onActivated: root.updateCondition(index, "povDirection", currentIndex + 1) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 132; model: root.profileStates; currentIndex: Number(modelData.type) === 10 ? 1 : 0; onActivated: root.updateCondition(index, "type", currentIndex === 1 ? 10 : 9) }
-                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 170; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateCondition(index, "profileId", root.profileChoiceId(currentIndex)) }
+                                        EditorTextField { visible: Number(modelData.type) === 3 || Number(modelData.type) === 4; width: 94; text: root.conditionPercent(modelData.maximum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateCondition(conditionCard.conditionIndex, "maximum", root.conditionValue(text, modelData.axis)) } }
+                                        EditorSpin { visible: root.requirementKind(modelData) === 3; width: 90; from: 1; to: 4; value: modelData.povHat; onValueModified: root.updateCondition(conditionCard.conditionIndex, "povHat", value) }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 144; model: root.povStates; currentIndex: Number(modelData.type) === 8 ? 1 : 0; onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "type", choiceIndex === 1 ? 8 : 7) } }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 3; width: 124; model: root.directions; currentIndex: Number(modelData.povDirection) - 1; onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "povDirection", choiceIndex + 1) } }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 132; model: root.profileStates; currentIndex: Number(modelData.type) === 10 ? 1 : 0; onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "type", choiceIndex === 1 ? 10 : 9) } }
+                                        EditorCombo { visible: root.requirementKind(modelData) === 4; width: 170; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: function(choiceIndex) { root.updateCondition(conditionCard.conditionIndex, "profileId", root.profileChoiceId(choiceIndex)) } }
                                     }
                                     RowLayout { visible: root.requirementKind(modelData) === 2; Layout.fillWidth: true
                                         Text { text: "Input stability"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                                        EditorTextField { Layout.preferredWidth: 88; text: root.percent(modelData.hysteresis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "hysteresis", Number(text.replace("%", "")) / 100) }
+                                        EditorTextField { Layout.preferredWidth: 88; text: root.percent(modelData.hysteresis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateCondition(conditionCard.conditionIndex, "hysteresis", Number(text.replace("%", "")) / 100) } }
                                         Text { text: "Ignore tiny movements below this amount."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                     }
                                 }
@@ -530,63 +532,65 @@ Item {
                     Repeater {
                         model: root.draft.actions || []
                         delegate: ThemedPanel {
+                            id: actionCard
                             required property int index
                             required property var modelData
+                            property int actionIndex: index
                             Layout.fillWidth: true; implicitHeight: effectContent.implicitHeight + 24; surfaceColor: root.raisedFill
                             ColumnLayout {
                                 id: effectContent
                                 anchors.fill: parent; anchors.margins: 12; spacing: 9
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: (index + 1) + " · " + root.effectSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeAction(index) }
+                                    Text { text: (actionCard.actionIndex + 1) + " · " + root.effectSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeAction(actionCard.actionIndex) }
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 8
-                                    EditorCombo { Layout.preferredWidth: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: root.setEffectType(index, currentIndex) }
+                                    EditorCombo { Layout.preferredWidth: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: function(choiceIndex) { root.setEffectType(actionCard.actionIndex, choiceIndex) } }
                                     RowLayout { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; Layout.fillWidth: true
                                         Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(actionCard.actionIndex, "virtualButton", value) }
                                     }
                                     RowLayout { visible: Number(modelData.type) === 2 || Number(modelData.type) === 3; Layout.fillWidth: true
                                         Text { text: "Profile"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 220; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileChoiceId(currentIndex)) }
+                                        EditorCombo { Layout.preferredWidth: 220; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "profileId", root.profileChoiceId(choiceIndex)) } }
                                     }
                                     RowLayout { visible: Number(modelData.type) === 4 || Number(modelData.type) === 5 || Number(modelData.type) === 7; Layout.fillWidth: true
                                         Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
                                         Text { text: Number(modelData.type) === 5 ? "by" : "to"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "value", Number(text.replace("%", "")) / 100) } }
                                     }
                                     RowLayout { visible: Number(modelData.type) === 6; Layout.fillWidth: true
                                         Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
                                         Text { text: "minimum"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.minimum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "minimum", Number(text.replace("%", "")) / 100) }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.minimum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "minimum", Number(text.replace("%", "")) / 100) } }
                                         Text { text: "maximum"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "maximum", Number(text.replace("%", "")) / 100) }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "maximum", Number(text.replace("%", "")) / 100) } }
                                     }
                                     RowLayout { visible: Number(modelData.type) === 8; Layout.fillWidth: true
                                         Text { text: "Source"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
-                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "sourceAxis", choiceIndex) } }
+                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "sourceStage", choiceIndex) } }
                                         Text { text: "Target"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
-                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "value", Number(text.replace("%", "")) / 100) } }
                                     }
                                     RowLayout { visible: Number(modelData.type) === 9; Layout.fillWidth: true
                                         Text { text: "Target"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
                                         Text { text: "follows"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
-                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
-                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "offset", Number(text.replace("%", "")) / 100) }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "sourceAxis", choiceIndex) } }
+                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "sourceStage", choiceIndex) } }
+                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "value", Number(text.replace("%", "")) / 100) } }
+                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "offset", Number(text.replace("%", "")) / 100) } }
                                     }
                                     RowLayout { visible: root.isTap(modelData); Layout.fillWidth: true
                                         Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(actionCard.actionIndex, "virtualButton", value) }
                                         Text { text: "Tap duration (ms)"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorSpin { Layout.preferredWidth: 92; from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(index, "tapDurationMs", value) }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(actionCard.actionIndex, "tapDurationMs", value) }
                                     }
                                 }
                             }
@@ -630,33 +634,39 @@ Item {
                         Repeater {
                             model: root.draft.conditions || []
                             delegate: RowLayout {
+                                id: multiPressConditionRow
                                 required property int index
                                 required property var modelData
+                                property int conditionIndex: index
                                 visible: root.isMultiPress(modelData); Layout.fillWidth: true
                                 Text { text: "Maximum time between presses"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
-                                EditorSpin { from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(index, "multiPressWindowMs", value) }
+                                EditorSpin { from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(multiPressConditionRow.conditionIndex, "multiPressWindowMs", value) }
                                 Text { text: "ms · Button " + modelData.button + " sequence gap."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }
                         Repeater {
                             model: root.draft.conditions || []
                             delegate: RowLayout {
+                                id: longPressConditionRow
                                 required property int index
                                 required property var modelData
+                                property int conditionIndex: index
                                 visible: root.isLongPress(modelData); Layout.fillWidth: true
                                 Text { text: "Long-press duration"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
-                                EditorSpin { from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(index, "longPressDurationMs", value) }
+                                EditorSpin { from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(longPressConditionRow.conditionIndex, "longPressDurationMs", value) }
                                 Text { text: "ms · Button " + modelData.button + " must stay held continuously."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }
                         Repeater {
                             model: root.draft.actions || []
                             delegate: RowLayout {
+                                id: tapActionRow
                                 required property int index
                                 required property var modelData
+                                property int actionIndex: index
                                 visible: root.isTap(modelData); Layout.fillWidth: true
                                 Text { text: "Virtual button tap duration"; color: root.textColor; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 170 }
-                                EditorSpin { from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(index, "tapDurationMs", value) }
+                                EditorSpin { from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(tapActionRow.actionIndex, "tapDurationMs", value) }
                                 Text { text: "ms · Virtual button " + modelData.virtualButton + "."; color: root.faintColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }

@@ -124,6 +124,7 @@ private slots:
     void virtualControllersAreNeverEligibleAsPhysicalInput();
     void implicitButtonsDefaultToMatchingVjoyTargets();
     void configurationRoundTrips();
+    void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
     void vjoyRequirementSupersetsAreAccepted();
@@ -683,6 +684,59 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.calibrationHistory.front().calibratedAxisCount, 4);
     QCOMPARE(restored.calibrationHistory.front().calibration[2].center, 0.1F);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
+}
+
+void MappingCoreTests::outputLimitsRoundTripAcrossDomainsAndSchemaMigration()
+{
+    AxisMapping mapping;
+    mapping.outputMinimum = -0.80F;
+    mapping.outputMaximum = 0.90F;
+    switchAxisOutputLimitDomain(mapping, AxisRangeMode::OneSided);
+    QCOMPARE(mapping.outputMinimum, 0.0F);
+    QCOMPARE(mapping.outputMaximum, 1.0F);
+    mapping.outputMinimum = 0.10F;
+    mapping.outputMaximum = 0.85F;
+    switchAxisOutputLimitDomain(mapping, AxisRangeMode::Centered);
+    QCOMPARE(mapping.outputMinimum, -0.80F);
+    QCOMPARE(mapping.outputMaximum, 0.90F);
+    switchAxisOutputLimitDomain(mapping, AxisRangeMode::OneSided);
+    QCOMPARE(mapping.outputMinimum, 0.10F);
+    QCOMPARE(mapping.outputMaximum, 0.85F);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    AxisMapping &persisted = activeProfile(configuration).axes[static_cast<int>(PhysicalAxis::X)];
+    persisted = mapping;
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const AxisMapping &roundTripped = activeProfile(restored).axes[static_cast<int>(PhysicalAxis::X)];
+    QCOMPARE(roundTripped.rangeMode, AxisRangeMode::OneSided);
+    QCOMPARE(roundTripped.outputMinimum, 0.10F);
+    QCOMPARE(roundTripped.outputMaximum, 0.85F);
+    QCOMPARE(roundTripped.centeredOutputMinimum, -0.80F);
+    QCOMPARE(roundTripped.centeredOutputMaximum, 0.90F);
+
+    QJsonObject schema16 = ConfigStore::toJson(configuration);
+    schema16.insert(QStringLiteral("version"), 16);
+    QJsonArray profiles = schema16.value(QStringLiteral("profiles")).toArray();
+    QJsonObject profile = profiles.first().toObject();
+    QJsonArray axes = profile.value(QStringLiteral("axes")).toArray();
+    QJsonObject axis = axes.first().toObject();
+    axis.remove(QStringLiteral("centeredOutputMinimum"));
+    axis.remove(QStringLiteral("centeredOutputMaximum"));
+    axis.remove(QStringLiteral("oneSidedOutputMinimum"));
+    axis.remove(QStringLiteral("oneSidedOutputMaximum"));
+    axes.replace(0, axis);
+    profile.insert(QStringLiteral("axes"), axes);
+    profiles.replace(0, profile);
+    schema16.insert(QStringLiteral("profiles"), profiles);
+    const MapperConfiguration migrated = ConfigStore::fromJson(schema16, &valid);
+    QVERIFY(valid);
+    const AxisMapping &migratedAxis = activeProfile(migrated).axes[static_cast<int>(PhysicalAxis::X)];
+    QCOMPARE(migratedAxis.oneSidedOutputMinimum, 0.10F);
+    QCOMPARE(migratedAxis.oneSidedOutputMaximum, 0.85F);
+    QCOMPARE(migratedAxis.centeredOutputMinimum, -1.0F);
+    QCOMPARE(migratedAxis.centeredOutputMaximum, 1.0F);
 }
 
 void MappingCoreTests::controllerRegistryPersistsPerDeviceCalibrationAndRequirements()
@@ -1472,7 +1526,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 16);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 17);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1715,7 +1769,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 16);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 17);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

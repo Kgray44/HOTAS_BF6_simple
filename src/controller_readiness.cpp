@@ -1087,14 +1087,23 @@ AutomaticRepairResult ControllerReadinessService::runRepairTransaction(
 
 bool ControllerReadinessService::verifyAfterRepair()
 {
-    // HidHide service state can take a short moment to reflect a successful
-    // transaction. This bounded control-plane retry is never run by the mapper.
-    for (int attempt = 0; attempt != 3; ++attempt) {
+    // vJoyConfig can return before existing consumers observe its new
+    // descriptor. Reinspect the actual device at a bounded control-plane
+    // cadence; never make process exit alone the proof of repair.
+    constexpr int kRepairReinspectionAttempts = 8;
+    constexpr unsigned long kRepairReinspectionIntervalMs = 150;
+    for (int attempt = 0; attempt != kRepairReinspectionAttempts; ++attempt) {
         const VJoyCapabilities vjoy = inspectVJoy(m_configuration.vjoyDeviceId);
         const HidHideCapabilities hidhide = inspectHidHide(m_physical);
         m_plan = planFor(m_physical, requirementsFor(m_configuration), vjoy, hidhide, VerificationMode::Full);
         if (m_plan.state == ControllerReadinessState::Ready) return true;
-        if (attempt != 2) QThread::msleep(static_cast<unsigned long>(150 * (attempt + 1)));
+        if (attempt + 1 != kRepairReinspectionAttempts) QThread::msleep(kRepairReinspectionIntervalMs);
+    }
+    if (m_plan.vjoyNeedsChanges) {
+        m_plan.vjoySummary = QStringLiteral("vJoy Device %1 still reports %2 buttons; %3 are required.")
+            .arg(m_plan.vjoy.deviceId).arg(m_plan.vjoy.buttons).arg(m_plan.requirements.buttons);
+        m_plan.status = QStringLiteral("VJOY CONVERGENCE TIMEOUT — Required %1 buttons; observed %2.")
+            .arg(m_plan.requirements.buttons).arg(m_plan.vjoy.buttons);
     }
     return false;
 }

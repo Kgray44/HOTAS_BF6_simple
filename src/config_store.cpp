@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 16;
+constexpr int kProfileSchemaVersion = 17;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -192,6 +192,10 @@ QJsonObject axisMappingToJson(const AxisMapping &mapping)
         {u"hysteresis"_qs, mapping.hysteresis},
         {u"outputMinimum"_qs, mapping.outputMinimum},
         {u"outputMaximum"_qs, mapping.outputMaximum},
+        {u"centeredOutputMinimum"_qs, mapping.centeredOutputMinimum},
+        {u"centeredOutputMaximum"_qs, mapping.centeredOutputMaximum},
+        {u"oneSidedOutputMinimum"_qs, mapping.oneSidedOutputMinimum},
+        {u"oneSidedOutputMaximum"_qs, mapping.oneSidedOutputMaximum},
         {u"curve"_qs, curveDefinitionToJson(mapping.curve)},
     };
     if (mapping.hasCenteredCurveBackup) {
@@ -215,6 +219,20 @@ AxisMapping axisMappingFromJson(const QJsonObject &json, AxisRangeMode legacyRan
     mapping.hysteresis = std::clamp(float(json.value(u"hysteresis"_qs).toDouble(0.002)), 0.0F, 0.25F);
     mapping.outputMinimum = std::clamp(float(json.value(u"outputMinimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
     mapping.outputMaximum = std::clamp(float(json.value(u"outputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
+    const bool hasDomainOutputLimits = json.contains(u"centeredOutputMinimum"_qs)
+        && json.contains(u"centeredOutputMaximum"_qs)
+        && json.contains(u"oneSidedOutputMinimum"_qs)
+        && json.contains(u"oneSidedOutputMaximum"_qs);
+    if (hasDomainOutputLimits) {
+        mapping.centeredOutputMinimum = std::clamp(
+            float(json.value(u"centeredOutputMinimum"_qs).toDouble(-1.0)), -1.0F, 1.0F);
+        mapping.centeredOutputMaximum = std::clamp(
+            float(json.value(u"centeredOutputMaximum"_qs).toDouble(1.0)), -1.0F, 1.0F);
+        mapping.oneSidedOutputMinimum = std::clamp(
+            float(json.value(u"oneSidedOutputMinimum"_qs).toDouble(0.0)), 0.0F, 1.0F);
+        mapping.oneSidedOutputMaximum = std::clamp(
+            float(json.value(u"oneSidedOutputMaximum"_qs).toDouble(1.0)), 0.0F, 1.0F);
+    }
     mapping.curve = curveDefinitionFromJson(json.value(u"curve"_qs).toObject(),
                                              mapping.rangeMode == AxisRangeMode::OneSided);
     const QJsonObject centeredBackup = json.value(u"centeredCurveBackup"_qs).toObject();
@@ -228,6 +246,26 @@ AxisMapping axisMappingFromJson(const QJsonObject &json, AxisRangeMode legacyRan
         mapping.hasOneSidedCurveBackup = curveDefinitionIsValid(mapping.oneSidedCurveBackup, true);
     }
     normalizeAxisProcessing(mapping);
+    if (!hasDomainOutputLimits) {
+        // Schema 16 stored only the active range. Preserve it in its actual
+        // domain and populate the untouched alternate range safely.
+        if (mapping.rangeMode == AxisRangeMode::OneSided) {
+            mapping.oneSidedOutputMinimum = mapping.outputMinimum;
+            mapping.oneSidedOutputMaximum = mapping.outputMaximum;
+        } else {
+            mapping.centeredOutputMinimum = mapping.outputMinimum;
+            mapping.centeredOutputMaximum = mapping.outputMaximum;
+        }
+    } else {
+        if (mapping.centeredOutputMinimum >= mapping.centeredOutputMaximum) {
+            mapping.centeredOutputMinimum = -1.0F;
+            mapping.centeredOutputMaximum = 1.0F;
+        }
+        if (mapping.oneSidedOutputMinimum >= mapping.oneSidedOutputMaximum) {
+            mapping.oneSidedOutputMinimum = 0.0F;
+            mapping.oneSidedOutputMaximum = 1.0F;
+        }
+    }
     return mapping;
 }
 
@@ -1028,7 +1066,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != 15 && version != kProfileSchemaVersion) {
+        && version != 15 && version != 16 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }

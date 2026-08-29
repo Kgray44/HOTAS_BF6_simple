@@ -1034,10 +1034,7 @@ QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
 QString AppBackend::vjoyStatusSeverity() const
 {
     if (!vjoyReady()) return u"error"_qs;
-    if (!vjoyCapacitySufficient() || vjoyButtonCount() < vjoyRecommendedButtonCount()) {
-        return u"warning"_qs;
-    }
-    return u"ready"_qs;
+    return vjoyCapacitySufficient() ? u"ready"_qs : u"warning"_qs;
 }
 bool AppBackend::hidhideAvailable() const { return m_readiness.plan().hidhide.installed; }
 bool AppBackend::hidhideCloakStateKnown() const
@@ -1452,9 +1449,8 @@ void AppBackend::setAxisRangeMode(int physicalAxis, const QString &mode)
             ? mapping.oneSidedCurveBackup
             : convertCurveDefinitionDomain(mapping.curve, false, true);
     }
-    mapping.rangeMode = normalized;
+    switchAxisOutputLimitDomain(mapping, normalized);
     normalizeCurveDefinition(mapping.curve, willBeOneSided);
-    normalizeAxisProcessing(mapping);
     persistAndApply();
 }
 
@@ -1512,6 +1508,13 @@ bool AppBackend::setAxisOutputLimits(int physicalAxis, double minimum, double ma
     }
     mapping.outputMinimum = boundedMinimum;
     mapping.outputMaximum = boundedMaximum;
+    if (mapping.rangeMode == AxisRangeMode::OneSided) {
+        mapping.oneSidedOutputMinimum = boundedMinimum;
+        mapping.oneSidedOutputMaximum = boundedMaximum;
+    } else {
+        mapping.centeredOutputMinimum = boundedMinimum;
+        mapping.centeredOutputMaximum = boundedMaximum;
+    }
     persistAndApply();
     return true;
 }
@@ -2306,7 +2309,6 @@ void AppBackend::sampleCalibrationControlPlane()
             capture.minimum = std::min(capture.minimum, raw);
             capture.maximum = std::max(capture.maximum, raw);
         } else if (m_calibrationStage == CalibrationStageState::Finalizing
-                   && currentProfile().axes[static_cast<size_t>(index)].rangeMode == AxisRangeMode::Centered
                    && capture.centerSampleCount < static_cast<int>(capture.centerSamples.size())) {
             capture.centerSamples[static_cast<size_t>(capture.centerSampleCount++)] = raw;
         }
@@ -2324,6 +2326,7 @@ void AppBackend::finishCalibration()
     constexpr float kMaximumCenterSpread = 0.12F;
     QStringList problems;
     std::array<Calibration, kPhysicalAxisCount> captured = m_configuration.calibration;
+    bool observedAny = false;
     bool savedAny = false;
     int calibratedAxisCount = 0;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
@@ -2331,42 +2334,42 @@ void AppBackend::finishCalibration()
         if (!capture.available) continue;
         const float span = capture.maximum - capture.minimum;
         if (!(span >= kMinimumTravel)) {
-            problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" needs more range movement"_qs);
+            // DirectInput may expose a slot that has no physical control. It
+            // is not calibration data and must not block real controls.
+            captured[static_cast<size_t>(index)] = Calibration{};
             continue;
         }
+        observedAny = true;
         Calibration calibration;
         calibration.enabled = true;
         calibration.minimum = capture.minimum;
         calibration.maximum = capture.maximum;
-        calibration.centered = currentProfile().axes[static_cast<size_t>(index)].rangeMode
-            == AxisRangeMode::Centered;
-        if (calibration.centered) {
-            if (capture.centerSampleCount < 10) {
-                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" did not receive enough center samples"_qs);
-                continue;
-            }
-            const float center = robustCalibrationCenter(capture.centerSamples, capture.centerSampleCount);
-            const auto samples = capture.centerSamples;
-            const auto bounds = std::minmax_element(samples.cbegin(), samples.cbegin() + capture.centerSampleCount);
-            if (!(capture.minimum + kMinimumCenteredMargin < center
-                  && center < capture.maximum - kMinimumCenteredMargin)) {
-                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" center is outside its measured range"_qs);
-                continue;
-            }
-            if (*bounds.second - *bounds.first > kMaximumCenterSpread) {
-                problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" center was too unstable; release it and try again"_qs);
-                continue;
-            }
+        if (capture.centerSampleCount < 10) {
+            problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" did not receive enough resting samples"_qs);
+            continue;
+        }
+        const float center = robustCalibrationCenter(capture.centerSamples, capture.centerSampleCount);
+        const auto samples = capture.centerSamples;
+        const auto bounds = std::minmax_element(samples.cbegin(), samples.cbegin() + capture.centerSampleCount);
+        if (*bounds.second - *bounds.first > kMaximumCenterSpread) {
+            problems.append(physicalAxisLabel(static_cast<PhysicalAxis>(index)) + u" resting position was too unstable; release it and try again"_qs);
+            continue;
+        }
+        const bool interiorCenter = capture.minimum + kMinimumCenteredMargin < center
+            && center < capture.maximum - kMinimumCenteredMargin;
+        calibration.centered = interiorCenter;
+        if (interiorCenter) {
             calibration.center = center;
         } else {
-            // This value is retained only for backward-compatible storage;
-            // normalization uses the measured range and ignores it.
+            // A stable endpoint is a valid physical range-only control. This
+            // describes the device itself, independent of profile Range.
             calibration.center = 0.0F;
         }
         captured[static_cast<size_t>(index)] = calibration;
         savedAny = true;
         ++calibratedAxisCount;
     }
+    if (!observedAny) problems.append(u"No meaningful axis travel was observed"_qs);
     if (savedAny && problems.isEmpty()) {
         m_configuration.calibration = captured;
         m_calibrationStage = CalibrationStageState::Idle;
