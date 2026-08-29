@@ -324,5 +324,15 @@
       "Keeps the public v1.9.3 launcher, manifest download, SHA-256 verification, temporary helper, installer, updated launcher, and mapper handoff unchanged.",
       "Prints the updater log if the accepted post-update mapper is not observed, preserving actionable failure evidence without touching user installations."
     ]
+  },
+  {
+    "version": "2.0.6",
+    "title": "Published Manifest Readiness Hotfix",
+    "summary": "Makes the public v1.9.3 updater acceptance wait until GitHub's latest-manifest alias resolves to the release under test, eliminating a release-metadata propagation race without changing shipped mapper behavior or the real-time input path.",
+    "highlights": [
+      "Polls the exact public latest update-manifest endpoint consumed by the shipped launcher until both version and tag match the candidate release.",
+      "Fails with the last observed manifest state if GitHub Release metadata does not advance within the bounded readiness window.",
+      "Preserves the unmodified v1.9.3 launcher, manifest download, SHA-256 verification, helper handoff, installer, updated launcher, mapper startup, and configuration-migration acceptance path."
+    ]
   }
 ]

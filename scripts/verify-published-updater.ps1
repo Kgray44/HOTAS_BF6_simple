@@ -10,6 +10,7 @@ if ($env:GITHUB_ACTIONS -ne 'true') {
     throw 'Published updater acceptance is intentionally restricted to an isolated GitHub Actions Windows runner.'
 }
 
+$latestManifestUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json'
 $fixture = (Resolve-Path -LiteralPath $FixtureTool).Path
 $runnerTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $work = Join-Path $runnerTemp "hotas-published-updater-$PID"
@@ -21,6 +22,31 @@ function Invoke-Installer([string] $installer, [string] $target) {
     $result = Start-Process -FilePath $installer -ArgumentList @(
         '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$target`"") -Wait -PassThru
     if ($result.ExitCode -ne 0) { throw "Legacy installer failed with exit code $($result.ExitCode)." }
+}
+
+function Wait-PublishedLatestManifest([string] $expectedVersion, [string] $manifestUrl) {
+    # The shipped launcher fetches this exact public latest endpoint.  A GitHub
+    # Release can be visible before its latest alias advances, so do not let the
+    # inherited v1.9.3 launcher consume a prior stable manifest during that gap.
+    $deadline = [DateTime]::UtcNow.AddMinutes(5)
+    $lastObservation = 'the latest manifest was not yet available'
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try {
+            $response = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing
+            $manifest = $response.Content | ConvertFrom-Json
+            $version = [string]$manifest.version
+            $tag = [string]$manifest.tag
+            $lastObservation = "version '$version', tag '$tag'"
+            if ($version -eq $expectedVersion -and $tag -eq "v$expectedVersion") {
+                Write-Host "Published latest manifest is ready for v$expectedVersion."
+                return
+            }
+        } catch {
+            $lastObservation = $_.Exception.Message
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "Published latest update manifest did not advance to v$expectedVersion within five minutes (last observation: $lastObservation)."
 }
 
 $priorPlatform = $env:QT_QPA_PLATFORM
@@ -35,6 +61,8 @@ try {
     Invoke-Installer $legacyInstaller $install
     & $fixture --seed-v14
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed v1.9.3 updater acceptance data.' }
+
+    Wait-PublishedLatestManifest -expectedVersion $ExpectedVersion -manifestUrl $latestManifestUrl
 
     # This uses the unmodified v1.9.3 launcher and the public latest manifest:
     # manifest fetch, download, SHA verification, helper, silent installer,
