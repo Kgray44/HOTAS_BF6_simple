@@ -23,6 +23,8 @@ function Invoke-Installer([string] $installer, [string] $target) {
     if ($result.ExitCode -ne 0) { throw "Legacy installer failed with exit code $($result.ExitCode)." }
 }
 
+$priorPlatform = $env:QT_QPA_PLATFORM
+
 try {
     New-Item -ItemType Directory -Path $work | Out-Null
     $legacyInstaller = Join-Path $work 'HOTAS-BF6-Setup-v1.9.3.exe'
@@ -38,6 +40,10 @@ try {
     # manifest fetch, download, SHA verification, helper, silent installer,
     # updated launcher, and mapper startup all execute as shipped.
     $launcher = Join-Path $install 'HOTAS BF6 Launcher.exe'
+    # GitHub-hosted Windows runners have no interactive desktop. The normal
+    # package smoke deliberately uses offscreen Qt for the same reason; make
+    # the launcher and its post-update mapper inherit that test-only platform.
+    $env:QT_QPA_PLATFORM = 'offscreen'
     [void](Start-Process -FilePath $launcher -PassThru)
     $versionFile = Join-Path $install 'VERSION'
     $mapperPath = (Join-Path $install 'HOTAS BF6.exe')
@@ -53,7 +59,14 @@ try {
         }
         Start-Sleep -Seconds 2
     }
-    if (-not $mapper -or $mapper.HasExited) { throw 'The published updater did not leave the updated mapper running.' }
+    if (-not $mapper -or $mapper.HasExited) {
+        $updaterLog = Join-Path $env:LOCALAPPDATA 'HOTAS BF6\logs\updater.log'
+        if (Test-Path -LiteralPath $updaterLog -PathType Leaf) {
+            Write-Host 'Updater log after failed startup:'
+            Get-Content -LiteralPath $updaterLog -Raw
+        }
+        throw 'The published updater did not leave the updated mapper running.'
+    }
     Start-Sleep -Seconds 3
     if ($mapper.HasExited) { throw 'The updated mapper exited during its initial stability interval.' }
 
@@ -75,6 +88,7 @@ try {
     }
     Write-Host "Published updater acceptance passed: v1.9.3 -> v$ExpectedVersion."
 } finally {
+    $env:QT_QPA_PLATFORM = $priorPlatform
     $running = Get-Process -Name 'HOTAS BF6' -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq (Join-Path $work 'installed\HOTAS BF6.exe') }
     foreach ($process in $running) {
