@@ -23,14 +23,7 @@ Flickable {
     readonly property color dangerColor: legacy ? "#c98e97" : theme.danger
     readonly property color accentColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 980
-
-    function connectedControllerCount() {
-        var count = 0
-        for (var index = 0; index < backend.controllers.length; ++index) {
-            if (backend.controllers[index].connected) ++count
-        }
-        return count
-    }
+    readonly property var controllerModel: backend.controllers
 
     component SectionLabel: RowLayout {
         property string label: "SECTION"
@@ -115,18 +108,18 @@ Flickable {
         }
         Card { Layout.fillWidth: true; title: "Input Controllers"; detail: "Discovered DirectInput controllers and remembered controller records."; accent: root.borderColor
             RowLayout { Layout.fillWidth: true
-                Text { text: backend.controllers.length + " CONTROLLERS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.telemetryFont }
+                Text { text: root.controllerModel.length + " CONTROLLERS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.telemetryFont }
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshControllers() }
             }
-            Rectangle { visible: backend.controllers.length > 0 && root.connectedControllerCount() === 0; Layout.fillWidth: true; implicitHeight: offlineNotice.implicitHeight + 20
+            Rectangle { visible: root.controllerModel.length > 0 && backend.connectedControllerCount === 0; Layout.fillWidth: true; implicitHeight: offlineNotice.implicitHeight + 20
                 color: Qt.rgba(root.warningColor.r, root.warningColor.g, root.warningColor.b, 0.10); border.color: root.warningColor; radius: theme.topGun ? 1 : theme.controlRadius
                 ColumnLayout { id: offlineNotice; anchors.fill: parent; anchors.margins: 10; spacing: 2
                     Text { text: "NO CONTROLLERS CONNECTED"; color: root.warningColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
-                    Text { Layout.fillWidth: true; text: backend.controllers.length + " verified controllers are remembered. Connect one to resume mapping."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: root.controllerModel.length + " verified controllers are remembered. Connect one to resume mapping."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
                 }
             }
-            Repeater { model: backend.controllers
+            Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 60; radius: theme.topGun ? 1 : theme.controlRadius
                     color: !modelData.connected ? root.panelColor : modelData.active ? theme.selectionCurrent : root.insetColor
                     border.color: !modelData.connected ? root.mutedColor : modelData.active ? root.accentColor : root.borderColor
@@ -149,7 +142,7 @@ Flickable {
                     }
                 }
             }
-            Text { visible: backend.controllers.length === 0; text: "No physical DirectInput controllers detected. vJoy is intentionally excluded."; color: root.mutedColor; font.pixelSize: 10 }
+            Text { visible: root.controllerModel.length === 0; text: "No physical DirectInput controllers detected. vJoy is intentionally excluded."; color: root.mutedColor; font.pixelSize: 10 }
         }
         GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 13; rowSpacing: 13
             SettingRow { Layout.fillWidth: true; title: "AUTO-SWITCH VERIFIED CONTROLLER"; detail: "Switch only to one unambiguous remembered controller when the active controller is unavailable."
@@ -272,15 +265,15 @@ Flickable {
             return targetDirectInputIds.indexOf(controller.directInputId) >= 0
         }
         function selectedController() {
-            for (var index = 0; index < backend.controllers.length; ++index) {
-                if (backend.controllers[index].directInputId === selectedDirectInputId) return backend.controllers[index]
+            for (var index = 0; index < root.controllerModel.length; ++index) {
+                if (root.controllerModel[index].directInputId === selectedDirectInputId) return root.controllerModel[index]
             }
             return null
         }
         function selectFirstTarget() {
-            for (var index = 0; index < backend.controllers.length; ++index) {
-                if (isSetupTarget(backend.controllers[index])) {
-                    selectedDirectInputId = backend.controllers[index].directInputId
+            for (var index = 0; index < root.controllerModel.length; ++index) {
+                if (isSetupTarget(root.controllerModel[index])) {
+                    selectedDirectInputId = root.controllerModel[index].directInputId
                     return
                 }
             }
@@ -291,7 +284,7 @@ Flickable {
         contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
             Text { Layout.fillWidth: true; text: theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"; color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
             Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Select the controller to set up. Existing active input remains unchanged." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            Repeater { model: backend.controllers
+            Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
                     color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? theme.selectionCurrent : root.insetColor; border.color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? root.accentColor : root.borderColor
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: detectedControllerDialog.selectedDirectInputId = modelData.directInputId }

@@ -21,6 +21,7 @@ private slots:
     void newDeviceSetupExplicitlyAcquiresThenVerifies();
     void controllerSetupRetainsItsExplicitTargetAndSuccessfulRepairPersistsIt();
     void sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit();
+    void controllerPresentationIsCachedAndTelemetryIsIsolated();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -75,6 +76,34 @@ void UiReleaseContractTests::sharedSettingsKeepOfflineControllersAndControlsVisu
     QVERIFY(settings.contains(QStringLiteral("up.indicator")));
     QVERIFY(settings.contains(QStringLiteral("down.indicator")));
     QVERIFY(backend.contains(QStringLiteral("Selected · Offline · Verified")));
+}
+
+void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolated()
+{
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("void controllersChanged();")));
+    QVERIFY(header.contains(QStringLiteral("void telemetryChanged();")));
+    QVERIFY(backend.contains(QStringLiteral("return m_controllerUiModel;")));
+    QVERIFY(backend.contains(QStringLiteral("sameControllerInventory")));
+    QVERIFY(backend.contains(QStringLiteral("if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();")));
+    const qsizetype snapshotStart = backend.indexOf(QStringLiteral("void AppBackend::refreshUiSnapshot()"));
+    QVERIFY(snapshotStart >= 0);
+    const qsizetype snapshotEnd = backend.indexOf(QStringLiteral("void AppBackend::appendEvent"), snapshotStart);
+    QVERIFY(snapshotEnd > snapshotStart);
+    const QString snapshot = backend.mid(snapshotStart, snapshotEnd - snapshotStart);
+    QCOMPARE(snapshot.count(QStringLiteral("emit stateChanged();")), 1);
+    QVERIFY(snapshot.contains(QStringLiteral("if (selectedAxisChanged || connectionChanged) emit stateChanged();")));
+    QVERIFY(snapshot.contains(QStringLiteral("emit telemetryChanged();")));
+    QVERIFY(snapshot.contains(QStringLiteral("emit inputTelemetryChanged();")));
+    QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
+    QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
+    QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)
