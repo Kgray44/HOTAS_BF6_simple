@@ -175,6 +175,9 @@ Flickable {
                 }
                 Text { text: "%"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
             }
+            SettingRow { Layout.fillWidth: true; title: "AUTOMATIC GAME CATEGORY"; detail: "Low-frequency foreground executable detection selects a matching category and restores its last-used profile."
+                Toggle { checked: backend.automaticGameDetection; onToggled: backend.setAutomaticGameDetection(checked) }
+            }
         }
         Card { Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true

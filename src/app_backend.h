@@ -26,6 +26,8 @@ class QSystemTrayIcon;
 
 namespace hotas {
 
+struct PortableConfigurationBundle;
+
 class AppBackend final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
@@ -53,9 +55,14 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList povs READ povs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList profileCategories READ profileCategories NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
+    Q_PROPERTY(QString activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged)
+    Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY stateChanged)
+    Q_PROPERTY(QString activeCategoryName READ activeCategoryName NOTIFY stateChanged)
     Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QString effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY inputTelemetryChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
@@ -146,6 +153,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
+    Q_PROPERTY(bool automaticGameDetection READ automaticGameDetection NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap portableImportPreview READ portableImportPreview NOTIFY stateChanged)
+    Q_PROPERTY(QString portableImportStatus READ portableImportStatus NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
 
 public:
@@ -175,9 +185,14 @@ public:
     QVariantList povs() const;
     QVariantList povInputs() const;
     QVariantList profiles() const;
+    QVariantList profileCategories() const;
     QString activeProfileId() const;
     QString activeProfileName() const;
+    QString activeProfileDisplayName() const;
+    QString activeCategoryId() const;
+    QString activeCategoryName() const;
     QString effectiveProfileName() const;
+    QString effectiveProfileDisplayName() const;
     QString profileSourceLabel() const;
     int activeProfileIndex() const;
     QString deviceName() const;
@@ -268,6 +283,9 @@ public:
     QVariantList profileTriggerChoices() const;
     QVariantList nativePovTargetChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
+    bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
+    QVariantMap portableImportPreview() const;
+    QString portableImportStatus() const { return m_portableImportStatus; }
     QStringList eventLog() const { return m_events.entries(); }
     // These counters are enabled only for the focused test process.
     // Production returns an empty map and keeps the presentation path clean.
@@ -325,10 +343,36 @@ public:
     Q_INVOKABLE bool setNativePovOutput(int povHat, bool enabled, const QString &targetKey);
     Q_INVOKABLE void resetButtonMappings();
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
+    Q_INVOKABLE bool createProfileInCategory(const QString &name, const QString &categoryId,
+                                             const QString &startFromId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);
+    Q_INVOKABLE bool duplicateProfileToCategory(const QString &profileId, const QString &name,
+                                                const QString &categoryId);
     Q_INVOKABLE bool renameProfile(const QString &profileId, const QString &name);
+    Q_INVOKABLE bool moveProfileToCategory(const QString &profileId, const QString &categoryId);
+    Q_INVOKABLE bool setProfileEnabled(const QString &profileId, bool enabled);
     Q_INVOKABLE bool deleteProfile(const QString &profileId);
     Q_INVOKABLE bool activateProfile(const QString &profileId);
+    Q_INVOKABLE bool createProfileCategory(const QString &name);
+    Q_INVOKABLE bool renameProfileCategory(const QString &categoryId, const QString &name);
+    Q_INVOKABLE bool deleteProfileCategory(const QString &categoryId);
+    Q_INVOKABLE bool activateProfileCategory(const QString &categoryId);
+    Q_INVOKABLE bool setProfileCategoryEnabled(const QString &categoryId, bool enabled);
+    Q_INVOKABLE bool setCategoryDefaultProfile(const QString &categoryId, const QString &profileId);
+    Q_INVOKABLE bool setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile);
+    Q_INVOKABLE bool setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules);
+    Q_INVOKABLE void setAutomaticGameDetection(bool enabled);
+    Q_INVOKABLE QVariantMap profileDetail(const QString &profileId) const;
+    Q_INVOKABLE QVariantMap profileRelationships(const QString &profileId) const;
+    Q_INVOKABLE bool exportPortableProfile(const QString &profileId, const QString &fileName);
+    Q_INVOKABLE bool exportPortablePack(const QStringList &categoryIds, const QStringList &profileIds,
+                                        const QString &name, const QString &description,
+                                        bool includeDevices, bool includeCalibration,
+                                        const QString &fileName);
+    Q_INVOKABLE bool loadPortableImportPreview(const QString &fileName);
+    Q_INVOKABLE bool applyPortableImport(const QString &destinationCategoryId = {},
+                                         bool replaceMatchingProfiles = false,
+                                         bool mergeCategories = true);
     Q_INVOKABLE void beginCalibration();
     Q_INVOKABLE bool beginCalibrationCenterCapture();
     Q_INVOKABLE bool saveCalibration();
@@ -399,6 +443,7 @@ private slots:
 private:
     void persistAndApply();
     void refreshControllerInventory();
+    void evaluateGameDetection();
     bool rebuildControllerUiModel();
     void rebuildCurveAxisChoices();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
@@ -421,6 +466,7 @@ private:
     const VirtualOutputLayout *activeOutputLayout() const;
     VirtualOutputLayout *activeOutputLayout();
     void synchronizeActiveOutputLayout();
+    QString profileDisplayName(const QString &profileId) const;
     QString effectiveProfileId() const;
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
@@ -477,6 +523,8 @@ private:
     QPointer<QThread> m_controllerSelectionThread;
     QTimer m_snapshotTimer;
     QTimer m_controllerDiscoveryTimer;
+    QTimer m_gameDetectionTimer;
+    QString m_lastDetectedExecutable;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
@@ -511,6 +559,9 @@ private:
     CurveDefinition m_curvePreviewDefinition;
     EventLog m_events;
     QString m_automationValidationMessage;
+    std::unique_ptr<PortableConfigurationBundle> m_pendingPortableImport;
+    QVariantMap m_portableImportPreview;
+    QString m_portableImportStatus;
     QNetworkAccessManager m_updateNetworkManager;
     QPointer<QNetworkReply> m_updateReply;
     QTimer m_updateTimeout;

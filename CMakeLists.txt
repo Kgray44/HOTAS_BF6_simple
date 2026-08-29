@@ -40,6 +40,8 @@ set(HOTAS_MAPPER_SOURCES
     src/physical_input_monitor.cpp
     src/profile_model.h
     src/profile_model.cpp
+    src/profile_portability.h
+    src/profile_portability.cpp
     src/profile_trigger_runtime.h
     src/profile_trigger_runtime.cpp
     src/automation_engine.h
@@ -83,6 +85,7 @@ qt_add_qml_module(HOTASMapper
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
+        qml/ProfileLibrary.qml
         qml/SettingsPage.qml
         qml/Standard.qml
         qml/CurveEditor.qml
@@ -185,6 +188,8 @@ if (BUILD_TESTING)
         src/physical_input_monitor.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/profile_portability.h
+        src/profile_portability.cpp
         src/profile_trigger_runtime.h
         src/profile_trigger_runtime.cpp
         src/automation_engine.h
@@ -291,6 +296,8 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/profile_portability.h
+        src/profile_portability.cpp
         src/config_store.h
         src/config_store.cpp
     )
@@ -342,6 +349,7 @@ if (BUILD_TESTING)
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml
+            qml/ProfileLibrary.qml
             qml/SettingsPage.qml
             qml/Standard.qml
             qml/CurveEditor.qml

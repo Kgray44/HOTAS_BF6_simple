@@ -941,7 +941,7 @@ Page {
             Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
                 Text { text: "PROFILE"
                     color: "#78919a"; font.pixelSize: 9; font.bold: true }
-                Text { text: backend.effectiveProfileName.toUpperCase()
+                Text { text: backend.effectiveProfileDisplayName.toUpperCase()
                     color: "#c3d8d9"; font.pixelSize: 10; font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
@@ -1088,6 +1088,8 @@ Page {
  anchors.margins: 24
         OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
         SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
+        ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: true
+            onNavigateToPage: function(page) { root.currentPage = page } }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1764,7 +1766,7 @@ Page {
         Flickable {
             id: profilesPage
             anchors.fill: parent
-            visible: root.currentPage === 5
+            visible: false
             contentWidth: width
             contentHeight: profilesContent.implicitHeight + 18
             clip: true

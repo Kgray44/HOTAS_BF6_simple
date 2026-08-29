@@ -990,7 +990,7 @@ Page {
             Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
                 Text { text: "PROFILE"
                     color: theme.textMuted; font.pixelSize: 9; font.bold: true }
-                Text { text: backend.effectiveProfileName.toUpperCase()
+                Text { text: backend.effectiveProfileDisplayName.toUpperCase()
                     color: theme.text; font.pixelSize: 10; font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
@@ -1055,7 +1055,7 @@ Page {
                     model: [
                         { label: backend.physicalConnected ? backend.deviceName.toUpperCase() : "T.FLIGHT HOTAS ONE", value: root.physicalStatusText(), color: root.physicalStatusColor() },
                         { label: "VJOY " + backend.vjoyDeviceId, value: backend.vjoyReady ? "READY" : "OFFLINE", color: backend.vjoyReady ? theme.cyan : theme.warning },
-                        { label: "PROFILE", value: backend.effectiveProfileName.toUpperCase(), color: theme.ivory }
+                        { label: "PROFILE", value: backend.effectiveProfileDisplayName.toUpperCase(), color: theme.ivory }
                     ]
                     delegate: Item {
                         required property var modelData
@@ -1213,6 +1213,8 @@ Page {
  anchors.margins: 24
         OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false }
         SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
+        ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
+            onNavigateToPage: function(page) { root.currentPage = page } }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1923,7 +1925,7 @@ Page {
         Flickable {
             id: profilesPage
             anchors.fill: parent
-            visible: root.currentPage === 5
+            visible: false
             contentWidth: width
             contentHeight: profilesContent.implicitHeight + 18
             clip: true
