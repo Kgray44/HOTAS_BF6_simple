@@ -25,7 +25,8 @@ private slots:
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
-    void installerUpgradeAcceptanceTracksSchema17();
+    void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
+    void installerUpgradeAcceptanceTracksSchema18();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -205,16 +206,46 @@ void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAuto
     QVERIFY(!calibration.contains(QStringLiteral("currentProfile().axes")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema17()
+void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthful()
+{
+    const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString readiness = sourceFile(QStringLiteral("src/controller_readiness.cpp"));
+    const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+
+    QVERIFY(backendHeader.contains(QStringLiteral("virtualOutputLayouts READ virtualOutputLayouts")));
+    QVERIFY(backendHeader.contains(QStringLiteral("assignProfileOutputLayout")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createFiveAxisOutputLayout")));
+    QVERIFY(backend.contains(QStringLiteral("physicalAxisActivityForObservedSpan")));
+    QVERIFY(backend.contains(QStringLiteral("No meaningful movement observed during completed calibration")));
+    QVERIFY(readiness.contains(QStringLiteral("capabilityAxesMatch")));
+    QVERIFY(readiness.contains(QStringLiteral("exact descriptor")));
+    QVERIFY(readiness.contains(QStringLiteral("applyManagedOutputVisibility")));
+    QVERIFY(worker.contains(QStringLiteral("outputLayoutAxes")));
+    QVERIFY(worker.contains(QStringLiteral("&& outputLayoutAxes[static_cast<size_t>(target)]")));
+    QVERIFY(settings.contains(QStringLiteral("Virtual Outputs")));
+    QVERIFY(settings.contains(QStringLiteral("CREATE 5-AXIS OUTPUT")));
+    for (const QString &page : {standard, legacy}) {
+        QVERIFY(page.contains(QStringLiteral("NOT ROUTED")));
+        QVERIFY(page.contains(QStringLiteral("UNMAPPED VJOY AXES PARKED")));
+        QVERIFY(page.contains(QStringLiteral("backend.physicalAxisCapabilitySummary")));
+        QVERIFY(page.contains(QStringLiteral("assignProfileOutputLayout")));
+    }
+}
+
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema18()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 17")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v17")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 18")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v18")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v17")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v17")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v18")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v18")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)

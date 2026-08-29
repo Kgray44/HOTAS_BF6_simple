@@ -68,6 +68,7 @@ Page {
         return valuePercent(value)
     }
     function outputState(info) {
+        if (!info || !info.virtualRouted) return "NOT ROUTED"
         if (!backend.vjoyReady) return "OUTPUT OFFLINE"
         if (!backend.mappingActive || !info.virtualValid) return "STANDBY"
         return controlValue(info, info.virtualValue)
@@ -1110,7 +1111,7 @@ Page {
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         Column { spacing: 4; Layout.preferredWidth: 96
                             Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
-                            Text { text: root.hasPhysicalInput ? backend.axisCount + " DETECTED" : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
+                            Text { text: root.hasPhysicalInput ? backend.physicalAxisCapabilitySummary : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
                         }
                         FlightComboBox {
                             id: axisSelector
@@ -1155,7 +1156,7 @@ Page {
                                     RowLayout { Layout.fillWidth: true
                                         Column { spacing: 2
                                             Text { text: axisIdentityPanel.info.label.toUpperCase(); color: "#edf6f6"; font.pixelSize: 17; font.bold: true }
-                                            Text { text: axisIdentityPanel.info.detail.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+                                            Text { text: (axisIdentityPanel.info.fixed ? axisIdentityPanel.info.activityLabel + " · " + axisIdentityPanel.info.activityDetail : axisIdentityPanel.info.detail).toUpperCase(); color: axisIdentityPanel.info.fixed ? "#d4ad69" : "#8ca6ae"; font.pixelSize: 10; font.bold: true }
                                         }
                                         Item { Layout.fillWidth: true }
                                         Row { spacing: 6
@@ -1182,8 +1183,8 @@ Page {
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
                                         Text { text: "VIRTUAL OUTPUT"; color: "#85aaa8"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.transformed); color: "#9ad0c5"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
-                                        Text { text: backend.mappingActive ? "LIVE PROCESSED COMMAND" : "LIVE COMMAND PREVIEW"; color: "#718f8b"; font.pixelSize: 9; font.bold: true }
+                                        Text { text: root.outputState(liveTelemetryPanel.info); color: liveTelemetryPanel.info.virtualRouted ? "#9ad0c5" : "#a5afb3"; font.pixelSize: liveTelemetryPanel.info.virtualRouted ? 31 : 18; font.family: "Consolas"; font.bold: true }
+                                        Text { text: liveTelemetryPanel.info.virtualRouted ? (backend.mappingActive ? "LIVE GAME-FACING OUTPUT" : "OUTPUT STANDBY") : "UNMAPPED VJOY AXES PARKED AT " + Number(backend.disabledAxisValue).toFixed(1) + "%"; color: "#718f8b"; font.pixelSize: 9; font.bold: true }
                                     }
                                 }
                             }
@@ -1806,7 +1807,7 @@ Page {
                     columns: width >= 1080 ? 3 : (width >= 700 ? 2 : 1)
                     columnSpacing: 12; rowSpacing: 12
                     Repeater { model: backend.profiles
-                        delegate: Panel { Layout.fillWidth: true; Layout.preferredHeight: 164
+                        delegate: Panel { Layout.fillWidth: true; Layout.preferredHeight: 194
                             color: modelData.active ? "#e51a352f" : "#ed182128"
                             border.color: modelData.active ? "#4a91a8a0" : "#41546770"
                             ColumnLayout { anchors.fill: parent; anchors.margins: 14; spacing: 7
@@ -1847,6 +1848,18 @@ Page {
                                     color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
                                 Text { text: modelData.mappedButtons + " mapped buttons"
                                     color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
+                                RowLayout { Layout.fillWidth: true; spacing: 7
+                                    Text { text: "OUTPUT"; color: "#71848b"; font.pixelSize: 8; font.bold: true; Layout.preferredWidth: 48 }
+                                    ComboBox { Layout.fillWidth: true; implicitHeight: 28; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
+                                        currentIndex: {
+                                            for (let index = 0; index < model.length; ++index) if (model[index].id === modelData.outputLayoutId) return index
+                                            return 0
+                                        }
+                                        onActivated: backend.assignProfileOutputLayout(modelData.id, currentValue)
+                                        contentItem: Text { leftPadding: 7; text: parent.displayText + " · vJoy " + modelData.outputDeviceId; color: "#e7f0f1"; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                                        background: Rectangle { color: "#0d1216"; border.color: "#546d78"; radius: 3 }
+                                    }
+                                }
                                 Item { Layout.fillHeight: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { visible: modelData.protected; text: "PROTECTED FALLBACK"

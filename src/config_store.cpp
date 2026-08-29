@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 17;
+constexpr int kProfileSchemaVersion = 18;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -106,6 +106,26 @@ QJsonObject controllerVjoyRequirementsToJson(const ControllerVJoyRequirements &r
             {u"discretePovs"_qs, requirements.discretePovs}, {u"deviceId"_qs, requirements.deviceId}};
 }
 
+QJsonArray axisActivityToJson(const std::array<PhysicalAxisActivity, kPhysicalAxisCount> &activity)
+{
+    QJsonArray result;
+    for (const PhysicalAxisActivity axis : activity) result.append(physicalAxisActivityKey(axis));
+    return result;
+}
+
+bool axisActivityFromJson(const QJsonValue &value,
+                          std::array<PhysicalAxisActivity, kPhysicalAxisCount> *activity)
+{
+    if (!activity || !value.isArray()) return false;
+    const QJsonArray values = value.toArray();
+    if (values.size() != kPhysicalAxisCount) return false;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        (*activity)[static_cast<size_t>(index)] = physicalAxisActivityFromKey(
+            values.at(index).toString());
+    }
+    return true;
+}
+
 bool controllerVjoyRequirementsFromJson(const QJsonObject &json, ControllerVJoyRequirements *requirements)
 {
     if (!requirements) return false;
@@ -118,6 +138,34 @@ bool controllerVjoyRequirementsFromJson(const QJsonObject &json, ControllerVJoyR
     requirements->continuousPovs = std::clamp(json.value(u"continuousPovs"_qs).toInt(), 0, 32);
     requirements->discretePovs = std::clamp(json.value(u"discretePovs"_qs).toInt(), 0, 32);
     requirements->deviceId = std::clamp(json.value(u"deviceId"_qs).toInt(1), 1, 16);
+    return true;
+}
+
+QJsonObject outputLayoutToJson(const VirtualOutputLayout &layout)
+{
+    return {{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
+            {u"requirements"_qs, controllerVjoyRequirementsToJson(layout.requirements)},
+            {u"hidHideDeviceInstanceId"_qs, layout.hidHideDeviceInstanceId},
+            {u"hidhideManaged"_qs, layout.hidhideManaged}};
+}
+
+bool outputLayoutFromJson(const QJsonObject &json, VirtualOutputLayout *layout)
+{
+    if (!layout) return false;
+    VirtualOutputLayout restored;
+    restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
+    restored.name = json.value(u"name"_qs).toString().trimmed().left(64);
+    if (restored.id.isEmpty() || restored.name.isEmpty()
+        || !controllerVjoyRequirementsFromJson(json.value(u"requirements"_qs).toObject(),
+                                                &restored.requirements)) {
+        return false;
+    }
+    restored.requirements.axes[0] = false;
+    restored.hidHideDeviceInstanceId = json.value(u"hidHideDeviceInstanceId"_qs)
+        .toString().trimmed().left(512);
+    restored.hidhideManaged = json.value(u"hidhideManaged"_qs).toBool(false)
+        && !restored.hidHideDeviceInstanceId.isEmpty();
+    *layout = std::move(restored);
     return true;
 }
 
@@ -138,7 +186,8 @@ QJsonObject savedControllerToJson(const SavedControllerRecord &record)
             {u"buttonCount"_qs, record.buttonCount}, {u"povCount"_qs, record.povCount},
             {u"capabilityFingerprint"_qs, record.capabilityFingerprint}, {u"lastSeen"_qs, record.lastSeen},
             {u"lastVerified"_qs, record.lastVerified}, {u"verificationVersion"_qs, record.verificationVersion},
-            {u"calibration"_qs, calibration}, {u"vjoyRequirements"_qs, controllerVjoyRequirementsToJson(record.vjoyRequirements)},
+            {u"calibration"_qs, calibration}, {u"axisActivity"_qs, axisActivityToJson(record.axisActivity)},
+            {u"vjoyRequirements"_qs, controllerVjoyRequirementsToJson(record.vjoyRequirements)},
             {u"ownedHidHideDeviceInstances"_qs, ownedInstances}};
 }
 
@@ -161,6 +210,10 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         parsed.axes[static_cast<size_t>(index)] = axes.at(index).toBool();
         parsed.calibration[static_cast<size_t>(index)] = calibrationFromJson(calibration.at(index).toObject());
+    }
+    if (json.contains(u"axisActivity"_qs)
+        && !axisActivityFromJson(json.value(u"axisActivity"_qs), &parsed.axisActivity)) {
+        return false;
     }
     parsed.vendorId = std::max(0, json.value(u"vendorId"_qs).toInt());
     parsed.productId = std::max(0, json.value(u"productId"_qs).toInt());
@@ -778,6 +831,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
     return {
         {u"id"_qs, profile.id},
         {u"name"_qs, profile.name},
+        {u"outputLayoutId"_qs, profile.outputLayoutId},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
         {u"povs"_qs, povBindingsToJson(profile.povs)},
@@ -799,6 +853,7 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     ControllerProfile restored;
     restored.id = id;
     restored.name = name;
+    restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
         if (axis.isEmpty()) return false;
@@ -1019,6 +1074,11 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     QJsonArray profiles;
     for (const ControllerProfile &profile : configuration.profiles) profiles.append(profileToJson(profile));
 
+    QJsonArray outputLayouts;
+    for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
+        outputLayouts.append(outputLayoutToJson(layout));
+    }
+
     QJsonArray personalCurvePresets;
     for (const PersonalCurvePreset &preset : configuration.personalCurvePresets) {
         personalCurvePresets.append(personalCurvePresetToJson(preset));
@@ -1046,7 +1106,9 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
+        {u"axisActivity"_qs, axisActivityToJson(configuration.axisActivity)},
         {u"calibrationHistory"_qs, calibrationHistory},
+        {u"outputLayouts"_qs, outputLayouts},
         {u"profiles"_qs, profiles},
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
@@ -1066,7 +1128,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != 15 && version != 16 && version != kProfileSchemaVersion) {
+        && version != 15 && version != 16 && version != 17 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1085,6 +1147,11 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             return fallbackWithGlobalSettings(json);
         }
         configuration.calibration[index] = calibrationFromJson(axis);
+    }
+    if (version >= 18 && !axisActivityFromJson(json.value(u"axisActivity"_qs),
+                                                &configuration.axisActivity)) {
+        if (valid) *valid = false;
+        return fallbackWithGlobalSettings(json);
     }
     if (version >= 16) {
         const QJsonArray history = json.value(u"calibrationHistory"_qs).toArray();
@@ -1223,6 +1290,88 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 
     if (version < 16) migrateLegacyControlsToAutomation(configuration);
 
+    if (version >= 18) {
+        const QJsonArray layouts = json.value(u"outputLayouts"_qs).toArray();
+        if (layouts.empty() || layouts.size() > 16) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        configuration.outputLayouts.clear();
+        QSet<QString> layoutIds;
+        QSet<int> layoutDeviceIds;
+        for (const QJsonValue &value : layouts) {
+            VirtualOutputLayout layout;
+            if (!outputLayoutFromJson(value.toObject(), &layout)
+                || layoutIds.contains(layout.id) || layoutDeviceIds.contains(layout.requirements.deviceId)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            layoutIds.insert(layout.id);
+            layoutDeviceIds.insert(layout.requirements.deviceId);
+            configuration.outputLayouts.push_back(std::move(layout));
+        }
+    } else {
+        // v2.0.10 migration is intentionally data-only: preserve the selected
+        // device and every mapping, but never touch the vJoy driver while a
+        // configuration is read. The compact default derives from existing
+        // routes so a legacy five-axis configuration is not silently reduced.
+        VirtualOutputLayout migrated = defaultBf6OutputLayout();
+        migrated.requirements.deviceId = configuration.vjoyDeviceId;
+        migrated.requirements.axes.fill(false);
+        migrated.requirements.buttons = 0;
+        migrated.requirements.continuousPovs = 0;
+        migrated.requirements.discretePovs = 0;
+        for (const ControllerProfile &profile : configuration.profiles) {
+            for (const AxisMapping &axis : profile.axes) {
+                const int target = static_cast<int>(axis.target);
+                if (target > 0 && target < kVirtualAxisSlotCount) {
+                    migrated.requirements.axes[static_cast<size_t>(target)] = true;
+                }
+            }
+            for (const ButtonBinding &binding : profile.buttons) {
+                if (binding.type == ButtonActionType::VirtualButton) {
+                    migrated.requirements.buttons = std::max(migrated.requirements.buttons, binding.target);
+                }
+            }
+            for (const auto &hat : profile.povs) {
+                for (const ButtonBinding &binding : hat) {
+                    if (binding.type == ButtonActionType::VirtualButton) {
+                        migrated.requirements.buttons = std::max(migrated.requirements.buttons, binding.target);
+                    }
+                }
+            }
+        }
+        for (const NativePovBinding &binding : configuration.nativePovBindings) {
+            if (!binding.enabled) continue;
+            if (binding.targetType == NativePovTargetType::Continuous) {
+                migrated.requirements.continuousPovs = std::max(migrated.requirements.continuousPovs,
+                                                               binding.targetIndex);
+            } else if (binding.targetType == NativePovTargetType::Discrete) {
+                migrated.requirements.discretePovs = std::max(migrated.requirements.discretePovs,
+                                                             binding.targetIndex);
+            }
+        }
+        for (const AutomationDefinition &automation : configuration.automations) {
+            for (const AutomationActionDefinition &action : automation.actions) {
+                if (action.type == AutomationActionType::VJoyButtonHold
+                    || action.type == AutomationActionType::VJoyButtonToggle
+                    || action.type == AutomationActionType::VJoyButtonTap) {
+                    migrated.requirements.buttons = std::max(migrated.requirements.buttons,
+                                                             action.virtualButton);
+                }
+            }
+        }
+        if (std::none_of(migrated.requirements.axes.cbegin() + 1,
+                         migrated.requirements.axes.cend(), [](bool axis) { return axis; })) {
+            migrated = defaultBf6OutputLayout();
+            migrated.requirements.deviceId = configuration.vjoyDeviceId;
+        }
+        configuration.outputLayouts = {std::move(migrated)};
+        for (ControllerProfile &profile : configuration.profiles) {
+            profile.outputLayoutId = defaultOutputLayoutId();
+        }
+    }
+
     // Normal is the durable, protected recovery profile. A malformed/manual
     // file that removes it falls back safely instead of leaving no known base.
     const ControllerProfile *normal = findProfile(configuration, normalProfileId());
@@ -1233,6 +1382,19 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     configuration.activeProfileId = json.value(u"activeProfileId"_qs).toString();
     if (!findProfile(configuration, configuration.activeProfileId)) {
         configuration.activeProfileId = normalProfileId();
+    }
+    for (ControllerProfile &profile : configuration.profiles) {
+        if (!findOutputLayout(configuration, profile.outputLayoutId)) {
+            if (version >= 18) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            profile.outputLayoutId = defaultOutputLayoutId();
+        }
+    }
+    if (const VirtualOutputLayout *activeLayout = findOutputLayout(configuration,
+            activeProfile(configuration).outputLayoutId)) {
+        configuration.vjoyDeviceId = activeLayout->requirements.deviceId;
     }
     if (valid) *valid = true;
     return configuration;

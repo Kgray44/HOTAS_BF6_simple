@@ -503,6 +503,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.transformed[index] = 0.0F;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
+        m_runtime.axisActivity[index] = static_cast<int>(m_configuration.axisActivity[index]);
         m_runtime.calibrationMinimum[index] = m_configuration.calibration[index].minimum;
         m_runtime.calibrationCenter[index] = m_configuration.calibration[index].center;
         m_runtime.calibrationMaximum[index] = m_configuration.calibration[index].maximum;
@@ -555,6 +556,7 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
         m_runtime.calibrationMinimum[index] = configuration.calibration[index].minimum;
         m_runtime.calibrationCenter[index] = configuration.calibration[index].center;
         m_runtime.calibrationMaximum[index] = configuration.calibration[index].maximum;
+        m_runtime.axisActivity[index] = static_cast<int>(configuration.axisActivity[index]);
     }
 }
 
@@ -738,6 +740,7 @@ void MappingWorker::run()
     LPDIRECTINPUTDEVICE8W device = nullptr;
     HANDLE inputEvent = nullptr;
     std::array<bool, kPhysicalAxisCount> availableAxes{};
+    std::array<bool, kPhysicalAxisCount> fixedAxes{};
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
     auto preparedConfiguration = preparedConfigurationCopy();
@@ -747,6 +750,16 @@ void MappingWorker::run()
     int effectiveProfileIndex = activeProfileCache->baseProfileIndex;
     const RuntimeMappingConfiguration *activeMapping
         = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        fixedAxes[static_cast<size_t>(index)] = configuration.axisActivity[static_cast<size_t>(index)]
+            == PhysicalAxisActivity::Fixed;
+    }
+    std::array<bool, kVirtualAxisSlotCount> outputLayoutAxes{};
+    if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
+        if (const VirtualOutputLayout *layout = findOutputLayout(configuration, profile->outputLayoutId)) {
+            outputLayoutAxes = layout->requirements.axes;
+        }
+    }
     ProfileTriggerRuntime profileTriggers;
     AutomationRuntime automation;
     automation.setCompiled(activeProfileCache->automation.get());
@@ -817,6 +830,16 @@ void MappingWorker::run()
                                             bool countSwitch) {
         const int selectedIndex = std::clamp(selection.profileIndex, 0,
             static_cast<int>(activeProfileCache->profiles.size()) - 1);
+        // A physical/Automation profile trigger is allowed to swap only
+        // within the already-acquired output layout. Cross-layout work is an
+        // AppBackend control-plane transition (neutralize, release, HidHide,
+        // acquire, neutral baseline), never an operation performed by a
+        // DirectInput report.
+        if (selectedIndex < static_cast<int>(activeProfileCache->profileVjoyDeviceIds.size())
+            && activeProfileCache->profileVjoyDeviceIds[static_cast<size_t>(selectedIndex)]
+                != configuration.vjoyDeviceId) {
+            return false;
+        }
         const bool changed = selectedIndex != effectiveProfileIndex;
         effectiveProfileIndex = selectedIndex;
         activeMapping = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
@@ -993,7 +1016,8 @@ void MappingWorker::run()
             vjoyAxisAvailable = reportedAxes;
             for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
                 m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
-                    vjoyAxisAvailable[static_cast<size_t>(axis)];
+                    vjoyAxisAvailable[static_cast<size_t>(axis)]
+                    && outputLayoutAxes[static_cast<size_t>(axis)];
             }
             lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
             emit hardwareStateChanged();
@@ -1032,6 +1056,21 @@ void MappingWorker::run()
         }
         auto prepared = preparedConfigurationCopy();
         configuration = std::move(prepared.first);
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            fixedAxes[static_cast<size_t>(index)] = configuration.axisActivity[static_cast<size_t>(index)]
+                == PhysicalAxisActivity::Fixed;
+        }
+        outputLayoutAxes.fill(false);
+        if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
+            if (const VirtualOutputLayout *layout = findOutputLayout(configuration, profile->outputLayoutId)) {
+                outputLayoutAxes = layout->requirements.axes;
+            }
+        }
+        for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
+            m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
+                vjoyAxisAvailable[static_cast<size_t>(axis)]
+                && outputLayoutAxes[static_cast<size_t>(axis)];
+        }
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
         activeProfileCache = std::move(prepared.second);
@@ -1284,7 +1323,8 @@ void MappingWorker::run()
                 automationInput.physicalAxes[static_cast<size_t>(axis)] = normalizeCalibrated(
                     physicalSnapshot.axes[static_cast<size_t>(axis)],
                     activeMapping->axes[static_cast<size_t>(axis)].calibration);
-                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)];
+                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)]
+                    && !fixedAxes[static_cast<size_t>(axis)];
             }
             automationInput.buttons = routedButtons;
             automationInput.povs = physicalSnapshot.povs;
@@ -1326,7 +1366,8 @@ void MappingWorker::run()
                 automationInput.physicalAxes[static_cast<size_t>(axis)] = normalizeCalibrated(
                     physicalSnapshot.axes[static_cast<size_t>(axis)],
                     activeMapping->axes[static_cast<size_t>(axis)].calibration);
-                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)];
+                automationInput.axisAvailable[static_cast<size_t>(axis)] = availableAxes[static_cast<size_t>(axis)]
+                    && !fixedAxes[static_cast<size_t>(axis)];
             }
             automationInput.buttons = routedButtons;
             automationInput.povs = physicalSnapshot.povs;
@@ -1375,8 +1416,16 @@ void MappingWorker::run()
         // mapped physical routes are overlaid. The fixed-size plan retains the
         // existing change-driven output cadence and keeps configuration/UI
         // work outside this real-time path.
+        std::array<bool, kPhysicalAxisCount> routableAxes{};
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            const int target = static_cast<int>(activeMapping->axes[static_cast<size_t>(index)].profile.target);
+            routableAxes[static_cast<size_t>(index)] = availableAxes[static_cast<size_t>(index)]
+                && !fixedAxes[static_cast<size_t>(index)]
+                && target > 0 && target < kVirtualAxisSlotCount
+                && outputLayoutAxes[static_cast<size_t>(target)];
+        }
         const VirtualAxisOutputPlan axisOutputPlan = buildVirtualAxisOutputPlan(
-            *activeMapping, availableAxes, transformedAxes, configuration.disabledAxisValue);
+            *activeMapping, routableAxes, transformedAxes, configuration.disabledAxisValue);
         const std::array<float, kVirtualAxisSlotCount> &output = axisOutputPlan.values;
         virtualAxisSources = axisOutputPlan.sourceIndexes;
         const float parkedAxisValue = sanitizedDisabledAxisValue(configuration.disabledAxisValue);
@@ -1410,6 +1459,14 @@ void MappingWorker::run()
             && std::chrono::steady_clock::now() >= nextVjoyAcquire) {
             QString status;
             if (vjoy.acquire(configuration.vjoyDeviceId, &status)) {
+                // A newly selected pre-provisioned device receives a complete
+                // explicit neutral baseline before any mapped report is
+                // published. This does not trust vJoy reset defaults and is
+                // reached only at an acquire boundary, never per report.
+                refreshVjoyCapabilities();
+                quiesceVirtualController();
+                lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+                lastNativePovValues.fill(-2);
                 m_runtime.mappingActive = true;
                 m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Active);
                 m_runtime.outputNeutralized = false;
@@ -1431,7 +1488,8 @@ void MappingWorker::run()
         }
         if (m_runtime.mappingActive.load()) {
             for (int target = 1; target < static_cast<int>(output.size()); ++target) {
-                if (!vjoyAxisAvailable[static_cast<size_t>(target)]) continue;
+                if (!vjoyAxisAvailable[static_cast<size_t>(target)]
+                    || !outputLayoutAxes[static_cast<size_t>(target)]) continue;
                 const float desired = output[target];
                 if (std::isfinite(lastVirtualValues[target])
                     && std::abs(desired - lastVirtualValues[target]) < 0.00001F) {

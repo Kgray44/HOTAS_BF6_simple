@@ -232,7 +232,7 @@ private slots:
     void diagnosticsAreScopedSanitizedAndCopyable();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
-    void savedControllerVjoyRequirementsUseSupersetSemantics();
+    void virtualAxisDescriptorsMustMatchExactly();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
 };
 
@@ -649,6 +649,7 @@ void ControllerReadinessTests::uacCancellationIsNotReportedAsRepairFailure()
 void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxes()
 {
     MapperConfiguration configuration = defaultConfiguration();
+    configuration.outputLayouts.front().requirements.axes[static_cast<int>(VirtualAxis::Slider1)] = true;
     configuration.profiles.front().axes[3].target = VirtualAxis::Slider1;
     ButtonBinding button;
     button.type = ButtonActionType::VirtualButton;
@@ -665,7 +666,7 @@ void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxe
     QCOMPARE(requirements.buttons, 64);
 }
 
-void ControllerReadinessTests::savedControllerVjoyRequirementsUseSupersetSemantics()
+void ControllerReadinessTests::virtualAxisDescriptorsMustMatchExactly()
 {
     ControllerVJoyRequirements saved;
     saved.deviceId = 1;
@@ -674,13 +675,13 @@ void ControllerReadinessTests::savedControllerVjoyRequirementsUseSupersetSemanti
     saved.continuousPovs = 1;
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(saved);
     VJoyCapabilities vjoy = readyVJoy();
-    vjoy.axes[4] = vjoy.axes[5] = true; // Extra available axes remain valid.
-    vjoy.buttons = 32;                  // Extra button capacity remains valid.
+    vjoy.axes[4] = vjoy.axes[5] = true; // Extra advertised axes are incompatible.
+    vjoy.buttons = 32;                  // Button capacity remains a minimum.
     vjoy.continuousPovs = 1;
     const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
         connectedController(), requirements, vjoy, readyHidHide());
-    QVERIFY(!plan.vjoyNeedsChanges);
-    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+    QVERIFY(plan.vjoyNeedsChanges);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("additional axes")));
 }
 
 void ControllerReadinessTests::savedControllerVjoyRequirementsDetectInsufficientOutput()

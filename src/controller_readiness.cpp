@@ -50,11 +50,11 @@ QString quotedArguments(const QStringList &arguments)
     return escaped.join(u' ');
 }
 
-bool capabilityAxesSatisfy(const std::array<bool, kVirtualAxisSlotCount> &have,
-                           const std::array<bool, kVirtualAxisSlotCount> &need)
+bool capabilityAxesMatch(const std::array<bool, kVirtualAxisSlotCount> &have,
+                          const std::array<bool, kVirtualAxisSlotCount> &need)
 {
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        if (need[static_cast<size_t>(index)] && !have[static_cast<size_t>(index)]) return false;
+        if (have[static_cast<size_t>(index)] != need[static_cast<size_t>(index)]) return false;
     }
     return true;
 }
@@ -68,6 +68,17 @@ QString axisList(const std::array<bool, kVirtualAxisSlotCount> &axes)
         }
     }
     return result.isEmpty() ? QStringLiteral("none") : result.join(QStringLiteral(", "));
+}
+
+QString extraAxisList(const std::array<bool, kVirtualAxisSlotCount> &actual,
+                      const std::array<bool, kVirtualAxisSlotCount> &expected)
+{
+    std::array<bool, kVirtualAxisSlotCount> extras{};
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        extras[static_cast<size_t>(index)] = actual[static_cast<size_t>(index)]
+            && !expected[static_cast<size_t>(index)];
+    }
+    return axisList(extras);
 }
 
 template <typename Bindings>
@@ -251,13 +262,23 @@ void ControllerReadinessService::clearRecoveryJournal() const
 MapperOutputRequirements ControllerReadinessService::requirementsFor(const MapperConfiguration &configuration)
 {
     MapperOutputRequirements requirements;
-    for (const ControllerProfile &profile : configuration.profiles) {
-        for (const AxisMapping &axis : profile.axes) {
-            const int index = static_cast<int>(axis.target);
-            if (index > 0 && index < kVirtualAxisSlotCount) requirements.axes[static_cast<size_t>(index)] = true;
+    const ControllerProfile *active = findProfile(configuration, configuration.activeProfileId);
+    const VirtualOutputLayout *layout = active
+        ? findOutputLayout(configuration, active->outputLayoutId) : nullptr;
+    if (layout) {
+        requirements = requirementsFor(layout->requirements);
+    } else {
+        // Pre-migration/malformed callers retain the old conservative route
+        // union, but valid v2.0.10 configurations always take the exact
+        // descriptor path above.
+        for (const ControllerProfile &profile : configuration.profiles) {
+            for (const AxisMapping &axis : profile.axes) {
+                const int index = static_cast<int>(axis.target);
+                if (index > 0 && index < kVirtualAxisSlotCount) requirements.axes[static_cast<size_t>(index)] = true;
+            }
+            requirements.buttons = std::max(requirements.buttons, highestButton(profile.buttons));
+            requirements.buttons = std::max(requirements.buttons, highestPovButton(profile.povs));
         }
-        requirements.buttons = std::max(requirements.buttons, highestButton(profile.buttons));
-        requirements.buttons = std::max(requirements.buttons, highestPovButton(profile.povs));
     }
     for (const NativePovBinding &binding : configuration.nativePovBindings) {
         if (!binding.enabled) continue;
@@ -274,26 +295,6 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
                 || action.type == AutomationActionType::VJoyButtonTap) {
                 requirements.buttons = std::max(requirements.buttons, action.virtualButton);
             }
-        }
-    }
-    // A verified controller's stored requirement is a floor, not a competing
-    // definition. Keep it when temporary profile edits happen to require less
-    // than the output configuration that was successfully verified for this
-    // selected device.
-    const auto activeRecord = std::find_if(configuration.savedControllers.cbegin(),
-        configuration.savedControllers.cend(), [&configuration](const SavedControllerRecord &record) {
-            return record.id == configuration.activeControllerRecordId;
-        });
-    if (activeRecord != configuration.savedControllers.cend()) {
-        requirements.buttons = std::max(requirements.buttons, activeRecord->vjoyRequirements.buttons);
-        requirements.continuousPovs = std::max(requirements.continuousPovs,
-                                                activeRecord->vjoyRequirements.continuousPovs);
-        requirements.discretePovs = std::max(requirements.discretePovs,
-                                              activeRecord->vjoyRequirements.discretePovs);
-        for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-            requirements.axes[static_cast<size_t>(index)] =
-                requirements.axes[static_cast<size_t>(index)]
-                || activeRecord->vjoyRequirements.axes[static_cast<size_t>(index)];
         }
     }
     requirements.buttons = std::clamp(requirements.buttons, 0, kMaximumVirtualButtons);
@@ -323,7 +324,7 @@ bool ControllerReadinessService::isVJoySufficient(const VJoyCapabilities &vjoy,
     // POV capacity for the selected controller.
     return vjoy.installed && vjoy.configurationUtilityAvailable && vjoy.driverReady
         && vjoy.devicePresent && (!vjoy.busy || vjoy.ownedByHotasBf6)
-        && capabilityAxesSatisfy(vjoy.axes, requirements.axes)
+        && capabilityAxesMatch(vjoy.axes, requirements.axes)
         && vjoy.buttons >= requirements.buttons
         && vjoy.continuousPovs >= requirements.continuousPovs
         && vjoy.discretePovs >= requirements.discretePovs;
@@ -394,7 +395,11 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         plan.findings.append(plan.vjoySummary);
     } else {
         plan.vjoyStatus = VerificationSubsystemState::Error;
-        plan.vjoySummary = QStringLiteral("vJoy Device %1 needs the required output capabilities.").arg(vjoy.deviceId);
+        const QString extras = extraAxisList(vjoy.axes, effectiveRequirements.axes);
+        plan.vjoySummary = extras == QStringLiteral("none")
+            ? QStringLiteral("vJoy Device %1 needs the required output capabilities.").arg(vjoy.deviceId)
+            : QStringLiteral("vJoy Device %1 exposes additional axes: %2. This layout requires an exact descriptor.")
+                .arg(vjoy.deviceId).arg(extras);
         plan.findings.append(QStringLiteral("VJOY NEEDS CONFIGURATION — Device %1 is %2; HOTAS BF6 requires %3.")
             .arg(vjoy.deviceId).arg(stateName(vjoy)).arg(describeVJoyRequirement(effectiveRequirements)));
         if (vjoy.forceFeedbackKnown && (!vjoy.devicePresent || !vjoy.restoreCommand.isEmpty())
@@ -777,6 +782,88 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
             result.selectedControllerResolved = true;
         }
     }
+    return result;
+}
+
+OutputVisibilitySwitchResult ControllerReadinessService::applyManagedOutputVisibility(
+    const MapperConfiguration &configuration, const QString &activeLayoutId) const
+{
+    OutputVisibilitySwitchResult result;
+    const QString cli = hidhideCliPath();
+    if (cli.isEmpty() || !hidhideServiceReady()) {
+        result.status = QStringLiteral("HidHide runtime visibility switching is unavailable on this installation; managed outputs were left unchanged.");
+        return result;
+    }
+
+    std::vector<const VirtualOutputLayout *> managed;
+    for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
+        if (layout.hidhideManaged && !layout.hidHideDeviceInstanceId.trimmed().isEmpty()) {
+            managed.push_back(&layout);
+        }
+    }
+    if (managed.empty()) {
+        result.status = QStringLiteral("No virtual outputs have explicit HidHide device identities; visibility was left unchanged.");
+        return result;
+    }
+
+    const SetupProcessResult cloak = runHidHide(false, {QStringLiteral("--cloak-state")});
+    const SetupProcessResult apps = runHidHide(false, {QStringLiteral("--app-list")});
+    const SetupProcessResult hidden = runHidHide(false, {QStringLiteral("--dev-list")});
+    if (!cloak.succeeded() || !apps.succeeded() || !hidden.succeeded()) {
+        result.status = QStringLiteral("HidHide did not provide a readable runtime configuration; visibility was left unchanged.");
+        return result;
+    }
+    const QString mapperPath = QDir::toNativeSeparators(mapperExecutablePath());
+    const QStringList appEntries = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
+    const bool mapperAllowed = std::any_of(appEntries.cbegin(), appEntries.cend(), [&mapperPath](const QString &entry) {
+            return QDir::toNativeSeparators(entry).compare(mapperPath, Qt::CaseInsensitive) == 0;
+        });
+    if (!cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive) || !mapperAllowed) {
+        result.status = QStringLiteral("HidHide visibility switching requires existing cloaking and a HOTAS BF6 allowlist entry; no runtime change was made.");
+        return result;
+    }
+
+    const QStringList hiddenDevices = parseHidHideCommands(hidden.output, QStringLiteral("dev-hide"));
+    struct Change { QString instance; bool wasHidden = false; bool hide = false; };
+    std::vector<Change> changes;
+    changes.reserve(managed.size());
+    for (const VirtualOutputLayout *layout : managed) {
+        const QString normalized = normalizeDeviceInstanceId(layout->hidHideDeviceInstanceId);
+        const bool wasHidden = std::any_of(hiddenDevices.cbegin(), hiddenDevices.cend(),
+            [&normalized](const QString &entry) { return normalizeDeviceInstanceId(entry) == normalized; });
+        const bool shouldHide = layout->id != activeLayoutId;
+        if (wasHidden != shouldHide) changes.push_back({layout->hidHideDeviceInstanceId, wasHidden, shouldHide});
+    }
+    result.available = true;
+    if (changes.empty()) {
+        result.status = QStringLiteral("Managed virtual-output visibility already matches the selected layout.");
+        return result;
+    }
+
+    std::vector<Change> completed;
+    completed.reserve(changes.size());
+    // Hide inactive outputs before exposing the selected one, so normal games
+    // never see two incompatible managed descriptors during this transition.
+    std::stable_sort(changes.begin(), changes.end(), [](const Change &left, const Change &right) {
+        return left.hide && !right.hide;
+    });
+    for (const Change &change : changes) {
+        const SetupProcessResult operation = runHidHide(false, {change.hide
+            ? QStringLiteral("--dev-hide") : QStringLiteral("--dev-unhide"), change.instance});
+        if (operation.succeeded()) {
+            completed.push_back(change);
+            continue;
+        }
+        for (auto rollback = completed.crbegin(); rollback != completed.crend(); ++rollback) {
+            runHidHide(false, {rollback->wasHidden ? QStringLiteral("--dev-hide")
+                                                   : QStringLiteral("--dev-unhide"), rollback->instance});
+        }
+        result.succeeded = false;
+        result.status = QStringLiteral("HidHide could not switch managed virtual-output visibility; completed changes were rolled back and mapping remains on the previous output.");
+        return result;
+    }
+    result.changed = true;
+    result.status = QStringLiteral("Managed virtual-output visibility switched without administrator elevation.");
     return result;
 }
 

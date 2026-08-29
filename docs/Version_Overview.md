@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.9**
+**Current release: v2.0.10**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.10 — Virtual Output Layouts & Phantom-Axis Safety
+
+Adds reusable profile-owned virtual-output layouts, exact-axis vJoy descriptor verification, safe output transitions, and calibration-backed phantom-axis isolation without adding control-plane work to the DirectInput-to-vJoy report path.
+
+- Profiles choose a persisted virtual-output layout; the built-in BF6 descriptor is exactly X, Y, Z, and Rz, with an explicit 5-axis layout available for another preconfigured vJoy device.
+- vJoy readiness rejects extra or missing virtual axes while retaining button and native-POV capacity semantics, so BF6 never sees an accidental superset descriptor from the selected layout.
+- Changing an active output neutralizes and releases the old device, makes only exact pre-authorized HidHide visibility changes, then reacquires the selected device with a complete neutral baseline.
+- Completed calibration records Active versus Fixed physical axes from observed travel; Fixed axes cannot route or feed Automation while the application still reports every advertised DirectInput slot.
+- Schema 18 migrates prior profiles, routes, buttons, POVs, calibration, controller memory, and Automation into a data-only preserved output layout without touching installed vJoy configuration.
 
 ## v2.0.9 — Final v2 Reliability Cleanup
 

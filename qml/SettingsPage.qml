@@ -24,6 +24,16 @@ Flickable {
     readonly property color accentColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 980
     readonly property var controllerModel: backend.controllers
+    function nextOutputDeviceId() {
+        for (let deviceId = 1; deviceId <= 16; ++deviceId) {
+            let used = false
+            for (let index = 0; index < backend.virtualOutputLayouts.length; ++index) {
+                if (backend.virtualOutputLayouts[index].deviceId === deviceId) { used = true; break }
+            }
+            if (!used) return deviceId
+        }
+        return 0
+    }
 
     component SectionLabel: RowLayout {
         property string label: "SECTION"
@@ -191,6 +201,25 @@ Flickable {
                     }
                 }
                 ActionButton { label: "CONFIGURE VJOY"; subdued: true; onTriggered: backend.openVjoyConfiguration() }
+            }
+        }
+
+        Card { Layout.fillWidth: true; title: "Virtual Outputs"; detail: "Profiles reuse preconfigured vJoy layouts. Creating a layout records its intended descriptor; vJoy provisioning stays an explicit setup action."; accent: root.borderColor
+            Repeater { model: backend.virtualOutputLayouts
+                delegate: Rectangle { Layout.fillWidth: true; implicitHeight: layoutRow.implicitHeight + 14; color: root.insetColor; border.color: modelData.active ? root.readyColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
+                    RowLayout { id: layoutRow; anchors.fill: parent; anchors.margins: 9; spacing: 9
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Text { text: modelData.name.toUpperCase() + (modelData.active ? " · ACTIVE" : ""); color: root.textColor; font.pixelSize: 10; font.bold: true }
+                            Text { text: "vJoy " + modelData.deviceId + "  ·  " + modelData.axes + "  ·  USED BY " + modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S"); color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                        }
+                        StatusPill { label: modelData.managedVisibility ? "VISIBILITY MANAGED" : "SETUP"; tone: modelData.managedVisibility ? root.readyColor : root.mutedColor }
+                    }
+                }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: "Use each profile's OUTPUT selector to reuse a compatible layout."; color: root.faintColor; font.pixelSize: 9 }
+                ActionButton { label: "CREATE 5-AXIS OUTPUT"; subdued: true; actionEnabled: root.nextOutputDeviceId() > 0
+                    onTriggered: { const id = root.nextOutputDeviceId(); backend.createFiveAxisOutputLayout("5-Axis Output " + id, id) } }
             }
         }
 

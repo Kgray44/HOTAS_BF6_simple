@@ -71,6 +71,16 @@ struct HidHideCapabilities {
     QString diagnostic;
 };
 
+// A normal profile switch may adjust only HOTAS BF6-managed virtual outputs.
+// It is deliberately separate from privileged provisioning/repair: all
+// commands use HidHide's documented least-privileged configuration client.
+struct OutputVisibilitySwitchResult {
+    bool available = false;
+    bool changed = false;
+    bool succeeded = true;
+    QString status;
+};
+
 struct MapperOutputRequirements {
     std::array<bool, kVirtualAxisSlotCount> axes{};
     int buttons = 0;
@@ -267,6 +277,8 @@ public:
     // Safe even when no controller is visible: it mutates only HOTAS BF6's
     // own HidHide application entry and never changes device visibility.
     bool allowlistMapperOnly();
+    OutputVisibilitySwitchResult applyManagedOutputVisibility(
+        const MapperConfiguration &configuration, const QString &activeLayoutId) const;
     bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }

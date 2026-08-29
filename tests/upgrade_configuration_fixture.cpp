@@ -75,8 +75,8 @@ bool assertMigratedFixture()
 {
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
-    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 17) {
-        std::cerr << "Expected the installed mapper to persist schema 17.\n";
+    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 18) {
+        std::cerr << "Expected the installed mapper to persist schema 18.\n";
         return false;
     }
 
@@ -86,7 +86,7 @@ bool assertMigratedFixture()
         || configuration.vjoyDeviceId != 2 || configuration.disabledAxisValue != -0.25F
         || configuration.automations.size() != 1
         || configuration.automations.front().name != QStringLiteral("Upgrade Automation")
-        || configuration.profiles.empty()) {
+        || configuration.profiles.empty() || configuration.outputLayouts.size() != 1) {
         std::cerr << "Migrated fixture lost application settings, profiles, or automation.\n";
         return false;
     }
@@ -97,6 +97,8 @@ bool assertMigratedFixture()
         || profile.buttons.size() != 6 || profile.buttons[5].target != 28
         || profile.povs.size() != 1
         || profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Up))].target != 29
+        || profile.outputLayoutId != hotas::defaultOutputLayoutId()
+        || configuration.outputLayouts.front().requirements.deviceId != 2
         || !hotas::ConfigStore::toJson(configuration).value(QStringLiteral("profiles")).toArray()
                 .first().toObject().value(QStringLiteral("axes")).toArray().first().toObject()
                 .contains(QStringLiteral("curve"))) {
@@ -122,8 +124,8 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v17"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v18"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v17.\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v18.\n";
     return 2;
 }
