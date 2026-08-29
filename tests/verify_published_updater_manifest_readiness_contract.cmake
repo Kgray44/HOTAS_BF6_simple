@@ -7,7 +7,7 @@ file(READ "${UPDATER_ACCEPTANCE_SCRIPT}" updater_source)
 foreach (required_fragment IN ITEMS
     "https://github.com/Kgray44/HOTAS_BF6_simple/releases/latest/download/update-manifest.json"
     "function Wait-PublishedLatestManifest"
-    "Invoke-WebRequest -Uri \$manifestUrl -UseBasicParsing"
+    "Invoke-RestMethod -Uri \$manifestUrl"
     "\$version -eq \$expectedVersion -and \$tag -eq \"v\$expectedVersion\""
     "Wait-PublishedLatestManifest -expectedVersion \$ExpectedVersion -manifestUrl \$latestManifestUrl")
     string(FIND "${updater_source}" "${required_fragment}" fragment_offset)

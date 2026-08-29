@@ -6,12 +6,13 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.0.6 | Current | Published Manifest Readiness Hotfix; recommended published release |
-| v2.0.5 | Superseded | Published Updater Acceptance Hotfix; upgrade to v2.0.6 for public latest-manifest readiness validation |
-| v2.0.4 | Superseded | UI Responsiveness Hotfix; upgrade to v2.0.6 for published updater acceptance reliability |
-| v2.0.3 | Superseded | Multi-Controller Setup & vJoy Reliability Hotfix; upgrade to v2.0.6 for UI responsiveness and published updater acceptance reliability |
-| v2.0.2 | Superseded | Dashboard & UX Polish; upgrade to v2.0.6 for multi-controller setup, UI responsiveness, and updater reliability fixes |
-| v2.0.1 | Superseded | Startup & Upgrade Hotfix; upgrade to v2.0.6 for dashboard, settings, tray, controller-switching, responsiveness, and updater reliability fixes |
+| v2.0.7 | Current | Published Manifest Transport Hotfix; recommended published release |
+| v2.0.6 | Superseded | Published Manifest Readiness Hotfix; upgrade to v2.0.7 for correct hosted-runner manifest decoding |
+| v2.0.5 | Superseded | Published Updater Acceptance Hotfix; upgrade to v2.0.7 for public latest-manifest readiness validation |
+| v2.0.4 | Superseded | UI Responsiveness Hotfix; upgrade to v2.0.7 for published updater acceptance reliability |
+| v2.0.3 | Superseded | Multi-Controller Setup & vJoy Reliability Hotfix; upgrade to v2.0.7 for UI responsiveness and published updater acceptance reliability |
+| v2.0.2 | Superseded | Dashboard & UX Polish; upgrade to v2.0.7 for multi-controller setup, UI responsiveness, and updater reliability fixes |
+| v2.0.1 | Superseded | Startup & Upgrade Hotfix; upgrade to v2.0.7 for dashboard, settings, tray, controller-switching, responsiveness, and updater reliability fixes |
 | v2.0.0 | **Deprecated** | **Do not install or use; launch-blocking startup defect; upgrade to v2.0.1+** |
 | v1.9.3 | Superseded | Upgrade to v2.0.2 for universal controller management and persistent device memory |
 | v1.9.2 | **Deprecated** | **Do not use for new setup; upgrade to v2.0.0+** |
