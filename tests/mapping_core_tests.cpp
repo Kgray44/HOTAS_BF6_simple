@@ -103,6 +103,9 @@ private slots:
     void nonCenteringCalibrationUsesRangeWithoutInventedNeutral();
     void invalidCalibrationFallsBackToRaw();
     void deadzoneIsRescaled();
+    void oneSidedTransferUsesFormerCenterAsOrigin();
+    void oneSidedDeadzoneAndInversionStayInUnipolarDomain();
+    void oneSidedCurveDomainKeepsThePositiveCenteredHalf();
     void inversionIsAppliedAfterDeadzone();
     void rangeIsClamped();
     void processingOrderIncludesLimitsAfterInversion();
@@ -143,6 +146,7 @@ private slots:
     void povRawValuesCompileToLogicalDirections();
     void povMappingsPressTransitionAndRelease();
     void povMappingsRejectDuplicatesAndRoundTrip();
+    void legacyControlsMigrateToAutomationWithoutHiddenPaths();
     void eventLogIsBoundedAndOrdered();
     void physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnavailable();
     void physicalMonitorRetainsFullOfflineButtonCount();
@@ -232,6 +236,64 @@ void MappingCoreTests::deadzoneIsRescaled()
     QVERIFY(nearlyEqual(applyRescaledDeadzone(0.60F, 0.20F), 0.50F));
     QVERIFY(nearlyEqual(applyRescaledDeadzone(-0.60F, 0.20F), -0.50F));
     QVERIFY(nearlyEqual(applyRescaledDeadzone(1.0F, 0.20F), 1.0F));
+}
+
+void MappingCoreTests::oneSidedTransferUsesFormerCenterAsOrigin()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.rangeMode = AxisRangeMode::OneSided;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.hysteresis = 0.0F;
+    mapping.responseCurve = compileResponseCurve(linearCurveDefinition(), true);
+
+    // The old centered origin is now the bottom-left 0% point. Negative
+    // travel parks there; no part of the centered transfer survives.
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-1.0F, mapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.0F, mapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.50F, mapping), 0.50F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, mapping), 1.0F));
+
+    AxisHysteresisState state;
+    QVERIFY(nearlyEqual(transformAxisLive(0.0F, mapping, state), 0.0F));
+    QVERIFY(nearlyEqual(transformAxisLive(1.0F, mapping, state), 1.0F));
+}
+
+void MappingCoreTests::oneSidedDeadzoneAndInversionStayInUnipolarDomain()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.rangeMode = AxisRangeMode::OneSided;
+    mapping.profile.deadzone = 0.03F;
+    mapping.profile.hysteresis = 0.0F;
+    mapping.responseCurve = compileResponseCurve(linearCurveDefinition(), true);
+
+    QVERIFY(nearlyEqual(applyRescaledUnipolarDeadzone(0.03F, 0.03F), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(-0.25F, mapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.0F, mapping), 0.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.03F, mapping), 0.0F));
+    QVERIFY(evaluateStaticAxisTransfer(0.04F, mapping) > 0.0F);
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, mapping), 1.0F));
+
+    mapping.profile.inverted = true;
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(0.0F, mapping), 1.0F));
+    QVERIFY(nearlyEqual(evaluateStaticAxisTransfer(1.0F, mapping), 0.0F));
+}
+
+void MappingCoreTests::oneSidedCurveDomainKeepsThePositiveCenteredHalf()
+{
+    CurveDefinition centered = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("precision-tracking")), false, 9);
+    const float oldPositiveHalf = evaluateCurveDefinition(0.50F, centered, false);
+    const CurveDefinition oneSided = convertCurveDefinitionDomain(centered, false, true);
+    QVERIFY(curveDefinitionIsValid(oneSided, true));
+    QVERIFY(nearlyEqual(oneSided.points.front().input, 0.0F));
+    QVERIFY(nearlyEqual(oneSided.points.front().output, 0.0F));
+    QVERIFY(nearlyEqual(oneSided.points.back().input, 1.0F));
+    QVERIFY(nearlyEqual(oneSided.points.back().output, 1.0F));
+    for (const CurvePoint &point : oneSided.points) {
+        QVERIFY(point.input >= 0.0F);
+        QVERIFY(point.output >= 0.0F);
+    }
+    QVERIFY(nearlyEqual(evaluateCurveDefinition(0.50F, oneSided, true), oldPositiveHalf));
 }
 
 void MappingCoreTests::inversionIsAppliedAfterDeadzone()
@@ -573,9 +635,26 @@ void MappingCoreTests::configurationRoundTrips()
     configuration.startMappingOnLaunch = true;
     configuration.disabledAxisValue = -0.25F;
     normal.axes[0].inverted = true;
+    normal.axes[0].rangeMode = AxisRangeMode::OneSided;
+    normal.axes[0].curve = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("precision-tracking")), true, 9);
+    normal.axes[0].centeredCurveBackup = materializeCurveDefinition(
+        advancedCurveDefinition(QStringLiteral("precision-tracking")), false, 9);
+    normal.axes[0].hasCenteredCurveBackup = true;
+    normal.axes[0].oneSidedCurveBackup = normal.axes[0].curve;
+    normal.axes[0].hasOneSidedCurveBackup = true;
     normal.axes[1].deadzone = 0.12F;
     configuration.calibration[2] = {true, -0.9F, 0.1F, 0.8F};
     configuration.calibration[2].centered = false;
+    CalibrationHistoryEntry calibrationRecord;
+    calibrationRecord.controllerRecordId = QStringLiteral("controller-a");
+    calibrationRecord.controllerDisplayName = QStringLiteral("T.Flight HOTAS One");
+    calibrationRecord.controllerIdentity = QStringLiteral("HID\\VID_044F");
+    calibrationRecord.completedAtUtc = QStringLiteral("2026-08-29T12:00:00.000Z");
+    calibrationRecord.applicationVersion = QStringLiteral("2.0.8");
+    calibrationRecord.calibratedAxisCount = 4;
+    calibrationRecord.calibration = configuration.calibration;
+    configuration.calibrationHistory.push_back(calibrationRecord);
     normal.buttons = defaultButtonMappings(4, 4);
     QVERIFY(createProfile(configuration, QStringLiteral("Helicopter")));
     QVERIFY(activateProfile(configuration, QStringLiteral("profile-normal")));
@@ -589,10 +668,20 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.disabledAxisValue, -0.25F);
     QCOMPARE(static_cast<int>(restored.profiles.size()), 3);
     QVERIFY(activeProfile(restored).axes[0].inverted);
+    QCOMPARE(activeProfile(restored).axes[0].rangeMode, AxisRangeMode::OneSided);
+    QVERIFY(activeProfile(restored).axes[0].hasCenteredCurveBackup);
+    QVERIFY(activeProfile(restored).axes[0].hasOneSidedCurveBackup);
+    QVERIFY(curveDefinitionIsValid(activeProfile(restored).axes[0].centeredCurveBackup, false));
+    QVERIFY(curveDefinitionIsValid(activeProfile(restored).axes[0].oneSidedCurveBackup, true));
     QCOMPARE(activeProfile(restored).axes[1].deadzone, 0.12F);
     QVERIFY(restored.calibration[2].enabled);
     QCOMPARE(restored.calibration[2].center, 0.1F);
     QVERIFY(!restored.calibration[2].centered);
+    QCOMPARE(static_cast<int>(restored.calibrationHistory.size()), 1);
+    QCOMPARE(restored.calibrationHistory.front().controllerDisplayName,
+             QStringLiteral("T.Flight HOTAS One"));
+    QCOMPARE(restored.calibrationHistory.front().calibratedAxisCount, 4);
+    QCOMPARE(restored.calibrationHistory.front().calibration[2].center, 0.1F);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
 }
 
@@ -1037,6 +1126,54 @@ void MappingCoreTests::povMappingsRejectDuplicatesAndRoundTrip()
     QVERIFY(activeProfile(migrated).povs.empty());
 }
 
+void MappingCoreTests::legacyControlsMigrateToAutomationWithoutHiddenPaths()
+{
+    MapperConfiguration legacy = defaultConfiguration();
+    QString alternateId;
+    QVERIFY(createProfile(legacy, QStringLiteral("Landing"), normalProfileId(), &alternateId));
+    legacy.mappingControls.resize(2);
+    legacy.mappingControls[0] = MappingControlAction::ToggleMapping;
+    legacy.profileTriggers.resize(2);
+    legacy.profileTriggers[1] = {alternateId, ProfileTriggerMode::Hold};
+    legacy.povProfileTriggers.resize(1);
+    legacy.povProfileTriggers[0][static_cast<size_t>(povDirectionIndex(PovDirection::Right))] =
+        {alternateId, ProfileTriggerMode::Toggle};
+
+    QJsonObject v15 = ConfigStore::toJson(legacy);
+    v15.insert(QStringLiteral("version"), 15);
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v15, &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.legacyControlMigrationWarning.isEmpty());
+    QVERIFY(std::all_of(migrated.mappingControls.cbegin(), migrated.mappingControls.cend(),
+                        [](MappingControlAction action) { return action == MappingControlAction::None; }));
+    QVERIFY(std::all_of(migrated.profileTriggers.cbegin(), migrated.profileTriggers.cend(),
+                        [](const ProfileTriggerBinding &binding) { return !profileTriggerBindingEnabled(binding); }));
+    QVERIFY(!profileTriggerBindingEnabled(
+        migrated.povProfileTriggers[0][static_cast<size_t>(povDirectionIndex(PovDirection::Right))]));
+
+    QCOMPARE(static_cast<int>(migrated.automations.size()), 3);
+    const auto byId = [&migrated](const QString &id) -> const AutomationDefinition * {
+        const auto found = std::find_if(migrated.automations.cbegin(), migrated.automations.cend(),
+            [&id](const AutomationDefinition &automation) { return automation.id == id; });
+        return found == migrated.automations.cend() ? nullptr : &*found;
+    };
+    const AutomationDefinition *mapping = byId(QStringLiteral("migration-v16-mapping-button-1"));
+    QVERIFY(mapping);
+    QCOMPARE(mapping->conditions.front().type, AutomationConditionType::ButtonPressed);
+    QCOMPARE(mapping->actions.front().type, AutomationActionType::ToggleMapping);
+    const AutomationDefinition *profile = byId(QStringLiteral("migration-v16-profile-button-2"));
+    QVERIFY(profile);
+    QCOMPARE(profile->conditions.front().type, AutomationConditionType::ButtonHeld);
+    QCOMPARE(profile->actions.front().type, AutomationActionType::ProfileHold);
+    QCOMPARE(profile->actions.front().profileId, alternateId);
+    const AutomationDefinition *pov = byId(QStringLiteral("migration-v16-profile-pov-1-3"));
+    QVERIFY(pov);
+    QCOMPARE(pov->conditions.front().type, AutomationConditionType::PovActive);
+    QCOMPARE(pov->actions.front().type, AutomationActionType::ProfileToggle);
+    QCOMPARE(pov->actions.front().profileId, alternateId);
+}
+
 void MappingCoreTests::eventLogIsBoundedAndOrdered()
 {
     EventLog events(3);
@@ -1335,7 +1472,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 15);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 16);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1578,7 +1715,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 15);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 16);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

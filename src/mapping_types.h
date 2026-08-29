@@ -24,6 +24,7 @@ constexpr int kVirtualAxisSlotCount = 9;
 constexpr int kMaximumPhysicalButtons = 128;
 constexpr int kMaximumVirtualButtons = 128;
 constexpr int kMaximumAutomationRules = 64;
+constexpr int kMaximumCalibrationHistoryEntries = 50;
 constexpr int kMaximumAutomationConditions = 4;
 constexpr int kMaximumAutomationActions = 4;
 constexpr int kMaximumAutomationProfileContributors =
@@ -133,8 +134,9 @@ struct Calibration {
 
 struct AxisMapping {
     VirtualAxis target = VirtualAxis::Disabled;
-    // Presentation/editing semantics only. The worker keeps the same
-    // normalized -1..+1 transfer domain for both modes.
+    // A centered axis is -1..+1. A one-sided axis promotes the old centered
+    // origin to the 0 end-stop and processes only the positive half as 0..1.
+    // This is a mapper semantic, not a presentation hint.
     AxisRangeMode rangeMode = AxisRangeMode::Centered;
     QString customName;
     bool inverted = false;
@@ -147,6 +149,12 @@ struct AxisMapping {
     float outputMinimum = -1.0F;
     float outputMaximum = 1.0F;
     CurveDefinition curve;
+    // Curve points are domain-specific. Keep the most recent alternate-domain
+    // definition so toggling Range never silently destroys a custom curve.
+    CurveDefinition centeredCurveBackup;
+    CurveDefinition oneSidedCurveBackup;
+    bool hasCenteredCurveBackup = false;
+    bool hasOneSidedCurveBackup = false;
 };
 
 // Calibration belongs to the physical controller. Runtime mappings combine
@@ -456,6 +464,18 @@ struct SavedControllerRecord {
     QStringList ownedHidHideDeviceInstances;
 };
 
+// Calibration history is deliberately durable, bounded control-plane data.
+// The mapper never reads it while processing DirectInput reports.
+struct CalibrationHistoryEntry {
+    QString controllerRecordId;
+    QString controllerDisplayName;
+    QString controllerIdentity;
+    QString completedAtUtc;
+    QString applicationVersion;
+    int calibratedAxisCount = 0;
+    std::array<Calibration, kPhysicalAxisCount> calibration{};
+};
+
 struct MapperConfiguration {
     QString preferredDeviceId;
     std::vector<SavedControllerRecord> savedControllers;
@@ -472,6 +492,7 @@ struct MapperConfiguration {
     // UI-only selection. It never determines which axes the worker maps.
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
+    std::vector<CalibrationHistoryEntry> calibrationHistory;
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> personalCurvePresets;
     // Global physical-input profile controls. Runtime activation/latch state
@@ -479,6 +500,11 @@ struct MapperConfiguration {
     ProfileTriggerBindings profileTriggers;
     PovProfileTriggerBindings povProfileTriggers;
     MappingControlBindings mappingControls;
+    // Normal schema-16 migration clears these after converting each exact
+    // legacy control into Automation. A rare overflow keeps only the
+    // unconverted controls and exposes this explicit warning instead of
+    // creating hidden behavior.
+    QString legacyControlMigrationWarning;
     // Native vJoy POV passthrough is global to the selected physical device,
     // rather than profile-specific, and defaults safely off on migration.
     NativePovBindings nativePovBindings;

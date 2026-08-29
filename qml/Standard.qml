@@ -73,7 +73,7 @@ Page {
         return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%"
     }
     function controlValue(info, value) {
-        if (info && info.unipolar) return ((Number(value) + 1) * 50).toFixed(1) + "%"
+        if (info && info.unipolar) return (Math.max(0, Math.min(1, Number(value))) * 100).toFixed(1) + "%"
         return valuePercent(value)
     }
     function outputState(info) {
@@ -111,17 +111,18 @@ Page {
         property string label: "ACTION"
         property bool commandEnabled: true
         property bool subdued: false
+        property bool destructive: false
         signal triggered()
         implicitWidth: Math.max(110, labelText.implicitWidth + 30)
         implicitHeight: 36
         radius: theme.controlRadius
-        color: !commandEnabled ? theme.controlDisabled : commandMouse.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (subdued ? theme.buttonSecondary : theme.buttonSurface)
-        border.color: !commandEnabled ? theme.border : (subdued ? theme.border : theme.orange)
+        color: !commandEnabled ? theme.controlDisabled : destructive ? (commandMouse.containsMouse ? Qt.rgba(theme.danger.r, theme.danger.g, theme.danger.b, 0.25) : Qt.rgba(theme.danger.r, theme.danger.g, theme.danger.b, 0.14)) : commandMouse.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (subdued ? theme.buttonSecondary : theme.buttonSurface)
+        border.color: !commandEnabled ? theme.border : (destructive ? theme.danger : (subdued ? theme.border : theme.orange))
         opacity: commandEnabled ? 1.0 : 0.45
         Text { id: labelText
  anchors.centerIn: parent
  text: parent.label
- color: parent.commandEnabled ? theme.textStrong : theme.textFaint
+ color: !parent.commandEnabled ? theme.textFaint : (parent.destructive ? theme.danger : theme.textStrong)
  font.pixelSize: 11
  font.bold: true
  font.family: theme.topGun ? theme.displayFont : root.font.family }
@@ -477,7 +478,7 @@ Page {
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
- value: Number(axisModule.info.calibrated)
+                value: axisModule.info.unipolar ? Number(axisModule.info.calibrated) * 2 - 1 : Number(axisModule.info.calibrated)
  tone: "#8eb5c1" }
                 Text { text: root.controlValue(axisModule.info, axisModule.info.calibrated)
  color: "#c6dce1"
@@ -495,7 +496,7 @@ Page {
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
- value: Number(axisModule.info.virtualValue)
+                value: axisModule.info.unipolar ? Number(axisModule.info.virtualValue) * 2 - 1 : Number(axisModule.info.virtualValue)
  offline: !backend.vjoyReady
  valid: axisModule.info.virtualValid
  tone: "#b7d7bf" }
@@ -628,8 +629,9 @@ Page {
                 property var curveSamples: curveViewer.samples
                 property real physicalInput: curveViewer.info ? Number(curveViewer.info.calibrated) : 0
                 property real transformedOutput: curveViewer.info ? Number(curveViewer.info.transformed) : 0
-                function xFor(value, left, plotWidth) { return left + ((value + 1) * 0.5) * plotWidth }
-                function yFor(value, top, plotHeight) { return top + (1 - ((value + 1) * 0.5)) * plotHeight }
+                property real domainMinimum: curveViewer.info && curveViewer.info.unipolar ? 0 : -1
+                function xFor(value, left, plotWidth) { return left + (value - domainMinimum) / (1 - domainMinimum) * plotWidth }
+                function yFor(value, top, plotHeight) { return top + (1 - (value - domainMinimum) / (1 - domainMinimum)) * plotHeight }
                 onCurveSamplesChanged: requestPaint()
                 onPhysicalInputChanged: requestPaint()
                 onTransformedOutputChanged: requestPaint()
@@ -655,15 +657,17 @@ Page {
                         ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotHeight); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotWidth, y); ctx.stroke()
                     }
-                    ctx.strokeStyle = theme.graphZero
-                    ctx.beginPath()
-                    ctx.moveTo(left, yFor(0, top, plotHeight))
-                    ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
-                    ctx.stroke()
-                    ctx.beginPath()
-                    ctx.moveTo(xFor(0, left, plotWidth), top)
-                    ctx.lineTo(xFor(0, left, plotWidth), top + plotHeight)
-                    ctx.stroke()
+                    if (domainMinimum < 0) {
+                        ctx.strokeStyle = theme.graphZero
+                        ctx.beginPath()
+                        ctx.moveTo(left, yFor(0, top, plotHeight))
+                        ctx.lineTo(left + plotWidth, yFor(0, top, plotHeight))
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(xFor(0, left, plotWidth), top)
+                        ctx.lineTo(xFor(0, left, plotWidth), top + plotHeight)
+                        ctx.stroke()
+                    }
                     const trace = function(key, color, widthValue) {
                         if (!curveSamples || curveSamples.length === 0) return
                         ctx.strokeStyle = color
@@ -681,7 +685,7 @@ Page {
                     trace("output", theme.graphOutput, 2.0)
                     if (curveViewer.info && Number(curveViewer.info.hysteresis) > 0) {
                         const halfBand = Number(curveViewer.info.hysteresis)
-                        const x0 = xFor(Math.max(-1, physicalInput - halfBand), left, plotWidth)
+                        const x0 = xFor(Math.max(domainMinimum, physicalInput - halfBand), left, plotWidth)
                         const x1 = xFor(Math.min(1, physicalInput + halfBand), left, plotWidth)
                         ctx.fillStyle = theme.graphPreview
                         ctx.fillRect(x0, top, Math.max(1, x1 - x0), plotHeight)
@@ -719,15 +723,9 @@ Page {
         id: buttonCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 344
-        color: info && (info.pressed || info.profileControlActive) ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.profileControlActive ? theme.ready : (info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border)
-        function triggerChoiceIndex(targetId) {
-            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
-                if (root.profileTriggerChoices[index].id === targetId) return index
-            }
-            return 0
-        }
+        Layout.preferredHeight: 204
+        color: info && info.pressed ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
+        border.color: info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border
         ColumnLayout {
             id: buttonContent
             anchors.fill: parent
@@ -784,87 +782,6 @@ Page {
                 FlightTextInput { Layout.fillWidth: true; text: buttonCard.info.customName || ""; placeholderText: buttonCard.info.hardwareLabel || "Controller button"
                     onEditingFinished: backend.setButtonCustomName(buttonCard.info.index, text) }
             }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "MAPPING CTRL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 108 }
-                FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 29; model: backend.mappingControlActionChoices
-                    currentIndex: Math.max(0, backend.mappingControlActionChoices.indexOf(buttonCard.info.mappingControl))
-                    onActivated: backend.setMappingControl(buttonCard.info.index, currentText) }
-            }
-            Text { visible: buttonCard.info.mappingControl !== "None"; text: "This control is consumed before game output and uses press edges only."
-                color: theme.warning; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            FineLine { Layout.fillWidth: true }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                FlightComboBox {
-                    id: profileControlTarget
-                    Layout.preferredWidth: 146; Layout.preferredHeight: 29
-                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
-                    currentIndex: buttonCard.triggerChoiceIndex(buttonCard.info.profileControlTargetId)
-                    onActivated: backend.setProfileTrigger(buttonCard.info.index, currentValue,
-                        buttonCard.info.profileControlEnabled ? buttonCard.info.profileControlMode : "Hold")
-                    background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.border }
-                    contentItem: Text { leftPadding: 8; text: profileControlTarget.displayText; color: theme.text
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                }
-            }
-            ColumnLayout { Layout.fillWidth: true; visible: buttonCard.info.profileControlEnabled; spacing: 6
-                RowLayout { Layout.fillWidth: true
-                    Text { text: "TARGET PROFILE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                    Text { text: buttonCard.info.profileControlTargetName.toUpperCase()
-                        color: buttonCard.info.profileControlTargetAvailable ? "#b8d8dc" : "#d49b62"
-                        font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 150 }
-                }
-            }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "MODE"; color: "#82949a"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                Rectangle {
-                    id: profileControlMode
-                    Layout.preferredWidth: 150; Layout.preferredHeight: 28
-                    radius: 5
-                    color: theme.control
-                    border.color: buttonCard.info.profileControlEnabled ? theme.border : theme.textFaint
-                    opacity: buttonCard.info.profileControlEnabled ? 1.0 : 0.55
-                    Row {
-                        anchors.fill: parent
-                        Repeater {
-                            model: ["Hold", "Toggle"]
-                            delegate: Rectangle {
-                                width: profileControlMode.width / 2
-                                height: profileControlMode.height
-                                radius: 4
-                                color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? theme.selection : "transparent"
-                                border.color: buttonCard.info.profileControlEnabled
-                                    && buttonCard.info.profileControlMode === modelData ? theme.orange : "transparent"
-                                Text { anchors.centerIn: parent; text: modelData.toUpperCase()
-                                    color: buttonCard.info.profileControlEnabled ? theme.text : theme.textFaint
-                                    font.pixelSize: 9; font.bold: true }
-                                MouseArea {
-                                    id: modeMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    enabled: buttonCard.info.profileControlEnabled
-                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: backend.setProfileTrigger(buttonCard.info.index,
-                                        buttonCard.info.profileControlTargetId, modelData)
-                                }
-                                ToolTip.visible: modeMouse.containsMouse
-                                ToolTip.text: modelData === "Hold"
-                                    ? "Target profile is active only while this button is held."
-                                    : "Press once to activate; press again to release."
-                            }
-                        }
-                    }
-                }
-            }
-            Text { visible: buttonCard.info.profileControlEnabled
-                text: buttonCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · "
-                    + buttonCard.info.profileControlMode.toUpperCase() : "Profile control consumes this button."
-                color: buttonCard.info.profileControlActive ? theme.ready : theme.textFaint
-                font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: buttonCard.info.profileControlActive }
         }
     }
 
@@ -919,15 +836,9 @@ Page {
         id: povCard
         property var info: null
         Layout.fillWidth: true
-        Layout.preferredHeight: 246
-        color: info && (info.active || info.profileControlActive) ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.profileControlActive ? theme.ready : (info && info.active ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border)
-        function triggerChoiceIndex(targetId) {
-            for (let index = 0; index < root.profileTriggerChoices.length; ++index) {
-                if (root.profileTriggerChoices[index].id === targetId) return index
-            }
-            return 0
-        }
+        Layout.preferredHeight: 152
+        color: info && info.active ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
+        border.color: info && info.active ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 7
             RowLayout { Layout.fillWidth: true
@@ -951,37 +862,6 @@ Page {
             }
             Text { text: povCard.info.target > 0 ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
                 color: povCard.info.virtualPressed ? theme.ready : theme.textFaint; font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: povCard.info.virtualPressed }
-            FineLine { Layout.fillWidth: true }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "PROFILE CONTROL"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
-                Item { Layout.fillWidth: true }
-                FlightComboBox { id: povProfileTarget; Layout.preferredWidth: 150
-                    model: root.profileTriggerChoices; textRole: "label"; valueRole: "id"
-                    currentIndex: povCard.triggerChoiceIndex(povCard.info.profileControlTargetId)
-                    onActivated: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, currentValue,
-                        povCard.info.profileControlEnabled ? povCard.info.profileControlMode : "Hold") }
-            }
-            RowLayout { Layout.fillWidth: true
-                Text { text: povCard.info.profileControlEnabled ? povCard.info.profileControlTargetName.toUpperCase() : "NONE"
-                    color: povCard.info.profileControlTargetAvailable || !povCard.info.profileControlEnabled ? theme.text : theme.warning
-                    font.pixelSize: 9; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                Rectangle { id: povProfileMode; Layout.preferredWidth: 126; Layout.preferredHeight: 26; radius: 4
-                    color: theme.control; border.color: povCard.info.profileControlEnabled ? theme.border : theme.textFaint; opacity: povCard.info.profileControlEnabled ? 1 : 0.55
-                    Row { anchors.fill: parent
-                        Repeater { model: ["Hold", "Toggle"]
-                            delegate: Rectangle { width: povProfileMode.width / 2; height: povProfileMode.height; radius: 3
-                                color: povCard.info.profileControlEnabled && povCard.info.profileControlMode === modelData ? theme.selection : "transparent"
-                                Text { anchors.centerIn: parent; text: modelData.toUpperCase(); color: povCard.info.profileControlEnabled ? theme.text : theme.textFaint; font.pixelSize: 8; font.bold: true }
-                                MouseArea { anchors.fill: parent; enabled: povCard.info.profileControlEnabled
-                                    onClicked: backend.setPovProfileTrigger(povCard.info.hat, povCard.info.direction, povCard.info.profileControlTargetId, modelData) }
-                            }
-                        }
-                    }
-                }
-            }
-            Text { visible: povCard.info.profileControlEnabled
-                text: povCard.info.profileControlActive ? "● PROFILE CONTROL ACTIVE · " + povCard.info.profileControlMode.toUpperCase() : "Profile control consumes this direction route."
-                color: povCard.info.profileControlActive ? theme.ready : theme.textFaint; font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: povCard.info.profileControlActive }
         }
     }
 
@@ -1540,20 +1420,20 @@ Page {
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightNumericStepper { id: outputMinimum; from: -100; to: 99
+                                    Text { text: processingPanel.info.unipolar ? "OUTPUT MIN" : "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    FlightNumericStepper { id: outputMinimum; from: processingPanel.info.unipolar ? 0 : -100; to: 99
                                         value: Number(processingPanel.info.outputMinimum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightNumericStepper { id: outputMaximum; from: -99; to: 100
+                                    FlightNumericStepper { id: outputMaximum; from: processingPanel.info.unipolar ? 1 : -99; to: 100
                                         value: Number(processingPanel.info.outputMaximum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
-                                Text { text: "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2
@@ -1605,6 +1485,9 @@ Page {
  subdued: true
  onTriggered: backend.resetButtonMappings() }
                 }
+                Text { visible: backend.legacyControlMigrationWarning.length > 0; width: parent.width
+                    text: backend.legacyControlMigrationWarning + " Configure a replacement in Automation."
+                    color: theme.warning; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 Panel { width: parent.width
  height: 62
                     RowLayout { anchors.fill: parent
@@ -1700,6 +1583,14 @@ Page {
                     width: parent.width
                     text: "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Do not touch the stick, twist, rudder, or paddles. Throttles and sliders do not need to be centered."
                     color: theme.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                Panel { visible: backend.calibrationSuccess; width: parent.width; height: calibrationSuccessContent.implicitHeight + 24
+                    color: theme.topGun ? "#202015" : "#16262a"; border.color: theme.topGun ? theme.orange : theme.ready
+                    Column { id: calibrationSuccessContent; anchors.fill: parent; anchors.margins: 12; spacing: 4
+                        Text { text: "CALIBRATION SUCCESSFUL"; color: theme.topGun ? theme.orangeBright : theme.ready; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                        Text { text: backend.calibrationStatus; color: theme.text; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                        Text { text: "You can start a new calibration whenever you are ready."; color: theme.textMuted; font.pixelSize: 10 }
+                    }
+                }
                 Text { text: "AXIS RANGE STATUS"
  color: theme.textMuted
  font.pixelSize: 10
@@ -1741,6 +1632,21 @@ Page {
  font.pixelSize: 13
  font.family: theme.telemetryFont }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+                Panel { width: parent.width; height: calibrationHistoryContent.implicitHeight + 24
+                    color: theme.topGun ? "#131b1d" : theme.panel; border.color: theme.border
+                    Column { id: calibrationHistoryContent; anchors.fill: parent; anchors.margins: 12; spacing: 8
+                        Text { text: "CALIBRATION HISTORY"; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 11; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                        Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for this and other saved controllers appear here."; color: theme.textMuted; font.pixelSize: 10 }
+                        Repeater { model: backend.calibrationHistory
+                            delegate: Rectangle { width: calibrationHistoryContent.width; height: 44; color: modelData.currentDevice ? (theme.topGun ? "#2a2419" : theme.panelRaised) : theme.control; border.color: modelData.currentDevice ? (theme.topGun ? theme.orange : theme.ready) : theme.border; radius: theme.topGun ? 1 : theme.controlRadius
+                                Column { anchors.left: parent.left; anchors.leftMargin: 9; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 18; spacing: 2
+                                    Text { text: modelData.name + (modelData.currentDevice ? "  ·  CURRENT DEVICE" : ""); color: theme.text; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; width: parent.width; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                    Text { text: modelData.when + "  ·  " + modelData.axes + " axes calibrated"; color: theme.textMuted; font.pixelSize: 9 }
                                 }
                             }
                         }
@@ -1883,7 +1789,7 @@ Page {
  color: "#aebcc0"
  font.pixelSize: 9
  font.bold: true }
-                                Text { text: "RAW       " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.raw)
+                                Text { text: "RAW       " + root.valuePercent(diagnosticAxisCard.info.raw)
  color: "#dfeaec"
  font.pixelSize: 12
  font.family: "Consolas" }
@@ -2078,17 +1984,21 @@ Page {
                                         background: Rectangle { radius: theme.controlRadius; color: parent.hovered ? theme.controlHover : "transparent"; border.color: parent.hovered ? theme.borderStrong : "transparent" }
                                         onClicked: profileActionMenu.open()
                                         Menu { id: profileActionMenu
-                                            background: Panel { color: theme.tooltip; border.color: theme.borderStrong }
-                                            MenuItem { text: "Rename"; enabled: !modelData.protected
-                                                onTriggered: { renameProfileDialog.profileId = modelData.id
-                                                    renameProfileDialog.profileName = modelData.name
-                                                    renameProfileDialog.open() } }
-                                            MenuItem { text: "Clone"; onTriggered: backend.cloneProfile(modelData.id) }
-                                            MenuSeparator { }
-                                            MenuItem { text: "Delete"; enabled: !modelData.protected && !modelData.active
-                                                onTriggered: { deleteProfileDialog.profileId = modelData.id
-                                                    deleteProfileDialog.profileName = modelData.name
-                                                    deleteProfileDialog.open() } }
+                                            y: parent.height + 4; x: parent.width - width; implicitWidth: 174; padding: 6
+                                            background: Rectangle { color: theme.topGun ? "#111b1e" : theme.panelRaised; border.color: theme.topGun ? theme.orange : theme.borderStrong; radius: theme.topGun ? 1 : theme.controlRadius }
+                                            MenuItem { id: renameProfileMenuItem; text: "Rename"; enabled: !modelData.protected; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: renameProfileMenuItem.text; color: !renameProfileMenuItem.enabled ? theme.textFaint : theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                                background: Rectangle { radius: theme.topGun ? 1 : 3; color: renameProfileMenuItem.pressed ? theme.selection : (renameProfileMenuItem.highlighted ? theme.controlHover : "transparent"); border.color: renameProfileMenuItem.highlighted && renameProfileMenuItem.enabled ? theme.borderStrong : "transparent" }
+                                                onTriggered: { renameProfileDialog.profileId = modelData.id; renameProfileDialog.profileName = modelData.name; renameProfileDialog.open() } }
+                                            MenuItem { id: cloneProfileMenuItem; text: "Clone"; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: cloneProfileMenuItem.text; color: theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                                background: Rectangle { radius: theme.topGun ? 1 : 3; color: cloneProfileMenuItem.pressed ? theme.selection : (cloneProfileMenuItem.highlighted ? theme.controlHover : "transparent"); border.color: cloneProfileMenuItem.highlighted ? theme.borderStrong : "transparent" }
+                                                onTriggered: backend.cloneProfile(modelData.id) }
+                                            MenuSeparator { topPadding: 5; bottomPadding: 5; contentItem: Rectangle { implicitHeight: 1; color: theme.divider } }
+                                            MenuItem { id: deleteProfileMenuItem; text: "Delete"; enabled: !modelData.protected && !modelData.active; implicitHeight: 34; leftPadding: 11; rightPadding: 11
+                                                contentItem: Text { text: deleteProfileMenuItem.text; color: !deleteProfileMenuItem.enabled ? theme.textFaint : theme.danger; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                                background: Rectangle { radius: theme.topGun ? 1 : 3; color: deleteProfileMenuItem.pressed ? Qt.rgba(theme.danger.r, theme.danger.g, theme.danger.b, 0.28) : (deleteProfileMenuItem.highlighted ? Qt.rgba(theme.danger.r, theme.danger.g, theme.danger.b, 0.16) : "transparent"); border.color: deleteProfileMenuItem.highlighted && deleteProfileMenuItem.enabled ? theme.danger : "transparent" }
+                                                onTriggered: { deleteProfileDialog.profileId = modelData.id; deleteProfileDialog.profileName = modelData.name; deleteProfileDialog.open() } }
                                         }
                                     }
                                 }
@@ -2506,7 +2416,8 @@ Page {
         onOpened: { renameProfileField.text = profileName; renameProfileField.forceActiveFocus(); renameProfileField.selectAll() }
         contentItem: Column { width: 338; spacing: 12
             Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-            TextField { id: renameProfileField; width: parent.width; color: "#e7f0f1"; selectByMouse: true }
+            TextField { id: renameProfileField; width: parent.width; color: theme.text; selectByMouse: true
+                background: Rectangle { radius: theme.topGun ? 1 : theme.controlRadius; color: theme.control; border.color: renameProfileField.activeFocus ? (theme.topGun ? theme.orange : theme.borderStrong) : theme.border } }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: renameProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: renameProfileDialog.close() }
@@ -2535,7 +2446,7 @@ Page {
                 CommandButton { id: deleteProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: deleteProfileDialog.close() }
                 Item { width: parent.width - deleteProfileCancelButton.width - deleteProfileButton.width - 16; height: 1 }
-                CommandButton { id: deleteProfileButton; label: "DELETE"; subdued: true
+                CommandButton { id: deleteProfileButton; label: "DELETE"; destructive: true
                     onTriggered: { if (backend.deleteProfile(deleteProfileDialog.profileId)) deleteProfileDialog.close() } }
             }
         }

@@ -478,6 +478,10 @@ Item {
                                         EditorCombo { visible: root.requirementKind(modelData) === 1; width: 168; model: root.buttonStates; currentIndex: root.buttonStateIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.buttonStateTypes[currentIndex]) }
                                         EditorSpin { visible: root.isMultiPress(modelData); width: 78; from: 2; to: 5; value: modelData.pressCount; onValueModified: root.updateCondition(index, "pressCount", value) }
                                         Text { visible: root.isMultiPress(modelData); text: "times"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                        EditorSpin { visible: root.isMultiPress(modelData); width: 92; from: 150; to: 1000; value: modelData.multiPressWindowMs; onValueModified: root.updateCondition(index, "multiPressWindowMs", value) }
+                                        Text { visible: root.isMultiPress(modelData); text: "ms window"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
+                                        EditorSpin { visible: root.isLongPress(modelData); width: 92; from: 200; to: 3000; value: modelData.longPressDurationMs; onValueModified: root.updateCondition(index, "longPressDurationMs", value) }
+                                        Text { visible: root.isLongPress(modelData); text: "ms hold"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
                                         EditorCombo { visible: root.requirementKind(modelData) === 2; width: 148; model: root.axisChoices; currentIndex: modelData.axis; onActivated: root.updateCondition(index, "axis", currentIndex) }
                                         EditorCombo { visible: root.requirementKind(modelData) === 2; width: 142; model: root.axisComparisons; currentIndex: root.axisComparisonIndex(modelData.type); onActivated: root.updateCondition(index, "type", root.axisComparisonTypes[currentIndex]) }
                                         EditorTextField { visible: root.requirementKind(modelData) === 2; width: 94; text: root.conditionPercent(modelData.minimum, modelData.axis); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateCondition(index, "minimum", root.conditionValue(text, modelData.axis)) }
@@ -536,38 +540,54 @@ Item {
                                     Text { text: (index + 1) + " · " + root.effectSummary(modelData); color: root.textColor; font.pixelSize: 11; font.bold: true; font.family: root.displayFont; Layout.fillWidth: true; elide: Text.ElideRight }
                                     ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeAction(index) }
                                 }
-                                Flow {
-                                    id: effectFlow
+                                ColumnLayout {
                                     Layout.fillWidth: true; spacing: 8
-                                    EditorCombo { width: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: root.setEffectType(index, currentIndex) }
-                                    Text { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1 || root.isTap(modelData); text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorSpin { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1 || root.isTap(modelData); width: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
-                                    EditorCombo { visible: Number(modelData.type) === 2 || Number(modelData.type) === 3; width: 180; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileChoiceId(currentIndex)) }
-                                    EditorCombo { visible: Number(modelData.type) >= 4 && Number(modelData.type) <= 7; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
-                                    Text { visible: Number(modelData.type) === 4; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 4; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 5; text: "by"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 5; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 6; text: "from"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 6; width: 94; text: root.percent(modelData.minimum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "minimum", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 6; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 6; width: 94; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "maximum", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 7; text: "to"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 7; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                    EditorCombo { visible: Number(modelData.type) === 8; width: 148; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
-                                    Text { visible: Number(modelData.type) === 8; text: "into"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorCombo { visible: Number(modelData.type) === 8; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
-                                    Text { visible: Number(modelData.type) === 9; text: "Make"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorCombo { visible: Number(modelData.type) === 9; width: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
-                                    Text { visible: Number(modelData.type) === 9; text: "follow"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorCombo { visible: Number(modelData.type) === 9; width: 148; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
-                                    EditorCombo { visible: Number(modelData.type) === 8 || Number(modelData.type) === 9; width: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
-                                    Text { visible: Number(modelData.type) === 8; text: "at"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 8; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 9; text: "gain"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 9; width: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
-                                    Text { visible: Number(modelData.type) === 9; text: "offset"; color: root.mutedColor; font.pixelSize: 10; height: 34; verticalAlignment: Text.AlignVCenter }
-                                    EditorTextField { visible: Number(modelData.type) === 9; width: 94; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "offset", Number(text.replace("%", "")) / 100) }
+                                    EditorCombo { Layout.preferredWidth: 220; model: root.effectTypes; currentIndex: Number(modelData.type) + 1; onActivated: root.setEffectType(index, currentIndex) }
+                                    RowLayout { visible: Number(modelData.type) === 0 || Number(modelData.type) === 1; Layout.fillWidth: true
+                                        Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 2 || Number(modelData.type) === 3; Layout.fillWidth: true
+                                        Text { text: "Profile"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 220; model: root.profileChoicesWithPlaceholder(); textRole: "label"; currentIndex: root.profileChoiceIndex(modelData.profileId); onActivated: root.updateAction(index, "profileId", root.profileChoiceId(currentIndex)) }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 4 || Number(modelData.type) === 5 || Number(modelData.type) === 7; Layout.fillWidth: true
+                                        Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        Text { text: Number(modelData.type) === 5 ? "by" : "to"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 6; Layout.fillWidth: true
+                                        Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 148; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        Text { text: "minimum"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.minimum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "minimum", Number(text.replace("%", "")) / 100) }
+                                        Text { text: "maximum"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.maximum); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "maximum", Number(text.replace("%", "")) / 100) }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 8; Layout.fillWidth: true
+                                        Text { text: "Source"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
+                                        Text { text: "Target"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        EditorTextField { Layout.preferredWidth: 94; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 9; Layout.fillWidth: true
+                                        Text { text: "Target"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: root.updateAction(index, "targetAxis", currentIndex) }
+                                        Text { text: "follows"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 132; model: root.axisChoices; currentIndex: modelData.sourceAxis; onActivated: root.updateAction(index, "sourceAxis", currentIndex) }
+                                        EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: root.updateAction(index, "sourceStage", currentIndex) }
+                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "value", Number(text.replace("%", "")) / 100) }
+                                        EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: root.updateAction(index, "offset", Number(text.replace("%", "")) / 100) }
+                                    }
+                                    RowLayout { visible: root.isTap(modelData); Layout.fillWidth: true
+                                        Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 1; to: 128; value: modelData.virtualButton; onValueModified: root.updateAction(index, "virtualButton", value) }
+                                        Text { text: "Tap duration (ms)"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorSpin { Layout.preferredWidth: 92; from: 20; to: 500; value: modelData.tapDurationMs; onValueModified: root.updateAction(index, "tapDurationMs", value) }
+                                    }
                                 }
                             }
                         }

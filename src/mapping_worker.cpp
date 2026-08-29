@@ -1418,6 +1418,7 @@ void MappingWorker::run()
                 emit workerEvent(u"Mapping active"_qs);
             } else {
                 m_runtime.vjoyReady = false;
+                m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Suspended);
                 setVjoyStatus(status);
                 nextVjoyAcquire = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             }

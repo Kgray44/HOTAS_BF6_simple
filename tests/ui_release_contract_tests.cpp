@@ -22,6 +22,8 @@ private slots:
     void controllerSetupRetainsItsExplicitTargetAndSuccessfulRepairPersistsIt();
     void sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit();
     void controllerPresentationIsCachedAndTelemetryIsIsolated();
+    void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
+    void profileOverflowMenuUsesThemedControlContract();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -98,12 +100,70 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(snapshotEnd > snapshotStart);
     const QString snapshot = backend.mid(snapshotStart, snapshotEnd - snapshotStart);
     QCOMPARE(snapshot.count(QStringLiteral("emit stateChanged();")), 1);
-    QVERIFY(snapshot.contains(QStringLiteral("if (selectedAxisChanged || connectionChanged) emit stateChanged();")));
+    QVERIFY(snapshot.contains(QStringLiteral("const bool selectedAxisChanged = fallBackToAvailableAxis();")));
+    QVERIFY(snapshot.contains(QStringLiteral("if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();")));
     QVERIFY(snapshot.contains(QStringLiteral("emit telemetryChanged();")));
     QVERIFY(snapshot.contains(QStringLiteral("emit inputTelemetryChanged();")));
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
     QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
+}
+
+void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts()
+{
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString standard = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/LegacyCurveEditor.qml"));
+    QVERIFY(header.contains(QStringLiteral("curveAxisChoices READ curveAxisChoices NOTIFY stateChanged")));
+    QVERIFY(header.contains(QStringLiteral("curveEditorTelemetry READ curveEditorTelemetry NOTIFY inputTelemetryChanged")));
+    QVERIFY(backend.contains(QStringLiteral("QVariantMap AppBackend::curveEditorTelemetry() const")));
+    QVERIFY(backend.contains(QStringLiteral("return false;\n}")));
+    for (const QString &editor : {standard, legacy}) {
+        QVERIFY(editor.contains(QStringLiteral("backendObject ? backendObject.curveAxisChoices : []")));
+        QVERIFY(!editor.contains(QStringLiteral("backendObject ? backendObject.axes : []")));
+        QVERIFY(editor.contains(QStringLiteral("function onInputTelemetryChanged()")));
+        QVERIFY(editor.contains(QStringLiteral("editor.liveTelemetry = backendObject.curveEditorTelemetry")));
+        QVERIFY(editor.contains(QStringLiteral("showEffective = checked; graph.requestPaint()")));
+        QVERIFY(editor.contains(QStringLiteral("responseView = !checked; graph.requestPaint()")));
+        QVERIFY(editor.contains(QStringLiteral("DASHED · LINEAR REFERENCE")));
+        QVERIFY(editor.contains(QStringLiteral("trace(ctx, identity")));
+        QVERIFY(editor.contains(QStringLiteral("\"output\", true)")));
+        QVERIFY(editor.contains(QStringLiteral("trace(ctx, effective")));
+        QVERIFY(editor.contains(QStringLiteral("\"output\", false)")));
+    }
+}
+
+void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
+{
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    for (const QString &page : {standard, legacy}) {
+        const qsizetype menuStart = page.indexOf(QStringLiteral("Menu { id: profileActionMenu"));
+        QVERIFY(menuStart >= 0);
+        const qsizetype menuEnd = page.indexOf(QStringLiteral("Dialog {"), menuStart);
+        QVERIFY(menuEnd > menuStart);
+        const QString menu = page.mid(menuStart, menuEnd - menuStart);
+        QVERIFY(menu.contains(QStringLiteral("y: parent.height + 4")));
+        QVERIFY(menu.contains(QStringLiteral("x: parent.width - width")));
+        QVERIFY(menu.contains(QStringLiteral("implicitWidth: 174")));
+        QVERIFY(menu.contains(QStringLiteral("background: Rectangle")));
+        QVERIFY(menu.contains(QStringLiteral("renameProfileMenuItem")));
+        QVERIFY(menu.contains(QStringLiteral("cloneProfileMenuItem")));
+        QVERIFY(menu.contains(QStringLiteral("deleteProfileMenuItem")));
+        QVERIFY(menu.contains(QStringLiteral("MenuSeparator")));
+        QVERIFY(menu.contains(QStringLiteral("!deleteProfileMenuItem.enabled")));
+        QVERIFY(menu.contains(QStringLiteral("onTriggered: backend.cloneProfile(modelData.id)")));
+    }
+    QVERIFY(standard.contains(QStringLiteral("theme.topGun ? theme.orange : theme.borderStrong")));
+    QVERIFY(standard.contains(QStringLiteral("theme.danger")));
+    QVERIFY(legacy.contains(QStringLiteral("color: \"#182a30\"")));
+    QVERIFY(legacy.contains(QStringLiteral("color: \"#ca9090\"")));
+    for (const QString &page : {standard, legacy}) {
+        QVERIFY(page.contains(QStringLiteral("id: renameProfileDialog")));
+        QVERIFY(page.contains(QStringLiteral("id: deleteProfileDialog")));
+        QVERIFY(page.contains(QStringLiteral("id: renameProfileField")));
+    }
 }
 
 QTEST_MAIN(UiReleaseContractTests)

@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.7**
+**Current release: v2.0.8**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.8 — Runtime and Workflow Reliability Hotfix
+
+Makes One-Sided axes a real 0–100% runtime transfer, restores selected-axis live Curve Editor telemetry, and closes focused Profiles, calibration, vJoy-capacity, and Automation workflow reliability gaps without expanding the DirectInput-to-vJoy report path.
+
+- Moves the old bipolar midpoint to the One-Sided origin, clamps below-origin travel to zero, applies a low-end unipolar deadzone, and preserves 0↔100% inversion through curves and limits.
+- Keeps Axes and Curve Editor on the same centered or one-sided domain, including presets, custom points, live markers, effective response, and safe per-domain custom-curve retention.
+- Restores Curve Editor selected-axis stability and lightweight live telemetry repainting without rebuilding the axis selector or recompiling curves for physical movement.
+- Uses a themed Profiles overflow menu and related profile dialogs in Legacy, Standard, and Top Gun, with explicit disabled and destructive states.
+- Records bounded calibration success history, derives vJoy requirements from the complete configuration, and migrates legacy direct controls into explicit Automation rules with a visible overflow warning.
 
 ## v2.0.7 — Published Manifest Transport Hotfix
 

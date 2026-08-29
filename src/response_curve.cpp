@@ -515,8 +515,11 @@ float evaluateCurveDefinition(float domainInput, const CurveDefinition &definiti
         if (!preset) return input;
         const float fullResponse = !unipolar
             ? evaluateMonotonePoints(input, preset->centeredPoints, CurveInterpolation::Smooth)
-            : (evaluateMonotonePoints(input * 2.0F - 1.0F, preset->centeredPoints,
-                                      CurveInterpolation::Smooth) + 1.0F) * 0.5F;
+            // A unipolar response begins at the old centered origin and uses
+            // the positive half of the authored response. Never compress the
+            // old -1..1 transfer into 0..1 and invent a false mid-point.
+            : evaluateMonotonePoints(input, preset->centeredPoints,
+                                     CurveInterpolation::Smooth);
         return blendFromLinear(input, fullResponse, definition.strength);
     }
     if (definition.pointEditing || definition.family == CurveFamily::Custom
@@ -555,6 +558,52 @@ CurveDefinition materializeCurveDefinition(const CurveDefinition &definition, bo
     }
     normalizeCurveDefinition(editable, unipolar);
     return editable;
+}
+
+CurveDefinition convertCurveDefinitionDomain(const CurveDefinition &definition,
+                                             bool sourceUnipolar, bool targetUnipolar)
+{
+    CurveDefinition converted = definition;
+    if (sourceUnipolar == targetUnipolar) {
+        normalizeCurveDefinition(converted, targetUnipolar);
+        return converted;
+    }
+
+    const bool hasExplicitPoints = definition.pointEditing || definition.family == CurveFamily::Custom
+        || (definition.family == CurveFamily::Personal && !definition.points.empty());
+    if (!hasExplicitPoints) {
+        // J/S/Advanced are domain-neutral parameters. Their evaluators select
+        // the correct semantic domain without mutating user configuration.
+        normalizeCurveDefinition(converted, targetUnipolar);
+        return converted;
+    }
+
+    const int density = supportedCurvePointDensity(definition.pointDensity)
+        ? definition.pointDensity : 9;
+    converted.symmetry = !targetUnipolar;
+    converted.pointEditing = definition.pointEditing;
+    converted.points.clear();
+    converted.points.reserve(static_cast<size_t>(density));
+    for (int index = 0; index < density; ++index) {
+        const float targetInput = (targetUnipolar ? 0.0F : -1.0F)
+            + (targetUnipolar ? 1.0F : 2.0F) * static_cast<float>(index)
+                / static_cast<float>(density - 1);
+        float targetOutput = targetInput;
+        if (targetUnipolar) {
+            // Centered -> one-sided: take the former positive half beginning
+            // exactly at the old 0 origin.
+            targetOutput = evaluateCurveDefinition(targetInput, definition, false);
+        } else {
+            // The reverse fallback mirrors a meaningful unipolar response so
+            // a switch remains valid even before an alternate backup exists.
+            const float magnitude = evaluateCurveDefinition(std::abs(targetInput), definition, true);
+            targetOutput = std::copysign(magnitude, targetInput);
+        }
+        converted.points.push_back({targetInput, targetOutput,
+                                    index == 0 || index == density - 1});
+    }
+    normalizeCurveDefinition(converted, targetUnipolar);
+    return converted;
 }
 
 bool updateCurvePoint(CurveDefinition &definition, bool unipolar, int index,
