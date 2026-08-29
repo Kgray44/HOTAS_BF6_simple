@@ -19,6 +19,7 @@ private slots:
     void headerIsTheOnlyPrimaryMappingControl();
     void trayAndThemeRefreshRemainOnTheUiSide();
     void newDeviceSetupExplicitlyAcquiresThenVerifies();
+    void publishedUpdaterWaitsForManifestConvergence();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -50,6 +51,16 @@ void UiReleaseContractTests::newDeviceSetupExplicitlyAcquiresThenVerifies()
     QVERIFY(backend.contains(QStringLiteral("m_worker.selectPhysicalController(directInputId)")));
     QVERIFY(backend.contains(QStringLiteral("verifyHotasSetup();")));
     QVERIFY(backend.contains(QStringLiteral("New controller detected:")));
+}
+
+void UiReleaseContractTests::publishedUpdaterWaitsForManifestConvergence()
+{
+    const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
+    QVERIFY(updater.contains(QStringLiteral("function Get-LatestPublishedVersion")));
+    QVERIFY(updater.contains(QStringLiteral("The public latest manifest did not converge")));
+    QVERIFY(updater.contains(QStringLiteral("Last installed version:")));
+    QVERIFY(updater.contains(QStringLiteral("Retry count:")));
+    QVERIFY(updater.contains(QStringLiteral("Stop-TargetMapper $mapperPath")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)

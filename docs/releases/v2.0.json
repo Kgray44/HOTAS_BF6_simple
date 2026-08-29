@@ -52,10 +52,10 @@
     "releaseTitle": "v2.0.2",
     "title": "Dashboard & UX Polish",
     "summary": "v2.0.2 gives the Universal Controller Update the interface it deserves, with a redesigned Overview dashboard, standardized Settings experience, polished theme-aware tray controls, and a permanent global mapping control. It also completes per-controller vJoy requirement enforcement during device switching and hardens new-device verification when multiple controllers are connected.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.3",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Dashboard and controller-management polish; upgrade to v2.0.3 for hardened published-updater verification.",
     "highlights": [
       "Replaces the card-stack Overview with a signal-flow dashboard for physical input, HOTAS BF6 processing, vJoy output, health, capability, and smoothed performance state.",
       "Places the theme-aware mapping state and Start or Stop action permanently in the main header and removes the Axis-page duplicate.",
@@ -63,6 +63,23 @@
       "Applies Legacy, Standard, and Top Gun visual tokens to the existing reliable Qt tray menu.",
       "Validates saved target vJoy requirements during controller switching, preserves adequate existing output supersets, and blocks mapping restoration until valid output is available.",
       "Explicitly acquires and verifies a selected new controller regardless of another controller's connection state."
+    ]
+  },
+  {
+    "version": "2.0.3",
+    "tag": "v2.0.3",
+    "releaseTitle": "v2.0.3",
+    "title": "Updater Verification Hotfix",
+    "summary": "v2.0.3 carries forward the v2.0.2 dashboard, settings, tray, and controller-management release while hardening the published v1.9.3 updater acceptance path against manifest convergence races and making any future update-start failure directly diagnosable.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Waits for the public latest update manifest to identify the expected release before launching the unmodified v1.9.3 updater.",
+      "Retries the normal updater chain only after observing an intermediate installed version in the isolated test installation.",
+      "Emits the final installed version and recent updater log when the expected mapper process does not remain alive.",
+      "Preserves the DirectInput-to-vJoy mapper hot path and all v2.0.2 user-facing behavior."
     ]
   }
 ]

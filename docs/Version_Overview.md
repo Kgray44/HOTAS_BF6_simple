@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.2**
+**Current release: v2.0.3**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.3 — Updater Verification Hotfix
+
+Hardens published legacy-updater acceptance against release-manifest convergence while retaining the v2.0.2 dashboard, settings, tray, and controller-management experience.
+
+- Waits for the public latest update manifest to identify the release under test before exercising the unchanged v1.9.3 launcher.
+- Retries only an explicitly observed intermediate updater version inside the isolated CI installation, preserving the real public update path.
+- Reports the final installed version and updater log when the published updater cannot leave the expected mapper process alive.
+- Keeps the DirectInput-to-vJoy mapper hot path unchanged.
 
 ## v2.0.2 — Dashboard & UX Polish
 

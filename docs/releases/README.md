@@ -6,10 +6,11 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.0.2 | Current | Dashboard & UX Polish; recommended published release |
-| v2.0.1 | Superseded | Startup & Upgrade Hotfix; upgrade to v2.0.2 for dashboard, settings, tray, and controller-switching polish |
+| v2.0.3 | Current | Updater Verification Hotfix; recommended published release |
+| v2.0.2 | Superseded | Dashboard & UX Polish; upgrade to v2.0.3 for hardened published-updater verification |
+| v2.0.1 | Superseded | Startup & Upgrade Hotfix; upgrade to v2.0.3 for dashboard, settings, tray, controller-switching, and updater-verification polish |
 | v2.0.0 | **Deprecated** | **Do not install or use; launch-blocking startup defect; upgrade to v2.0.1+** |
-| v1.9.3 | Superseded | Upgrade to v2.0.2 for universal controller management and persistent device memory |
+| v1.9.3 | Superseded | Upgrade to v2.0.3 for universal controller management and persistent device memory |
 | v1.9.2 | **Deprecated** | **Do not use for new setup; upgrade to v2.0.0+** |
 | v1.9.1 | **Deprecated** | **Do not use Automatic Repair; upgrade to v2.0.0+** |
 | v1.9.0 | **Deprecated** | **Do not use; upgrade to v2.0.0+** |

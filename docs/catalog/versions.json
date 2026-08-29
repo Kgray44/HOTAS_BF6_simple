@@ -289,5 +289,16 @@
       "Enforces each verified controller's saved vJoy capability contract during active-device switching, reusing sufficient supersets and validating reconfiguration before mapping can resume.",
       "Makes Set Up explicitly acquire and verify the selected new controller even when another physical controller remains connected."
     ]
+  },
+  {
+    "version": "2.0.3",
+    "title": "Updater Verification Hotfix",
+    "summary": "Hardens published legacy-updater acceptance against release-manifest convergence while retaining the v2.0.2 dashboard, settings, tray, and controller-management experience.",
+    "highlights": [
+      "Waits for the public latest update manifest to identify the release under test before exercising the unchanged v1.9.3 launcher.",
+      "Retries only an explicitly observed intermediate updater version inside the isolated CI installation, preserving the real public update path.",
+      "Reports the final installed version and updater log when the published updater cannot leave the expected mapper process alive.",
+      "Keeps the DirectInput-to-vJoy mapper hot path unchanged."
+    ]
   }
 ]
