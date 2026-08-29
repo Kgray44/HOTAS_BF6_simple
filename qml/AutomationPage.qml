@@ -340,7 +340,7 @@ Item {
                 visible: root.rules.length === 0; width: parent.width; implicitHeight: 180
                 Column { anchors.centerIn: parent; width: Math.min(parent.width - 48, 560); spacing: 8
                     Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO AUTOMATIONS"; color: root.textColor; font.pixelSize: 17; font.bold: true; font.family: root.displayFont }
-                    Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: "Automation rules modify HOTAS behavior from supported buttons, axes, POV states, and profiles. New rules begin disabled until you save a valid configuration."; color: root.mutedColor; font.pixelSize: 11 }
+                    Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: "Automation rules modify controller behavior from supported buttons, axes, POV states, and profiles. New rules begin disabled until you save a valid configuration."; color: root.mutedColor; font.pixelSize: 11 }
                     ActionButton { anchors.horizontalCenter: parent.horizontalCenter; label: "+ CREATE AUTOMATION"; onTriggered: root.newAutomation() }
                 }
             }
@@ -520,7 +520,7 @@ Item {
                     anchors.fill: parent; anchors.margins: 14; spacing: 12
                     ColumnLayout { Layout.fillWidth: true; spacing: 2
                         Text { text: "WHAT SHOULD IT DO?"; color: root.accentColor; font.pixelSize: 15; font.bold: true; font.family: root.displayFont }
-                        Text { text: "Choose the HOTAS behavior to apply whenever this automation matches."; color: root.mutedColor; font.pixelSize: 10 }
+                        Text { text: "Choose the controller behavior to apply whenever this automation matches."; color: root.mutedColor; font.pixelSize: 10 }
                     }
                     Text { visible: (root.draft.actions || []).length === 0; text: "Nothing selected yet."; color: root.warningColor; font.pixelSize: 11 }
                     Repeater {

@@ -49,11 +49,11 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
-                Text { text: root.topGun ? "HOTAS SYSTEM CHECK" : "HOTAS SETUP & VERIFICATION"
+                Text { text: root.topGun ? "CONTROLLER SYSTEM CHECK" : "CONTROLLER SETUP & VERIFICATION"
                     color: root.textColor; font.pixelSize: 17; font.bold: true
                     font.family: root.topGun ? root.themeTokens.displayFont : undefined }
                 Text { text: root.topGun ? "PHYSICAL INPUT · VJOY OUTPUT · HIDHIDE ISOLATION"
-                                         : "Verify your physical HOTAS, vJoy, and HidHide configuration."
+                                         : "Verify your selected controller, vJoy, and HidHide configuration."
                     color: root.mutedColor; font.pixelSize: 10 }
             }
             Text { text: root.backendObject ? root.backendObject.controllerReadinessState : "NOT CHECKED"
@@ -271,12 +271,12 @@ Item {
             anchors.fill: parent
             anchors.margins: 18
             spacing: 12
-            Text { Layout.fillWidth: true; text: root.topGun ? "AUTOMATED CONFIGURATION REPAIR" : "AUTOMATIC HOTAS REPAIR"
+            Text { Layout.fillWidth: true; text: root.topGun ? "AUTOMATED CONFIGURATION REPAIR" : "AUTOMATIC CONTROLLER REPAIR"
                 color: root.textColor; font.pixelSize: 16; font.bold: true
                 font.family: root.topGun ? root.themeTokens.displayFont : undefined }
             Text { Layout.fillWidth: true; text: "Detected issue"; color: root.warningColor; font.pixelSize: 10; font.bold: true
                 font.family: root.topGun ? root.themeTokens.telemetryFont : undefined }
-            Text { Layout.fillWidth: true; text: root.backendObject ? root.backendObject.controllerReadinessStatus : "A repairable HOTAS configuration issue was detected."
+            Text { Layout.fillWidth: true; text: root.backendObject ? root.backendObject.controllerReadinessStatus : "A repairable controller configuration issue was detected."
                 wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11 }
             Rectangle {
                 Layout.fillWidth: true
@@ -318,7 +318,7 @@ Item {
         id: undoDialog
         parent: Overlay.overlay
         modal: true
-        title: "Undo automatic HOTAS repair?"
+        title: "Undo automatic controller repair?"
         standardButtons: Dialog.Cancel
         width: Math.min(540, root.width)
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: root.radius }

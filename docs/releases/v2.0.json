@@ -52,10 +52,10 @@
     "releaseTitle": "v2.0.2",
     "title": "Dashboard & UX Polish",
     "summary": "v2.0.2 gives the Universal Controller Update the interface it deserves, with a redesigned Overview dashboard, standardized Settings experience, polished theme-aware tray controls, and a permanent global mapping control. It also completes per-controller vJoy requirement enforcement during device switching and hardens new-device verification when multiple controllers are connected.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.3",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Dashboard and UX polish release; upgrade to v2.0.3 for multi-controller setup and vJoy reliability fixes.",
     "highlights": [
       "Replaces the card-stack Overview with a signal-flow dashboard for physical input, HOTAS BF6 processing, vJoy output, health, capability, and smoothed performance state.",
       "Places the theme-aware mapping state and Start or Stop action permanently in the main header and removes the Axis-page duplicate.",
@@ -63,6 +63,26 @@
       "Applies Legacy, Standard, and Top Gun visual tokens to the existing reliable Qt tray menu.",
       "Validates saved target vJoy requirements during controller switching, preserves adequate existing output supersets, and blocks mapping restoration until valid output is available.",
       "Explicitly acquires and verifies a selected new controller regardless of another controller's connection state."
+    ]
+  },
+  {
+    "version": "2.0.3",
+    "tag": "v2.0.3",
+    "releaseTitle": "v2.0.3",
+    "title": "Multi-Controller Setup & vJoy Reliability Hotfix",
+    "summary": "HOTAS BF6 v2.0.3 hardens the Universal Controller workflow using real multi-controller hardware testing. It fixes incorrect setup targeting when a new controller is connected, completes NEW-to-VERIFIED persistence after automatic repair, ensures vJoy capacity is actually sufficient for each verified controller, makes disconnected devices visually unmistakable, cleans generic controller terminology, and fixes remaining Settings layout and styling regressions.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Removes the mapper-ownership shortcut that treated a BUSY vJoy device with successful reports as sufficient without validating axes, buttons, and POV capacity.",
+      "Configures and reinspects the actual selected vJoy device before setup can become Ready, including the safe first-time physical button-capacity floor and saved controller-specific requirements.",
+      "Carries explicit DirectInput controller identity from new-device discovery into a themed setup selector, so a newly connected controller never opens verification for an already active controller.",
+      "Completes post-repair validation by immediately saving or updating the selected controller, clearing NEW and preserving VERIFIED after the setup popup closes.",
+      "Distinguishes active connected, selected offline, verified, new, and offline saved controllers; adds an intentional zero-connected state and clear automatic-switch feedback.",
+      "Repairs compact Settings-row text layout, fully themes the vJoy +/- selector and theme menu controls, and uses Controller or Device terminology for generic physical inputs.",
+      "Keeps Universal Controller discovery, registry persistence, readiness inspection, verification, driver transactions, UI rendering, and all new state handling outside the DirectInput-to-vJoy report loop."
     ]
   }
 ]

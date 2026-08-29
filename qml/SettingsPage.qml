@@ -24,6 +24,14 @@ Flickable {
     readonly property color accentColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 980
 
+    function connectedControllerCount() {
+        var count = 0
+        for (var index = 0; index < backend.controllers.length; ++index) {
+            if (backend.controllers[index].connected) ++count
+        }
+        return count
+    }
+
     component SectionLabel: RowLayout {
         property string label: "SECTION"
         Layout.fillWidth: true; spacing: 8
@@ -68,16 +76,17 @@ Flickable {
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: parent.toggled(!parent.checked) }
     }
     component SettingRow: Rectangle {
-        default property alias content: row.data
+        default property alias content: controls.data
         property string title: "SETTING"
         property string detail: ""
         implicitHeight: Math.max(58, row.implicitHeight + 20)
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
-        RowLayout { id: row; anchors.fill: parent; anchors.margins: 10; spacing: 14
-            ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { text: parent.parent.title; color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
-                Text { visible: parent.parent.detail.length > 0; text: parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        GridLayout { id: row; anchors.fill: parent; anchors.margins: 10; columns: root.narrow ? 1 : 2; columnSpacing: 14; rowSpacing: 8
+            ColumnLayout { Layout.fillWidth: true; Layout.minimumWidth: root.narrow ? 0 : 180; spacing: 2
+                Text { Layout.fillWidth: true; Layout.minimumWidth: 120; text: parent.parent.parent.title; color: root.textColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                Text { Layout.fillWidth: true; visible: parent.parent.parent.detail.length > 0; text: parent.parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
             }
+            RowLayout { id: controls; Layout.alignment: root.narrow ? Qt.AlignLeft : Qt.AlignRight; Layout.fillWidth: root.narrow; spacing: 7 }
         }
     }
     component StatusPill: Rectangle {
@@ -97,7 +106,7 @@ Flickable {
         }
 
         SectionLabel { label: "CONTROLLERS" }
-        Card { Layout.fillWidth: true; title: theme.topGun ? "HOTAS SYSTEM CHECK" : "HOTAS Setup & Verification"; detail: backend.controllerReadinessStatus; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
+        Card { Layout.fillWidth: true; title: theme.topGun ? "CONTROLLER SYSTEM CHECK" : "Controller Setup & Verification"; detail: backend.controllerReadinessStatus; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 StatusPill { label: backend.controllerReadinessState; tone: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor }
                 Item { Layout.fillWidth: true }
@@ -110,14 +119,25 @@ Flickable {
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshControllers() }
             }
+            Rectangle { visible: backend.controllers.length > 0 && root.connectedControllerCount() === 0; Layout.fillWidth: true; implicitHeight: offlineNotice.implicitHeight + 20
+                color: Qt.rgba(root.warningColor.r, root.warningColor.g, root.warningColor.b, 0.10); border.color: root.warningColor; radius: theme.topGun ? 1 : theme.controlRadius
+                ColumnLayout { id: offlineNotice; anchors.fill: parent; anchors.margins: 10; spacing: 2
+                    Text { text: "NO CONTROLLERS CONNECTED"; color: root.warningColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                    Text { Layout.fillWidth: true; text: backend.controllers.length + " verified controllers are remembered. Connect one to resume mapping."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                }
+            }
             Repeater { model: backend.controllers
                 delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 60; radius: theme.topGun ? 1 : theme.controlRadius
-                    color: modelData.active ? theme.selectionCurrent : root.insetColor; border.color: modelData.active ? root.accentColor : root.borderColor
+                    color: !modelData.connected ? root.panelColor : modelData.active ? theme.selectionCurrent : root.insetColor
+                    border.color: !modelData.connected ? root.mutedColor : modelData.active ? root.accentColor : root.borderColor
+                    opacity: modelData.connected ? 1.0 : 0.62
                     RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 9
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true; spacing: 5
                                 Text { text: modelData.name; color: root.textColor; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                 StatusPill { visible: modelData.active; label: "ACTIVE"; tone: root.accentColor }
+                                StatusPill { visible: !modelData.connected; label: "OFFLINE"; tone: root.mutedColor }
+                                StatusPill { visible: modelData.selected && !modelData.active; label: "SELECTED"; tone: root.warningColor }
                                 StatusPill { visible: modelData.verified; label: "VERIFIED"; tone: root.readyColor }
                                 StatusPill { visible: !modelData.verified; label: "NEW"; tone: root.warningColor }
                             }
@@ -162,9 +182,19 @@ Flickable {
                     }
                     Text { text: backend.virtualAxisStatus + "  ·  " + backend.vjoyButtonCount + " buttons  ·  " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                SpinBox { from: 1; to: 16; value: backend.vjoyDeviceId; onValueModified: backend.setVjoyDeviceId(value)
+                SpinBox { id: vjoyDeviceSelector; from: 1; to: 16; value: backend.vjoyDeviceId; implicitWidth: 84; implicitHeight: 32; onValueModified: backend.setVjoyDeviceId(value)
                     background: Rectangle { color: root.insetColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
-                    contentItem: TextInput { text: parent.textFromValue(parent.value, parent.locale); readOnly: true; color: root.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.family: theme.telemetryFont }
+                    contentItem: TextInput { text: vjoyDeviceSelector.textFromValue(vjoyDeviceSelector.value, vjoyDeviceSelector.locale); readOnly: true; color: root.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 6; rightPadding: 27; font.family: theme.telemetryFont }
+                    up.indicator: Rectangle { x: vjoyDeviceSelector.mirrored ? 0 : parent.width - width; y: 0; width: 26; height: parent.height / 2; radius: theme.topGun ? 1 : theme.controlRadius
+                        color: !vjoyDeviceSelector.enabled ? theme.controlDisabled : vjoyDeviceSelector.up.pressed ? root.accentColor : vjoyDeviceSelector.up.hovered ? theme.buttonSecondaryHover : theme.buttonSecondary
+                        border.color: root.borderColor
+                        Text { anchors.centerIn: parent; text: "+"; color: root.textColor; font.pixelSize: 13; font.bold: true }
+                    }
+                    down.indicator: Rectangle { x: vjoyDeviceSelector.mirrored ? 0 : parent.width - width; y: parent.height / 2; width: 26; height: parent.height - y; radius: theme.topGun ? 1 : theme.controlRadius
+                        color: !vjoyDeviceSelector.enabled ? theme.controlDisabled : vjoyDeviceSelector.down.pressed ? root.accentColor : vjoyDeviceSelector.down.hovered ? theme.buttonSecondaryHover : theme.buttonSecondary
+                        border.color: root.borderColor
+                        Text { anchors.centerIn: parent; text: "−"; color: root.textColor; font.pixelSize: 13; font.bold: true }
+                    }
                 }
                 ActionButton { label: "CONFIGURE VJOY"; subdued: true; onTriggered: backend.openVjoyConfiguration() }
             }
@@ -179,6 +209,15 @@ Flickable {
                 ComboBox { id: appearance; implicitWidth: 138; model: themeManager.themeChoices; currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme)); onActivated: themeManager.setCurrentTheme(currentText)
                     contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    indicator: Text { x: appearance.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 12; font.bold: true }
+                    delegate: ItemDelegate { id: appearanceDelegate; width: appearance.width; highlighted: appearance.highlightedIndex === index
+                        contentItem: Text { text: modelData; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
+                        background: Rectangle { color: appearanceDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
+                    }
+                    popup: Popup { y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
+                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: appearance.popup.visible ? appearance.delegateModel : null; currentIndex: appearance.highlightedIndex }
+                        background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    }
                 }
             }
         }
@@ -226,8 +265,65 @@ Flickable {
         background: Rectangle { color: root.panelColor; border.color: root.accentColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: theme; legacy: root.legacy; onCloseRequested: readinessDialog.close() }
     }
+    Dialog { id: detectedControllerDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(560, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18
+        property var targetDirectInputIds: []
+        property string selectedDirectInputId: ""
+        function isSetupTarget(controller) {
+            return targetDirectInputIds.indexOf(controller.directInputId) >= 0
+        }
+        function selectedController() {
+            for (var index = 0; index < backend.controllers.length; ++index) {
+                if (backend.controllers[index].directInputId === selectedDirectInputId) return backend.controllers[index]
+            }
+            return null
+        }
+        function selectFirstTarget() {
+            for (var index = 0; index < backend.controllers.length; ++index) {
+                if (isSetupTarget(backend.controllers[index])) {
+                    selectedDirectInputId = backend.controllers[index].directInputId
+                    return
+                }
+            }
+            selectedDirectInputId = ""
+        }
+        onOpened: selectFirstTarget()
+        background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
+        contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
+            Text { Layout.fillWidth: true; text: theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"; color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Select the controller to set up. Existing active input remains unchanged." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Repeater { model: backend.controllers
+                delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
+                    color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? theme.selectionCurrent : root.insetColor; border.color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? root.accentColor : root.borderColor
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: detectedControllerDialog.selectedDirectInputId = modelData.directInputId }
+                    RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Text { Layout.fillWidth: true; text: modelData.name; color: root.textColor; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: modelData.connected ? "CONNECTED  ·  " + modelData.axisCount + " AXES  ·  " + modelData.buttonCount + " BUTTONS  ·  " + modelData.povCount + " POV" : "OFFLINE"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight }
+                        }
+                        StatusPill { label: modelData.ambiguous ? "SELECT" : modelData.verified ? "NEEDS SETUP" : "NEW"; tone: modelData.ambiguous ? root.warningColor : modelData.verified ? root.warningColor : root.warningColor }
+                    }
+                }
+            }
+            Rectangle { visible: backend.activeControllerRecordId.length > 0; Layout.fillWidth: true; implicitHeight: activeSummary.implicitHeight + 18; color: root.insetColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
+                Text { id: activeSummary; anchors.fill: parent; anchors.margins: 9; text: "Current active controller remains selected while this controller is set up."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            }
+            RowLayout { Layout.fillWidth: true; spacing: 8
+                Item { Layout.fillWidth: true }
+                ActionButton { label: "NOT NOW"; subdued: true; onTriggered: detectedControllerDialog.close() }
+                ActionButton { label: detectedControllerDialog.selectedController() ? "SET UP " + detectedControllerDialog.selectedController().name.toUpperCase() : "SET UP CONTROLLER"; actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
+                    onTriggered: { if (backend.selectNewController(detectedControllerDialog.selectedDirectInputId)) { detectedControllerDialog.close(); readinessDialog.open() } } }
+            }
+        }
+    }
+    Connections { target: backend
+        function onControllerSetupRequested(targetDirectInputIds) {
+            detectedControllerDialog.targetDirectInputIds = targetDirectInputIds
+            detectedControllerDialog.selectFirstTarget()
+            if (!detectedControllerDialog.opened) detectedControllerDialog.open()
+        }
+    }
     Dialog { id: actionDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; property string action: ""; title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget saved controllers?" : "Reset active-controller calibration?"; standardButtons: Dialog.NoButton; padding: 18
-        background: Rectangle { color: root.panelColor; border.color: action === "uninstall" ? root.dangerColor : root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
+        background: Rectangle { color: root.panelColor; border.color: actionDialog.action === "uninstall" ? root.dangerColor : root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: 400; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11; text: actionDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, automation, and saved data remain by default." : actionDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles, curves, automation, and other settings stay intact." : "This removes calibration only for the active controller. Profiles, curves, and mappings stay intact." }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }

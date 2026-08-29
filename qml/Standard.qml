@@ -397,7 +397,7 @@ Page {
             }
             Text {
                 Layout.fillWidth: true
-                text: "The mapper is idle. Connect the HOTAS whenever you are ready and its live controls will appear here automatically."
+                text: "The mapper is idle. Connect a controller whenever you are ready and its live controls will appear here automatically."
                 color: "#9fa9ad"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -2135,12 +2135,12 @@ Page {
                     border.color: theme.topGun ? theme.borderStrong : theme.border
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "HOTAS SETUP & VERIFICATION"; color: theme.topGun ? theme.ivory : theme.text; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                            Text { text: "Verify your physical HOTAS, vJoy, and HidHide configuration."
+                            Text { text: "CONTROLLER SETUP & VERIFICATION"; color: theme.topGun ? theme.ivory : theme.text; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                            Text { text: "Verify your selected controller, vJoy, and HidHide configuration."
                                 color: theme.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             Text { text: backend.controllerReadinessStatus; color: backend.controllerReadinessState === "READY" ? theme.ready : backend.controllerReadinessState === "ACTION REQUIRED" ? theme.danger : theme.warning; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
                         }
-                        CommandButton { label: "VERIFY HOTAS SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
+                        CommandButton { label: "VERIFY CONTROLLER SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
                     }
                 }
                 Panel { width: parent.width; height: Math.max(138, 80 + controllerManagerRepeater.count * 64)
@@ -2427,13 +2427,6 @@ Page {
             }
         }
     }
-    Connections {
-        target: backend
-        function onControllerSetupRequested() {
-            if (!controllerSetupDialog.opened) controllerSetupDialog.open()
-        }
-    }
-
     Dialog {
         id: controllerSetupDialog
         parent: Overlay.overlay

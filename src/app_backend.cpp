@@ -339,7 +339,11 @@ AppBackend::~AppBackend()
         delete thread;
     }
     m_worker.requestStop();
-    m_worker.wait(1500);
+    // The mapper owns DirectInput and vJoy handles. Releasing the backend
+    // while its report thread is still unwinding destroys a live QThread and
+    // can abort application shutdown. Stop is observed at the next bounded
+    // poll boundary, so join before member destruction.
+    m_worker.wait();
 }
 
 QVariantList AppBackend::axes() const
@@ -867,16 +871,20 @@ QVariantList AppBackend::controllers() const
     for (const DiscoveredController &controller : m_discoveredControllers) {
         if (controller.virtualDevice) continue;
         const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+        const bool verified = !match.recordId.isEmpty() && !match.ambiguous;
+        const bool selected = verified && match.recordId == m_configuration.activeControllerRecordId;
+        const bool active = controller.connected && controller.directInputId == liveId;
         QVariantMap item{{u"id"_qs, match.recordId}, {u"directInputId"_qs, controller.directInputId},
                          {u"name"_qs, controller.name}, {u"connected"_qs, controller.connected},
-                         {u"verified"_qs, !match.recordId.isEmpty() && !match.ambiguous},
-                         {u"ambiguous"_qs, match.ambiguous}, {u"active"_qs, controller.directInputId == liveId},
+                         {u"verified"_qs, verified}, {u"selected"_qs, selected},
+                         {u"ambiguous"_qs, match.ambiguous}, {u"active"_qs, active},
                          {u"axisCount"_qs, controller.axisCount}, {u"buttonCount"_qs, controller.buttonCount},
                          {u"povCount"_qs, controller.povCount}};
         item.insert(u"state"_qs, match.ambiguous ? u"Connected · Selection required"_qs
             : match.recordId.isEmpty() ? u"Connected · New device"_qs
-            : controller.directInputId == liveId ? u"Connected · Verified · Active"_qs
-                                               : u"Connected · Verified"_qs);
+            : active ? u"Connected · Verified · Active"_qs
+            : selected ? u"Connected · Verified · Selected"_qs
+                       : u"Connected · Verified"_qs);
         represented.insert(match.recordId);
         result.append(item);
     }
@@ -884,9 +892,12 @@ QVariantList AppBackend::controllers() const
         if (represented.contains(record.id)) continue;
         result.append(QVariantMap{{u"id"_qs, record.id}, {u"directInputId"_qs, record.lastDirectInputId},
             {u"name"_qs, record.displayName}, {u"connected"_qs, false}, {u"verified"_qs, true},
-            {u"ambiguous"_qs, false}, {u"active"_qs, record.id == m_configuration.activeControllerRecordId},
+            {u"selected"_qs, record.id == m_configuration.activeControllerRecordId},
+            {u"ambiguous"_qs, false}, {u"active"_qs, false},
             {u"axisCount"_qs, record.axisCount}, {u"buttonCount"_qs, record.buttonCount},
-            {u"povCount"_qs, record.povCount}, {u"state"_qs, u"Offline · Verified"_qs}});
+            {u"povCount"_qs, record.povCount},
+            {u"state"_qs, record.id == m_configuration.activeControllerRecordId
+                ? u"Selected · Offline · Verified"_qs : u"Offline · Verified"_qs}});
     }
     return result;
 }
@@ -964,7 +975,7 @@ QVariantList AppBackend::controllerReadinessChecks() const
                                   {u"message"_qs, summary},
                                   {u"severity"_qs, severity}});
     };
-    append(u"PHYSICAL HOTAS"_qs, plan.physicalStatus, plan.physicalSummary);
+    append(u"PHYSICAL CONTROLLER"_qs, plan.physicalStatus, plan.physicalSummary);
     append(u"VJOY OUTPUT"_qs, plan.vjoyStatus, plan.vjoySummary);
     append(u"HIDHIDE ISOLATION"_qs, plan.hidhideStatus, plan.hidhideSummary);
     return checks;
@@ -1008,7 +1019,7 @@ QString AppBackend::controllerReadinessState() const
 QString AppBackend::controllerReadinessStatus() const
 {
     const QString status = m_readiness.plan().status;
-    return status.isEmpty() ? QStringLiteral("Verify your HOTAS setup from Settings.") : status;
+    return status.isEmpty() ? QStringLiteral("Verify your controller setup from Settings.") : status;
 }
 QString AppBackend::controllerReadinessLastChecked() const
 {
@@ -2635,8 +2646,8 @@ void AppBackend::startVerification(VerificationMode mode)
     m_readiness.adoptPlan(ControllerReadinessService::checkingPlan(physical, mode));
     emit stateChanged();
     appendEvent(mode == VerificationMode::Full
-        ? u"Full HOTAS verification started"_qs
-        : u"Quick HOTAS verification started"_qs);
+        ? u"Full controller verification started"_qs
+        : u"Quick controller verification started"_qs);
 
     QThread *thread = QThread::create([this, configuration, physical, mode, mappingWasRequested,
                                        mapperOwnsVjoy, outputReportsSucceeding, arrivalId] {
@@ -2690,15 +2701,15 @@ void AppBackend::startVerification(VerificationMode mode)
                 pending.physicalStatus = VerificationSubsystemState::Attention;
                 pending.hidhideStatus = VerificationSubsystemState::Attention;
                 pending.physicalSummary = QStringLiteral("A prior automatic setup did not complete fresh physical-controller verification.");
-                pending.hidhideSummary = QStringLiteral("A narrow recovery record is available. Use Undo Automatic Repair after confirming the selected HOTAS is connected.");
+                pending.hidhideSummary = QStringLiteral("A narrow recovery record is available. Use Undo Automatic Repair after confirming the selected controller is connected.");
                 pending.status = QStringLiteral("RECOVERY PENDING — Review the previous automatic setup and Undo Automatic Repair if needed.");
                 pending.lastChecked = QDateTime::currentDateTime();
                 m_readiness.adoptPlan(std::move(pending));
             }
             m_verificationInProgress = false;
             appendEvent(restored
-                ? QString(u"HOTAS verification complete: %1"_qs).arg(m_readiness.plan().status)
-                : u"HOTAS verification complete, but mapping restoration failed"_qs);
+                ? QString(u"Controller verification complete: %1"_qs).arg(m_readiness.plan().status)
+                : u"Controller verification complete, but mapping restoration failed"_qs);
             if (mode == VerificationMode::Full && restored
                 && m_readiness.plan().state == ControllerReadinessState::Ready
                 && currentPhysicalCapabilities().connected) {
@@ -2719,9 +2730,9 @@ void AppBackend::startVerification(VerificationMode mode)
                     true, m_readiness.plan());
                 if (current.connected && current.directInputId == arrivalId
                     && (!known || actionable || calibrationNeedsSetup(current) || m_readiness.hasPendingRecovery())) {
-                    appendEvent(known ? u"HOTAS setup needs attention after controller arrival"_qs
+                    appendEvent(known ? u"Controller setup needs attention after controller arrival"_qs
                                       : u"New controller detected; Verify Setup is required"_qs);
-                    emit controllerSetupRequested();
+                    emit controllerSetupRequested({arrivalId});
                 }
             }
             emit stateChanged();
@@ -2762,7 +2773,7 @@ bool AppBackend::applyControllerReadiness()
     waiting.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Preparing the approved repair transaction.");
     m_readiness.adoptPlan(std::move(waiting));
     m_verificationInProgress = true;
-    appendEvent(u"Automatic HOTAS repair requested"_qs);
+    appendEvent(u"Automatic controller repair requested"_qs);
     appendEvent(u"Repair plan will preserve unrelated HidHide rules and the previous Mapping state"_qs);
     emit stateChanged();
 
@@ -2862,10 +2873,17 @@ bool AppBackend::applyControllerReadiness()
                                          recoveryAttempted, recoverySucceeded, recoveredPhysicalReports] {
             m_readiness = std::move(*repair);
             m_verificationInProgress = false;
+            if (completed && restored && physicalReacquired
+                && m_readiness.plan().state == ControllerReadinessState::Ready
+                && currentPhysicalCapabilities().connected) {
+                // A completed automatic repair is a full verification result;
+                // commit the controller now rather than requiring Verify Again.
+                rememberCurrentController();
+            }
             if (!restored) {
-                appendEvent(u"Automatic HOTAS repair completed, but mapping restoration failed"_qs);
+                appendEvent(u"Automatic controller repair completed, but mapping restoration failed"_qs);
             } else if (!completed && m_readiness.lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::None) {
-                appendEvent(u"HOTAS setup requires a manual repair; no changes were applied"_qs);
+                appendEvent(u"Controller setup requires a manual repair; no changes were applied"_qs);
             } else {
                 appendEvent(m_readiness.plan().status);
                 if (recoveryAttempted) {
@@ -2899,7 +2917,7 @@ bool AppBackend::undoControllerReadiness()
     const bool mappingWasRequested = m_worker.mappingRequested();
     const QString expectedHidInstanceId = currentPhysicalCapabilities().hidInstanceId;
     if (!m_worker.prepareForDriverConfiguration()) {
-        appendEvent(u"Could not release vJoy for HOTAS setup rollback"_qs);
+        appendEvent(u"Could not release vJoy for controller setup rollback"_qs);
         emit stateChanged();
         return false;
     }
@@ -2909,20 +2927,20 @@ bool AppBackend::undoControllerReadiness()
     ControllerReadinessPlan plan = m_readiness.plan();
     if (restored && physicalRestored) {
         plan.physicalStatus = VerificationSubsystemState::Ready;
-        plan.physicalSummary = QStringLiteral("Physical HOTAS reacquired and live reports confirmed after undo.");
-        plan.status = QStringLiteral("Automatic HOTAS repair was undone; physical input was verified.");
+        plan.physicalSummary = QStringLiteral("Physical controller reacquired and live reports confirmed after undo.");
+        plan.status = QStringLiteral("Automatic controller repair was undone; physical input was verified.");
         m_readiness.adoptPlan(std::move(plan));
     } else if (restored) {
         plan.state = ControllerReadinessState::Attention;
         plan.physicalStatus = VerificationSubsystemState::Error;
         plan.physicalSummary = QStringLiteral("Undo commands completed, but HOTAS BF6 has not reacquired physical reports.");
-        plan.status = QStringLiteral("UNDO VERIFICATION INCOMPLETE — Reconnect your HOTAS, then use Verify Again or Copy Diagnostics.");
+        plan.status = QStringLiteral("UNDO VERIFICATION INCOMPLETE — Reconnect your controller, then use Verify Again or Copy Diagnostics.");
         m_readiness.adoptPlan(std::move(plan));
     }
     appendEvent(restored && physicalRestored && mappingStateRestored
-        ? u"Automatic HOTAS repair was undone; physical input and previous mapping state restored"_qs
+        ? u"Automatic controller repair was undone; physical input and previous mapping state restored"_qs
         : mappingStateRestored ? m_readiness.plan().status
-                               : u"HOTAS setup rollback completed, but mapping restoration failed"_qs);
+                               : u"Controller setup rollback completed, but mapping restoration failed"_qs);
     emit stateChanged();
     return restored && physicalRestored && mappingStateRestored;
 }
@@ -2953,7 +2971,7 @@ bool AppBackend::copyControllerDiagnostics()
 {
     if (!controllerDiagnosticsAvailable()
         || !copyControllerDiagnosticsToClipboard(controllerDiagnosticsSnapshot())) return false;
-    appendEvent(u"HOTAS setup diagnostics copied to the clipboard"_qs);
+    appendEvent(u"Controller setup diagnostics copied to the clipboard"_qs);
     emit stateChanged();
     return true;
 }
@@ -3030,8 +3048,18 @@ void AppBackend::rememberCurrentController()
     if (!controller || controller->virtualDevice) return;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
     const QString existingId = match.ambiguous ? QString{} : match.recordId;
+    ControllerVJoyRequirements verifiedRequirements = currentVjoyRequirements();
+    const ControllerReadinessPlan &verifiedPlan = m_readiness.plan();
+    if (verifiedPlan.state == ControllerReadinessState::Ready
+        && verifiedPlan.physical.directInputId == controller->directInputId) {
+        verifiedRequirements.axes = verifiedPlan.requirements.axes;
+        verifiedRequirements.buttons = verifiedPlan.requirements.buttons;
+        verifiedRequirements.continuousPovs = verifiedPlan.requirements.continuousPovs;
+        verifiedRequirements.discretePovs = verifiedPlan.requirements.discretePovs;
+    }
+    verifiedRequirements.deviceId = m_configuration.vjoyDeviceId;
     SavedControllerRecord record = ControllerManager::verifiedRecord(*controller, m_configuration.calibration,
-                                                                      currentVjoyRequirements(), existingId);
+                                                                      verifiedRequirements, existingId);
     if (!existingId.isEmpty()) {
         for (SavedControllerRecord &existing : m_configuration.savedControllers) {
             if (existing.id != existingId) continue;
@@ -3295,24 +3323,25 @@ bool AppBackend::launchUninstaller()
 void AppBackend::refreshControllerInventory()
 {
     m_discoveredControllers = ControllerDiscovery::enumerate();
-    bool newlyDiscoveredUnverified = false;
-    QString newlyDiscoveredName;
+    QStringList newlyDiscoveredUnverifiedIds;
     for (const DiscoveredController &controller : m_discoveredControllers) {
         if (controller.virtualDevice || !controller.connected || controller.directInputId.isEmpty()) continue;
         const bool firstSeen = !m_observedControllerIds.contains(controller.directInputId);
         m_observedControllerIds.insert(controller.directInputId);
         const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
         if (m_controllerInventoryInitialized && firstSeen && (match.recordId.isEmpty() || match.ambiguous)) {
-            newlyDiscoveredUnverified = true;
-            newlyDiscoveredName = controller.name;
+            newlyDiscoveredUnverifiedIds.append(controller.directInputId);
         }
     }
     m_controllerInventoryInitialized = true;
     tryAutoSwitchVerifiedController();
-    if (newlyDiscoveredUnverified && !m_verificationInProgress && !m_controllerSelectionInProgress) {
-        appendEvent(QString(u"New controller detected: %1. Select Set Up to explicitly verify it."_qs)
-            .arg(newlyDiscoveredName));
-        emit controllerSetupRequested();
+    if (!newlyDiscoveredUnverifiedIds.isEmpty() && !m_verificationInProgress && !m_controllerSelectionInProgress) {
+        appendEvent(newlyDiscoveredUnverifiedIds.size() == 1
+            ? QString(u"New controller detected: %1. Select Set Up to explicitly verify it."_qs)
+                .arg(discoveredController(newlyDiscoveredUnverifiedIds.front())->name)
+            : QString(u"%1 new controllers detected. Select one for explicit setup."_qs)
+                .arg(newlyDiscoveredUnverifiedIds.size()));
+        emit controllerSetupRequested(newlyDiscoveredUnverifiedIds);
     }
     emit stateChanged();
 }
@@ -3328,8 +3357,11 @@ void AppBackend::tryAutoSwitchVerifiedController()
     if (!controller) return;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
     if (match.recordId.isEmpty() || match.ambiguous) return;
+    const SavedControllerRecord *previous = activeControllerRecord();
+    const QString previousName = previous ? previous->displayName : u"Selected controller"_qs;
     if (setActiveController(match.recordId)) {
-        appendEvent(QString(u"Automatically switching to verified controller: %1"_qs).arg(controller->name));
+        appendEvent(QString(u"%1 disconnected; switched to verified controller: %2"_qs)
+            .arg(previousName, controller->name));
     }
 }
 
@@ -3440,7 +3472,7 @@ void AppBackend::refreshUiSnapshot()
     if (ControllerReadinessService::isNewPhysicalControllerArrival(
             m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
         m_pendingControllerArrivalId = deviceId();
-        appendEvent(u"Physical HOTAS arrived; evaluating setup readiness"_qs);
+        appendEvent(u"Physical controller arrived; evaluating setup readiness"_qs);
         startQuickVerification();
     } else if (!connected) {
         m_pendingControllerArrivalId.clear();

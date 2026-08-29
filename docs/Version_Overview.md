@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.2**
+**Current release: v2.0.3**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.3 — Multi-Controller Setup & vJoy Reliability Hotfix
+
+Hardens the Universal Controller workflow from real multi-controller hardware testing while preserving the mapper's low-latency report path.
+
+- Validates actual vJoy axes, buttons, and POV capacity even when HOTAS BF6 already owns the output device and reports are succeeding.
+- Reinspects vJoy after automatic configuration and persists the verified controller-specific capability contract, including first-time physical button capacity.
+- Carries an explicit controller identity from new-device discovery through the shared setup selector and verification workflow, never falling back to the current active controller.
+- Completes successful first-time automatic repair by immediately saving the controller and transitioning NEW to VERIFIED without a redundant Verify Again pass.
+- Makes saved offline controllers, zero-connected state, selected-offline state, and automatic verified-controller switching visually clear across Legacy, Standard, and Top Gun.
+- Repairs shared Settings row layout and fully themes the vJoy device SpinBox controls while applying generic Controller and Device wording to universal-controller UI.
 
 ## v2.0.2 — Dashboard & UX Polish
 
