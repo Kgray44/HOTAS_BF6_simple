@@ -75,6 +75,9 @@ float transformAxis(float raw, const RuntimeAxisMapping &mapping);
 
 // Restores safe, bounded profile values after configuration deserialization.
 void normalizeAxisProcessing(AxisMapping &mapping);
+// Control-plane range transition for the domain-specific output limits.
+// This is never called by the DirectInput-to-vJoy report path.
+void switchAxisOutputLimitDomain(AxisMapping &mapping, AxisRangeMode rangeMode);
 
 // Rejects duplicate non-disabled targets, retaining the first assignment.
 // Returns true when the configuration was already conflict-free.

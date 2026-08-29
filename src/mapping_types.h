@@ -148,6 +148,13 @@ struct AxisMapping {
     // physical-device calibration. They are applied after inversion/curve.
     float outputMinimum = -1.0F;
     float outputMaximum = 1.0F;
+    // Output limits belong to the active input domain just as curve points do.
+    // Retain both ranges so a One-Sided edit never overwrites the user's
+    // Centered limits (and vice versa) when Range is toggled.
+    float centeredOutputMinimum = -1.0F;
+    float centeredOutputMaximum = 1.0F;
+    float oneSidedOutputMinimum = 0.0F;
+    float oneSidedOutputMaximum = 1.0F;
     CurveDefinition curve;
     // Curve points are domain-specific. Keep the most recent alternate-domain
     // definition so toggling Range never silently destroys a custom curve.

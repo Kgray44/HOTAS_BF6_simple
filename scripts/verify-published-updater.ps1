@@ -100,7 +100,7 @@ try {
     Start-Sleep -Seconds 3
     if ($mapper.HasExited) { throw 'The updated mapper exited during its initial stability interval.' }
 
-    & $fixture --assert-v16
+    & $fixture --assert-v17
     if ($LASTEXITCODE -ne 0) { throw 'The published updater did not preserve and migrate the v1.9.3 fixture.' }
 
     $updaterLog = Join-Path $env:LOCALAPPDATA 'HOTAS BF6\logs\updater.log'

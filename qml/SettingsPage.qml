@@ -166,14 +166,15 @@ Flickable {
                 Text { text: "%"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
             }
         }
-        Card { Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyReady ? "Current virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyReady ? root.readyColor : root.warningColor
+        Card { Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                     RowLayout { spacing: 7
                         Text { text: "DEVICE " + backend.vjoyDeviceId; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.telemetryFont }
-                        StatusPill { label: backend.vjoyReady ? "READY" : "LIMITED"; tone: backend.vjoyReady ? root.readyColor : root.warningColor }
+                        StatusPill { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "ACTION REQUIRED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
                     }
                     Text { text: backend.virtualAxisStatus + "  ·  " + backend.vjoyButtonCount + " buttons  ·  " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Required: " + backend.vjoyRequiredButtonCount + " buttons  ·  Optional recommended headroom: " + backend.vjoyRecommendedButtonCount; color: root.faintColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
                 SpinBox { id: vjoyDeviceSelector; from: 1; to: 16; value: backend.vjoyDeviceId; implicitWidth: 84; implicitHeight: 32; onValueModified: backend.setVjoyDeviceId(value)
                     background: Rectangle { color: root.insetColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }

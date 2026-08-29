@@ -356,5 +356,16 @@
       "Uses a themed Profiles overflow menu and related profile dialogs in Legacy, Standard, and Top Gun, with explicit disabled and destructive states.",
       "Records bounded calibration success history, derives vJoy requirements from the complete configuration, and migrates legacy direct controls into explicit Automation rules with a visible overflow warning."
     ]
+  },
+  {
+    "version": "2.0.9",
+    "title": "Final v2 Reliability Cleanup",
+    "summary": "Closes the remaining v2 reliability issues found during real v2.0.8 hardware validation while preserving the low-latency mapper architecture.",
+    "highlights": [
+      "Automatic vJoy repair now waits for the actual post-repair capability, refreshes the ready state in one setup transaction, and treats exact required capacity as Ready rather than an optional-headroom warning.",
+      "Physical calibration skips stationary phantom DirectInput slots, records stable interior rests as centered, and retains stable endpoint controls as range-only calibration.",
+      "Automation editor delegates use explicit stable row indexes, so every parameterized action mutates its correct draft row and displays its required controls.",
+      "Centered and One-Sided output limits retain their own persistent values across Range changes, including schema-16 to schema-17 migration."
+    ]
   }
 ]

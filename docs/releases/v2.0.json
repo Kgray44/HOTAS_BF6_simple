@@ -157,15 +157,33 @@
     "releaseTitle": "v2.0.8",
     "title": "Runtime and Workflow Reliability Hotfix",
     "summary": "HOTAS BF6 v2.0.8 corrects the real runtime semantics of One-Sided axes and restores reliable selected-axis Curve Editor telemetry while applying narrow Profiles, calibration, vJoy-capacity, and Automation workflow fixes. The DirectInput-to-vJoy report path remains compiled and allocation-free.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.9",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "statusNote": "Superseded by v2.0.9 Final v2 Reliability Cleanup.",
     "highlights": [
       "One-Sided axes now run from the former bipolar midpoint at 0% to the positive endpoint at 100%, with below-origin clamping, a low-end deadzone, and unipolar inversion.",
       "Axes and Curve Editor share the same one-sided domain for curves, custom points, effective traces, labels, and live telemetry without recompiling curves on movement.",
       "Profiles use a fully themed overflow menu and themed rename/delete controls in Legacy, Standard, and Top Gun; legacy direct controls migrate to visible Automation rules.",
       "Calibration records bounded durable success history, and vJoy readiness uses complete profile and Automation requirements."
+    ]
+  },
+  {
+    "version": "2.0.9",
+    "tag": "v2.0.9",
+    "releaseTitle": "v2.0.9",
+    "title": "Final v2 Reliability Cleanup",
+    "summary": "HOTAS BF6 v2.0.9 closes four remaining issues found during real v2.0.8 hardware validation: automatic vJoy repair now completes verification in one pass and reports exact required capacity correctly, physical calibration ignores phantom axes and distinguishes centered from non-centering controls, Automation parameter editors reliably mutate and display the correct action row, and Centered/One-Sided output limits retain independent values across range changes.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers.",
+    "highlights": [
+      "Automatic repair polls the actual vJoy capability at a bounded control-plane cadence before the same transaction continues to verification and worker reacquisition.",
+      "Exact required vJoy capacity is Ready across header, Overview, Settings, Diagnostics, and Verify Setup; 32 buttons remains optional informational headroom.",
+      "Two-stage calibration excludes unobserved slots, stores stable interior rests as centered, and accepts stable endpoint controls as range-only without profile-range assumptions.",
+      "Automation condition and action delegates use explicit row indexes so every selector and editor updates the intended draft record.",
+      "Configuration schema 17 persists separate Centered and One-Sided output-limit ranges and migrates schema-16 active limits safely."
     ]
   }
 ]

@@ -71,6 +71,7 @@ public:
     bool failRollback = false;
     bool cancelElevation = false;
     bool repairApplied = false;
+    int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
     QStringList calls;
@@ -167,7 +168,7 @@ public:
     }
 
 private:
-    SetupProcessResult result(const QStringList &arguments) const
+    SetupProcessResult result(const QStringList &arguments)
     {
         const QString joined = arguments.join(u' ');
         if (joined.contains(QStringLiteral("--cloak-state"))) {
@@ -188,8 +189,14 @@ private:
             return {true, true, 0, QStringLiteral("vJoyConfig 1 -f -a X Y Z Rz -b 4\n"), {}};
         }
         if (joined.contains(QStringLiteral("-t"))) {
+            const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), QStringLiteral("1")};
+            bool capabilitiesConverged = repairApplied;
+            if (capabilitiesConverged && targetedCapabilityReport && staleVJoyCapabilityInspections > 0) {
+                --staleVJoyCapabilityInspections;
+                capabilitiesConverged = false;
+            }
             return {true, true, 0, QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rz\nFFB Effects: None\n")
-                .arg(repairApplied ? 32 : 4), {}};
+                .arg(capabilitiesConverged ? 32 : 4), {}};
         }
         return {true, true, 0, {}, {}};
     }
@@ -202,6 +209,7 @@ class ControllerReadinessTests final : public QObject {
 
 private slots:
     void alreadyCorrectVJoyNeedsNoChange();
+    void exactRequiredVJoyCapacityIsReady();
     void insufficientButtonsProducesFocusedVJoyRepair();
     void missingAxisProducesFocusedVJoyRepair();
     void nativePovRequirementsAndMixedPovSafety();
@@ -217,6 +225,7 @@ private slots:
     void activeInputReportsArePhysicalHealthEvidence();
     void processRunnerRollbackOnlyReversesThisTransaction();
     void repairCompletesInOneElevationAndVerifies();
+    void repairWaitsForDelayedVJoyCapabilityPublication();
     void selfAccessFailureRollsBackBeforeReportingReady();
     void failedReacquisitionRequestsReconnectInsteadOfReady();
     void failedRecoveryReportsRollbackFailure();
@@ -233,6 +242,17 @@ void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
         connectedController(), defaultRequirements(), readyVJoy(), readyHidHide());
     QVERIFY(!plan.vjoyNeedsChanges);
     QVERIFY(!plan.hidhideNeedsChanges);
+    QCOMPARE(plan.state, ControllerReadinessState::Ready);
+}
+
+void ControllerReadinessTests::exactRequiredVJoyCapacityIsReady()
+{
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.buttons = 15;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide());
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
     QCOMPARE(plan.state, ControllerReadinessState::Ready);
 }
 
@@ -450,6 +470,30 @@ void ControllerReadinessTests::repairCompletesInOneElevationAndVerifies()
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Ready);
     QCOMPARE(service.plan().state, ControllerReadinessState::Ready);
     QCOMPARE(service.plan().status, QStringLiteral("READY — Controller setup repaired successfully and physical input was reacquired."));
+}
+
+void ControllerReadinessTests::repairWaitsForDelayedVJoyCapabilityPublication()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->staleVJoyCapabilityInspections = 2;
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    ButtonBinding button;
+    button.type = ButtonActionType::VirtualButton;
+    button.target = 15;
+    configuration.profiles.front().buttons = {button};
+    QVERIFY(service.inspect(configuration, connectedController()).canApplyAutomatically);
+    QVERIFY(service.applyAutomatically());
+    QCOMPARE(probe->staleVJoyCapabilityInspections, 0);
+    QCOMPARE(probe->elevatedTransactions, 1);
+    QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Ready);
+    QCOMPARE(service.plan().state, ControllerReadinessState::Verifying);
 }
 
 void ControllerReadinessTests::selfAccessFailureRollsBackBeforeReportingReady()

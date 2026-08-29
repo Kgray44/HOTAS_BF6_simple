@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.8**
+**Current release: v2.0.9**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.9 — Final v2 Reliability Cleanup
+
+Closes the remaining v2 reliability issues found during real v2.0.8 hardware validation while preserving the low-latency mapper architecture.
+
+- Automatic vJoy repair now waits for the actual post-repair capability, refreshes the ready state in one setup transaction, and treats exact required capacity as Ready rather than an optional-headroom warning.
+- Physical calibration skips stationary phantom DirectInput slots, records stable interior rests as centered, and retains stable endpoint controls as range-only calibration.
+- Automation editor delegates use explicit stable row indexes, so every parameterized action mutates its correct draft row and displays its required controls.
+- Centered and One-Sided output limits retain their own persistent values across Range changes, including schema-16 to schema-17 migration.
 
 ## v2.0.8 — Runtime and Workflow Reliability Hotfix
 

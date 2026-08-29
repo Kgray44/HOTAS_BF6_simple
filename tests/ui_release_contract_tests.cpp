@@ -24,7 +24,8 @@ private slots:
     void controllerPresentationIsCachedAndTelemetryIsIsolated();
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
-    void installerUpgradeAcceptanceTracksSchema16();
+    void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
+    void installerUpgradeAcceptanceTracksSchema17();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -167,16 +168,53 @@ void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
     }
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema16()
+void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString readiness = sourceFile(QStringLiteral("src/controller_readiness.cpp"));
+    const QString automation = sourceFile(QStringLiteral("qml/AutomationPage.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+
+    QVERIFY(backend.contains(QStringLiteral("return vjoyCapacitySufficient() ? u\"ready\"_qs : u\"warning\"_qs;")));
+    QVERIFY(!backend.contains(QStringLiteral("vjoyButtonCount() < vjoyRecommendedButtonCount()")));
+    QVERIFY(readiness.contains(QStringLiteral("kRepairReinspectionAttempts = 8")));
+    QVERIFY(readiness.contains(QStringLiteral("VJOY CONVERGENCE TIMEOUT — Required %1 buttons; observed %2.")));
+    QVERIFY(standard.contains(QStringLiteral("return \"READY\"")));
+    QVERIFY(legacy.contains(QStringLiteral("return \"READY\"")));
+    QVERIFY(!standard.contains(QStringLiteral("CONFIGURATION LIMITED")));
+    QVERIFY(!legacy.contains(QStringLiteral("CONFIGURATION LIMITED")));
+    QVERIFY(settings.contains(QStringLiteral("Optional recommended headroom")));
+
+    QVERIFY(automation.contains(QStringLiteral("property int actionIndex: index")));
+    QVERIFY(automation.contains(QStringLiteral("property int conditionIndex: index")));
+    QVERIFY(automation.contains(QStringLiteral("root.setEffectType(actionCard.actionIndex, choiceIndex)")));
+    QVERIFY(automation.contains(QStringLiteral("root.updateAction(actionCard.actionIndex")));
+    QVERIFY(automation.contains(QStringLiteral("root.updateCondition(conditionCard.conditionIndex")));
+    QVERIFY(!automation.contains(QStringLiteral("root.setEffectType(index, currentIndex)")));
+    QVERIFY(!automation.contains(QStringLiteral("root.updateAction(index,")));
+    QVERIFY(!automation.contains(QStringLiteral("root.updateCondition(index,")));
+
+    const qsizetype calibrationStart = backend.indexOf(QStringLiteral("void AppBackend::finishCalibration()"));
+    const qsizetype calibrationEnd = backend.indexOf(QStringLiteral("void AppBackend::appendCalibrationHistory"), calibrationStart);
+    QVERIFY(calibrationStart >= 0 && calibrationEnd > calibrationStart);
+    const QString calibration = backend.mid(calibrationStart, calibrationEnd - calibrationStart);
+    QVERIFY(calibration.contains(QStringLiteral("No meaningful axis travel was observed")));
+    QVERIFY(calibration.contains(QStringLiteral("const bool interiorCenter")));
+    QVERIFY(!calibration.contains(QStringLiteral("currentProfile().axes")));
+}
+
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema17()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 16")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(!fixture.contains(QStringLiteral("--assert-v15")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v16")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v16")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 17")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v17")));
+    QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v17")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v17")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)
