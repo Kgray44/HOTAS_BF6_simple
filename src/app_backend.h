@@ -68,6 +68,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool physicalConnected READ physicalConnected NOTIFY stateChanged)
     Q_PROPERTY(int axisCount READ axisCount NOTIFY stateChanged)
+    Q_PROPERTY(QString physicalAxisCapabilitySummary READ physicalAxisCapabilitySummary NOTIFY stateChanged)
     Q_PROPERTY(int buttonCount READ buttonCount NOTIFY stateChanged)
     Q_PROPERTY(int povCount READ povCount NOTIFY stateChanged)
     Q_PROPERTY(int povValue READ povValue NOTIFY inputTelemetryChanged)
@@ -109,6 +110,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString legacyControlMigrationWarning READ legacyControlMigrationWarning NOTIFY stateChanged)
     Q_PROPERTY(bool startMappingOnLaunch READ startMappingOnLaunch NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDeviceId READ vjoyDeviceId NOTIFY stateChanged)
+    Q_PROPERTY(QString activeOutputLayoutName READ activeOutputLayoutName NOTIFY stateChanged)
+    Q_PROPERTY(QString activeOutputLayoutDescriptor READ activeOutputLayoutDescriptor NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList virtualOutputLayouts READ virtualOutputLayouts NOTIFY stateChanged)
     Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
     Q_PROPERTY(bool updateChecking READ updateChecking NOTIFY stateChanged)
     Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY stateChanged)
@@ -186,6 +190,7 @@ public:
     bool trayAvailable() const;
     bool physicalConnected() const;
     int axisCount() const;
+    QString physicalAxisCapabilitySummary() const;
     int buttonCount() const;
     int povCount() const;
     int povValue() const;
@@ -227,6 +232,9 @@ public:
     QString legacyControlMigrationWarning() const { return m_configuration.legacyControlMigrationWarning; }
     bool startMappingOnLaunch() const;
     int vjoyDeviceId() const;
+    QString activeOutputLayoutName() const;
+    QString activeOutputLayoutDescriptor() const;
+    QVariantList virtualOutputLayouts() const;
     double disabledAxisValue() const;
     bool updateChecking() const { return m_updateChecking; }
     bool updateAvailable() const { return m_updateAvailable; }
@@ -327,6 +335,8 @@ public:
     Q_INVOKABLE void resetCalibration();
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
+    Q_INVOKABLE bool assignProfileOutputLayout(const QString &profileId, const QString &layoutId);
+    Q_INVOKABLE QString createFiveAxisOutputLayout(const QString &name, int deviceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
     // These return the newly-created stable ID so the presentation can open a
     // full-page draft editor without ever deriving identity from list order.
@@ -406,6 +416,9 @@ private:
     bool axisIsOneSided(int physicalAxis) const;
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
+    const VirtualOutputLayout *activeOutputLayout() const;
+    VirtualOutputLayout *activeOutputLayout();
+    void synchronizeActiveOutputLayout();
     QString effectiveProfileId() const;
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();

@@ -99,8 +99,8 @@ QString ControllerManager::autoSelect(const QList<DiscoveredController> &control
 bool ControllerManager::isVjoySufficient(const ControllerVJoyRequirements &available,
                                           const ControllerVJoyRequirements &required)
 {
-    for (int index = 0; index < kVirtualAxisSlotCount; ++index) {
-        if (required.axes[static_cast<size_t>(index)] && !available.axes[static_cast<size_t>(index)]) {
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        if (available.axes[static_cast<size_t>(index)] != required.axes[static_cast<size_t>(index)]) {
             return false;
         }
     }

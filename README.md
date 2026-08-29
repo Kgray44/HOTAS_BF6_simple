@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.0.9**
+**Current release: v2.0.10**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into the virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.9 completes the v2 reliability cleanup with one-pass vJoy repair verification, physical calibration that skips phantom controls, dependable Automation parameter editing, and persistent Centered/One-Sided output limits without adding work to the DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.0.10 adds reusable profile-owned virtual-output layouts, exact-axis descriptor verification, safe neutral/reacquire transitions, and calibration-backed phantom-axis isolation without adding work to the DirectInput-to-vJoy report path. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification.
 
 ## Product gallery
 
@@ -27,8 +27,8 @@ The application sits between a physical DirectInput controller and a vJoy virtua
 4. Axis inversion and response curve lookup
 5. Profile-owned output limits and axis domain
 6. Compiled Automation evaluation
-7. Safe routing to available vJoy axes, buttons, and POVs
-8. Battlefield 6 binding to the virtual vJoy device
+7. Safe routing to the selected virtual-output layout's vJoy axes, buttons, and POVs
+8. Battlefield 6 binding to the selected virtual vJoy device
 
 The QML interface observes snapshots and edits configuration; it does not schedule controller output. The mapping worker remains the authority for real-time input processing.
 
@@ -61,18 +61,18 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 ## Main capabilities
 
 - **Real-Time Mapping Runtime** — A dedicated DirectInput-to-vJoy worker owns report processing so controller output is not scheduled by the UI.
-- **Axis Routing and Processing** — Physical DirectInput axes can be routed to available vJoy axes with profile-owned transforms and labels.
+- **Axis Routing and Processing** — Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
 - **Mapping Safety Controls** — Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.
 - **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit ownership.
 - **POV / Hat Support** — DirectInput POV hats can act as discrete logical directions, profile controls, or native vJoy POV outputs.
-- **Profiles** — Profiles package axis and button behavior into instant-switching configurations without reacquiring DirectInput or vJoy.
+- **Profiles** — Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations.
 - **Response Curves** — Each profile/axis can use compiled response curves with both preset-based and point-based editing.
 - **Automation Engine** — A deterministic, fixed-capacity Automation subsystem evaluates rules inside the mapper using data compiled before report processing.
 - **Automation Editor UX** — Automation is edited as readable full-page rules rather than raw condition/action arrays.
 - **Universal Controller Management** — HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.
 - **Diagnostics and Observability** — The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
 - **User Interface and Themes** — The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.
-- **vJoy Integration** — vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.
+- **vJoy Integration** — vJoy is dynamically loaded and queried so the application enforces the selected virtual-output layout configured on the machine.
 - **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
 - **HOTAS Setup & Verification** — Passive startup checks and Settings-accessible full verification explain the complete HOTAS chain without moving setup work into real-time mapping.
 - **Launcher, Installer, and Updates** — A native launcher owns stable update checks and installation handoff so network/update work never remains active during mapping.
@@ -85,7 +85,7 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
 2. Open HOTAS BF6 at Overview. Choose a connected controller in Settings when more than one is available; a new controller opens themed setup after selection.
-3. Open Settings and choose VERIFY CONTROLLER SETUP to deeply verify the selected physical controller, vJoy Device 1, and HidHide configuration.
+3. Open Settings and choose VERIFY CONTROLLER SETUP to deeply verify the selected physical controller, the active profile's virtual-output layout, and HidHide configuration.
 4. Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 executes required vJoy/HidHide changes through one approved elevated transaction and restores the Mapping On/Off state that preceded the repair.
 5. Confirm READY, then select or create a profile.
 6. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.
@@ -100,9 +100,9 @@ The launcher performs stable-release update checks with short timeouts. Update f
 
 Use the official dependency installer or complete the configuration manually. HOTAS BF6 will not download, update, or silently change an already-installed driver.
 
-### vJoy Device 1 is busy, disabled, or lacks required outputs
+### The selected vJoy output is busy, disabled, or lacks the required descriptor
 
-When HOTAS BF6 already owns Device 1 while mapping, that is Ready. If another application owns it, close that application, then verify again. Automatic repair refuses to overwrite a busy target.
+When HOTAS BF6 already owns the active layout's device while mapping, that is Ready. If another application owns it, close that application, then verify again. Automatic repair refuses to overwrite a busy target, and extra virtual axes must be corrected rather than treated as compatible.
 
 ### A game sees both the physical controller and vJoy
 

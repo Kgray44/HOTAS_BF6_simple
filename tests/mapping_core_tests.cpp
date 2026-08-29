@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 using namespace hotas;
 
@@ -127,7 +128,9 @@ private slots:
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
-    void vjoyRequirementSupersetsAreAccepted();
+    void vjoyAxisDescriptorsMustMatchExactlyWhileCapacitySupersetsAreAccepted();
+    void physicalAxisActivityRequiresCompletedCalibrationTravel();
+    void v17ConfigurationMigratesToPreservedOutputLayout();
     void disabledAxisValueDefaultsMigratesAndPersistsGlobally();
     void disabledAxisValueClampsSafely();
     void disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes();
@@ -633,6 +636,7 @@ void MappingCoreTests::configurationRoundTrips()
     ControllerProfile &normal = activeProfile(configuration);
     configuration.preferredDeviceId = QStringLiteral("{0D15EA5E-0000-0000-0000-000000000001}");
     configuration.vjoyDeviceId = 2;
+    configuration.outputLayouts.front().requirements.deviceId = 2;
     configuration.startMappingOnLaunch = true;
     configuration.disabledAxisValue = -0.25F;
     normal.axes[0].inverted = true;
@@ -807,7 +811,7 @@ void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAuto
     QVERIFY(ControllerManager::autoSelect({first}, {remembered, duplicate}, remembered.id).isEmpty());
 }
 
-void MappingCoreTests::vjoyRequirementSupersetsAreAccepted()
+void MappingCoreTests::vjoyAxisDescriptorsMustMatchExactlyWhileCapacitySupersetsAreAccepted()
 {
     ControllerVJoyRequirements available;
     available.axes.fill(true);
@@ -818,9 +822,61 @@ void MappingCoreTests::vjoyRequirementSupersetsAreAccepted()
     required.axes[1] = true;
     required.buttons = 15;
     required.continuousPovs = 1;
+    QVERIFY(!ControllerManager::isVjoySufficient(available, required));
+    available.axes[2] = available.axes[3] = available.axes[4] = available.axes[5] = false;
+    available.axes[6] = available.axes[7] = available.axes[8] = false;
     QVERIFY(ControllerManager::isVjoySufficient(available, required));
     required.buttons = 33;
     QVERIFY(!ControllerManager::isVjoySufficient(available, required));
+}
+
+void MappingCoreTests::physicalAxisActivityRequiresCompletedCalibrationTravel()
+{
+    QCOMPARE(physicalAxisActivityForObservedSpan(-1.0F, 1.0F, false), PhysicalAxisActivity::Unknown);
+    QCOMPARE(physicalAxisActivityForObservedSpan(-0.01F, 0.02F, true), PhysicalAxisActivity::Fixed);
+    QCOMPARE(physicalAxisActivityForObservedSpan(-0.09F, 0.01F, true), PhysicalAxisActivity::Active);
+    QCOMPARE(physicalAxisActivityForObservedSpan(std::numeric_limits<float>::quiet_NaN(), 0.5F, true),
+             PhysicalAxisActivity::Unknown);
+}
+
+void MappingCoreTests::v17ConfigurationMigratesToPreservedOutputLayout()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.vjoyDeviceId = 2;
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.axes[static_cast<size_t>(PhysicalAxis::Rx)].target = VirtualAxis::Slider0;
+    profile.buttons = {{ButtonActionType::VirtualButton, 16, true, QStringLiteral("Legacy Fire")}};
+    AutomationDefinition automation;
+    automation.id = QStringLiteral("legacy-layout-action");
+    automation.name = QStringLiteral("Legacy Layout Action");
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::Always;
+    automation.conditions = {condition};
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonTap;
+    action.virtualButton = 20;
+    automation.actions = {action};
+    configuration.automations = {automation};
+    configuration.calibration[static_cast<size_t>(PhysicalAxis::Rx)] = {true, -0.8F, 0.0F, 0.9F};
+
+    QJsonObject v17 = ConfigStore::toJson(configuration);
+    v17.insert(QStringLiteral("version"), 17);
+    v17.remove(QStringLiteral("axisActivity"));
+    v17.remove(QStringLiteral("outputLayouts"));
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v17, &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(migrated.outputLayouts.size()), 1);
+    const VirtualOutputLayout &layout = migrated.outputLayouts.front();
+    QCOMPARE(layout.id, defaultOutputLayoutId());
+    QCOMPARE(layout.requirements.deviceId, 2);
+    QVERIFY(layout.requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)]);
+    QCOMPARE(layout.requirements.buttons, 20);
+    QCOMPARE(activeProfile(migrated).outputLayoutId, defaultOutputLayoutId());
+    QCOMPARE(activeProfile(migrated).axes[static_cast<size_t>(PhysicalAxis::Rx)].target,
+             VirtualAxis::Slider0);
+    QCOMPARE(migrated.calibration[static_cast<size_t>(PhysicalAxis::Rx)].maximum, 0.9F);
+    QCOMPARE(migrated.axisActivity[static_cast<size_t>(PhysicalAxis::Rx)], PhysicalAxisActivity::Unknown);
 }
 
 void MappingCoreTests::disabledAxisValueDefaultsMigratesAndPersistsGlobally()
@@ -1526,7 +1582,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 17);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 18);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -1769,7 +1825,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 17);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 18);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

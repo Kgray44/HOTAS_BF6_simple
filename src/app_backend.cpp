@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 
 namespace hotas {
@@ -396,17 +397,29 @@ QVariantList AppBackend::axes() const
         item.insert(u"customName"_qs, customLabel);
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"available"_qs, runtime.axisAvailable[index].load());
+        const PhysicalAxisActivity activity = static_cast<PhysicalAxisActivity>(
+            runtime.axisActivity[index].load());
+        const bool fixed = activity == PhysicalAxisActivity::Fixed;
+        item.insert(u"activity"_qs, physicalAxisActivityKey(activity));
+        item.insert(u"activityLabel"_qs, physicalAxisActivityLabel(activity));
+        item.insert(u"activityDetail"_qs, fixed
+            ? u"No meaningful movement observed during completed calibration"_qs : QString{});
+        item.insert(u"fixed"_qs, fixed);
         item.insert(u"raw"_qs, runtime.raw[index].load());
         // Normal screens deliberately use the calibrated coordinate system.
         // Raw remains exposed separately for calibration and support work.
         item.insert(u"calibrated"_qs, runtime.normalized[index].load());
         item.insert(u"curveResponse"_qs, runtime.curveResponse[index].load());
         item.insert(u"transformed"_qs, runtime.transformed[index].load());
-        const float virtualValue = runtime.virtualValues[index].load();
-        item.insert(u"virtualValue"_qs, virtualValue);
-        item.insert(u"virtualValid"_qs, std::isfinite(virtualValue));
         item.insert(u"target"_qs, virtualAxisLabel(mapping.target));
         const int targetIndex = static_cast<int>(mapping.target);
+        const bool virtualRouted = !fixed && targetIndex > 0 && targetIndex < kVirtualAxisSlotCount
+            && runtime.virtualAxisAvailable[static_cast<size_t>(targetIndex)].load();
+        const float virtualValue = virtualRouted ? runtime.virtualValues[index].load()
+                                                 : std::numeric_limits<float>::quiet_NaN();
+        item.insert(u"virtualValue"_qs, virtualValue);
+        item.insert(u"virtualRouted"_qs, virtualRouted);
+        item.insert(u"virtualValid"_qs, virtualRouted && std::isfinite(virtualValue));
         const QString alias = targetIndex > 0 && targetIndex < kVirtualAxisSlotCount
             ? profile.virtualAxisAliases[static_cast<size_t>(targetIndex)].trimmed() : QString{};
         item.insert(u"outputAlias"_qs, alias);
@@ -859,6 +872,10 @@ QVariantList AppBackend::profiles() const
         item.insert(u"protected"_qs, profile.id == normalProfileId());
         item.insert(u"mappedAxes"_qs, mappedAxes);
         item.insert(u"mappedButtons"_qs, mappedButtons);
+        const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
+        item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
+        item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
+        item.insert(u"outputDeviceId"_qs, layout ? layout->requirements.deviceId : 0);
         result.append(item);
     }
     return result;
@@ -993,6 +1010,26 @@ bool AppBackend::keepRunningInTray() const { return m_configuration.keepRunningI
 bool AppBackend::trayAvailable() const { return m_trayIcon && m_trayIcon->isVisible(); }
 bool AppBackend::physicalConnected() const { return m_worker.runtime().physicalConnected.load(); }
 int AppBackend::axisCount() const { return m_worker.runtime().axisCount.load(); }
+
+QString AppBackend::physicalAxisCapabilitySummary() const
+{
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    int advertised = 0;
+    int active = 0;
+    bool classified = false;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        if (!runtime.axisAvailable[static_cast<size_t>(index)].load()) continue;
+        ++advertised;
+        const PhysicalAxisActivity activity = static_cast<PhysicalAxisActivity>(
+            runtime.axisActivity[static_cast<size_t>(index)].load());
+        classified = classified || activity != PhysicalAxisActivity::Unknown;
+        active += activity == PhysicalAxisActivity::Active ? 1 : 0;
+    }
+    if (!classified) return advertised > 0
+        ? QString(u"%1 ADVERTISED · CALIBRATE TO VERIFY ACTIVITY"_qs).arg(advertised)
+        : u"WAITING"_qs;
+    return QString(u"%1 ACTIVE · %2 ADVERTISED"_qs).arg(active).arg(advertised);
+}
 int AppBackend::buttonCount() const { return m_worker.runtime().buttonCount.load(); }
 int AppBackend::povCount() const { return m_worker.runtime().povCount.load(); }
 int AppBackend::povValue() const { return m_worker.runtime().povValues[0].load(); }
@@ -1151,6 +1188,65 @@ QString AppBackend::calibrationStage() const
 }
 bool AppBackend::startMappingOnLaunch() const { return m_configuration.startMappingOnLaunch; }
 int AppBackend::vjoyDeviceId() const { return m_configuration.vjoyDeviceId; }
+
+const VirtualOutputLayout *AppBackend::activeOutputLayout() const
+{
+    return findOutputLayout(m_configuration, currentProfile().outputLayoutId);
+}
+
+VirtualOutputLayout *AppBackend::activeOutputLayout()
+{
+    return findOutputLayout(m_configuration, currentProfile().outputLayoutId);
+}
+
+void AppBackend::synchronizeActiveOutputLayout()
+{
+    if (const VirtualOutputLayout *layout = activeOutputLayout()) {
+        m_configuration.vjoyDeviceId = layout->requirements.deviceId;
+    }
+}
+
+QString AppBackend::activeOutputLayoutName() const
+{
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    return layout ? layout->name : u"Output unavailable"_qs;
+}
+
+QString AppBackend::activeOutputLayoutDescriptor() const
+{
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    if (!layout) return {};
+    QStringList axes;
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        if (layout->requirements.axes[static_cast<size_t>(index)]) {
+            axes.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+        }
+    }
+    return axes.join(u" · "_qs);
+}
+
+QVariantList AppBackend::virtualOutputLayouts() const
+{
+    QVariantList result;
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        QStringList axes;
+        for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+            if (layout.requirements.axes[static_cast<size_t>(index)]) {
+                axes.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+            }
+        }
+        int profileCount = 0;
+        for (const ControllerProfile &profile : m_configuration.profiles) {
+            profileCount += profile.outputLayoutId == layout.id ? 1 : 0;
+        }
+        result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
+            {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
+            {u"profileCount"_qs, profileCount}, {u"active"_qs, currentProfile().outputLayoutId == layout.id},
+            {u"managedVisibility"_qs, layout.hidhideManaged},
+            {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});
+    }
+    return result;
+}
 
 double AppBackend::disabledAxisValue() const
 {
@@ -1399,6 +1495,17 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     ControllerProfile &profile = currentProfile();
     const VirtualAxis virtualAxis = virtualAxisFromString(target);
     const int targetIndex = static_cast<int>(virtualAxis);
+    if (virtualAxis != VirtualAxis::Disabled
+        && m_configuration.axisActivity[static_cast<size_t>(physicalAxis)] == PhysicalAxisActivity::Fixed) {
+        appendEvent(u"Inactive descriptor axes cannot be routed; complete a new calibration to revise activity"_qs);
+        return false;
+    }
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    if (virtualAxis != VirtualAxis::Disabled && layout
+        && !layout->requirements.axes[static_cast<size_t>(targetIndex)]) {
+        appendEvent(u"Selected virtual axis is not part of this profile's output layout"_qs);
+        return false;
+    }
     if (virtualAxis != VirtualAxis::Disabled
         && (targetIndex < 1 || targetIndex >= kVirtualAxisSlotCount
             || !m_worker.runtime().virtualAxisAvailable[static_cast<size_t>(targetIndex)].load())) {
@@ -2238,10 +2345,31 @@ bool AppBackend::activateProfile(const QString &profileId)
     const ControllerProfile *profile = findProfile(m_configuration, profileId);
     if (!profile) return false;
     if (profileId == m_configuration.activeProfileId) return true;
+    const bool outputChanges = profile->outputLayoutId != currentProfile().outputLayoutId;
+    const bool mappingWasRequested = outputChanges && m_worker.mappingRequested();
+    if (outputChanges && !m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Could not safely release the current virtual output for profile switching"_qs);
+        return false;
+    }
+    if (outputChanges) {
+        ControllerReadinessService visibility;
+        const OutputVisibilitySwitchResult visibilityResult =
+            visibility.applyManagedOutputVisibility(m_configuration, profile->outputLayoutId);
+        if (!visibilityResult.succeeded) {
+            m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+            appendEvent(visibilityResult.status);
+            return false;
+        }
+        appendEvent(visibilityResult.status);
+    }
     const QString name = profile->name;
     if (!hotas::activateProfile(m_configuration, profileId)) return false;
+    synchronizeActiveOutputLayout();
     persistAndApply();
-    appendEvent(u"Activated profile: "_qs + name);
+    if (outputChanges && !m_worker.restoreAfterDriverConfiguration(mappingWasRequested)) {
+        appendEvent(u"Profile was selected, but mapping could not reacquire its virtual output"_qs);
+    }
+    appendEvent(u"Activated profile: "_qs + name + u" · "_qs + activeOutputLayoutName());
     return true;
 }
 
@@ -2292,6 +2420,7 @@ void AppBackend::resetCalibration()
     m_calibrationCapture = {};
     m_calibrationSuccess = false;
     for (Calibration &calibration : m_configuration.calibration) calibration = Calibration{};
+    m_configuration.axisActivity.fill(PhysicalAxisActivity::Unknown);
     persistAndApply();
     m_calibrationStatus = u"Calibration reset. Raw input is shown until you calibrate again."_qs;
     appendEvent(u"Calibration reset"_qs);
@@ -2321,24 +2450,27 @@ void AppBackend::sampleCalibrationControlPlane()
 
 void AppBackend::finishCalibration()
 {
-    constexpr float kMinimumTravel = 0.08F;
     constexpr float kMinimumCenteredMargin = 0.01F;
     constexpr float kMaximumCenterSpread = 0.12F;
     QStringList problems;
     std::array<Calibration, kPhysicalAxisCount> captured = m_configuration.calibration;
+    std::array<PhysicalAxisActivity, kPhysicalAxisCount> capturedActivity{};
     bool observedAny = false;
     bool savedAny = false;
     int calibratedAxisCount = 0;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const CalibrationCaptureAxis &capture = m_calibrationCapture[static_cast<size_t>(index)];
         if (!capture.available) continue;
-        const float span = capture.maximum - capture.minimum;
-        if (!(span >= kMinimumTravel)) {
+        const PhysicalAxisActivity activity = physicalAxisActivityForObservedSpan(
+            capture.minimum, capture.maximum, true);
+        if (activity == PhysicalAxisActivity::Fixed) {
             // DirectInput may expose a slot that has no physical control. It
             // is not calibration data and must not block real controls.
             captured[static_cast<size_t>(index)] = Calibration{};
+            capturedActivity[static_cast<size_t>(index)] = activity;
             continue;
         }
+        capturedActivity[static_cast<size_t>(index)] = activity;
         observedAny = true;
         Calibration calibration;
         calibration.enabled = true;
@@ -2372,6 +2504,14 @@ void AppBackend::finishCalibration()
     if (!observedAny) problems.append(u"No meaningful axis travel was observed"_qs);
     if (savedAny && problems.isEmpty()) {
         m_configuration.calibration = captured;
+        m_configuration.axisActivity = capturedActivity;
+        for (ControllerProfile &profile : m_configuration.profiles) {
+            for (int index = 0; index < kPhysicalAxisCount; ++index) {
+                if (capturedActivity[static_cast<size_t>(index)] == PhysicalAxisActivity::Fixed) {
+                    profile.axes[static_cast<size_t>(index)].target = VirtualAxis::Disabled;
+                }
+            }
+        }
         m_calibrationStage = CalibrationStageState::Idle;
         m_calibrationCapture = {};
         m_calibrationSuccess = true;
@@ -2435,8 +2575,78 @@ void AppBackend::setStartMappingOnLaunch(bool enabled)
 
 void AppBackend::setVjoyDeviceId(int deviceId)
 {
-    m_configuration.vjoyDeviceId = std::clamp(deviceId, 1, 16);
+    const int normalized = std::clamp(deviceId, 1, 16);
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        if (layout.id != currentProfile().outputLayoutId
+            && layout.requirements.deviceId == normalized) {
+            appendEvent(u"Each virtual output layout needs its own vJoy device ID"_qs);
+            return;
+        }
+    }
+    if (VirtualOutputLayout *layout = activeOutputLayout()) {
+        layout->requirements.deviceId = normalized;
+    }
+    m_configuration.vjoyDeviceId = normalized;
     persistAndApply();
+}
+
+bool AppBackend::assignProfileOutputLayout(const QString &profileId, const QString &layoutId)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    if (!profile || !layout) return false;
+    if (profile->outputLayoutId == layoutId) return true;
+    const bool active = profileId == m_configuration.activeProfileId;
+    const bool mappingWasRequested = active && m_worker.mappingRequested();
+    if (active && !m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Could not safely release the current virtual output for layout switching"_qs);
+        return false;
+    }
+    if (active) {
+        ControllerReadinessService visibility;
+        const OutputVisibilitySwitchResult visibilityResult =
+            visibility.applyManagedOutputVisibility(m_configuration, layoutId);
+        if (!visibilityResult.succeeded) {
+            m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+            appendEvent(visibilityResult.status);
+            return false;
+        }
+        appendEvent(visibilityResult.status);
+    }
+    profile->outputLayoutId = layoutId;
+    if (active) synchronizeActiveOutputLayout();
+    persistAndApply();
+    if (active && !m_worker.restoreAfterDriverConfiguration(mappingWasRequested)) {
+        appendEvent(u"Output layout was selected, but mapping could not reacquire the target vJoy device"_qs);
+    }
+    appendEvent(QString(u"Profile %1 now uses %2"_qs).arg(profile->name, layout->name));
+    return true;
+}
+
+QString AppBackend::createFiveAxisOutputLayout(const QString &name, int deviceId)
+{
+    const QString trimmed = name.trimmed().left(64);
+    const int normalizedDeviceId = std::clamp(deviceId, 1, 16);
+    if (trimmed.isEmpty() || static_cast<int>(m_configuration.outputLayouts.size()) >= 16) return {};
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        if (layout.name.compare(trimmed, Qt::CaseInsensitive) == 0
+            || layout.requirements.deviceId == normalizedDeviceId) return {};
+    }
+    VirtualOutputLayout layout;
+    layout.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    layout.name = trimmed;
+    layout.requirements.deviceId = normalizedDeviceId;
+    layout.requirements.buttons = 32;
+    for (const VirtualAxis axis : {VirtualAxis::X, VirtualAxis::Y, VirtualAxis::Z,
+                                   VirtualAxis::Rz, VirtualAxis::Slider0}) {
+        layout.requirements.axes[static_cast<size_t>(axis)] = true;
+    }
+    const QString id = layout.id;
+    m_configuration.outputLayouts.push_back(std::move(layout));
+    persistAndApply();
+    appendEvent(QString(u"Created 5-axis virtual output %1 on vJoy Device %2; provision it once in vJoy setup before use"_qs)
+        .arg(trimmed).arg(normalizedDeviceId));
+    return id;
 }
 
 void AppBackend::setAutomationEngineEnabled(bool enabled)
@@ -3217,6 +3427,7 @@ void AppBackend::rememberCurrentController()
     verifiedRequirements.deviceId = m_configuration.vjoyDeviceId;
     SavedControllerRecord record = ControllerManager::verifiedRecord(*controller, m_configuration.calibration,
                                                                       verifiedRequirements, existingId);
+    record.axisActivity = m_configuration.axisActivity;
     if (!existingId.isEmpty()) {
         for (SavedControllerRecord &existing : m_configuration.savedControllers) {
             if (existing.id != existingId) continue;
@@ -3260,7 +3471,7 @@ bool AppBackend::setActiveController(const QString &recordId)
     targetConfiguration.activeControllerRecordId = recordId;
     targetConfiguration.preferredDeviceId = selectedTarget.directInputId;
     targetConfiguration.calibration = targetRecord.calibration;
-    targetConfiguration.vjoyDeviceId = std::clamp(targetRecord.vjoyRequirements.deviceId, 1, 16);
+    targetConfiguration.axisActivity = targetRecord.axisActivity;
     PhysicalControllerCapabilities targetPhysical;
     targetPhysical.name = selectedTarget.name;
     targetPhysical.directInputId = selectedTarget.directInputId;
@@ -3269,12 +3480,15 @@ bool AppBackend::setActiveController(const QString &recordId)
     targetPhysical.axes = selectedTarget.axes;
     targetPhysical.buttons = selectedTarget.buttonCount;
     targetPhysical.povs = selectedTarget.povCount;
+    // Output selection belongs to the active profile, not to a physical
+    // controller record. A controller change therefore cannot silently move a
+    // game-facing virtual descriptor to a stale saved device ID.
     const MapperOutputRequirements targetRequirements =
-        ControllerReadinessService::requirementsFor(targetRecord.vjoyRequirements);
+        ControllerReadinessService::requirementsFor(targetConfiguration);
     const bool mappingWasRequested = m_worker.mappingRequested();
     m_verificationInProgress = true;
     m_readiness.adoptPlan(ControllerReadinessService::checkingPlan(targetPhysical, VerificationMode::Full));
-    appendEvent(QString(u"Switching active controller to %1; validating its saved vJoy requirements"_qs)
+    appendEvent(QString(u"Switching active controller to %1; validating the selected profile output layout"_qs)
         .arg(selectedTarget.name));
     emit stateChanged();
 
@@ -3318,7 +3532,7 @@ bool AppBackend::setActiveController(const QString &recordId)
                 rebuildControllerUiModel();
                 emit selectedAxisCurveChanged();
                 appendEvent(reusedExistingVjoy
-                    ? QString(u"Active controller switched to %1; existing vJoy capability superset was reused"_qs).arg(selectedTarget.name)
+                    ? QString(u"Active controller switched to %1; the selected vJoy descriptor matched exactly"_qs).arg(selectedTarget.name)
                     : QString(u"Active controller switched to %1; vJoy was configured and verified before mapping resumed"_qs).arg(selectedTarget.name));
             } else {
                 appendEvent(QString(u"Active controller switch to %1 was not completed; prior mapping configuration was restored"_qs)
@@ -3725,6 +3939,7 @@ void AppBackend::persistAndApply()
 {
     if (SavedControllerRecord *record = activeControllerRecord()) {
         record->calibration = m_configuration.calibration;
+        record->axisActivity = m_configuration.axisActivity;
         record->vjoyRequirements = currentVjoyRequirements();
     }
     ConfigStore::save(m_configuration);

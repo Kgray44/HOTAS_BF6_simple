@@ -32,6 +32,7 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
+    std::array<std::atomic_int, kPhysicalAxisCount> axisActivity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationMinimum{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationCenter{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationMaximum{};

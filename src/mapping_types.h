@@ -70,6 +70,26 @@ enum class AxisRangeMode : int {
     OneSided,
 };
 
+// DirectInput descriptors can contain placeholder objects that never move.
+// This is persisted only after a completed calibration has actual travel
+// evidence; Unknown deliberately remains the safe pre-calibration state.
+enum class PhysicalAxisActivity : int {
+    Unknown = 0,
+    Active,
+    Fixed,
+};
+
+constexpr float kPhysicalAxisActivityMinimumTravel = 0.08F;
+
+inline PhysicalAxisActivity physicalAxisActivityForObservedSpan(float minimum, float maximum,
+                                                                 bool calibrationCompleted)
+{
+    if (!calibrationCompleted || !std::isfinite(minimum) || !std::isfinite(maximum)
+        || maximum < minimum) return PhysicalAxisActivity::Unknown;
+    return maximum - minimum < kPhysicalAxisActivityMinimumTravel
+        ? PhysicalAxisActivity::Fixed : PhysicalAxisActivity::Active;
+}
+
 // A response definition is durable user configuration.  It deliberately
 // contains no compiled or runtime-only state: the worker receives a LUT made
 // from this definition at a configuration boundary.
@@ -412,6 +432,10 @@ using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
 struct ControllerProfile {
     QString id;
     QString name;
+    // A profile chooses a reusable pre-provisioned virtual controller.  The
+    // report loop receives only the already-resolved device ID at a
+    // configuration boundary; it never looks this string up.
+    QString outputLayoutId;
     AxisMappings axes{};
     ButtonBindings buttons;
     // Missing entries mean safely disabled hats. A saved controller can have
@@ -431,6 +455,18 @@ struct ControllerVJoyRequirements {
     int continuousPovs = 0;
     int discretePovs = 0;
     int deviceId = 1;
+};
+
+// One vJoy descriptor that HOTAS BF6 may adopt or create. Profiles reference
+// this durable object instead of treating the global device ID as a profile
+// setting. The exact HidHide instance path is optional and is used only when
+// the user has explicitly adopted visibility management for this output.
+struct VirtualOutputLayout {
+    QString id;
+    QString name;
+    ControllerVJoyRequirements requirements;
+    QString hidHideDeviceInstanceId;
+    bool hidhideManaged = false;
 };
 
 struct DiscoveredController {
@@ -465,6 +501,7 @@ struct SavedControllerRecord {
     QString lastVerified;
     int verificationVersion = 1;
     std::array<Calibration, kPhysicalAxisCount> calibration{};
+    std::array<PhysicalAxisActivity, kPhysicalAxisCount> axisActivity{};
     ControllerVJoyRequirements vjoyRequirements;
     // Only exact instances HOTAS BF6 has explicitly configured belong here;
     // unrelated HidHide entries are intentionally never represented.
@@ -499,7 +536,12 @@ struct MapperConfiguration {
     // UI-only selection. It never determines which axes the worker maps.
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
+    // Current selected-controller activity cache. The matching saved record
+    // retains the same data so activity is controller-specific across
+    // controller changes.
+    std::array<PhysicalAxisActivity, kPhysicalAxisCount> axisActivity{};
     std::vector<CalibrationHistoryEntry> calibrationHistory;
+    std::vector<VirtualOutputLayout> outputLayouts;
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> personalCurvePresets;
     // Global physical-input profile controls. Runtime activation/latch state
@@ -527,6 +569,44 @@ inline float sanitizedDisabledAxisValue(float value)
     return std::isfinite(value) ? std::clamp(value, -1.0F, 1.0F) : 0.0F;
 }
 
+inline QString defaultOutputLayoutId()
+{
+    return u"bf6-output"_qs;
+}
+
+inline VirtualOutputLayout defaultBf6OutputLayout()
+{
+    VirtualOutputLayout layout;
+    layout.id = defaultOutputLayoutId();
+    layout.name = u"BF6 Output"_qs;
+    layout.requirements.deviceId = 1;
+    layout.requirements.buttons = 32;
+    layout.requirements.axes[static_cast<int>(VirtualAxis::X)] = true;
+    layout.requirements.axes[static_cast<int>(VirtualAxis::Y)] = true;
+    layout.requirements.axes[static_cast<int>(VirtualAxis::Z)] = true;
+    layout.requirements.axes[static_cast<int>(VirtualAxis::Rz)] = true;
+    return layout;
+}
+
+inline const VirtualOutputLayout *findOutputLayout(const MapperConfiguration &configuration,
+                                                    const QString &id)
+{
+    const auto found = std::find_if(configuration.outputLayouts.cbegin(),
+        configuration.outputLayouts.cend(), [&id](const VirtualOutputLayout &layout) {
+            return layout.id == id;
+        });
+    return found == configuration.outputLayouts.cend() ? nullptr : &*found;
+}
+
+inline VirtualOutputLayout *findOutputLayout(MapperConfiguration &configuration, const QString &id)
+{
+    const auto found = std::find_if(configuration.outputLayouts.begin(),
+        configuration.outputLayouts.end(), [&id](const VirtualOutputLayout &layout) {
+            return layout.id == id;
+        });
+    return found == configuration.outputLayouts.end() ? nullptr : &*found;
+}
+
 // This is the complete, allocation-ready mapping payload compiled once when
 // configuration changes. The mapping loop only consumes this structure.
 struct RuntimeMappingConfiguration {
@@ -549,6 +629,10 @@ using RuntimePovProfileTriggers = std::array<std::array<RuntimeProfileTrigger,
 
 struct RuntimeProfileCache {
     std::vector<RuntimeMappingConfiguration> profiles;
+    // Resolved at compile time so runtime profile controls can reject a
+    // cross-layout request without a QString lookup or device transition in a
+    // DirectInput report.
+    std::vector<int> profileVjoyDeviceIds;
     std::array<RuntimeProfileTrigger, kMaximumPhysicalButtons> profileTriggers{};
     std::array<MappingControlAction, kMaximumPhysicalButtons> mappingControls{};
     RuntimePovProfileTriggers povProfileTriggers{};
@@ -575,6 +659,34 @@ inline QString physicalAxisKey(PhysicalAxis axis)
     case PhysicalAxis::Slider1: return u"slider1"_qs;
     }
     return u"unknown"_qs;
+}
+
+inline QString physicalAxisActivityKey(PhysicalAxisActivity activity)
+{
+    switch (activity) {
+    case PhysicalAxisActivity::Unknown: return u"unknown"_qs;
+    case PhysicalAxisActivity::Active: return u"active"_qs;
+    case PhysicalAxisActivity::Fixed: return u"fixed"_qs;
+    }
+    return u"unknown"_qs;
+}
+
+inline PhysicalAxisActivity physicalAxisActivityFromKey(const QString &value)
+{
+    const QString normalized = value.trimmed().toCaseFolded();
+    if (normalized == u"active"_qs) return PhysicalAxisActivity::Active;
+    if (normalized == u"fixed"_qs || normalized == u"inactive"_qs) return PhysicalAxisActivity::Fixed;
+    return PhysicalAxisActivity::Unknown;
+}
+
+inline QString physicalAxisActivityLabel(PhysicalAxisActivity activity)
+{
+    switch (activity) {
+    case PhysicalAxisActivity::Unknown: return u"Activity unknown"_qs;
+    case PhysicalAxisActivity::Active: return u"Active device axis"_qs;
+    case PhysicalAxisActivity::Fixed: return u"Inactive device axis"_qs;
+    }
+    return u"Activity unknown"_qs;
 }
 
 inline QString physicalAxisLabel(PhysicalAxis axis)
@@ -831,10 +943,13 @@ inline MapperConfiguration defaultConfiguration()
 {
     MapperConfiguration configuration;
     ControllerProfile normal = defaultProfile(normalProfileId(), u"Normal"_qs);
+    normal.outputLayoutId = defaultOutputLayoutId();
     ControllerProfile precision = normal;
     precision.id = precisionProfileId();
     precision.name = u"Precision"_qs;
     configuration.profiles = {std::move(normal), std::move(precision)};
+    configuration.outputLayouts = {defaultBf6OutputLayout()};
+    configuration.vjoyDeviceId = configuration.outputLayouts.front().requirements.deviceId;
     configuration.activeProfileId = normalProfileId();
     return configuration;
 }

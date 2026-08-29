@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.0.9**
+**Current release: v2.0.10**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -39,10 +39,11 @@ A dedicated DirectInput-to-vJoy worker owns report processing so controller outp
 
 ## Axis Routing and Processing
 
-Physical DirectInput axes can be routed to available vJoy axes with profile-owned transforms and labels.
+Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
 
 - Runtime discovery of vJoy X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 targets.
-- Per-profile axis routing with conflict prevention and unsupported-target handling.
+- Per-profile axis routing with conflict prevention and selected-layout unsupported-target handling.
+- Completed calibration marks real controls Active and stationary advertised slots Fixed; Fixed slots are never routed.
 - Calibration and normalization before profile transforms.
 - Rescaled deadzone, hysteresis, inversion, response curve, and output-limit processing.
 - Centered or One-Sided axis domain selectable per profile and per axis.
@@ -84,11 +85,12 @@ DirectInput POV hats can act as discrete logical directions, profile controls, o
 
 ## Profiles
 
-Profiles package axis and button behavior into instant-switching configurations without reacquiring DirectInput or vJoy.
+Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations.
 
 - Persistent base profiles with create, clone/start-from, rename, delete, and live activation.
 - New profiles are deep copies with no live parent link.
-- Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, and custom names.
+- Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, custom names, and virtual-output layout selection.
+- Same-layout Profile Hold/Toggle changes use compiled runtime state; changing layouts is an explicit neutral/release/reacquire control-plane transition.
 - Global physical-button and POV Profile Hold/Toggle controls.
 - Deterministic precedence: newest active Hold, then newest active Toggle, then manual base profile.
 - Manual profile selection clears Toggle overrides while currently held Hold controls remain until release.
@@ -175,10 +177,11 @@ The app provides three persistent visual systems without allowing presentation s
 
 ## vJoy Integration
 
-vJoy is dynamically loaded and queried so the application adapts to the virtual device actually configured on the machine.
+vJoy is dynamically loaded and queried so the application enforces the selected virtual-output layout configured on the machine.
 
 - Dynamic x64 vJoyInterface.dll loading with no vendored SDK binary dependency.
-- Runtime axis, button, continuous POV, and discrete POV capability discovery.
+- Runtime axis, button, continuous POV, and discrete POV capability discovery with exact required-axis descriptors and capacity checks for buttons/POVs.
+- Reusable BF6 4-axis and explicit 5-axis output layouts on distinct preconfigured vJoy devices.
 - Safe handling of insufficient button capacity and unavailable axis targets.
 - HOTAS Setup & Verification uses the installed supported vJoyConfig console utility only after an explicit preview and Windows elevation prompt.
 - Open Configure vJoy action for advanced/manual device setup.
@@ -193,6 +196,7 @@ The application helps establish the surrounding controller stack while keeping p
 - Dependency payload SHA-256 and Authenticode verification before vendor installers are opened.
 - No silent update, downgrade, enable, cloak, or reconfiguration of an already-installed dependency.
 - HidHideCLI integration adds the mapper allowlist entry before hiding only the exact selected HID instance or enabling cloaking.
+- Normal output-layout visibility changes act only on exact stored virtual-device identities already authorized in configuration and never enumerate broad hide rules.
 - Existing HidHide allowlist entries, inverse behavior, and unrelated hidden devices are preserved.
 - Direct action to open the HidHide Configuration Client.
 
@@ -200,7 +204,7 @@ The application helps establish the surrounding controller stack while keeping p
 
 Passive startup checks and Settings-accessible full verification explain the complete HOTAS chain without moving setup work into real-time mapping.
 
-- Inspects the selected DirectInput controller, axes, buttons, POVs, vJoy Device 1 capability, HidHide state, and current mapper output requirements.
+- Inspects the selected DirectInput controller, axes, buttons, POVs, active virtual-output layout descriptor, HidHide state, and current mapper output requirements.
 - Computes required vJoy axes, buttons, and native POV capacity from current profiles and Automation rather than cloning the physical device.
 - Recognizes HOTAS BF6's own acquired vJoy Device 1 as healthy while distinguishing a confirmed external-owner conflict.
 - Builds an explicit repair plan and executes required vJoyConfig/HidHideCLI changes in one approved elevated transaction, with narrow in-transaction rollback for partial failures.
@@ -227,7 +231,7 @@ A native launcher owns stable update checks and installation handoff so network/
 Persistent configuration evolves through explicit schema migrations while transient runtime state remains outside saved data.
 
 - QSettings-backed persistent profiles and global settings.
-- Schema migrations preserve established behavior for older configurations.
+- Schema migrations preserve established behavior for older configurations, including schema-18 data-only migration to reusable virtual-output layouts.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.
 - Runtime-only toggles, latches, timers, and held-control state are never persisted.

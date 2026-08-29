@@ -948,6 +948,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
 {
     RuntimeProfileCache cache;
     cache.profiles.reserve(configuration.profiles.size());
+    cache.profileVjoyDeviceIds.reserve(configuration.profiles.size());
     for (int profileIndex = 0;
          profileIndex < static_cast<int>(configuration.profiles.size()); ++profileIndex) {
         const ControllerProfile &profile = configuration.profiles[static_cast<size_t>(profileIndex)];
@@ -961,11 +962,15 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
         }
         runtime.buttons = profile.buttons;
         runtime.povs = profile.povs;
+        const VirtualOutputLayout *layout = findOutputLayout(configuration, profile.outputLayoutId);
+        cache.profileVjoyDeviceIds.push_back(layout ? layout->requirements.deviceId
+                                                    : configuration.vjoyDeviceId);
         if (profile.id == configuration.activeProfileId) cache.baseProfileIndex = profileIndex;
         cache.profiles.push_back(std::move(runtime));
     }
     if (cache.profiles.empty()) {
         cache.profiles.push_back(compileActiveProfile(defaultConfiguration()));
+        cache.profileVjoyDeviceIds.push_back(defaultConfiguration().vjoyDeviceId);
         cache.baseProfileIndex = 0;
     }
     const int mappingControlCount = std::min(static_cast<int>(configuration.mappingControls.size()),

@@ -151,7 +151,7 @@ Flickable {
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: backend.vjoyReady ? root.readyColor : root.warningColor
                         Column { anchors.centerIn: parent; spacing: 4
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "VJOY " + backend.vjoyDeviceId; color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.telemetryFont }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "VJOY " + backend.vjoyDeviceId + " · " + backend.activeOutputLayoutName.toUpperCase(); color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.telemetryFont; elide: Text.ElideRight; width: parent.width - 16; horizontalAlignment: Text.AlignHCenter }
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "OUTPUT NEEDS ATTENTION"; color: backend.vjoyReady ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
                         }
                     }
@@ -173,7 +173,7 @@ Flickable {
                     Capability { value: backend.povCount; label: "POVS" }
                 }
             }
-            Panel { Layout.fillWidth: true; eyebrow: "VIRTUAL OUTPUT"; title: "vJoy Device " + backend.vjoyDeviceId; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
+            Panel { Layout.fillWidth: true; eyebrow: "VIRTUAL OUTPUT"; title: backend.activeOutputLayoutName + " · vJoy Device " + backend.vjoyDeviceId; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
                 RowLayout { Layout.fillWidth: true
                     StatusBadge { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "ACTION REQUIRED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
                     Item { Layout.fillWidth: true }
