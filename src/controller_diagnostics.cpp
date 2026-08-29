@@ -41,6 +41,14 @@ QString sanitizeControllerDiagnosticText(QString text, const QStringList &privat
 
 QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot)
 {
+    const int advertisedAxes = static_cast<int>(std::count(snapshot.physical.axes.cbegin(),
+        snapshot.physical.axes.cend(), true));
+    int activeAxes = 0;
+    int fixedAxes = 0;
+    for (const ControllerAxisDiagnostic &axis : snapshot.axes) {
+        activeAxes += axis.activity == PhysicalAxisActivity::Active ? 1 : 0;
+        fixedAxes += axis.activity == PhysicalAxisActivity::Fixed ? 1 : 0;
+    }
     QStringList lines{
         QStringLiteral("HOTAS BF6 Diagnostics"),
         QStringLiteral("Version: v%1").arg(snapshot.version),
@@ -52,8 +60,8 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
         QStringLiteral("Name: %1").arg(sanitizeControllerDiagnosticText(
             snapshot.physical.name, snapshot.privatePaths)),
         QStringLiteral("Connected: %1").arg(yesNo(snapshot.physical.connected)),
-        QStringLiteral("Axes: %1  Buttons: %2  POVs: %3")
-            .arg(std::count(snapshot.physical.axes.cbegin(), snapshot.physical.axes.cend(), true))
+        QStringLiteral("Axes: %1 advertised  %2 active  %3 fixed  Buttons: %4  POVs: %5")
+            .arg(advertisedAxes).arg(activeAxes).arg(fixedAxes)
             .arg(snapshot.physical.buttons).arg(snapshot.physical.povs),
         QStringLiteral("Input reports received: %1").arg(yesNo(snapshot.physical.inputReportsReceived)),
         QStringLiteral("Reacquisition attempted: %1").arg(yesNo(snapshot.repair.physicalReacquisitionAttempted)),
@@ -68,6 +76,8 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
             .arg(std::count(snapshot.vjoy.axes.cbegin(), snapshot.vjoy.axes.cend(), true))
             .arg(snapshot.vjoy.buttons).arg(snapshot.vjoy.continuousPovs).arg(snapshot.vjoy.discretePovs),
         QString{},
+        QStringLiteral("ACTIVE PROFILE / OUTPUT"),
+        QStringLiteral("Profile: %1").arg(snapshot.activeProfileName),
         QStringLiteral("HIDHIDE"),
         QStringLiteral("Installed: %1  Service ready: %2  Cloaking: %3")
             .arg(yesNo(snapshot.hidhide.installed)).arg(yesNo(snapshot.hidhide.serviceReady))
@@ -82,6 +92,13 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
         QStringLiteral("Result: %1").arg(sanitizeControllerDiagnosticText(
             snapshot.repair.message, snapshot.privatePaths)),
     };
+    for (const VirtualOutputDiagnostic &output : snapshot.virtualOutputs) {
+        const QString visibility = !output.visibilityManaged ? QStringLiteral("not managed")
+            : output.hidden ? QStringLiteral("hidden") : QStringLiteral("visible");
+        lines.append(QStringLiteral("Output: %1  vJoy %2  %3  %4%5")
+            .arg(output.name).arg(output.deviceId).arg(output.descriptor).arg(visibility)
+            .arg(output.active ? QStringLiteral("  active") : QString{}));
+    }
     for (const AutomaticRepairOperationResult &operation : snapshot.repair.operations) {
         lines.append(QStringLiteral("%1: %2 (exit code %3%4)")
             .arg(sanitizeControllerDiagnosticText(operation.operationName, snapshot.privatePaths),
@@ -103,10 +120,10 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
     lines.append(QString{});
     lines.append(QStringLiteral("CALIBRATION"));
     for (const ControllerAxisDiagnostic &axis : snapshot.axes) {
-        lines.append(QStringLiteral("%1 RAW MIN: %2  RAW NEUTRAL: %3  RAW MAX: %4  CALIBRATED: %5  MAPPED: %6")
+        lines.append(QStringLiteral("%1 RAW MIN: %2  RAW NEUTRAL: %3  RAW MAX: %4  CALIBRATED: %5  MAPPED: %6  ACTIVITY: %7")
             .arg(axis.label).arg(axis.rawMinimum, 0, 'f', 3).arg(axis.rawNeutral, 0, 'f', 3)
             .arg(axis.rawMaximum, 0, 'f', 3).arg(axis.calibratedInput, 0, 'f', 3)
-            .arg(axis.mappedOutput, 0, 'f', 3));
+            .arg(axis.mappedOutput, 0, 'f', 3).arg(physicalAxisActivityLabel(axis.activity)));
     }
     lines.append(QString{});
     lines.append(QStringLiteral("ADVANCED / TECHNICAL"));

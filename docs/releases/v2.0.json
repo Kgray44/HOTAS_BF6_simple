@@ -192,16 +192,34 @@
     "releaseTitle": "v2.0.10",
     "title": "Virtual Output Layouts & Phantom-Axis Safety",
     "summary": "HOTAS BF6 v2.0.10 introduces reusable per-profile virtual-output layouts so Battlefield 6 sees one deliberate vJoy descriptor at a time. It adds exact-axis descriptor verification, profile-owned layout selection, safe neutral/release/reacquire transitions, calibration-backed physical-axis activity classification, and truthful NOT ROUTED telemetry without adding allocation, UI, driver, or HidHide work to the DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.0.11",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. Run full Setup & Verification and a real BF6 binding check after changing virtual-output layouts or drivers.",
+    "statusNote": "Superseded by v2.0.11 Virtual Output Visibility Completion.",
     "highlights": [
       "Profiles persist a selected reusable virtual-output layout; the built-in BF6 Output layout exposes exactly X, Y, Z, and Rz with 32-button capacity, while an explicit 5-axis layout can be prepared on a separate vJoy device.",
       "Readiness now treats virtual-axis descriptors as exact: additional or missing axes require an explicit setup correction, while button and native-POV capacity remain minimum-capacity checks.",
       "An active layout change neutralizes the prior virtual device, releases it, applies only pre-authorized HidHide visibility changes for exact stored virtual-device identities, then acquires and establishes a neutral baseline on the selected output.",
       "Completed calibration classifies advertised physical axes as Active or Fixed from observed travel. Fixed slots are never routed or offered as Automation input, while the UI continues to report the full DirectInput descriptor honestly.",
       "Schema 18 migrates existing configurations data-only into a preserved layout derived from their existing routes, buttons, and POVs; migration does not rewrite vJoy configuration or discard saved calibration, profiles, controller memory, or Automation."
+    ]
+  },
+  {
+    "version": "2.0.11",
+    "tag": "v2.0.11",
+    "releaseTitle": "v2.0.11",
+    "title": "Virtual Output Visibility Completion",
+    "summary": "HOTAS BF6 v2.0.11 completes the safe practical HidHide isolation path for reusable virtual-output layouts. It adds an explicit exact-vJoy HID adoption step, preserves v2.0.10's neutral/release/acquire transition, and reports physical/output capability state concisely without adding work to the DirectInput-to-vJoy report path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. Prepare an exact vJoy identity in Settings before relying on automatic inactive-output visibility, and restart a game that was already running when its controller handle was opened.",
+    "highlights": [
+      "A layout can be marked visibility-managed only after HidHide confirms the exact user-selected HID\\VID_1234&PID_BEAD vJoy instance is currently enumerated; display names, inferred ownership, and unrelated devices are never accepted.",
+      "Normal cross-layout switching stays non-elevated: it neutralizes and releases the old output, hides only adopted inactive layouts, exposes the selected adopted layout, acquires it, and publishes a neutral baseline before mapping resumes. A failed visibility command rolls back completed visibility changes.",
+      "Settings exposes one compact preparation action for the selected layout, and Controller Diagnostics now reports advertised/active/fixed physical axes, active profile/output descriptor, and managed output visibility without exposing arbitrary device inventories.",
+      "HidHide changes game-device enumeration, not already-open game handles. Switch layouts before launching a game, or restart a game that retains an older controller handle after the switch.",
+      "Configuration schema 18 remains compatible: existing layouts stay untouched and un-managed until their exact virtual HID identities are explicitly adopted."
     ]
   }
 ]

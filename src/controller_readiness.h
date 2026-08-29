@@ -277,6 +277,12 @@ public:
     // Safe even when no controller is visible: it mutates only HOTAS BF6's
     // own HidHide application entry and never changes device visibility.
     bool allowlistMapperOnly();
+    // Records no driver state. This control-plane validation proves that a
+    // user-selected exact vJoy HID instance is currently known to HidHide
+    // before a layout is allowed to manage its visibility at switch time.
+    bool validateManagedVirtualOutputIdentity(const QString &instanceId,
+                                              QString *normalizedInstanceId,
+                                              QString *status) const;
     OutputVisibilitySwitchResult applyManagedOutputVisibility(
         const MapperConfiguration &configuration, const QString &activeLayoutId) const;
     bool hasPendingRecovery() const { return m_journal.available; }

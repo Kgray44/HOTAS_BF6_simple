@@ -16,6 +16,16 @@ struct ControllerAxisDiagnostic {
     float rawMaximum = 1.0F;
     float calibratedInput = 0.0F;
     float mappedOutput = 0.0F;
+    PhysicalAxisActivity activity = PhysicalAxisActivity::Unknown;
+};
+
+struct VirtualOutputDiagnostic {
+    QString name;
+    QString descriptor;
+    int deviceId = 0;
+    bool active = false;
+    bool visibilityManaged = false;
+    bool hidden = false;
 };
 
 struct ControllerDiagnosticsSnapshot {
@@ -27,6 +37,8 @@ struct ControllerDiagnosticsSnapshot {
     HidHideCapabilities hidhide;
     AutomaticRepairResult repair;
     QList<ControllerAxisDiagnostic> axes;
+    QList<VirtualOutputDiagnostic> virtualOutputs;
+    QString activeProfileName;
     QString selectedHidInstance;
     // Known local paths are redacted before text reaches the clipboard.
     QStringList privatePaths;

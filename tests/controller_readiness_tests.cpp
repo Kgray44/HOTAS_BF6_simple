@@ -10,6 +10,8 @@
 #include <QSaveFile>
 #include <QtTest>
 
+#include <algorithm>
+
 using namespace hotas;
 
 namespace {
@@ -69,17 +71,23 @@ class FakeRunner final : public SetupProcessRunner {
 public:
     bool failHide = false;
     bool failRollback = false;
+    bool failRuntimeUnhide = false;
     bool cancelElevation = false;
     bool repairApplied = false;
     int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
     QStringList calls;
+    QStringList gamingDevices;
+    QStringList hiddenDevices;
 
     SetupProcessResult run(const QString &program, const QStringList &arguments, int) override
     {
         Q_UNUSED(program)
         calls.append(arguments.join(u' '));
+        if (failRuntimeUnhide && arguments.contains(QStringLiteral("--dev-unhide"))) {
+            return {true, true, 5, {}, QStringLiteral("Access denied")};
+        }
         return result(arguments);
     }
 
@@ -179,10 +187,18 @@ private:
                 ? QStringLiteral("--app-reg \"") + QCoreApplication::applicationFilePath() + QStringLiteral("\"\n") : QString{}, {}};
         }
         if (joined.contains(QStringLiteral("--dev-list"))) {
+            if (!hiddenDevices.isEmpty()) {
+                QStringList lines;
+                for (const QString &instance : hiddenDevices) {
+                    lines.append(QStringLiteral("--dev-hide \"") + instance + QStringLiteral("\""));
+                }
+                return {true, true, 0, lines.join(u'\n') + u'\n', {}};
+            }
             return {true, true, 0, repairApplied
                 ? QStringLiteral("--dev-hide \"HID\\VID_044F&PID_B68D\\exact-instance\"\n") : QString{}, {}};
         }
         if (joined.contains(QStringLiteral("--dev-gaming"))) {
+            if (!gamingDevices.isEmpty()) return {true, true, 0, gamingDevices.join(u'\n'), {}};
             return {true, true, 0, QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance"), {}};
         }
         if (joined.contains(QStringLiteral("-t -c"))) {
@@ -234,6 +250,8 @@ private slots:
     void requirementsCoverProfilesAutomationAndExtendedAxes();
     void virtualAxisDescriptorsMustMatchExactly();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
+    void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
+    void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -599,6 +617,10 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
         5, 31, QStringLiteral("C:\\Users\\Snow\\HOTAS failure"),
         QStringLiteral("See C:\\Program Files\\HOTAS BF6\\setup.log"), {}});
     snapshot.axes.append({QStringLiteral("X"), -1.0F, -0.041F, 1.0F, 0.0F, 0.0F});
+    snapshot.axes.back().activity = PhysicalAxisActivity::Fixed;
+    snapshot.activeProfileName = QStringLiteral("Battlefield 6");
+    snapshot.virtualOutputs.append({QStringLiteral("BF6 Output"), QStringLiteral("X · Y · Z · Rz"),
+        1, true, true, false});
     snapshot.selectedHidInstance = connectedController().hidInstanceId;
     snapshot.privatePaths = {QStringLiteral("C:\\Program Files\\HOTAS BF6")};
 
@@ -607,6 +629,9 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
     QVERIFY(report.contains(QStringLiteral("PHYSICAL CONTROLLER")));
     QVERIFY(report.contains(QStringLiteral("exit code 5")));
     QVERIFY(report.contains(QStringLiteral("X RAW MIN: -1.000  RAW NEUTRAL: -0.041")));
+    QVERIFY(report.contains(QStringLiteral("ACTIVITY: Inactive device axis")));
+    QVERIFY(report.contains(QStringLiteral("ACTIVE PROFILE / OUTPUT")));
+    QVERIFY(report.contains(QStringLiteral("Output: BF6 Output  vJoy 1")));
     QVERIFY(report.contains(snapshot.selectedHidInstance));
     QVERIFY(report.contains(QStringLiteral("<USER_HOME>")));
     QVERIFY(report.contains(QStringLiteral("<LOCAL_PATH>")));
@@ -696,6 +721,90 @@ void ControllerReadinessTests::savedControllerVjoyRequirementsDetectInsufficient
         connectedController(), requirements, vjoy, readyHidHide());
     QVERIFY(plan.vjoyNeedsChanges);
     QVERIFY(plan.vjoyCanApply);
+}
+
+void ControllerReadinessTests::managedVirtualOutputIdentityRequiresExactEnumeratedVjoy()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->gamingDevices = {QStringLiteral("HID\\VID_1234&PID_BEAD\\VJOY-ONE")};
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    QString normalized;
+    QString status;
+    QVERIFY(service.validateManagedVirtualOutputIdentity(
+        QStringLiteral("HID\\VID_1234&PID_BEAD\\VJOY-ONE"), &normalized, &status));
+    QCOMPARE(normalized, QStringLiteral("HID\\VID_1234&PID_BEAD\\VJOY-ONE"));
+    QVERIFY(status.contains(QStringLiteral("verified"), Qt::CaseInsensitive));
+    probe->gamingDevices = {QStringLiteral("HID\\VID_1234&PID_BEAD\\VJOY-ONE-OTHER")};
+    QVERIFY(!service.validateManagedVirtualOutputIdentity(
+        QStringLiteral("HID\\VID_1234&PID_BEAD\\VJOY-ONE"), &normalized, &status));
+    QVERIFY(status.contains(QStringLiteral("not currently enumerated"), Qt::CaseInsensitive));
+    QVERIFY(!service.validateManagedVirtualOutputIdentity(
+        QStringLiteral("HID\\VID_044F&PID_B68D\\physical"), &normalized, &status));
+    QVERIFY(status.contains(QStringLiteral("display names"), Qt::CaseInsensitive));
+    QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("elevated:"));
+    }));
+}
+
+void ControllerReadinessTests::managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure()
+{
+    const QString bf6Instance = QStringLiteral("HID\\VID_1234&PID_BEAD\\BF6-OUTPUT");
+    const QString starInstance = QStringLiteral("HID\\VID_1234&PID_BEAD\\STAR-OUTPUT");
+    MapperConfiguration configuration = defaultConfiguration();
+    VirtualOutputLayout &bf6 = configuration.outputLayouts.front();
+    bf6.hidhideManaged = true;
+    bf6.hidHideDeviceInstanceId = bf6Instance;
+    VirtualOutputLayout star = defaultBf6OutputLayout();
+    star.id = QStringLiteral("star-output");
+    star.name = QStringLiteral("Star Citizen Output");
+    star.requirements.deviceId = 2;
+    star.requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)] = true;
+    star.hidhideManaged = true;
+    star.hidHideDeviceInstanceId = starInstance;
+    configuration.outputLayouts.push_back(star);
+
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->repairApplied = true;
+    probe->hiddenDevices = {starInstance};
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    const OutputVisibilitySwitchResult result = service.applyManagedOutputVisibility(
+        configuration, star.id);
+    QVERIFY(result.succeeded);
+    QVERIFY(result.changed);
+    const int hideBf6 = probe->calls.indexOf(QStringLiteral("--dev-hide ") + bf6Instance);
+    const int unhideStar = probe->calls.indexOf(QStringLiteral("--dev-unhide ") + starInstance);
+    QVERIFY(hideBf6 >= 0);
+    QVERIFY(unhideStar > hideBf6);
+    QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("elevated:"));
+    }));
+
+    auto failingFake = std::make_unique<FakeRunner>();
+    FakeRunner *failingProbe = failingFake.get();
+    failingProbe->repairApplied = true;
+    failingProbe->hiddenDevices = {starInstance};
+    failingProbe->failRuntimeUnhide = true;
+    ControllerReadinessService failingService(std::move(failingFake), utilities);
+    const OutputVisibilitySwitchResult failed = failingService.applyManagedOutputVisibility(
+        configuration, star.id);
+    QVERIFY(!failed.succeeded);
+    QVERIFY(failed.status.contains(QStringLiteral("rolled back"), Qt::CaseInsensitive));
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-hide ") + bf6Instance));
+    // The selected output was already hidden when its unhide command failed;
+    // only the completed hide of the old output needs reversal.
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-unhide ") + bf6Instance));
+    QVERIFY(!failingProbe->calls.contains(QStringLiteral("--dev-hide ") + starInstance));
 }
 
 int main(int argc, char *argv[])

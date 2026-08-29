@@ -2649,6 +2649,35 @@ QString AppBackend::createFiveAxisOutputLayout(const QString &name, int deviceId
     return id;
 }
 
+bool AppBackend::adoptVirtualOutputVisibility(const QString &layoutId,
+                                               const QString &deviceInstanceId)
+{
+    VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    if (!layout) return false;
+
+    ControllerReadinessService visibility;
+    QString normalizedInstanceId;
+    QString status;
+    if (!visibility.validateManagedVirtualOutputIdentity(deviceInstanceId, &normalizedInstanceId, &status)) {
+        appendEvent(status);
+        return false;
+    }
+    for (const VirtualOutputLayout &other : m_configuration.outputLayouts) {
+        if (other.id == layout->id || other.hidHideDeviceInstanceId.isEmpty()) continue;
+        if (ControllerReadinessService::normalizeDeviceInstanceId(other.hidHideDeviceInstanceId)
+            == normalizedInstanceId) {
+            appendEvent(u"That exact vJoy HID instance is already adopted by another virtual output layout"_qs);
+            return false;
+        }
+    }
+    layout->hidHideDeviceInstanceId = normalizedInstanceId;
+    layout->hidhideManaged = true;
+    persistAndApply();
+    appendEvent(QString(u"Virtual-output visibility prepared for %1. Normal layout switches use HidHide without administrator elevation; restart a running game if it retains an older device handle."_qs)
+        .arg(layout->name));
+    return true;
+}
+
 void AppBackend::setAutomationEngineEnabled(bool enabled)
 {
     if (m_configuration.automationEnabled == enabled) return;
@@ -3321,13 +3350,32 @@ ControllerDiagnosticsSnapshot AppBackend::controllerDiagnosticsSnapshot() const
     diagnostics.vjoy = m_readiness.plan().vjoy;
     diagnostics.hidhide = m_readiness.plan().hidhide;
     diagnostics.repair = m_readiness.lastAutomaticRepairResult();
+    diagnostics.activeProfileName = currentProfile().name;
     diagnostics.privatePaths = {QDir::homePath(), QCoreApplication::applicationDirPath()};
     const AtomicRuntimeState &runtime = m_worker.runtime();
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
         diagnostics.axes.append({physicalAxisLabel(static_cast<PhysicalAxis>(index)), calibration.minimum,
             calibration.center, calibration.maximum, runtime.normalized[index].load(),
-            runtime.transformed[index].load()});
+            runtime.transformed[index].load(), m_configuration.axisActivity[static_cast<size_t>(index)]});
+    }
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        QStringList axes;
+        for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+            if (layout.requirements.axes[static_cast<size_t>(index)]) {
+                axes.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+            }
+        }
+        const QString normalized = ControllerReadinessService::normalizeDeviceInstanceId(
+            layout.hidHideDeviceInstanceId);
+        const bool hidden = layout.hidhideManaged && std::any_of(
+            diagnostics.hidhide.hiddenDeviceInstanceIds.cbegin(),
+            diagnostics.hidhide.hiddenDeviceInstanceIds.cend(), [&normalized](const QString &entry) {
+                return !normalized.isEmpty()
+                    && ControllerReadinessService::normalizeDeviceInstanceId(entry) == normalized;
+            });
+        diagnostics.virtualOutputs.append({layout.name, axes.join(u" · "_qs), layout.requirements.deviceId,
+            layout.id == currentProfile().outputLayoutId, layout.hidhideManaged, hidden});
     }
     diagnostics.selectedHidInstance = diagnostics.physical.hidInstanceId;
     return diagnostics;

@@ -867,6 +867,44 @@ OutputVisibilitySwitchResult ControllerReadinessService::applyManagedOutputVisib
     return result;
 }
 
+bool ControllerReadinessService::validateManagedVirtualOutputIdentity(const QString &instanceId,
+                                                                        QString *normalizedInstanceId,
+                                                                        QString *status) const
+{
+    if (normalizedInstanceId) normalizedInstanceId->clear();
+    const QString normalized = normalizeDeviceInstanceId(instanceId);
+    if (!normalized.startsWith(QStringLiteral("HID\\VID_1234&PID_BEAD\\"), Qt::CaseInsensitive)) {
+        if (status) *status = QStringLiteral("Enter the exact HID instance for a vJoy device; display names are not accepted.");
+        return false;
+    }
+    if (hidhideCliPath().isEmpty() || !hidhideServiceReady()) {
+        if (status) *status = QStringLiteral("HidHide is not ready, so this virtual output cannot be prepared for visibility management.");
+        return false;
+    }
+    const SetupProcessResult gaming = runHidHide(false, {QStringLiteral("--dev-gaming")});
+    if (!gaming.succeeded()) {
+        if (status) *status = QStringLiteral("HidHide could not read currently enumerated gaming devices; no visibility identity was recorded.");
+        return false;
+    }
+    const QRegularExpression vjoyInstancePattern(
+        QStringLiteral("(?im)HID\\\\VID_1234&PID_BEAD\\\\[^\\r\\n\\\"]+"));
+    bool exactEnumeratedIdentity = false;
+    QRegularExpressionMatchIterator matches = vjoyInstancePattern.globalMatch(gaming.output);
+    while (matches.hasNext()) {
+        if (normalizeDeviceInstanceId(matches.next().captured()) == normalized) {
+            exactEnumeratedIdentity = true;
+            break;
+        }
+    }
+    if (!exactEnumeratedIdentity) {
+        if (status) *status = QStringLiteral("The supplied vJoy HID instance is not currently enumerated by HidHide; no visibility identity was recorded.");
+        return false;
+    }
+    if (normalizedInstanceId) *normalizedInstanceId = normalized;
+    if (status) *status = QStringLiteral("Exact vJoy HID identity verified for non-elevated visibility switching.");
+    return true;
+}
+
 const ControllerReadinessPlan &ControllerReadinessService::inspect(const MapperConfiguration &configuration,
                                                                      const PhysicalControllerCapabilities &physical,
                                                                      VerificationMode mode,

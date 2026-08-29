@@ -221,6 +221,20 @@ Flickable {
                 ActionButton { label: "CREATE 5-AXIS OUTPUT"; subdued: true; actionEnabled: root.nextOutputDeviceId() > 0
                     onTriggered: { const id = root.nextOutputDeviceId(); backend.createFiveAxisOutputLayout("5-Axis Output " + id, id) } }
             }
+            RowLayout { Layout.fillWidth: true; spacing: 8
+                ComboBox { id: visibilityLayoutSelector; Layout.preferredWidth: 175; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
+                    contentItem: Text { leftPadding: 8; rightPadding: 22; text: visibilityLayoutSelector.displayText; color: root.textColor; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                    background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    indicator: Text { x: visibilityLayoutSelector.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 11 }
+                }
+                TextField { id: virtualOutputIdentity; Layout.fillWidth: true; implicitHeight: 30; placeholderText: "Exact vJoy HID instance from HidHide"; selectByMouse: true; color: root.textColor; font.pixelSize: 9
+                    background: Rectangle { color: root.panelColor; border.color: virtualOutputIdentity.activeFocus ? root.accentColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                }
+                ActionButton { label: "PREPARE VISIBILITY"; subdued: true
+                    actionEnabled: visibilityLayoutSelector.currentValue !== undefined && virtualOutputIdentity.text.trim().length > 0
+                    onTriggered: if (backend.adoptVirtualOutputVisibility(visibilityLayoutSelector.currentValue, virtualOutputIdentity.text)) virtualOutputIdentity.text = "" }
+            }
+            Text { Layout.fillWidth: true; text: "Optional advanced setup: adopt only an exact HID\\VID_1234&PID_BEAD vJoy identity already shown by HidHide. Layout switches then hide inactive adopted outputs without UAC. A running game can retain an already-open controller handle, so switch before launch or restart the game."; color: root.faintColor; font.pixelSize: 8; wrapMode: Text.WordWrap }
         }
 
         SectionLabel { label: "APPLICATION" }

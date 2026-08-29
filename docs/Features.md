@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.0.10**
+**Current release: v2.0.11**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -196,7 +196,9 @@ The application helps establish the surrounding controller stack while keeping p
 - Dependency payload SHA-256 and Authenticode verification before vendor installers are opened.
 - No silent update, downgrade, enable, cloak, or reconfiguration of an already-installed dependency.
 - HidHideCLI integration adds the mapper allowlist entry before hiding only the exact selected HID instance or enabling cloaking.
-- Normal output-layout visibility changes act only on exact stored virtual-device identities already authorized in configuration and never enumerate broad hide rules.
+- An explicit Settings adoption step validates an exact currently enumerated vJoy HID instance before normal output-layout visibility changes act on it; display names and broad hide rules are never used.
+- Normal output-layout visibility changes are non-elevated, hide inactive adopted outputs before exposing the selected one, and roll back completed changes if a switch fails.
+- HidHide affects future enumeration; a game that already opened a device handle may need a restart after an output-layout switch.
 - Existing HidHide allowlist entries, inverse behavior, and unrelated hidden devices are preserved.
 - Direct action to open the HidHide Configuration Client.
 
