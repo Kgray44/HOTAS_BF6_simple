@@ -282,6 +282,12 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     const QString portability = sourceFile(QStringLiteral("src/profile_portability.cpp"));
     QVERIFY(library.contains(QStringLiteral("PROFILE LIBRARY")));
     QVERIFY(library.contains(QStringLiteral("Profile Detail")));
+    QVERIFY(library.contains(QStringLiteral("GAME DETECTION")));
+    QVERIFY(library.contains(QStringLiteral("WHEN THIS CATEGORY ACTIVATES")));
+    QVERIFY(library.contains(QStringLiteral("RUNNING APPLICATIONS")));
+    QVERIFY(library.contains(QStringLiteral("BROWSE FOR GAME")));
+    QVERIFY(library.contains(QStringLiteral("IMPORT / EXPORT")));
+    QVERIFY(!library.contains(QStringLiteral("ONE EXECUTABLE PER LINE")));
     QVERIFY(library.contains(QStringLiteral("selectedPackCategoryIds")));
     QVERIFY(library.contains(QStringLiteral("togglePackProfile")));
     QVERIFY(library.contains(QStringLiteral("RELATED CONFIGURATION")));
@@ -295,6 +301,8 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(!library.contains(QStringLiteral("\n                    ComboBox { id:")));
     QVERIFY(standard.contains(QStringLiteral("ProfileLibrary")));
     QVERIFY(legacy.contains(QStringLiteral("ProfileLibrary")));
+    QVERIFY(backend.contains(QStringLiteral("runningApplicationSnapshot")));
+    QVERIFY(backend.contains(QStringLiteral("categoryForRunningExecutables")));
     QVERIFY(backend.contains(QStringLiteral("selectPortableImportDevice")));
     QVERIFY(portability.contains(QStringLiteral("kPortableProfileSchemaVersion")));
     QVERIFY(portability.contains(QStringLiteral("kPortablePackSchemaVersion")));

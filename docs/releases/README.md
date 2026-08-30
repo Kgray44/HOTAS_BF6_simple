@@ -6,11 +6,12 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.1.2 | Current | Deep Tray & Runtime Efficiency; recommended published release |
-| v2.1.1 | Superseded | Profile Library Completion & Portable Pack Safety; upgrade to v2.1.2 for Deep Tray Sleep and reduced background presentation work |
-| v2.1.0 | Superseded | Profile Library & Portable Configuration foundation; upgrade to v2.1.2 for the completed portability workflow and Deep Tray Sleep |
-| v2.0.12 | Superseded | Automation Editor Interaction Qualification; upgrade to v2.1.2 for the completed Profile Library and efficient tray runtime |
-| v2.0.7 | Superseded | Published Manifest Transport Hotfix; upgrade to v2.1.2 for the current release |
+| v2.1.3 | Current | Profiles, Categories & Game Detection UX; recommended published release |
+| v2.1.2 | Superseded | Deep Tray & Runtime Efficiency; upgrade to v2.1.3 for the clearer Profile/Category workflow and smart game management |
+| v2.1.1 | Superseded | Profile Library Completion & Portable Pack Safety; upgrade to v2.1.3 for the completed, clearer Profile/Category workflow |
+| v2.1.0 | Superseded | Profile Library & Portable Configuration foundation; upgrade to v2.1.3 for clearer game detection and category behavior |
+| v2.0.12 | Superseded | Automation Editor Interaction Qualification; upgrade to v2.1.3 for the completed Profile Library and efficient tray runtime |
+| v2.0.7 | Superseded | Published Manifest Transport Hotfix; upgrade to v2.1.3 for the current release |
 | v2.0.6 | Superseded | Published Manifest Readiness Hotfix; upgrade to v2.0.7 for correct hosted-runner manifest decoding |
 | v2.0.5 | Superseded | Published Updater Acceptance Hotfix; upgrade to v2.0.7 for public latest-manifest readiness validation |
 | v2.0.4 | Superseded | UI Responsiveness Hotfix; upgrade to v2.0.7 for published updater acceptance reliability |

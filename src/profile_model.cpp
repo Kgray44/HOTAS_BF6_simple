@@ -1,5 +1,8 @@
 #include "profile_model.h"
 
+#include <QFileInfo>
+#include <QSet>
+
 #include <algorithm>
 
 namespace hotas {
@@ -48,22 +51,37 @@ QString categoryProfileLabel(const MapperConfiguration &configuration, const QSt
 GameCategoryMatch categoryForForegroundExecutable(const MapperConfiguration &configuration,
                                                   const QString &executable)
 {
-    GameCategoryMatch result;
-    const QString normalized = executable.trimmed();
-    if (normalized.isEmpty()) return result;
-    for (const ProfileCategory &category : configuration.profileCategories) {
-        if (!category.enabled) continue;
-        const bool matches = std::any_of(category.executableRules.cbegin(), category.executableRules.cend(),
-            [&normalized](const QString &rule) { return rule.compare(normalized, Qt::CaseInsensitive) == 0; });
-        if (!matches) continue;
-        if (!result.categoryId.isEmpty()) {
-            result.categoryId.clear();
-            result.ambiguous = true;
-            return result;
-        }
-        result.categoryId = category.id;
+    return categoryForRunningExecutables(configuration, {executable});
+}
+
+GameCategoryMatch categoryForRunningExecutables(const MapperConfiguration &configuration,
+                                                const QStringList &executables,
+                                                const QString &activeCategoryId)
+{
+    QSet<QString> running;
+    for (const QString &executable : executables) {
+        const QString basename = QFileInfo(executable.trimmed()).fileName();
+        if (!basename.isEmpty()) running.insert(basename.toCaseFolded());
     }
-    return result;
+    if (running.isEmpty()) return {};
+
+    const auto categoryMatches = [&running](const ProfileCategory &category) {
+        return category.enabled && std::any_of(category.executableRules.cbegin(), category.executableRules.cend(),
+            [&running](const QString &rule) {
+                return running.contains(QFileInfo(rule.trimmed()).fileName().toCaseFolded());
+            });
+    };
+
+    // Do not flap merely because another configured game is also running.
+    // An active matching category wins. Otherwise the persisted category
+    // order is the explicit, stable tie-breaker.
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (category.id == activeCategoryId && categoryMatches(category)) return {category.id, false};
+    }
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (categoryMatches(category)) return {category.id, false};
+    }
+    return {};
 }
 
 bool foregroundExecutableChanged(QString *lastExecutable, const QString &currentExecutable)

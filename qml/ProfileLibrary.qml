@@ -23,6 +23,7 @@ Flickable {
     property bool applyImportedCalibration: false
     property bool replaceCategoryConfirmed: false
     property bool replaceProfilesConfirmed: false
+    property var runningApplications: []
     signal navigateToPage(int page)
 
     anchors.fill: parent
@@ -57,7 +58,7 @@ Flickable {
         return result
     }
     function returnToLibrary() { view = "library"; selectedCategoryId = ""; selectedProfileId = "" }
-    function openCategory(id) { selectedCategoryId = id; selectedProfileId = ""; view = "category" }
+    function openCategory(id) { selectedCategoryId = id; selectedProfileId = ""; view = "category"; refreshRunningApplications() }
     function openProfile(id) { selectedProfileId = id; view = "profile" }
     function openTransfer(mode, kind, profileId, categoryId) {
         transferMode = mode; transferKind = kind; transferFile = ""
@@ -68,7 +69,46 @@ Flickable {
         replaceCategoryConfirmed = false; replaceProfilesConfirmed = false
         transferDialog.open()
     }
+    function selectTransferKind(kind) {
+        transferKind = kind
+        if (kind === "category" && selectedPackCategoryIds.length === 0 && categories.length > 0) {
+            selectedPackCategoryIds = [transferCategoryId || categories[0].id]
+            selectedPackProfileIds = []
+        }
+    }
     function categoryNameFor(id) { const item = categoryById(id); return item ? item.name : "General" }
+    function friendlyGameName(executable) {
+        const base = String(executable || "").split(/[\\/]/).pop()
+        const stem = base.replace(/\.exe$/i, "")
+        if (stem.toLowerCase() === "bf6") return "Battlefield 6"
+        if (stem.toLowerCase() === "starcitizen") return "Star Citizen"
+        return stem.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ") || base
+    }
+    function runningApplicationFor(executable) {
+        const target = String(executable || "").split(/[\\/]/).pop().toLowerCase()
+        for (let i = 0; i < runningApplications.length; ++i) {
+            if (String(runningApplications[i].executable || "").toLowerCase() === target) return runningApplications[i]
+        }
+        return null
+    }
+    function refreshRunningApplications() { if (backendObject) runningApplications = backendObject.runningApplications() }
+    function saveGameRule(rawRule, previousRule) {
+        if (!root.selectedCategory) return false
+        const rules = root.selectedCategory.executableRules.slice()
+        if (previousRule) {
+            const previousIndex = rules.findIndex(function(rule) { return String(rule).toLowerCase() === String(previousRule).toLowerCase() })
+            if (previousIndex >= 0) rules.splice(previousIndex, 1)
+        }
+        rules.push(rawRule)
+        return backendObject.setCategoryGameDetectionRules(root.selectedCategoryId, rules)
+    }
+    function removeGameRule(rule) {
+        if (!root.selectedCategory) return false
+        return backendObject.setCategoryGameDetectionRules(root.selectedCategoryId,
+            root.selectedCategory.executableRules.filter(function(candidate) {
+                return String(candidate).toLowerCase() !== String(rule).toLowerCase()
+            }))
+    }
     function hasId(values, id) { return values.indexOf(id) >= 0 }
     function togglePackCategory(id, checked) {
         let values = selectedPackCategoryIds.slice(0)
@@ -145,11 +185,14 @@ Flickable {
             onClicked: { selectionToggle.checked = !selectionToggle.checked; selectionToggle.toggled(selectionToggle.checked) }
         }
     }
-    component Card: Rectangle {
+    Timer { interval: 2000; running: root.view === "category"; repeat: true; onTriggered: root.refreshRunningApplications() }
+    component Card: Item {
+        id: card
         default property alias content: contents.data
         property color cardAccent: root.border
         implicitHeight: contents.implicitHeight + 28
-        radius: theme.topGun ? 1 : 7; color: root.panel; border.color: cardAccent
+        LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
+        Rectangle { anchors.fill: parent; visible: !root.legacy; radius: theme.topGun ? 1 : 7; color: root.panel; border.color: card.cardAccent }
         ColumnLayout { id: contents; anchors.fill: parent; anchors.margins: 14; spacing: 8 }
     }
     component Pill: Rectangle {
@@ -237,18 +280,29 @@ Flickable {
                         Pill { label: backendObject.automaticGameDetection ? "GAME DETECTION ON" : "MANUAL"; tone: backendObject.automaticGameDetection ? root.good : root.warning }
                     }
                 }
+                RowLayout { Layout.fillWidth: true; spacing: 7
+                    Text { text: "GAME DETECTION"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
+                    Text { text: "CATEGORY"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
+                    Text { text: "PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
+                    Text { text: "VIRTUAL OUTPUT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                }
                 Section { label: "CATEGORIES" }
                 GridLayout { Layout.fillWidth: true; columns: root.width >= 1100 ? 3 : (root.width >= 730 ? 2 : 1); rowSpacing: 12; columnSpacing: 12
                     Repeater { model: root.categories
-                        delegate: Card { required property var modelData; Layout.fillWidth: true; Layout.preferredHeight: 158; cardAccent: modelData.active ? root.accent : root.border
+                        delegate: Card { required property var modelData; Layout.fillWidth: true; Layout.preferredHeight: 168; cardAccent: modelData.active ? root.accent : root.border
                             RowLayout { Layout.fillWidth: true
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     Text { text: modelData.name; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + "  ·  " + (modelData.restoreLastProfile ? "RESTORE LAST" : "DEFAULT FIRST"); color: root.muted; font.pixelSize: 8; font.bold: true }
+                                    Text { text: modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + (modelData.active ? "  ·  ACTIVE: " + backendObject.activeProfileName : ""); color: root.muted; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
-                            Text { Layout.fillWidth: true; text: modelData.executableRules.length > 0 ? "DETECTS: " + modelData.executableRules.join(", ") : "NO GAME RULES"; color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: "GAME DETECTION: " + (modelData.executableRules.length > 0 ? modelData.executableRules.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: "ACTIVATION: " + (modelData.restoreLastProfile ? "Restore last-used profile" : "Always use " + (modelData.defaultProfileName || "selected profile")); color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
                             Item { Layout.fillHeight: true }
                             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "OPEN"; subdued: true; onTriggered: root.openCategory(modelData.id) } }
                         }
@@ -290,7 +344,7 @@ Flickable {
                             Text { text: root.selectedCategory && root.selectedCategory.restoreLastProfile ? "When detected, restores the last active profile." : "When detected, selects the category default profile."; color: root.muted; font.pixelSize: 9 }
                         }
                         ActionButton { label: "RENAME"; subdued: true; onTriggered: { renameCategoryDialog.categoryId = root.selectedCategoryId; renameCategoryDialog.categoryName = root.selectedCategory.name; renameCategoryDialog.open() } }
-                        ActionButton { label: "EXPORT CATEGORY"; subdued: true; onTriggered: root.openTransfer("export", "pack", "", root.selectedCategoryId) }
+                        ActionButton { label: "EXPORT CATEGORY"; subdued: true; onTriggered: root.openTransfer("export", "category", "", root.selectedCategoryId) }
                         ActionButton { label: "+ PROFILE"; onTriggered: { createProfileDialog.categoryId = root.selectedCategoryId; createProfileDialog.open() } }
                     }
                 }
@@ -298,24 +352,46 @@ Flickable {
                 Card { Layout.fillWidth: true
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: backendObject.automaticGameDetection ? "AUTOMATIC GAME DETECTION ENABLED" : "AUTOMATIC GAME DETECTION DISABLED"; color: root.text; font.pixelSize: 11; font.bold: true }
-                            Text { text: root.selectedCategory && root.selectedCategory.executableRules.length > 0 ? root.selectedCategory.executableRules.join(", ") : "No executable rules configured."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Automatically activate this category when one of these games is running."; color: root.text; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: backendObject.automaticGameDetection ? "Detection is enabled globally." : "Detection is paused globally; this category can still be activated manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
-                        ActionButton { label: "EDIT RULES"; subdued: true; onTriggered: { detectionDialog.categoryId = root.selectedCategoryId; detectionDialog.rules = root.selectedCategory ? root.selectedCategory.executableRules.join("\n") : ""; detectionDialog.open() } }
+                        ActionButton { label: backendObject.automaticGameDetection ? "DETECTION ON" : "DETECTION OFF"; subdued: true; onTriggered: backendObject.setAutomaticGameDetection(!backendObject.automaticGameDetection) }
                     }
+                    Repeater { model: root.selectedCategory ? root.selectedCategory.executableRules : []
+                        delegate: Rectangle { id: gameRuleRow; required property string modelData; Layout.fillWidth: true; implicitHeight: 58; radius: theme.topGun ? 1 : 5; color: root.inset; border.color: root.border
+                            readonly property var runningApplication: root.runningApplicationFor(modelData)
+                            RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
+                                ColumnLayout { Layout.fillWidth: true; spacing: 1
+                                    Text { text: root.friendlyGameName(modelData); color: root.text; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: modelData + "  ·  " + (gameRuleRow.runningApplication ? "RUNNING" : "NOT RUNNING"); color: gameRuleRow.runningApplication ? root.good : root.muted; font.pixelSize: 8; font.bold: true }
+                                }
+                                ActionButton { label: "EDIT"; subdued: true; onTriggered: { addGameDialog.editingRule = modelData; addGameDialog.mode = "manual"; addGameDialog.open() } }
+                                ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeGameRule(modelData) }
+                            }
+                        }
+                    }
+                    Text { visible: !root.selectedCategory || root.selectedCategory.executableRules.length === 0; text: "No games are linked to this category. This category can still be activated manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "+ ADD GAME"; onTriggered: { addGameDialog.editingRule = ""; addGameDialog.mode = "running"; addGameDialog.open() } } }
                 }
+                Section { label: "AUTOMATIC ACTIVATION" }
                 Card { Layout.fillWidth: true
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: "CATEGORY BEHAVIOR"; color: root.text; font.pixelSize: 11; font.bold: true }
-                            Text { text: root.selectedCategory && root.selectedCategory.defaultProfileName.length > 0 ? "Default: " + root.selectedCategory.defaultProfileName : "Choose a default profile."; color: root.muted; font.pixelSize: 9 }
+                            Text { text: root.selectedCategory && root.selectedCategory.enabled ? "Automatic activation is enabled" : "Automatic activation is disabled"; color: root.text; font.pixelSize: 10; font.bold: true }
+                            Text { text: "Game detection ignores disabled categories without changing their profiles or game rules."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { label: root.selectedCategory && root.selectedCategory.enabled ? "DISABLE" : "ENABLE"; subdued: true; actionEnabled: !root.selectedCategory || !root.selectedCategory.active; onTriggered: backendObject.setProfileCategoryEnabled(root.selectedCategoryId, !root.selectedCategory.enabled) }
-                        SelectionToggle { label: "RESTORE LAST"; checked: root.selectedCategory ? root.selectedCategory.restoreLastProfile : true; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, checked) }
                     }
-                    RowLayout { Layout.fillWidth: true
-                        ThemedComboBox { id: defaultCategoryProfile; Layout.fillWidth: true; model: root.profilesForCategory(root.selectedCategoryId); textRole: "name"; valueRole: "id"; currentIndex: { for (let i = 0; i < model.length; ++i) if (root.selectedCategory && model[i].id === root.selectedCategory.defaultProfileId) return i; return 0 } }
-                        ActionButton { label: "SET DEFAULT"; subdued: true; actionEnabled: defaultCategoryProfile.currentValue !== undefined; onTriggered: backendObject.setCategoryDefaultProfile(root.selectedCategoryId, defaultCategoryProfile.currentValue) }
+                }
+                Section { label: "WHEN THIS CATEGORY ACTIVATES" }
+                Card { Layout.fillWidth: true
+                    SelectionToggle { label: "Restore the last-used profile"; checked: root.selectedCategory ? root.selectedCategory.restoreLastProfile : true; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, checked) }
+                    Text { text: "Return to whichever profile was most recently active inside this category."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    SelectionToggle { label: "Always use a specific profile"; checked: root.selectedCategory ? !root.selectedCategory.restoreLastProfile : false; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, !checked) }
+                    Text { visible: root.selectedCategory && !root.selectedCategory.restoreLastProfile; text: "Choose the profile that should become active every time this category activates."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    RowLayout { visible: root.selectedCategory && !root.selectedCategory.restoreLastProfile; Layout.fillWidth: true
+                        Text { text: "PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                        ThemedComboBox { id: defaultCategoryProfile; Layout.fillWidth: true; model: root.profilesForCategory(root.selectedCategoryId); textRole: "name"; valueRole: "id"; currentIndex: { for (let i = 0; i < model.length; ++i) if (root.selectedCategory && model[i].id === root.selectedCategory.defaultProfileId) return i; return 0 } onActivated: backendObject.setCategoryDefaultProfile(root.selectedCategoryId, currentValue) }
                     }
                 }
                 Section { label: "CATEGORY PROFILES" }
@@ -355,6 +431,7 @@ Flickable {
                         Pill { label: root.detail.mappedButtons + " BUTTONS"; tone: root.accent }
                         Pill { label: root.detail.mappedPovs + " POV"; tone: root.accent }
                         Pill { label: root.detail.customCurves + " CURVES"; tone: root.accent }
+                        Pill { label: "VJOY " + root.detail.vjoyDevice; tone: root.accent }
                         Pill { label: root.detail.compatibility || "Compatibility pending"; tone: (root.detail.compatibility || "").indexOf("Partial") >= 0 ? root.warning : root.good }
                     }
                 }
@@ -369,8 +446,10 @@ Flickable {
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
                         Text { text: "BUTTONS & POV"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Repeater { model: root.detail.buttons || []; delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.input + " → " + modelData.output; color: root.muted; font.pixelSize: 9 } }
-                        Repeater { model: root.detail.povs || []; delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.input + " → " + modelData.output; color: root.muted; font.pixelSize: 9 } }
+                        Text { text: "Mapped Buttons: " + root.detail.mappedButtons; color: root.text; font.pixelSize: 10; font.bold: true }
+                        Text { text: "Profile-Control Buttons: " + root.detail.profileControlButtons; color: root.muted; font.pixelSize: 9 }
+                        Text { text: "Mapped POV Hats: " + root.detail.mappedPovHats; color: root.muted; font.pixelSize: 9 }
+                        Text { text: "Direct POV Outputs: " + root.detail.directPovOutputs; color: root.muted; font.pixelSize: 9 }
                         ActionButton { label: "OPEN BUTTONS"; subdued: true; onTriggered: root.navigateToPage(1) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
@@ -391,15 +470,24 @@ Flickable {
                     Card { Layout.fillWidth: true; cardAccent: root.border
                         Text { text: "VIRTUAL OUTPUT"; color: root.text; font.pixelSize: 11; font.bold: true }
                         Text { text: root.detail.outputName + "  ·  vJoy Device " + root.detail.vjoyDevice; color: root.text; font.pixelSize: 10; font.bold: true }
+                        Text { text: "Active output axes: " + root.detail.outputAxes + "  ·  Unmapped output axes: " + root.detail.unmappedOutputAxes; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Pill { label: root.detail.vjoyReady ? "READY" : "REVIEW OUTPUT"; tone: root.detail.vjoyReady ? root.good : root.warning }
                         Text { text: root.detail.controllerName ? "CURRENT CONTROLLER: " + root.detail.controllerName : "No current controller"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
+                        Text { text: "GAME / CATEGORY"; color: root.text; font.pixelSize: 11; font.bold: true }
+                        Text { text: "Category: " + (root.detail.category || "General"); color: root.text; font.pixelSize: 10; font.bold: true }
+                        Text { text: "Games: " + ((root.detail.categoryGames || []).length > 0 ? root.detail.categoryGames.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "When category activates: " + (root.detail.categoryActivationBehavior || "Restore the last-used profile"); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        ActionButton { label: "OPEN CATEGORY"; subdued: true; onTriggered: root.openCategory(root.detail.categoryId) }
+                    }
+                    Card { Layout.fillWidth: true; cardAccent: root.border
                         Text { text: "RELATIONSHIPS"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: "REFERENCED BY"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length > 0; text: "REFERENCED BY"; color: root.muted; font.pixelSize: 8; font.bold: true }
                         Repeater { model: (root.detail.relationships || {}).referencedBy || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: 9 } }
-                        Text { text: "REFERENCES"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                        Text { visible: ((root.detail.relationships || {}).references || []).length > 0; text: "REFERENCES"; color: root.muted; font.pixelSize: 8; font.bold: true }
                         Repeater { model: (root.detail.relationships || {}).references || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: 9 } }
+                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length === 0 && ((root.detail.relationships || {}).references || []).length === 0; text: "No profile dependencies."; color: root.muted; font.pixelSize: 9 }
                     }
                 }
                 RowLayout { Layout.fillWidth: true
@@ -475,29 +563,85 @@ Flickable {
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteProfileDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfile(deleteProfileDialog.profileId)) { deleteProfileDialog.close(); root.returnToLibrary() } } } }
         }
     }
-    Dialog { id: detectionDialog; property string categoryId: ""; property string rules: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Game Detection Rules"; standardButtons: Dialog.NoButton
-        contentItem: ColumnLayout { width: 400; spacing: 10
-            Text { text: "ONE EXECUTABLE PER LINE"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            TextArea { id: detectionRules; Layout.fillWidth: true; Layout.preferredHeight: 130; color: root.text; selectByMouse: true; background: Rectangle { color: root.inset; border.color: root.border; radius: 4 } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: detectionDialog.close() } ActionButton { label: "SAVE RULES"; onTriggered: { if (backendObject.setCategoryGameDetectionRules(detectionDialog.categoryId, detectionRules.text.split("\n"))) detectionDialog.close() } } }
+    Dialog { id: addGameDialog; property string mode: "running"; property string editingRule: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(610, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 0
+        header: Rectangle { implicitHeight: 66; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
+            ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
+                Text { text: addGameDialog.editingRule.length > 0 ? "EDIT GAME" : "ADD GAME"; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                Text { text: "Choose a running application, browse for an EXE, or enter one manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            }
         }
-        onOpened: { detectionRules.text = rules; detectionRules.forceActiveFocus() }
+        background: Rectangle { color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7 }
+        contentItem: ColumnLayout { width: addGameDialog.width - 30; spacing: 11
+            RowLayout { Layout.fillWidth: true
+                Repeater { model: [{label:"RUNNING APPLICATIONS", value:"running"}, {label:"BROWSE FOR GAME", value:"browse"}, {label:"MANUAL", value:"manual"}]
+                    delegate: ActionButton { required property var modelData; label: modelData.label; subdued: addGameDialog.mode !== modelData.value; onTriggered: addGameDialog.mode = modelData.value }
+                }
+            }
+            Text { visible: addGameDialog.mode === "running"; text: "Select an application currently running on this PC. System and background processes are filtered out."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            ScrollView { visible: addGameDialog.mode === "running"; Layout.fillWidth: true; Layout.preferredHeight: 230; clip: true
+                contentWidth: availableWidth
+                ColumnLayout { width: addGameDialog.width - 30; spacing: 6
+                    Repeater { model: root.runningApplications
+                        delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 52; radius: theme.topGun ? 1 : 5; color: root.inset; border.color: root.border
+                            RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
+                                ColumnLayout { Layout.fillWidth: true; spacing: 1
+                                    Text { text: modelData.name; color: root.text; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: modelData.executable; color: root.muted; font.pixelSize: 8 }
+                                }
+                                ActionButton { label: "ADD"; onTriggered: { if (root.saveGameRule(modelData.executable, addGameDialog.editingRule)) addGameDialog.close() } }
+                            }
+                        }
+                    }
+                    Text { visible: root.runningApplications.length === 0; text: "No suitable running applications were found. You can still browse for an EXE or enter one manually."; color: root.muted; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+            }
+            ColumnLayout { visible: addGameDialog.mode === "browse"; Layout.fillWidth: true; spacing: 8
+                Text { text: "Choose the game's executable. HOTAS BF6 saves only the filename, so detection continues to work after an install moves or is reinstalled."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                RowLayout { Layout.fillWidth: true
+                    Field { id: browseGamePath; Layout.fillWidth: true; readOnly: true; placeholderText: "No executable selected" }
+                    ActionButton { label: "BROWSE"; onTriggered: gameExecutableDialog.open() }
+                }
+                Text { visible: browseGamePath.text.length > 0; text: "Game: " + root.friendlyGameName(browseGamePath.text) + "  ·  Executable: " + browseGamePath.text.split(/[\\/]/).pop(); color: root.text; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            }
+            ColumnLayout { visible: addGameDialog.mode === "manual"; Layout.fillWidth: true; spacing: 8
+                Text { text: "Enter an executable filename for an advanced manual rule."; color: root.muted; font.pixelSize: 9 }
+                Field { id: manualGameExecutable; Layout.fillWidth: true; placeholderText: "bf6.exe" }
+                Text { text: manualGameExecutable.text.trim().length > 0 ? "Game: " + root.friendlyGameName(manualGameExecutable.text) + "  ·  Executable: " + manualGameExecutable.text.split(/[\\/]/).pop() : ""; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
+                ActionButton { label: "CANCEL"; subdued: true; onTriggered: addGameDialog.close() }
+                ActionButton { visible: addGameDialog.mode !== "running"; label: addGameDialog.editingRule.length > 0 ? "SAVE GAME" : "ADD GAME"; actionEnabled: addGameDialog.mode === "browse" ? browseGamePath.text.length > 0 : manualGameExecutable.text.trim().length > 0; onTriggered: { const rule = addGameDialog.mode === "browse" ? browseGamePath.text : manualGameExecutable.text; if (root.saveGameRule(rule, addGameDialog.editingRule)) addGameDialog.close() } }
+            }
+        }
+        onOpened: { root.refreshRunningApplications(); browseGamePath.text = ""; manualGameExecutable.text = editingRule; if (mode === "manual") manualGameExecutable.forceActiveFocus() }
     }
-    Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(820, root.width - 40); title: "Import / Export Center"; standardButtons: Dialog.NoButton
-        contentItem: ScrollView { implicitWidth: transferDialog.width - 36; implicitHeight: Math.max(360, Math.min(680, root.height - 90)); clip: true
+    Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(820, root.width - 40); title: ""; standardButtons: Dialog.NoButton; padding: 0
+        header: Rectangle { implicitHeight: 68; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
+            ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
+                Text { text: "IMPORT / EXPORT"; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                Text { text: root.transferMode === "import" ? "Select a file, review the validated preview, then confirm the import." : "Choose exactly what to export and a destination file."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            }
+        }
+        background: Rectangle { color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7 }
+        contentItem: ScrollView { implicitWidth: transferDialog.width - 30; implicitHeight: Math.min(620, Math.max(300, root.height - 170)); clip: true
             contentWidth: availableWidth
-            ColumnLayout { width: transferDialog.width - 36; spacing: 12
+            ColumnLayout { width: transferDialog.width - 30; spacing: 12
             RowLayout { Layout.fillWidth: true
                 Repeater { model: ["IMPORT", "EXPORT"]; delegate: ActionButton { required property string modelData; label: modelData; subdued: (modelData.toLowerCase() !== root.transferMode); onTriggered: root.transferMode = modelData.toLowerCase() } }
                 Item { Layout.fillWidth: true }
-                Repeater { model: ["PROFILE", "PACK"]; delegate: ActionButton { required property string modelData; label: modelData; subdued: (modelData.toLowerCase() !== root.transferKind); onTriggered: root.transferKind = modelData.toLowerCase() } }
+                Repeater { model: ["PROFILE", "CATEGORY", "PACK"]; delegate: ActionButton { required property string modelData; label: modelData; subdued: (modelData.toLowerCase() !== root.transferKind); onTriggered: root.selectTransferKind(modelData.toLowerCase()) } }
             }
             Card { Layout.fillWidth: true; cardAccent: root.accent
-                Text { text: root.transferMode === "import" ? "Select a portable Profile or Pack. It is validated and previewed before any configuration changes." : "Portable exports include profile behavior and required curves. Packs can also include selected categories, Automation, and optional device/calibration data."; color: root.text; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: root.transferMode === "import" ? "Nothing changes until the imported Profile, Category, or Pack has passed validation and you confirm it below." : root.transferKind === "profile" ? "One individual HOTAS configuration." : root.transferKind === "category" ? "One Category and all profiles it contains." : "A portable collection of selected configuration items."; color: root.text; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "profile"; Layout.fillWidth: true; spacing: 5
                     Text { text: "PROFILE TO EXPORT"; color: root.muted; font.pixelSize: 8; font.bold: true }
                     ThemedComboBox { id: exportProfileChoice; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === root.transferProfileId) return i; return backendObject.activeProfileIndex } onActivated: root.transferProfileId = currentValue }
                     Text { text: "The complete Profile behavior, required curves, profile controls, Automation relationships, vJoy contract, and safe source-controller compatibility summary are included."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                }
+                ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "category"; Layout.fillWidth: true; spacing: 5
+                    Text { text: "CATEGORY TO EXPORT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    ThemedComboBox { id: exportCategoryChoice; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (root.hasId(root.selectedPackCategoryIds, model[i].id)) return i; return 0 } onActivated: { root.selectedPackCategoryIds = [currentValue]; root.selectedPackProfileIds = [] } }
+                    Text { text: "Includes all profiles in this category, their required curves, and the category's game-detection behavior."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 RowLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true
                     ColumnLayout { Layout.fillWidth: true; Text { text: "PACK NAME"; color: root.muted; font.pixelSize: 8; font.bold: true } Field { id: packName; Layout.fillWidth: true; text: "HOTAS BF6 Pack" } }
@@ -575,8 +719,11 @@ Flickable {
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceProfilesConfirmation.close() } ActionButton { label: "REPLACE PROFILES"; destructive: true; onTriggered: { root.replaceProfilesConfirmed = true; replaceProfilesConfirmation.close(); root.requestPortableImport() } } }
         }
     }
-    FileDialog { id: importFileDialog; title: "Import HOTAS BF6 configuration"; fileMode: FileDialog.OpenFile; nameFilters: root.transferKind === "pack" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)", "HOTAS BF6 Pack (*.hbf6pack)"]
+    FileDialog { id: gameExecutableDialog; title: "Choose a game executable"; fileMode: FileDialog.OpenFile; nameFilters: ["Windows applications (*.exe)"]
+        onAccepted: browseGamePath.text = selectedFile.toString()
+    }
+    FileDialog { id: importFileDialog; title: "Import HOTAS BF6 configuration"; fileMode: FileDialog.OpenFile; nameFilters: root.transferKind === "pack" || root.transferKind === "category" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)", "HOTAS BF6 Pack (*.hbf6pack)"]
         onAccepted: backendObject.loadPortableImportPreview(selectedFile) }
-    FileDialog { id: exportFileDialog; title: "Export HOTAS BF6 configuration"; fileMode: FileDialog.SaveFile; nameFilters: root.transferKind === "pack" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)"]
+    FileDialog { id: exportFileDialog; title: "Export HOTAS BF6 configuration"; fileMode: FileDialog.SaveFile; nameFilters: root.transferKind === "pack" || root.transferKind === "category" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)"]
         onAccepted: { if (root.transferKind === "profile") backendObject.exportPortableProfile(exportProfileChoice.currentValue, selectedFile); else backendObject.exportPortablePack(root.selectedPackCategoryIds, root.selectedPackProfileIds, packName.text, packDescription.text, includeDevices.checked, includeCalibration.checked, includeAutomations.checked, includeRelationships.checked, includeGameDetection.checked, selectedFile) } }
 }

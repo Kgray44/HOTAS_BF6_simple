@@ -36,9 +36,12 @@ Flickable {
         property string title: ""
         property color accent: root.primaryColor
         implicitHeight: panelBody.implicitHeight + 32
-        radius: root.legacy ? 3 : theme.panelRadius
-        color: root.panelColor
-        border.color: accent
+        radius: root.legacy ? 6 : theme.panelRadius
+        color: root.legacy ? "transparent" : root.panelColor
+        border.color: root.legacy ? "transparent" : accent
+        // Reuse the Legacy Axes/Buttons/Diagnostics surface instead of
+        // maintaining a look-alike overview-card style.
+        LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
         ColumnLayout {
             id: panelBody
             anchors.fill: parent; anchors.margins: 16; spacing: 10

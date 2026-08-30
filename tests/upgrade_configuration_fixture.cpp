@@ -10,6 +10,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 
+#include <cstring>
 #include <iostream>
 
 namespace {
@@ -112,6 +113,18 @@ bool assertMigratedFixture()
 
 int main(int argc, char *argv[])
 {
+    bool testMode = false;
+    for (int index = 1; index < argc; ++index) {
+        if (std::strcmp(argv[index], "--test-mode") == 0) {
+            testMode = true;
+            break;
+        }
+    }
+    if (testMode) {
+        // Match the application's isolated startup smoke location. This keeps
+        // fixture seeding out of a developer's or player's live settings.
+        QStandardPaths::setTestModeEnabled(true);
+    }
     QCoreApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
@@ -126,6 +139,6 @@ int main(int argc, char *argv[])
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--assert-v19"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v19.\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v19 (optionally with --test-mode).\n";
     return 2;
 }

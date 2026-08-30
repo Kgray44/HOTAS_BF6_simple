@@ -238,7 +238,9 @@ Item {
         property color surfaceColor: root.panelFill
         property color edgeColor: root.borderColor
         AviationPanel { anchors.fill: parent; visible: !root.legacy; theme: root.themeTokens; color: panel.surfaceColor; border.color: panel.edgeColor }
-        LegacyAviationPanel { anchors.fill: parent; visible: root.legacy; color: panel.surfaceColor; border.color: panel.edgeColor }
+        // Legacy cards must use the exact same shared treatment as the
+        // established Axes, Buttons, Curve Editor, and Diagnostics pages.
+        LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
     }
     component FineLine: Rectangle { implicitHeight: 1; color: root.dividerColor }
     component ActionButton: Rectangle {
