@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.0**
+**Current release: v2.1.1**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.1 — Profile Library Completion & Portable Pack Safety
+
+Completes the Profile Library portability workflow with selective pack composition, independent strict schemas, detailed preview and compatibility handling, explicit conflict decisions, and opt-in controller calibration application while retaining the compiled, allocation-free DirectInput-to-vJoy mapper architecture.
+
+- Packs can include selected complete categories or individual profiles, with required custom curves and vJoy contracts always retained and optional Automation, profile-control relationships, game rules, devices, and calibration clearly scoped.
+- Profile and Pack files validate their independent schema versions, source-controller descriptors, relationship references, vJoy layout contracts, bounded identifiers, and duplicate dependencies before any atomic import mutation.
+- Import previews now enumerate categories, executable rules, mapping counts, Automation, profile controls, curves, vJoy requirements, source/current controller compatibility, and each warning or conflict before changes are applied.
+- Existing categories offer explicit Merge, Import as New, or protected Replace choices; matching profiles import as renamed copies by default and require a second confirmation before replacement.
+- Device/calibration data remains off by default. Imported calibration is applied only after an explicit choice of a compatible saved controller; ambiguous matches never use controller names or silently choose a target.
+- Profile categories, portability inspection, previewing, game detection, UI presentation, and device handling stay on configuration/control paths; the mapper benchmark continues to report zero hot-path allocations.
 
 ## v2.1.0 — Profile Library & Portable Configuration
 

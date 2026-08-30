@@ -26,19 +26,27 @@ int main(int argc, char *argv[])
         // One explicit cached read establishes the getter baseline. During the
         // following ten seconds no telemetry refresh may invoke it again.
         const QVariantList controllerModel = backend.controllers();
+        const QVariantList profiles = backend.profiles();
+        const QVariantList categories = backend.profileCategories();
         Q_UNUSED(controllerModel);
+        Q_UNUSED(profiles);
+        Q_UNUSED(categories);
         QTimer::singleShot(10'000, &application, [&] {
             const QVariantMap counters = backend.uiPerformanceCounters();
             const qulonglong controllerGetterCalls = counters.value(QStringLiteral("controllerGetterCalls")).toULongLong();
             const qulonglong controllerRebuilds = counters.value(QStringLiteral("controllerModelRebuilds")).toULongLong();
             const qulonglong controllerNotifications = counters.value(QStringLiteral("controllersChanged")).toULongLong();
+            const qulonglong profileGetterCalls = counters.value(QStringLiteral("profileGetterCalls")).toULongLong();
+            const qulonglong categoryGetterCalls = counters.value(QStringLiteral("categoryGetterCalls")).toULongLong();
             const qulonglong telemetryNotifications = counters.value(QStringLiteral("telemetryChanged")).toULongLong();
             const qulonglong inputNotifications = counters.value(QStringLiteral("inputTelemetryChanged")).toULongLong();
             const qulonglong stateNotifications = counters.value(QStringLiteral("stateChanged")).toULongLong();
             std::fprintf(stderr,
-                         "ui_steady_state_seconds=10 controller_getter_calls=%llu controller_model_rebuilds=%llu controllers_changed=%llu "
+                         "ui_steady_state_seconds=10 controller_getter_calls=%llu profile_getter_calls=%llu category_getter_calls=%llu controller_model_rebuilds=%llu controllers_changed=%llu "
                          "telemetry_changed=%llu input_telemetry_changed=%llu state_changed=%llu\n",
                          static_cast<unsigned long long>(controllerGetterCalls),
+                         static_cast<unsigned long long>(profileGetterCalls),
+                         static_cast<unsigned long long>(categoryGetterCalls),
                          static_cast<unsigned long long>(controllerRebuilds),
                          static_cast<unsigned long long>(controllerNotifications),
                          static_cast<unsigned long long>(telemetryNotifications),
@@ -50,7 +58,8 @@ int main(int argc, char *argv[])
             // presentation-cadence churn. The offscreen test host is not a
             // frame-rate benchmark, so it asserts live notifications rather
             // than a machine-specific callback count.
-            passed = controllerGetterCalls == 1 && controllerRebuilds == 0 && controllerNotifications == 0
+            passed = controllerGetterCalls == 1 && profileGetterCalls == 1 && categoryGetterCalls == 1
+                && controllerRebuilds == 0 && controllerNotifications == 0
                 && telemetryNotifications >= 10 && inputNotifications >= 10
                 && stateNotifications < telemetryNotifications / 4;
             QCoreApplication::quit();

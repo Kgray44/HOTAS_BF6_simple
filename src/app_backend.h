@@ -6,6 +6,7 @@
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QObject>
@@ -368,11 +369,16 @@ public:
     Q_INVOKABLE bool exportPortablePack(const QStringList &categoryIds, const QStringList &profileIds,
                                         const QString &name, const QString &description,
                                         bool includeDevices, bool includeCalibration,
+                                        bool includeAutomations, bool includeProfileRelationships,
+                                        bool includeGameDetection,
                                         const QString &fileName);
     Q_INVOKABLE bool loadPortableImportPreview(const QString &fileName);
     Q_INVOKABLE bool applyPortableImport(const QString &destinationCategoryId = {},
                                          bool replaceMatchingProfiles = false,
-                                         bool mergeCategories = true);
+                                         const QString &categoryConflictMode = u"merge"_qs,
+                                         bool applyImportedCalibration = false);
+    Q_INVOKABLE bool selectPortableImportDevice(int descriptorIndex,
+                                                const QString &savedControllerId);
     Q_INVOKABLE void beginCalibration();
     Q_INVOKABLE bool beginCalibrationCenterCapture();
     Q_INVOKABLE bool saveCalibration();
@@ -562,6 +568,7 @@ private:
     std::unique_ptr<PortableConfigurationBundle> m_pendingPortableImport;
     QVariantMap m_portableImportPreview;
     QString m_portableImportStatus;
+    QHash<int, QString> m_portableImportDeviceSelections;
     QNetworkAccessManager m_updateNetworkManager;
     QPointer<QNetworkReply> m_updateReply;
     QTimer m_updateTimeout;
@@ -574,6 +581,8 @@ private:
     bool m_uiPerformanceInstrumentationEnabled = false;
     mutable quint64 m_controllerGetterCalls = 0;
     quint64 m_controllerUiModelRebuilds = 0;
+    mutable quint64 m_profileGetterCalls = 0;
+    mutable quint64 m_categoryGetterCalls = 0;
     quint64 m_stateChangedNotifications = 0;
     quint64 m_telemetryChangedNotifications = 0;
     quint64 m_inputTelemetryChangedNotifications = 0;

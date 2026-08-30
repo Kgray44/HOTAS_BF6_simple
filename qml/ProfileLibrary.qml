@@ -17,6 +17,12 @@ Flickable {
     property string transferMode: "import" // import, export
     property string transferKind: "profile" // profile, pack
     property string transferFile: ""
+    property var selectedPackCategoryIds: []
+    property var selectedPackProfileIds: []
+    property string categoryConflictMode: "merge"
+    property bool applyImportedCalibration: false
+    property bool replaceCategoryConfirmed: false
+    property bool replaceProfilesConfirmed: false
     signal navigateToPage(int page)
 
     anchors.fill: parent
@@ -56,9 +62,51 @@ Flickable {
     function openTransfer(mode, kind, profileId, categoryId) {
         transferMode = mode; transferKind = kind; transferFile = ""
         transferProfileId = profileId || ""; transferCategoryId = categoryId || ""
+        selectedPackCategoryIds = categoryId ? [categoryId] : []
+        selectedPackProfileIds = profileId ? [profileId] : []
+        categoryConflictMode = "merge"; applyImportedCalibration = false
+        replaceCategoryConfirmed = false; replaceProfilesConfirmed = false
         transferDialog.open()
     }
     function categoryNameFor(id) { const item = categoryById(id); return item ? item.name : "General" }
+    function hasId(values, id) { return values.indexOf(id) >= 0 }
+    function togglePackCategory(id, checked) {
+        let values = selectedPackCategoryIds.slice(0)
+        const index = values.indexOf(id)
+        if (checked && index < 0) values.push(id)
+        if (!checked && index >= 0) values.splice(index, 1)
+        selectedPackCategoryIds = values
+    }
+    function togglePackProfile(id, categoryId, checked) {
+        let values = selectedPackProfileIds.slice(0)
+        if (hasId(selectedPackCategoryIds, categoryId)) {
+            let categories = selectedPackCategoryIds.slice(0)
+            categories.splice(categories.indexOf(categoryId), 1)
+            selectedPackCategoryIds = categories
+            const siblings = profilesForCategory(categoryId)
+            for (let i = 0; i < siblings.length; ++i) {
+                if (siblings[i].id !== id && values.indexOf(siblings[i].id) < 0) values.push(siblings[i].id)
+            }
+        }
+        const index = values.indexOf(id)
+        if (checked && index < 0) values.push(id)
+        if (!checked && index >= 0) values.splice(index, 1)
+        selectedPackProfileIds = values
+    }
+    function commitPortableImport() {
+        if (backendObject.applyPortableImport(backendObject.portableImportPreview.categoryCount === 1 ? importDestinationCategory.currentValue : "", replaceImportedProfiles.checked, root.categoryConflictMode, root.applyImportedCalibration)) transferDialog.close()
+    }
+    function requestPortableImport() {
+        if (root.categoryConflictMode === "replace" && !root.replaceCategoryConfirmed) {
+            replaceCategoryConfirmation.open()
+            return
+        }
+        if (replaceImportedProfiles.checked && !root.replaceProfilesConfirmed) {
+            replaceProfilesConfirmation.open()
+            return
+        }
+        root.commitPortableImport()
+    }
 
     property string transferProfileId: ""
     property string transferCategoryId: ""
@@ -76,6 +124,26 @@ Flickable {
         opacity: actionEnabled ? 1 : 0.5
         Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.danger : root.text; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
         MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; enabled: parent.actionEnabled; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
+    }
+    component SelectionToggle: Item {
+        id: selectionToggle
+        property string label: ""
+        property bool checked: false
+        property bool actionEnabled: true
+        signal toggled(bool checked)
+        implicitWidth: row.implicitWidth
+        implicitHeight: 24
+        opacity: actionEnabled ? 1.0 : 0.42
+        Row { id: row; spacing: 7; anchors.verticalCenter: parent.verticalCenter
+            Rectangle { width: 15; height: 15; radius: 3; border.width: 1; border.color: root.border
+                color: selectionToggle.checked ? root.accent : root.inset
+                Text { anchors.centerIn: parent; visible: selectionToggle.checked; text: "✓"; color: root.panel; font.pixelSize: 11; font.bold: true }
+            }
+            Text { text: selectionToggle.label; color: root.text; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+        }
+        MouseArea { anchors.fill: parent; enabled: selectionToggle.actionEnabled; cursorShape: Qt.PointingHandCursor
+            onClicked: { selectionToggle.checked = !selectionToggle.checked; selectionToggle.toggled(selectionToggle.checked) }
+        }
     }
     component Card: Rectangle {
         default property alias content: contents.data
@@ -101,6 +169,45 @@ Flickable {
     component Field: TextField {
         implicitHeight: 33; color: root.text; selectByMouse: true
         background: Rectangle { radius: theme.topGun ? 1 : 5; color: root.inset; border.color: parent.activeFocus ? root.accent : root.border }
+    }
+    component ThemedComboBox: ComboBox {
+        id: themedComboBox
+        implicitHeight: 33
+        contentItem: Text {
+            leftPadding: 10; rightPadding: themedComboBox.indicator.width + 16
+            text: themedComboBox.displayText; color: root.text; font.pixelSize: 10
+            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+        }
+        indicator: Text {
+            x: themedComboBox.width - width - 10; y: (themedComboBox.height - height) / 2
+            text: "v"; color: root.muted; font.pixelSize: 10; font.bold: true
+        }
+        background: Rectangle {
+            radius: theme.topGun ? 1 : 5; color: themedComboBox.pressed ? root.panel : root.inset
+            border.color: themedComboBox.visualFocus ? root.accent : root.border
+        }
+        delegate: ItemDelegate {
+            required property var modelData
+            width: themedComboBox.width; height: 31
+            highlighted: themedComboBox.highlightedIndex === index
+            contentItem: Text {
+                leftPadding: 10; rightPadding: 10
+                text: themedComboBox.textRole.length > 0 ? modelData[themedComboBox.textRole] : modelData
+                color: root.text; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+            }
+            background: Rectangle { color: parent.highlighted ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.panel }
+        }
+        popup: Popup {
+            y: themedComboBox.height - 1; width: themedComboBox.width
+            implicitHeight: Math.min(contentItem.implicitHeight, 248); padding: 1
+            contentItem: ListView {
+                clip: true; implicitHeight: contentHeight
+                model: themedComboBox.popup.visible ? themedComboBox.delegateModel : null
+                currentIndex: themedComboBox.highlightedIndex
+                ScrollIndicator.vertical: ScrollIndicator { }
+            }
+            background: Rectangle { radius: theme.topGun ? 1 : 5; color: root.panel; border.color: root.border }
+        }
     }
 
     ColumnLayout {
@@ -182,6 +289,7 @@ Flickable {
                             Text { text: root.selectedCategory ? root.selectedCategory.profileCount + " Profiles" : ""; color: root.text; font.pixelSize: 14; font.bold: true }
                             Text { text: root.selectedCategory && root.selectedCategory.restoreLastProfile ? "When detected, restores the last active profile." : "When detected, selects the category default profile."; color: root.muted; font.pixelSize: 9 }
                         }
+                        ActionButton { label: "RENAME"; subdued: true; onTriggered: { renameCategoryDialog.categoryId = root.selectedCategoryId; renameCategoryDialog.categoryName = root.selectedCategory.name; renameCategoryDialog.open() } }
                         ActionButton { label: "EXPORT CATEGORY"; subdued: true; onTriggered: root.openTransfer("export", "pack", "", root.selectedCategoryId) }
                         ActionButton { label: "+ PROFILE"; onTriggered: { createProfileDialog.categoryId = root.selectedCategoryId; createProfileDialog.open() } }
                     }
@@ -203,10 +311,10 @@ Flickable {
                             Text { text: root.selectedCategory && root.selectedCategory.defaultProfileName.length > 0 ? "Default: " + root.selectedCategory.defaultProfileName : "Choose a default profile."; color: root.muted; font.pixelSize: 9 }
                         }
                         ActionButton { label: root.selectedCategory && root.selectedCategory.enabled ? "DISABLE" : "ENABLE"; subdued: true; actionEnabled: !root.selectedCategory || !root.selectedCategory.active; onTriggered: backendObject.setProfileCategoryEnabled(root.selectedCategoryId, !root.selectedCategory.enabled) }
-                        CheckBox { text: "Restore last"; checked: root.selectedCategory ? root.selectedCategory.restoreLastProfile : true; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, checked) }
+                        SelectionToggle { label: "RESTORE LAST"; checked: root.selectedCategory ? root.selectedCategory.restoreLastProfile : true; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, checked) }
                     }
                     RowLayout { Layout.fillWidth: true
-                        ComboBox { id: defaultCategoryProfile; Layout.fillWidth: true; model: root.profilesForCategory(root.selectedCategoryId); textRole: "name"; valueRole: "id"; currentIndex: { for (let i = 0; i < model.length; ++i) if (root.selectedCategory && model[i].id === root.selectedCategory.defaultProfileId) return i; return 0 } }
+                        ThemedComboBox { id: defaultCategoryProfile; Layout.fillWidth: true; model: root.profilesForCategory(root.selectedCategoryId); textRole: "name"; valueRole: "id"; currentIndex: { for (let i = 0; i < model.length; ++i) if (root.selectedCategory && model[i].id === root.selectedCategory.defaultProfileId) return i; return 0 } }
                         ActionButton { label: "SET DEFAULT"; subdued: true; actionEnabled: defaultCategoryProfile.currentValue !== undefined; onTriggered: backendObject.setCategoryDefaultProfile(root.selectedCategoryId, defaultCategoryProfile.currentValue) }
                     }
                 }
@@ -222,6 +330,10 @@ Flickable {
                             ActionButton { label: "OPEN"; subdued: true; onTriggered: root.openProfile(modelData.id) }
                         }
                     }
+                }
+                RowLayout { Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    ActionButton { label: "DELETE CATEGORY"; destructive: true; actionEnabled: root.selectedCategory && root.selectedCategory.profileCount === 0 && !root.selectedCategory.active; onTriggered: { deleteCategoryDialog.categoryId = root.selectedCategoryId; deleteCategoryDialog.categoryName = root.selectedCategory.name; deleteCategoryDialog.open() } }
                 }
             }
         }
@@ -302,6 +414,19 @@ Flickable {
         }
     }
 
+    Dialog { id: renameCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Rename Category"; standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout { width: 340; spacing: 10
+            Field { id: renameCategoryName; Layout.fillWidth: true }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: renameCategoryDialog.close() } ActionButton { label: "RENAME"; actionEnabled: renameCategoryName.text.trim().length > 0; onTriggered: { if (backendObject.renameProfileCategory(renameCategoryDialog.categoryId, renameCategoryName.text)) renameCategoryDialog.close() } } }
+        }
+        onOpened: { renameCategoryName.text = categoryName; renameCategoryName.forceActiveFocus() }
+    }
+    Dialog { id: deleteCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Delete Empty Category?"; standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout { width: 380; spacing: 12
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete the empty category \"" + deleteCategoryDialog.categoryName + "\"? Categories with profiles or the active category cannot be deleted."; color: root.text; font.pixelSize: 10 }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteCategoryDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfileCategory(deleteCategoryDialog.categoryId)) { deleteCategoryDialog.close(); root.returnToLibrary() } } } }
+        }
+    }
     Dialog { id: newCategoryDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "New Category"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Text { text: "CATEGORY NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
@@ -315,9 +440,9 @@ Flickable {
             Text { text: "PROFILE NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
             Field { id: newProfileName; Layout.fillWidth: true; placeholderText: "Helicopter" }
             Text { text: "CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            ComboBox { id: newProfileCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === createProfileDialog.categoryId) return i; return 0 } }
+            ThemedComboBox { id: newProfileCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === createProfileDialog.categoryId) return i; return 0 } }
             Text { text: "START FROM"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            ComboBox { id: newProfileSource; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: backendObject.activeProfileIndex }
+            ThemedComboBox { id: newProfileSource; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: backendObject.activeProfileIndex }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: createProfileDialog.close() } ActionButton { label: "CREATE"; actionEnabled: newProfileName.text.trim().length > 0; onTriggered: { if (backendObject.createProfileInCategory(newProfileName.text, newProfileCategory.currentValue, newProfileSource.currentValue)) createProfileDialog.close() } } }
         }
         onOpened: { newProfileName.text = ""; newProfileName.forceActiveFocus() }
@@ -332,14 +457,14 @@ Flickable {
     Dialog { id: moveProfileDialog; property string profileId: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Move Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Text { text: "DESTINATION CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            ComboBox { id: moveCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === moveProfileDialog.categoryId) return i; return 0 } }
+            ThemedComboBox { id: moveCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === moveProfileDialog.categoryId) return i; return 0 } }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: moveProfileDialog.close() } ActionButton { label: "MOVE"; onTriggered: { if (backendObject.moveProfileToCategory(moveProfileDialog.profileId, moveCategory.currentValue)) moveProfileDialog.close() } } }
         }
     }
     Dialog { id: duplicateProfileDialog; property string profileId: ""; property string name: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Duplicate Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Field { id: duplicateName; Layout.fillWidth: true }
-            ComboBox { id: duplicateCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === duplicateProfileDialog.categoryId) return i; return 0 } }
+            ThemedComboBox { id: duplicateCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === duplicateProfileDialog.categoryId) return i; return 0 } }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: duplicateProfileDialog.close() } ActionButton { label: "DUPLICATE"; onTriggered: { if (backendObject.duplicateProfileToCategory(duplicateProfileDialog.profileId, duplicateName.text, duplicateCategory.currentValue)) duplicateProfileDialog.close() } } }
         }
         onOpened: { duplicateName.text = name; duplicateName.forceActiveFocus() }
@@ -358,8 +483,10 @@ Flickable {
         }
         onOpened: { detectionRules.text = rules; detectionRules.forceActiveFocus() }
     }
-    Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(760, root.width - 40); title: "Import / Export Center"; standardButtons: Dialog.NoButton
-        contentItem: ColumnLayout { width: parent.width - 36; spacing: 12
+    Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(820, root.width - 40); title: "Import / Export Center"; standardButtons: Dialog.NoButton
+        contentItem: ScrollView { implicitWidth: transferDialog.width - 36; implicitHeight: Math.max(360, Math.min(680, root.height - 90)); clip: true
+            contentWidth: availableWidth
+            ColumnLayout { width: transferDialog.width - 36; spacing: 12
             RowLayout { Layout.fillWidth: true
                 Repeater { model: ["IMPORT", "EXPORT"]; delegate: ActionButton { required property string modelData; label: modelData; subdued: (modelData.toLowerCase() !== root.transferMode); onTriggered: root.transferMode = modelData.toLowerCase() } }
                 Item { Layout.fillWidth: true }
@@ -367,25 +494,64 @@ Flickable {
             }
             Card { Layout.fillWidth: true; cardAccent: root.accent
                 Text { text: root.transferMode === "import" ? "Select a portable Profile or Pack. It is validated and previewed before any configuration changes." : "Portable exports include profile behavior and required curves. Packs can also include selected categories, Automation, and optional device/calibration data."; color: root.text; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "profile"; Layout.fillWidth: true; spacing: 5
+                    Text { text: "PROFILE TO EXPORT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    ThemedComboBox { id: exportProfileChoice; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === root.transferProfileId) return i; return backendObject.activeProfileIndex } onActivated: root.transferProfileId = currentValue }
+                    Text { text: "The complete Profile behavior, required curves, profile controls, Automation relationships, vJoy contract, and safe source-controller compatibility summary are included."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                }
                 RowLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true
                     ColumnLayout { Layout.fillWidth: true; Text { text: "PACK NAME"; color: root.muted; font.pixelSize: 8; font.bold: true } Field { id: packName; Layout.fillWidth: true; text: "HOTAS BF6 Pack" } }
                     ColumnLayout { Layout.fillWidth: true; Text { text: "DESCRIPTION"; color: root.muted; font.pixelSize: 8; font.bold: true } Field { id: packDescription; Layout.fillWidth: true; placeholderText: "Optional" } }
                 }
                 RowLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true
-                    CheckBox { id: includeDevices; text: "Devices"; checked: false }
-                    CheckBox { id: includeCalibration; text: "Calibration"; checked: false; enabled: includeDevices.checked }
+                    SelectionToggle { id: includeDevices; label: "DEVICES"; checked: false; onToggled: { if (!checked) includeCalibration.checked = false } }
+                    SelectionToggle { id: includeCalibration; label: "CALIBRATION"; checked: false; actionEnabled: includeDevices.checked; onToggled: { if (!includeDevices.checked) checked = false } }
                     Text { text: "Both default OFF; imported calibration is never applied automatically."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
-                Text { visible: root.transferMode === "export"; text: root.transferKind === "profile" ? (root.transferProfileId.length > 0 ? "READY: " + root.detail.displayName : "Choose a Profile from its detail page for a direct export.") : (root.transferCategoryId.length > 0 ? "READY: " + root.categoryNameFor(root.transferCategoryId) + " and its profiles" : "Exports all selected categories in the Library."); color: root.muted; font.pixelSize: 9 }
+                ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
+                    Text { text: "SELECT CATEGORIES OR INDIVIDUAL PROFILES"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Repeater { model: root.categories; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
+                        SelectionToggle { label: modelData.name.toUpperCase(); checked: root.hasId(root.selectedPackCategoryIds, modelData.id); onToggled: root.togglePackCategory(modelData.id, checked) }
+                        Repeater { model: root.profilesForCategory(modelData.id); delegate: SelectionToggle { required property var modelData; label: "    " + modelData.name; checked: root.hasId(root.selectedPackCategoryIds, modelData.categoryId) || root.hasId(root.selectedPackProfileIds, modelData.id); onToggled: root.togglePackProfile(modelData.id, modelData.categoryId, checked) } }
+                    } }
+                }
+                ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
+                    Text { text: "RELATED CONFIGURATION"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        SelectionToggle { id: includeAutomations; label: "RELATED AUTOMATIONS"; checked: true }
+                        SelectionToggle { id: includeRelationships; label: "PROFILE CONTROL RELATIONSHIPS"; checked: true }
+                        SelectionToggle { id: includeGameDetection; label: "GAME DETECTION RULES"; checked: true }
+                    }
+                    Text { text: "Required custom curves and vJoy requirements are always included so a selected profile never exports broken behavior."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                }
             }
             Card { visible: root.transferMode === "import" && backendObject.portableImportPreview && backendObject.portableImportPreview.profileCount > 0; Layout.fillWidth: true; cardAccent: root.good
                 Text { text: "IMPORT PREVIEW  ·  " + backendObject.portableImportPreview.kind + "  ·  " + backendObject.portableImportPreview.name; color: root.text; font.pixelSize: 12; font.bold: true }
-                Text { text: backendObject.portableImportPreview.categoryCount + " categories  ·  " + backendObject.portableImportPreview.profileCount + " profiles  ·  " + backendObject.portableImportPreview.automationCount + " Automations  ·  " + backendObject.portableImportPreview.curveCount + " curves"; color: root.muted; font.pixelSize: 9 }
-                Repeater { model: backendObject.portableImportPreview.profiles || []; delegate: Text { required property var modelData; text: modelData.category + " / " + modelData.name + "  ·  " + modelData.mappedAxes + " axes  ·  " + modelData.mappedButtons + " buttons"; color: root.muted; font.pixelSize: 9 } }
+                Text { text: "Exported by " + backendObject.portableImportPreview.exporterVersion + " · " + backendObject.portableImportPreview.categoryCount + " categories · " + backendObject.portableImportPreview.profileCount + " profiles · " + backendObject.portableImportPreview.automationCount + " Automations · " + backendObject.portableImportPreview.curveCount + " curves"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "SOURCE CONTROLLER: " + ((backendObject.portableImportPreview.sourceController || {}).name || "Not recorded") + "  ·  CURRENT: " + backendObject.portableImportPreview.currentControllerName; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: backendObject.portableImportPreview.categories || []; delegate: Text { required property var modelData; text: "CATEGORY  " + modelData.name + " · " + modelData.profileCount + " profiles · " + modelData.conflict + (modelData.rules.length ? " · detects " + modelData.rules.join(", ") : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: backendObject.portableImportPreview.profiles || []; delegate: Text { required property var modelData; text: modelData.category + " / " + modelData.name + " · " + modelData.mappedAxes + " axes · " + modelData.mappedButtons + " buttons · " + modelData.povMappings + " POV · " + modelData.automationCount + " Automation · " + modelData.compatibility + (modelData.nameConflict ? " · NAME CONFLICT" : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: backendObject.portableImportPreview.outputLayouts || []; delegate: Text { required property var modelData; text: "vJOY: " + modelData.name + " · Device " + modelData.vjoyDevice + " · " + modelData.axes + " axes · " + modelData.buttons + " buttons"; color: root.muted; font.pixelSize: 9 } }
+                Text { text: "RELATED: " + backendObject.portableImportPreview.profileControlCount + " profile controls · " + (backendObject.portableImportPreview.curves || []).length + " curves · " + (backendObject.portableImportPreview.automations || []).length + " Automations"; color: root.muted; font.pixelSize: 9 }
+                RowLayout { visible: backendObject.portableImportPreview.categoryCount === 1; Layout.fillWidth: true
+                    Text { text: "PROFILE DESTINATION:"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    ThemedComboBox { id: importDestinationCategory; Layout.fillWidth: true; model: [{id:"", name:"SOURCE CATEGORY (create or merge)"}].concat(root.categories); textRole: "name"; valueRole: "id" }
+                }
+                RowLayout { visible: (backendObject.portableImportPreview.categories || []).some(function(c) { return c.exists }); Layout.fillWidth: true
+                    Text { text: "EXISTING CATEGORY:"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Repeater { model: [{label:"MERGE", value:"merge"}, {label:"IMPORT AS NEW", value:"new"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.categoryConflictMode !== modelData.value; onTriggered: { root.categoryConflictMode = modelData.value; root.replaceCategoryConfirmed = false } } }
+                }
+                Repeater { model: backendObject.portableImportPreview.devices || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
+                    Text { text: "DEVICE: " + modelData.name + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.state; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    ThemedComboBox { visible: modelData.choices.length > 1; Layout.fillWidth: true; model: modelData.choices; textRole: "name"; valueRole: "id"; onActivated: backendObject.selectPortableImportDevice(modelData.index, currentValue) }
+                } }
+                SelectionToggle { visible: backendObject.portableImportPreview.includesCalibration; label: "APPLY IMPORTED CALIBRATION TO THE MATCHED CONTROLLER"; checked: root.applyImportedCalibration; onToggled: root.applyImportedCalibration = checked }
+                Text { visible: backendObject.portableImportPreview.includesCalibration; text: "Default is Keep Local Calibration. Applying requires the controller match shown above; ambiguous matches require your selection."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: backendObject.portableImportPreview.warnings || []; delegate: Text { required property var modelData; text: "REVIEW: " + modelData; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
                 RowLayout { Layout.fillWidth: true
-                    CheckBox { id: replaceImportedProfiles; text: "Replace matching profiles"; checked: false }
+                    SelectionToggle { id: replaceImportedProfiles; label: "REPLACE MATCHING PROFILES"; checked: false; onToggled: root.replaceProfilesConfirmed = false }
                     Item { Layout.fillWidth: true }
-                    ActionButton { label: "IMPORT"; onTriggered: { if (backendObject.applyPortableImport("", replaceImportedProfiles.checked, true)) transferDialog.close() } }
+                    ActionButton { label: "IMPORT"; onTriggered: root.requestPortableImport() }
                 }
             }
             Text { visible: backendObject.portableImportStatus.length > 0; text: backendObject.portableImportStatus; color: root.transferMode === "import" && (!backendObject.portableImportPreview || backendObject.portableImportPreview.profileCount === 0) ? root.warning : root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -394,10 +560,23 @@ Flickable {
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: transferDialog.close() }
                 ActionButton { label: root.transferMode === "import" ? "SELECT FILE" : "CHOOSE DESTINATION"; onTriggered: { if (root.transferMode === "import") importFileDialog.open(); else exportFileDialog.open() } }
             }
+            }
+        }
+    }
+    Dialog { id: replaceCategoryConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Replace Existing Category?"; standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout { width: 390; spacing: 12
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "This replaces the matching non-active category and its profiles with the imported category. General, active, and last remaining categories are protected."; color: root.text; font.pixelSize: 10 }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceCategoryConfirmation.close() } ActionButton { label: "REPLACE CATEGORY"; destructive: true; onTriggered: { root.replaceCategoryConfirmed = true; replaceCategoryConfirmation.close(); root.requestPortableImport() } } }
+        }
+    }
+    Dialog { id: replaceProfilesConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Replace Matching Profiles?"; standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout { width: 390; spacing: 12
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Matching profile names will be replaced with the imported configuration. Leave this unchecked to import safe renamed copies instead."; color: root.text; font.pixelSize: 10 }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceProfilesConfirmation.close() } ActionButton { label: "REPLACE PROFILES"; destructive: true; onTriggered: { root.replaceProfilesConfirmed = true; replaceProfilesConfirmation.close(); root.requestPortableImport() } } }
         }
     }
     FileDialog { id: importFileDialog; title: "Import HOTAS BF6 configuration"; fileMode: FileDialog.OpenFile; nameFilters: root.transferKind === "pack" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)", "HOTAS BF6 Pack (*.hbf6pack)"]
         onAccepted: backendObject.loadPortableImportPreview(selectedFile) }
     FileDialog { id: exportFileDialog; title: "Export HOTAS BF6 configuration"; fileMode: FileDialog.SaveFile; nameFilters: root.transferKind === "pack" ? ["HOTAS BF6 Pack (*.hbf6pack)"] : ["HOTAS BF6 Profile (*.hbf6profile)"]
-        onAccepted: { if (root.transferKind === "profile") backendObject.exportPortableProfile(root.transferProfileId, selectedFile); else backendObject.exportPortablePack(root.transferCategoryId.length > 0 ? [root.transferCategoryId] : root.categories.map(function(c) { return c.id }), [], packName.text, packDescription.text, includeDevices.checked, includeCalibration.checked, selectedFile) } }
+        onAccepted: { if (root.transferKind === "profile") backendObject.exportPortableProfile(exportProfileChoice.currentValue, selectedFile); else backendObject.exportPortablePack(root.selectedPackCategoryIds, root.selectedPackProfileIds, packName.text, packDescription.text, includeDevices.checked, includeCalibration.checked, includeAutomations.checked, includeRelationships.checked, includeGameDetection.checked, selectedFile) } }
 }

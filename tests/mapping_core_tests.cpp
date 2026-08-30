@@ -12,6 +12,8 @@
 #include <QtTest>
 
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QFile>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -164,6 +166,10 @@ private slots:
     void categoryScopedNamesAndStableReferencesSurviveMove();
     void portableProfileRoundTripIsAtomicAndRemapsIds();
     void portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault();
+    void portablePackSelectionsConflictsAndDependenciesAreSafe();
+    void portableDeviceMatchingAndCalibrationRequireExplicitIntent();
+    void portableFormatValidationRejectsFutureAndInvalidDependenciesAtomically();
+    void gameCategoryDetectionIsPureLowFrequencyControlPlaneLogic();
     void profileCrudValidatesNamesAndProtectsNormal();
     void newProfileClonesRequestedSourceIndependently();
     void profilesRemainIsolatedAndPersist();
@@ -1441,6 +1447,34 @@ void MappingCoreTests::categoryMigrationPreservesExistingProfiles()
 {
     MapperConfiguration source = defaultConfiguration();
     QVERIFY(activateProfile(source, precisionProfileId()));
+    ControllerProfile *precision = findProfile(source, precisionProfileId());
+    QVERIFY(precision);
+    precision->buttons = defaultButtonMappings(2, 32);
+    precision->povs.resize(1);
+    precision->povs[0][0] = {ButtonActionType::VirtualButton, 9, true};
+    PersonalCurvePreset curve;
+    curve.id = QStringLiteral("legacy-migration-curve");
+    curve.name = QStringLiteral("Legacy Migration Curve");
+    curve.definition = linearCurveDefinition();
+    source.personalCurvePresets.push_back(curve);
+    precision->axes[static_cast<int>(PhysicalAxis::X)].curve.family = CurveFamily::Personal;
+    precision->axes[static_cast<int>(PhysicalAxis::X)].curve.presetId = curve.id;
+    setProfileTrigger(source, 4, precisionProfileId(), ProfileTriggerMode::Toggle);
+    setPovProfileTrigger(source, 1, PovDirection::Up, precisionProfileId(), ProfileTriggerMode::Hold);
+    AutomationDefinition automation;
+    automation.id = QStringLiteral("legacy-profile-automation");
+    automation.name = QStringLiteral("Legacy Profile Automation");
+    automation.conditions.push_back({AutomationConditionType::Always, 0, 0.0F, 0.0F, 0.0F, 1, 1,
+                                    PovDirection::Up, precisionProfileId()});
+    automation.actions.push_back({AutomationActionType::ProfileToggle, 1, normalProfileId()});
+    source.automations.push_back(automation);
+    SavedControllerRecord controller;
+    controller.id = QStringLiteral("migration-controller");
+    controller.displayName = QStringLiteral("Migration HOTAS");
+    controller.vjoyRequirements.deviceId = 1;
+    controller.calibration[0] = {true, -0.83F, 0.02F, 0.94F};
+    source.savedControllers.push_back(controller);
+    source.activeControllerRecordId = controller.id;
     QJsonObject legacy = ConfigStore::toJson(source);
     legacy.insert(QStringLiteral("version"), 18);
     legacy.remove(QStringLiteral("profileCategories"));
@@ -1461,6 +1495,14 @@ void MappingCoreTests::categoryMigrationPreservesExistingProfiles()
     QCOMPARE(migrated.profileCategories.front().name, QStringLiteral("General"));
     QCOMPARE(migrated.profileCategories.front().profileIds.size(), source.profiles.size());
     QCOMPARE(migrated.activeProfileId, precisionProfileId());
+    QCOMPARE(migrated.personalCurvePresets.size(), size_t{1});
+    QCOMPARE(findProfile(migrated, precisionProfileId())->buttons.size(), size_t{2});
+    QCOMPARE(findProfile(migrated, precisionProfileId())->povs.size(), size_t{1});
+    QCOMPARE(migrated.profileTriggers[3].targetProfileId, precisionProfileId());
+    QCOMPARE(migrated.povProfileTriggers[0][0].targetProfileId, precisionProfileId());
+    QCOMPARE(migrated.automations.size(), size_t{1});
+    QCOMPARE(migrated.savedControllers.size(), size_t{1});
+    QCOMPARE(migrated.savedControllers.front().calibration[0].minimum, -0.83F);
     for (const ControllerProfile &profile : migrated.profiles) {
         QCOMPARE(profile.categoryId, generalProfileCategoryId());
         QVERIFY(profile.enabled);
@@ -1537,6 +1579,7 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QString error;
     QVERIFY2(ProfilePortability::exportPack(source, {categoryId}, {}, QStringLiteral("BF6 Pack"),
                                              QStringLiteral("Portable vehicle setup"), false, false,
+                                             true, true, true,
                                              fileName, &error), qPrintable(error));
     PortableConfigurationBundle bundle;
     QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
@@ -1555,6 +1598,212 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(category != target.profileCategories.cend());
     QCOMPARE(category->executableRules, QStringList{QStringLiteral("bf6.exe")});
     QCOMPARE(target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum, originalMinimum);
+}
+
+void MappingCoreTests::portablePackSelectionsConflictsAndDependenciesAreSafe()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MapperConfiguration source = defaultConfiguration();
+    QString categoryId;
+    QVERIFY(createProfileCategory(source, QStringLiteral("Battlefield 6"), &categoryId));
+    QString groundId;
+    QString flightId;
+    QVERIFY(createProfileInCategory(source, QStringLiteral("Ground"), categoryId, normalProfileId(), &groundId));
+    QVERIFY(createProfileInCategory(source, QStringLiteral("Flight"), categoryId, precisionProfileId(), &flightId));
+    PersonalCurvePreset curve;
+    curve.id = QStringLiteral("curve-landing");
+    curve.name = QStringLiteral("Landing Curve");
+    curve.definition = linearCurveDefinition();
+    source.personalCurvePresets.push_back(curve);
+    ControllerProfile *ground = findProfile(source, groundId);
+    QVERIFY(ground);
+    ground->axes[static_cast<int>(PhysicalAxis::X)].curve.family = CurveFamily::Personal;
+    ground->axes[static_cast<int>(PhysicalAxis::X)].curve.presetId = curve.id;
+    AutomationDefinition automation;
+    automation.id = QStringLiteral("automation-ground-flight");
+    automation.name = QStringLiteral("Ground to Flight");
+    automation.conditions.push_back({AutomationConditionType::Always, 0, 0.0F, 0.0F, 0.0F, 1, 1,
+                                    PovDirection::Up, groundId});
+    automation.actions.push_back({AutomationActionType::ProfileToggle, 1, flightId});
+    source.automations.push_back(automation);
+    setProfileTrigger(source, 8, groundId, ProfileTriggerMode::Hold);
+
+    const QString fileName = temporary.filePath(QStringLiteral("selected.hbf6pack"));
+    QString error;
+    QVERIFY2(ProfilePortability::exportPack(source, {}, {groundId}, QStringLiteral("Selected"), {}, false,
+                                             false, true, true, true, fileName, &error), qPrintable(error));
+    PortableConfigurationBundle bundle;
+    QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
+    // The chosen profile and its Automation target travel together; no
+    // package-local relationship is emitted dangling.
+    QCOMPARE(bundle.profiles.size(), size_t{2});
+    QCOMPARE(bundle.curves.size(), size_t{1});
+    QCOMPARE(bundle.automations.size(), size_t{1});
+
+    MapperConfiguration mergeTarget = defaultConfiguration();
+    QVERIFY(createProfileCategory(mergeTarget, QStringLiteral("Battlefield 6")));
+    PortableImportOptions merge;
+    merge.categoryConflictMode = PortableCategoryConflictMode::Merge;
+    QStringList warnings;
+    QVERIFY2(ProfilePortability::apply(&mergeTarget, bundle, merge, &warnings, &error), qPrintable(error));
+    QCOMPARE(std::count_if(mergeTarget.profileCategories.cbegin(), mergeTarget.profileCategories.cend(),
+        [](const ProfileCategory &category) { return category.name == QStringLiteral("Battlefield 6"); }), 1);
+    QVERIFY(std::any_of(mergeTarget.automations.cbegin(), mergeTarget.automations.cend(),
+        [](const AutomationDefinition &item) { return item.name == QStringLiteral("Ground to Flight"); }));
+
+    MapperConfiguration newTarget = defaultConfiguration();
+    QVERIFY(createProfileCategory(newTarget, QStringLiteral("Battlefield 6")));
+    PortableImportOptions importAsNew;
+    importAsNew.categoryConflictMode = PortableCategoryConflictMode::ImportAsNew;
+    QVERIFY2(ProfilePortability::apply(&newTarget, bundle, importAsNew, &warnings, &error), qPrintable(error));
+    QVERIFY(std::any_of(newTarget.profileCategories.cbegin(), newTarget.profileCategories.cend(),
+        [](const ProfileCategory &category) { return category.name == QStringLiteral("Battlefield 6 (Imported)"); }));
+
+    MapperConfiguration replaceTarget = defaultConfiguration();
+    QString replaceCategory;
+    QVERIFY(createProfileCategory(replaceTarget, QStringLiteral("Battlefield 6"), &replaceCategory));
+    QString oldProfile;
+    QVERIFY(createProfileInCategory(replaceTarget, QStringLiteral("Old"), replaceCategory,
+                                    normalProfileId(), &oldProfile));
+    PortableImportOptions replace;
+    replace.categoryConflictMode = PortableCategoryConflictMode::Replace;
+    QVERIFY2(ProfilePortability::apply(&replaceTarget, bundle, replace, &warnings, &error), qPrintable(error));
+    QVERIFY(!findProfile(replaceTarget, oldProfile));
+    const ProfileCategory *replaced = findProfileCategory(replaceTarget, replaceCategory);
+    QVERIFY(replaced);
+    QCOMPARE(replaced->profileIds.size(), size_t{2});
+}
+
+void MappingCoreTests::portableDeviceMatchingAndCalibrationRequireExplicitIntent()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MapperConfiguration source = defaultConfiguration();
+    QString categoryId;
+    QVERIFY(createProfileCategory(source, QStringLiteral("Backup"), &categoryId));
+    QString profileId;
+    QVERIFY(createProfileInCategory(source, QStringLiteral("Travel"), categoryId, normalProfileId(), &profileId));
+    SavedControllerRecord sourceRecord;
+    sourceRecord.id = QStringLiteral("source-controller");
+    sourceRecord.displayName = QStringLiteral("T.Flight Hotas One");
+    sourceRecord.productGuid = QStringLiteral("PRODUCT-GUID");
+    sourceRecord.vendorId = 1135;
+    sourceRecord.productId = 47245;
+    sourceRecord.axisCount = 5;
+    sourceRecord.buttonCount = 12;
+    sourceRecord.povCount = 1;
+    sourceRecord.vjoyRequirements.deviceId = 1;
+    sourceRecord.calibration[0] = {true, -0.82F, 0.04F, 0.91F};
+    source.savedControllers.push_back(sourceRecord);
+    source.activeControllerRecordId = sourceRecord.id;
+    const QString fileName = temporary.filePath(QStringLiteral("hardware.hbf6pack"));
+    QString error;
+    QVERIFY2(ProfilePortability::exportPack(source, {categoryId}, {}, QStringLiteral("Hardware"), {}, true,
+                                             true, true, true, true, fileName, &error), qPrintable(error));
+    PortableConfigurationBundle bundle;
+    QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
+    QVERIFY(bundle.includesDevices);
+    QVERIFY(bundle.includesCalibration);
+    QCOMPARE(bundle.deviceDescriptors.size(), 1);
+
+    MapperConfiguration target = defaultConfiguration();
+    for (const QString &id : {QStringLiteral("local-a"), QStringLiteral("local-b")}) {
+        SavedControllerRecord record = sourceRecord;
+        record.id = id;
+        record.calibration[0] = {true, -1.0F, 0.0F, 1.0F};
+        target.savedControllers.push_back(record);
+    }
+    const QVariantMap preview = ProfilePortability::preview(bundle, target);
+    const QVariantMap device = preview.value(QStringLiteral("devices")).toList().front().toMap();
+    QCOMPARE(device.value(QStringLiteral("choices")).toList().size(), 2);
+    QVERIFY(device.value(QStringLiteral("state")).toString().contains(QStringLiteral("USER SELECTION REQUIRED")));
+
+    const QJsonObject before = ConfigStore::toJson(target);
+    PortableImportOptions applyCalibration;
+    applyCalibration.applyImportedCalibration = true;
+    QVERIFY(!ProfilePortability::apply(&target, bundle, applyCalibration, nullptr, &error));
+    QCOMPARE(ConfigStore::toJson(target), before);
+    applyCalibration.deviceSelections.insert(0, QStringLiteral("local-a"));
+    QVERIFY2(ProfilePortability::apply(&target, bundle, applyCalibration, nullptr, &error), qPrintable(error));
+    const auto matched = std::find_if(target.savedControllers.cbegin(), target.savedControllers.cend(),
+        [](const SavedControllerRecord &record) { return record.id == QStringLiteral("local-a"); });
+    QVERIFY(matched != target.savedControllers.cend());
+    QCOMPARE(matched->calibration[0].minimum, -0.82F);
+    const auto untouched = std::find_if(target.savedControllers.cbegin(), target.savedControllers.cend(),
+        [](const SavedControllerRecord &record) { return record.id == QStringLiteral("local-b"); });
+    QVERIFY(untouched != target.savedControllers.cend());
+    QCOMPARE(untouched->calibration[0].minimum, -1.0F);
+}
+
+void MappingCoreTests::portableFormatValidationRejectsFutureAndInvalidDependenciesAtomically()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MapperConfiguration source = defaultConfiguration();
+    const QString fileName = temporary.filePath(QStringLiteral("normal.hbf6profile"));
+    QString error;
+    QVERIFY2(ProfilePortability::exportProfile(source, normalProfileId(), fileName, &error), qPrintable(error));
+    QFile file(fileName);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QJsonObject document = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    document.insert(QStringLiteral("schemaVersion"), 2);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(document).toJson());
+    file.close();
+    PortableConfigurationBundle future;
+    QVERIFY(!ProfilePortability::inspect(fileName, &future, &error));
+    QVERIFY(error.contains(QStringLiteral("newer unsupported format")));
+
+    document.insert(QStringLiteral("schemaVersion"), 1);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(document).toJson());
+    file.close();
+    QJsonObject payload = document.value(QStringLiteral("payload")).toObject();
+    QJsonArray profiles = payload.value(QStringLiteral("profiles")).toArray();
+    QJsonObject profile = profiles.at(0).toObject();
+    profile.insert(QStringLiteral("outputLayoutId"), QStringLiteral("missing-layout"));
+    profiles[0] = profile;
+    payload.insert(QStringLiteral("profiles"), profiles);
+    document.insert(QStringLiteral("payload"), payload);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(document).toJson());
+    file.close();
+    MapperConfiguration target = defaultConfiguration();
+    const QJsonObject before = ConfigStore::toJson(target);
+    PortableConfigurationBundle invalidBundle;
+    QVERIFY(!ProfilePortability::inspect(fileName, &invalidBundle, &error));
+    QVERIFY(error.contains(QStringLiteral("vJoy contract")));
+    QCOMPARE(ConfigStore::toJson(target), before);
+}
+
+void MappingCoreTests::gameCategoryDetectionIsPureLowFrequencyControlPlaneLogic()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    QString categoryId;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Battlefield 6"), &categoryId));
+    QString helicopterId;
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Helicopter"), categoryId,
+                                    normalProfileId(), &helicopterId));
+    ProfileCategory *category = findProfileCategory(configuration, categoryId);
+    QVERIFY(category);
+    category->executableRules = {QStringLiteral("bf6.exe")};
+    category->defaultProfileId = helicopterId;
+    category->lastActiveProfileId = helicopterId;
+    category->restoreLastProfile = true;
+    const GameCategoryMatch match = categoryForForegroundExecutable(configuration, QStringLiteral("BF6.EXE"));
+    QCOMPARE(match.categoryId, categoryId);
+    QVERIFY(!match.ambiguous);
+    QVERIFY(activateCategoryProfile(configuration, match.categoryId));
+    QCOMPARE(configuration.activeProfileId, helicopterId);
+    QString lastExecutable;
+    QVERIFY(foregroundExecutableChanged(&lastExecutable, QStringLiteral("bf6.exe")));
+    QVERIFY(!foregroundExecutableChanged(&lastExecutable, QStringLiteral("BF6.EXE")));
+    QVERIFY(foregroundExecutableChanged(&lastExecutable, QStringLiteral("other.exe")));
+    QVERIFY(activateProfile(configuration, helicopterId)); // Manual in-category selection remains valid.
+    category->enabled = false;
+    QVERIFY(categoryForForegroundExecutable(configuration, QStringLiteral("bf6.exe")).categoryId.isEmpty());
 }
 
 void MappingCoreTests::profileCrudValidatesNamesAndProtectsNormal()
