@@ -1086,10 +1086,33 @@ Page {
         id: pageHost
         anchors.fill: parent
  anchors.margins: 24
-        OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
-        SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
-        ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: true
-            onNavigateToPage: function(page) { root.currentPage = page } }
+        // Defer optional heavy pages until their first visit, but retain them
+        // afterwards so navigation cannot drop an in-progress editor draft.
+        Loader {
+            id: overviewPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 8 || item !== null
+            sourceComponent: Component {
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
+            }
+        }
+        Loader {
+            id: settingsPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 4 || item !== null
+            sourceComponent: Component {
+                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
+            }
+        }
+        Loader {
+            id: profileLibraryLoader
+            anchors.fill: parent
+            active: root.currentPage === 5 || item !== null
+            sourceComponent: Component {
+                ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: true
+                    onNavigateToPage: function(page) { root.currentPage = page } }
+            }
+        }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -2160,8 +2183,22 @@ Page {
                 }
             }
         }
-        LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
-        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
+        Loader {
+            id: curveEditorLoader
+            anchors.fill: parent
+            active: root.currentPage === 6 || item !== null
+            sourceComponent: Component {
+                LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
+            }
+        }
+        Loader {
+            id: automationPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 7 || item !== null
+            sourceComponent: Component {
+                AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
+            }
+        }
     }
 
     Dialog {

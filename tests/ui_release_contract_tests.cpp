@@ -22,6 +22,7 @@ private slots:
     void controllerSetupRetainsItsExplicitTargetAndSuccessfulRepairPersistsIt();
     void sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit();
     void controllerPresentationIsCachedAndTelemetryIsIsolated();
+    void presentationLifecycleSleepsOnlyTheGuiControlPlane();
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
@@ -111,6 +112,36 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
     QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
+}
+
+void UiReleaseContractTests::presentationLifecycleSleepsOnlyTheGuiControlPlane()
+{
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+
+    QVERIFY(header.contains(QStringLiteral("presentationState READ presentationState NOTIFY presentationStateChanged")));
+    QVERIFY(header.contains(QStringLiteral("enum class PresentationLifecycleState")));
+    QVERIFY(header.contains(QStringLiteral("Q_INVOKABLE void restoreFromTray()")));
+    QVERIFY(backend.contains(QStringLiteral("kVisibleSnapshotIntervalMs = 16")));
+    QVERIFY(backend.contains(QStringLiteral("kMinimizedSnapshotIntervalMs = 200")));
+    QVERIFY(backend.contains(QStringLiteral("kTrayHiddenControllerDiscoveryIntervalMs = 7500")));
+    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.stop();")));
+    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);")));
+    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kVisibleSnapshotIntervalMs);")));
+    QVERIFY(backend.contains(QStringLiteral("quickWindow->releaseResources();")));
+    QVERIFY(backend.contains(QStringLiteral("quickWindow->setPersistentSceneGraph(false);")));
+    QVERIFY(backend.contains(QStringLiteral("if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();")));
+    QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.stop();")));
+    for (const QString &page : {sourceFile(QStringLiteral("qml/Standard.qml")),
+                                sourceFile(QStringLiteral("qml/Legacy.qml"))}) {
+        QVERIFY(page.count(QStringLiteral("active: root.currentPage")) >= 5);
+        QVERIFY(page.contains(QStringLiteral("|| item !== null")));
+        QVERIFY(page.contains(QStringLiteral("unsaved editor/import draft"))
+                 || page.contains(QStringLiteral("in-progress editor draft")));
+    }
+    QVERIFY(!worker.contains(QStringLiteral("presentationState")));
+    QVERIFY(!worker.contains(QStringLiteral("presentationLifecycle")));
 }
 
 void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts()
