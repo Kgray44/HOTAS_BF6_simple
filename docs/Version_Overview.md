@@ -2,11 +2,23 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.1**
+**Current release: v2.1.2**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.2 — Deep Tray & Runtime Efficiency
+
+Makes the GUI and presentation control plane sleep aggressively when HOTAS BF6 is minimized or hidden to the system tray, while preserving the awake, allocation-free DirectInput-to-vJoy mapper path.
+
+- Adds explicit Visible, Minimized, and Tray Hidden presentation lifecycle states outside MappingWorker; live snapshots stay responsive while visible, slow to 200 ms while minimized, and stop entirely in Deep Tray Sleep.
+- Restoring the window recreates presentation resources where needed and immediately projects the current worker state before normal visible telemetry resumes.
+- Controller-list discovery now adapts from one second visible to 3.5 seconds minimized and 7.5 seconds tray-hidden, while worker-owned input/reconnect behavior remains independent.
+- Tray entry releases nonpersistent Qt Quick scene-graph and graphics resources through QQuickWindow without destroying AppBackend, MappingWorker, active profiles, Automation, calibration, vJoy ownership, or configuration.
+- Overview, Settings, Profile Library, Curve Editor, and Automation pages now create their heavy QML trees only on first visit, then retain them to preserve unsaved editor and import drafts.
+- Optional automatic game-category detection no longer runs a one-second no-op timer while disabled; when enabled it retains its independent low-frequency control-plane cadence.
+- The mapper report loop remains unchanged: no DirectInput polling, vJoy responsiveness, configuration, UI, process inspection, allocation, locking, or timer work was added to report processing.
 
 ## v2.1.1 — Profile Library Completion & Portable Pack Safety
 

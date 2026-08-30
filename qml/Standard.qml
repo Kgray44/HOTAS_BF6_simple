@@ -1211,10 +1211,34 @@ Page {
         id: pageHost
         anchors.fill: parent
  anchors.margins: 24
-        OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false }
-        SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
-        ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
-            onNavigateToPage: function(page) { root.currentPage = page } }
+        // The heavy optional pages do not need to allocate a QML object tree
+        // before a user ever visits them. Once loaded they remain alive so an
+        // unsaved editor/import draft cannot be discarded by navigation.
+        Loader {
+            id: overviewPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 8 || item !== null
+            sourceComponent: Component {
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false }
+            }
+        }
+        Loader {
+            id: settingsPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 4 || item !== null
+            sourceComponent: Component {
+                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
+            }
+        }
+        Loader {
+            id: profileLibraryLoader
+            anchors.fill: parent
+            active: root.currentPage === 5 || item !== null
+            sourceComponent: Component {
+                ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
+                    onNavigateToPage: function(page) { root.currentPage = page } }
+            }
+        }
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -2334,8 +2358,22 @@ Page {
                 }
             }
         }
-        CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens }
-        AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
+        Loader {
+            id: curveEditorLoader
+            anchors.fill: parent
+            active: root.currentPage === 6 || item !== null
+            sourceComponent: Component {
+                CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens }
+            }
+        }
+        Loader {
+            id: automationPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 7 || item !== null
+            sourceComponent: Component {
+                AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
+            }
+        }
     }
 
     Dialog {

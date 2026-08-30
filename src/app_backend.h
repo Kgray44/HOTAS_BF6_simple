@@ -74,6 +74,10 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
     Q_PROPERTY(bool keepRunningInTray READ keepRunningInTray NOTIFY stateChanged)
     Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY stateChanged)
+    // Presentation scheduling is deliberately separate from MappingWorker.
+    // It tells the GUI/control plane when it may project runtime state, never
+    // how quickly DirectInput reports are processed or written to vJoy.
+    Q_PROPERTY(QString presentationState READ presentationState NOTIFY presentationStateChanged)
     Q_PROPERTY(bool physicalConnected READ physicalConnected NOTIFY stateChanged)
     Q_PROPERTY(int axisCount READ axisCount NOTIFY stateChanged)
     Q_PROPERTY(QString physicalAxisCapabilitySummary READ physicalAxisCapabilitySummary NOTIFY stateChanged)
@@ -204,6 +208,11 @@ public:
     bool autoSwitchVerifiedController() const;
     bool keepRunningInTray() const;
     bool trayAvailable() const;
+    QString presentationState() const;
+    int presentationSnapshotIntervalMs() const;
+    int controllerDiscoveryIntervalMs() const;
+    bool presentationSnapshotActive() const;
+    bool gameDetectionTimerActive() const;
     bool physicalConnected() const;
     int axisCount() const;
     QString physicalAxisCapabilitySummary() const;
@@ -426,6 +435,7 @@ public:
     Q_INVOKABLE void resetApplicationConfiguration();
     void attachMainWindow(QWindow *window);
     Q_INVOKABLE void hideToTray();
+    Q_INVOKABLE void restoreFromTray();
     Q_INVOKABLE void exitApplication();
 
 signals:
@@ -435,6 +445,7 @@ signals:
     void controllersChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
+    void presentationStateChanged();
     // Setup presentation must keep the discovered controller identity instead
     // of inferring a target from whichever controller is currently active.
     void controllerSetupRequested(const QStringList &targetDirectInputIds);
@@ -447,9 +458,19 @@ private slots:
     void failUpdateCheck(const QString &reason);
 
 private:
+    enum class PresentationLifecycleState {
+        Visible,
+        Minimized,
+        TrayHidden,
+    };
+
     void persistAndApply();
     void refreshControllerInventory();
     void evaluateGameDetection();
+    void updatePresentationLifecycle();
+    void setPresentationLifecycle(PresentationLifecycleState state);
+    void releasePresentationResources();
+    void restorePresentationResources();
     bool rebuildControllerUiModel();
     void rebuildCurveAxisChoices();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
@@ -518,6 +539,8 @@ private:
     QSet<QString> m_observedControllerIds;
     bool m_controllerInventoryInitialized = false;
     QPointer<QWindow> m_mainWindow;
+    PresentationLifecycleState m_presentationLifecycle = PresentationLifecycleState::Visible;
+    bool m_trayHidden = false;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;
     QAction *m_trayStatusAction = nullptr;

@@ -264,10 +264,10 @@
     "releaseTitle": "v2.1.1",
     "title": "Profile Library Completion & Portable Pack Safety",
     "summary": "HOTAS BF6 v2.1.1 completes the Profile Library portability workflow with selective pack export, independent strict Profile/Pack schemas, detailed pre-apply preview, explicit category/profile conflict decisions, compatible controller matching, and opt-in calibration application without changing the DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.1.2",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.1 has local/CI validation for configuration migration, strict Profile/Pack inspection, selective export/import, atomic conflict handling, application startup, three-theme QML startup, and synthetic mapper behavior. Physical controller, game, installer, signing, and public updater acceptance remain machine- or release-specific checks.",
+    "statusNote": "Superseded by v2.1.2 Deep Tray & Runtime Efficiency. v2.1.1 remains the completed Profile Library portability baseline; v2.1.2 preserves it while reducing unnecessary minimized and tray-hidden presentation work.",
     "highlights": [
       "Pack export selects whole categories or individual profiles and carries only the requested related configuration; required custom curves and vJoy contracts remain closed over so a selected profile cannot be exported with broken dependencies.",
       "The transfer center previews category rules, profile mapping/POV/Automation counts, profile-control relationships, curves, vJoy requirements, source/current controller compatibility, conflicts, and warnings before import can mutate saved configuration.",
@@ -275,6 +275,26 @@
       "Existing categories use explicit Merge, Import as New, or protected Replace behavior. Profile collisions use renamed copies by default; destructive category/profile replacement requires a separate confirmation.",
       "Devices and calibration are opt-in on export. Calibration remains local by default and can apply only to an explicitly selected compatible saved controller; ambiguous matches never select by controller name.",
       "No work was added to mapper report processing. The synthetic report benchmark covers all built-in curve families plus profile controls and Automation with zero hot-path allocations."
+    ]
+  },
+  {
+    "version": "2.1.2",
+    "tag": "v2.1.2",
+    "releaseTitle": "v2.1.2",
+    "title": "Deep Tray & Runtime Efficiency",
+    "summary": "HOTAS BF6 v2.1.2 makes minimized and tray-hidden presentation work sleep aggressively while preserving the fully awake, allocation-free DirectInput-to-vJoy mapper.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.2 has local/CI lifecycle, startup, QML, portability, and synthetic mapper validation. Physical controller, game, installer, signing, public updater, and measured resource acceptance remain machine- or release-specific checks.",
+    "highlights": [
+      "Introduces explicit Visible, Minimized, and Tray Hidden presentation lifecycle states outside the mapper. Snapshot projection remains responsive while visible, reduces to 200 ms while minimized, and stops in Deep Tray Sleep.",
+      "Restoring from the tray immediately projects current runtime state and resumes visible presentation cadence without restarting MappingWorker, changing Mapping On/Off intent, releasing vJoy, or mutating profiles and configuration.",
+      "Uses safe Qt Quick nonpersistent scene-graph and graphics-resource controls plus releaseResources() on tray entry, so the GUI can recreate resources on restore without destroying the backend or real-time worker.",
+      "Defers Overview, Settings, Profile Library, Curve Editor, and Automation QML-tree creation until first use while retaining a loaded page to protect unsaved editor/import drafts from navigation loss.",
+      "Adapts presentation controller discovery to visible, minimized, and tray-hidden cadence while leaving worker-owned physical reconnect correctness independent of the UI timer.",
+      "Stops the optional foreground game-category detection timer when the feature is disabled; enabled detection remains a separate one-second control-plane sample.",
+      "Does not alter DirectInput polling, transforms, Automation runtime evaluation, vJoy report scheduling, output-layout behavior, HidHide configuration, persistence, or the synthetic report path."
     ]
   }
 ]

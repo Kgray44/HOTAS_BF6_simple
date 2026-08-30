@@ -22,6 +22,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QQuickWindow>
 #include <QSettings>
 #include <QSet>
 #include <QSystemTrayIcon>
@@ -47,6 +48,13 @@ namespace hotas {
 using namespace Qt::StringLiterals;
 
 namespace {
+
+constexpr int kVisibleSnapshotIntervalMs = 16;
+constexpr int kMinimizedSnapshotIntervalMs = 200;
+constexpr int kVisibleControllerDiscoveryIntervalMs = 1000;
+constexpr int kMinimizedControllerDiscoveryIntervalMs = 3500;
+constexpr int kTrayHiddenControllerDiscoveryIntervalMs = 7500;
+constexpr int kGameDetectionIntervalMs = 1000;
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
@@ -306,17 +314,17 @@ AppBackend::AppBackend(QObject *parent)
     }
     connect(&m_worker, &MappingWorker::buttonConfigurationSuggested, this,
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
-    m_snapshotTimer.setInterval(16); // UI-only latest-state projection, never the mapping cadence.
+    m_snapshotTimer.setInterval(kVisibleSnapshotIntervalMs);
     m_snapshotTimer.start();
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
-    m_controllerDiscoveryTimer.setInterval(1000);
+    m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
     m_controllerDiscoveryTimer.start();
     // Foreground-process sampling is low-frequency control-plane work. It is
     // intentionally independent from the 16 ms presentation snapshot and
     // the DirectInput worker's report loop.
-    m_gameDetectionTimer.setInterval(1000);
-    m_gameDetectionTimer.start();
+    m_gameDetectionTimer.setInterval(kGameDetectionIntervalMs);
+    if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -324,12 +332,7 @@ AppBackend::AppBackend(QObject *parent)
         m_trayStatusAction->setEnabled(false);
         m_trayMenu->addSeparator();
         QAction *open = m_trayMenu->addAction(u"Open HOTAS BF6"_qs);
-        connect(open, &QAction::triggered, this, [this] {
-            if (!m_mainWindow) return;
-            m_mainWindow->showNormal();
-            m_mainWindow->raise();
-            m_mainWindow->requestActivate();
-        });
+        connect(open, &QAction::triggered, this, &AppBackend::restoreFromTray);
         m_trayToggleAction = m_trayMenu->addAction(u"Start Mapping"_qs);
         connect(m_trayToggleAction, &QAction::triggered, this, &AppBackend::toggleMapping);
         m_trayMenu->addSeparator();
@@ -339,11 +342,7 @@ AppBackend::AppBackend(QObject *parent)
         m_trayIcon->setContextMenu(m_trayMenu);
         connect(m_trayIcon, &QSystemTrayIcon::activated, this,
                 [this](QSystemTrayIcon::ActivationReason reason) {
-                    if (reason == QSystemTrayIcon::Trigger && m_mainWindow) {
-                        m_mainWindow->showNormal();
-                        m_mainWindow->raise();
-                        m_mainWindow->requestActivate();
-                    }
+                    if (reason == QSystemTrayIcon::Trigger) restoreFromTray();
                 });
         m_trayIcon->show();
     }
@@ -374,7 +373,9 @@ AppBackend::AppBackend(QObject *parent)
     // It never stops mapping, releases either device, or opens a modal.
     QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
     QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
-    QTimer::singleShot(1000, this, &AppBackend::evaluateGameDetection);
+    if (m_configuration.automaticGameDetection) {
+        QTimer::singleShot(kGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+    }
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
@@ -1109,6 +1110,28 @@ QString AppBackend::activeControllerRecordId() const { return m_configuration.ac
 bool AppBackend::autoSwitchVerifiedController() const { return m_configuration.autoSwitchVerifiedController; }
 bool AppBackend::keepRunningInTray() const { return m_configuration.keepRunningInTray; }
 bool AppBackend::trayAvailable() const { return m_trayIcon && m_trayIcon->isVisible(); }
+QString AppBackend::presentationState() const
+{
+    switch (m_presentationLifecycle) {
+    case PresentationLifecycleState::Visible: return u"Visible"_qs;
+    case PresentationLifecycleState::Minimized: return u"Minimized"_qs;
+    case PresentationLifecycleState::TrayHidden: return u"TrayHidden"_qs;
+    }
+    return u"Visible"_qs;
+}
+
+int AppBackend::presentationSnapshotIntervalMs() const
+{
+    return m_snapshotTimer.isActive() ? m_snapshotTimer.interval() : 0;
+}
+
+int AppBackend::controllerDiscoveryIntervalMs() const
+{
+    return m_controllerDiscoveryTimer.interval();
+}
+
+bool AppBackend::presentationSnapshotActive() const { return m_snapshotTimer.isActive(); }
+bool AppBackend::gameDetectionTimerActive() const { return m_gameDetectionTimer.isActive(); }
 bool AppBackend::physicalConnected() const { return m_worker.runtime().physicalConnected.load(); }
 int AppBackend::axisCount() const { return m_worker.runtime().axisCount.load(); }
 
@@ -1587,6 +1610,10 @@ void AppBackend::setMappingActive(bool active)
     if (m_mappingDesired == active && m_worker.mappingRequested() == active) return;
     m_mappingDesired = active;
     m_worker.setMappingEnabled(active);
+    // The 16 ms presentation projection is deliberately stopped in Deep Tray
+    // Sleep, so keep the native tray control accurate through this direct,
+    // user-driven control-plane path.
+    refreshTrayStatus();
     appendEvent(active ? u"Starting mapping…"_qs : u"Stopping mapping…"_qs);
     emit stateChanged();
 }
@@ -2625,6 +2652,11 @@ void AppBackend::setAutomaticGameDetection(bool enabled)
     if (m_configuration.automaticGameDetection == enabled) return;
     m_configuration.automaticGameDetection = enabled;
     m_lastDetectedExecutable.clear();
+    if (enabled) {
+        m_gameDetectionTimer.start(kGameDetectionIntervalMs);
+    } else {
+        m_gameDetectionTimer.stop();
+    }
     persistAndApply();
     appendEvent(enabled ? u"Automatic game category detection enabled"_qs
                         : u"Automatic game category detection disabled"_qs);
@@ -4341,12 +4373,41 @@ void AppBackend::tryAutoSwitchVerifiedController()
 
 void AppBackend::attachMainWindow(QWindow *window)
 {
+    if (m_mainWindow == window) return;
     m_mainWindow = window;
+    if (!m_mainWindow) return;
+    connect(m_mainWindow, &QWindow::visibilityChanged, this,
+            [this](QWindow::Visibility) { updatePresentationLifecycle(); });
+    connect(m_mainWindow, &QWindow::windowStateChanged, this,
+            [this](Qt::WindowState) { updatePresentationLifecycle(); });
+    connect(m_mainWindow, &QObject::destroyed, this, [this] {
+        m_mainWindow = nullptr;
+        m_trayHidden = false;
+        setPresentationLifecycle(PresentationLifecycleState::Visible);
+    });
+    updatePresentationLifecycle();
 }
 
 void AppBackend::hideToTray()
 {
-    if (m_mainWindow) m_mainWindow->hide();
+    if (!m_mainWindow) return;
+    m_trayHidden = true;
+    m_mainWindow->hide();
+    updatePresentationLifecycle();
+}
+
+void AppBackend::restoreFromTray()
+{
+    m_trayHidden = false;
+    if (!m_mainWindow) {
+        setPresentationLifecycle(PresentationLifecycleState::Visible);
+        return;
+    }
+    restorePresentationResources();
+    m_mainWindow->showNormal();
+    m_mainWindow->raise();
+    m_mainWindow->requestActivate();
+    updatePresentationLifecycle();
 }
 
 void AppBackend::exitApplication()
@@ -4363,6 +4424,72 @@ void AppBackend::refreshTrayStatus()
                                              : u"Mapping off"_qs;
     m_trayStatusAction->setText(controller + u" · "_qs + mapping);
     m_trayToggleAction->setText(mappingRequested() ? u"Stop Mapping"_qs : u"Start Mapping"_qs);
+}
+
+void AppBackend::updatePresentationLifecycle()
+{
+    if (m_trayHidden) {
+        setPresentationLifecycle(PresentationLifecycleState::TrayHidden);
+        return;
+    }
+    if (!m_mainWindow) {
+        setPresentationLifecycle(PresentationLifecycleState::Visible);
+        return;
+    }
+    if ((m_mainWindow->windowState() & Qt::WindowMinimized)
+        || m_mainWindow->visibility() == QWindow::Minimized
+        || !m_mainWindow->isVisible()) {
+        setPresentationLifecycle(PresentationLifecycleState::Minimized);
+        return;
+    }
+    setPresentationLifecycle(PresentationLifecycleState::Visible);
+}
+
+void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
+{
+    if (m_presentationLifecycle == state) return;
+    m_presentationLifecycle = state;
+    switch (state) {
+    case PresentationLifecycleState::Visible:
+        restorePresentationResources();
+        m_snapshotTimer.start(kVisibleSnapshotIntervalMs);
+        m_controllerDiscoveryTimer.start(kVisibleControllerDiscoveryIntervalMs);
+        // Project the latest worker atomics before the visible QML tree has a
+        // chance to render. This is presentation work only; MappingWorker has
+        // remained awake and independent throughout the transition.
+        refreshUiSnapshot();
+        break;
+    case PresentationLifecycleState::Minimized:
+        m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);
+        m_controllerDiscoveryTimer.start(kMinimizedControllerDiscoveryIntervalMs);
+        break;
+    case PresentationLifecycleState::TrayHidden:
+        m_snapshotTimer.stop();
+        m_controllerDiscoveryTimer.start(kTrayHiddenControllerDiscoveryIntervalMs);
+        releasePresentationResources();
+        break;
+    }
+    emit presentationStateChanged();
+}
+
+void AppBackend::releasePresentationResources()
+{
+    auto *quickWindow = qobject_cast<QQuickWindow *>(m_mainWindow.data());
+    if (!quickWindow) return;
+    // These are GUI-thread QQuick lifecycle controls. They release only scene
+    // graph/graphics resources after the window has gone to the tray; the
+    // backend and MappingWorker remain owned by the running application.
+    quickWindow->setPersistentSceneGraph(false);
+    quickWindow->setPersistentGraphics(false);
+    quickWindow->releaseResources();
+}
+
+void AppBackend::restorePresentationResources()
+{
+    auto *quickWindow = qobject_cast<QQuickWindow *>(m_mainWindow.data());
+    if (!quickWindow) return;
+    quickWindow->setPersistentSceneGraph(true);
+    quickWindow->setPersistentGraphics(true);
 }
 
 void AppBackend::resetApplicationConfiguration()
