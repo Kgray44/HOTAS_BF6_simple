@@ -23,6 +23,7 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSet>
 #include <QSystemTrayIcon>
@@ -36,12 +37,14 @@
 #include <QMenu>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace hotas {
@@ -77,23 +80,73 @@ QString automationProfileName(const MapperConfiguration &configuration, const QS
     return id.isEmpty() ? u"a profile"_qs : u"missing profile"_qs;
 }
 
-QString foregroundExecutableName()
+struct RunningApplication {
+    QString name;
+    QString executable;
+    QString path;
+};
+
+QString friendlyApplicationName(const QString &executable)
 {
+    const QString stem = QFileInfo(executable).completeBaseName();
+    if (stem.compare(u"bf6"_qs, Qt::CaseInsensitive) == 0) return u"Battlefield 6"_qs;
+    if (stem.compare(u"starcitizen"_qs, Qt::CaseInsensitive) == 0) return u"Star Citizen"_qs;
+    QString spaced = stem;
+    spaced.replace(QRegularExpression(u"([a-z])([A-Z])"_qs), u"\\1 \\2"_qs);
+    spaced.replace(QRegularExpression(u"[_-]+"_qs), u" "_qs);
+    return spaced.isEmpty() ? executable : spaced;
+}
+
+bool isUsefulRunningApplication(const QString &executable)
+{
+    static const QSet<QString> excluded = {
+        u"applicationframehost.exe"_qs, u"audiodg.exe"_qs, u"conhost.exe"_qs,
+        u"csrss.exe"_qs, u"ctfmon.exe"_qs, u"dwm.exe"_qs, u"explorer.exe"_qs,
+        u"fontdrvhost.exe"_qs, u"idle.exe"_qs, u"lsass.exe"_qs, u"memory compression"_qs,
+        u"msedgewebview2.exe"_qs, u"registry"_qs, u"runtimebroker.exe"_qs,
+        u"searchhost.exe"_qs, u"services.exe"_qs, u"shellexperiencehost.exe"_qs,
+        u"sihost.exe"_qs, u"smss.exe"_qs, u"spoolsv.exe"_qs, u"startmenuexperiencehost.exe"_qs,
+        u"svchost.exe"_qs, u"system"_qs, u"taskhostw.exe"_qs, u"textinputhost.exe"_qs,
+        u"wininit.exe"_qs, u"winlogon.exe"_qs
+    };
+    return executable.endsWith(u".exe"_qs, Qt::CaseInsensitive)
+        && !excluded.contains(executable.toCaseFolded());
+}
+
+QList<RunningApplication> runningApplicationSnapshot()
+{
+    QList<RunningApplication> result;
 #ifdef Q_OS_WIN
-    const HWND window = GetForegroundWindow();
-    DWORD processId = 0;
-    if (!window || GetWindowThreadProcessId(window, &processId) == 0) return {};
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
-    if (!process) return {};
-    std::array<wchar_t, 32768> path{};
-    DWORD length = static_cast<DWORD>(path.size());
-    const bool read = QueryFullProcessImageNameW(process, 0, path.data(), &length) != FALSE;
-    CloseHandle(process);
-    return read ? QFileInfo(QString::fromWCharArray(path.data(), static_cast<qsizetype>(length))).fileName()
-                : QString{};
-#else
-    return {};
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return result;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    QSet<QString> seen;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            const QString executable = QString::fromWCharArray(entry.szExeFile).trimmed();
+            const QString key = executable.toCaseFolded();
+            if (!isUsefulRunningApplication(executable) || seen.contains(key)) continue;
+            seen.insert(key);
+            QString path;
+            const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+            if (process) {
+                std::array<wchar_t, 32768> buffer{};
+                DWORD length = static_cast<DWORD>(buffer.size());
+                if (QueryFullProcessImageNameW(process, 0, buffer.data(), &length)) {
+                    path = QString::fromWCharArray(buffer.data(), static_cast<qsizetype>(length));
+                }
+                CloseHandle(process);
+            }
+            result.append({friendlyApplicationName(executable), executable, path});
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
 #endif
+    std::sort(result.begin(), result.end(), [](const RunningApplication &left, const RunningApplication &right) {
+        return left.name.compare(right.name, Qt::CaseInsensitive) < 0;
+    });
+    return result;
 }
 
 QString automationBehaviorLabel(AutomationActivationMode mode)
@@ -2647,11 +2700,23 @@ bool AppBackend::setCategoryGameDetectionRules(const QString &categoryId, const 
     return true;
 }
 
+QVariantList AppBackend::runningApplications() const
+{
+    QVariantList applications;
+    const QList<RunningApplication> snapshot = runningApplicationSnapshot();
+    for (const RunningApplication &application : snapshot) {
+        applications.append(QVariantMap{{u"name"_qs, application.name},
+                                        {u"executable"_qs, application.executable},
+                                        {u"path"_qs, application.path}});
+    }
+    return applications;
+}
+
 void AppBackend::setAutomaticGameDetection(bool enabled)
 {
     if (m_configuration.automaticGameDetection == enabled) return;
     m_configuration.automaticGameDetection = enabled;
-    m_lastDetectedExecutable.clear();
+    m_lastDetectedExecutables.clear();
     if (enabled) {
         m_gameDetectionTimer.start(kGameDetectionIntervalMs);
     } else {
@@ -2672,6 +2737,9 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"name"_qs, profile->name);
     detail.insert(u"categoryId"_qs, profile->categoryId);
     detail.insert(u"category"_qs, category ? category->name : u"General"_qs);
+    detail.insert(u"categoryGames"_qs, category ? category->executableRules : QStringList{});
+    detail.insert(u"categoryActivationBehavior"_qs, category && !category->restoreLastProfile
+        ? u"Always use the selected profile"_qs : u"Restore the last-used profile"_qs);
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
@@ -2710,16 +2778,24 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     }
     QVariantList povs;
     int mappedPovs = 0;
+    int mappedPovHats = 0;
     for (int hat = 0; hat < static_cast<int>(profile->povs.size()); ++hat) {
+        bool hatMapped = false;
         for (int direction = 0; direction < kPovDirectionCount; ++direction) {
             const ButtonBinding &binding = profile->povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
             if (binding.type != ButtonActionType::VirtualButton) continue;
             ++mappedPovs;
+            hatMapped = true;
             povs.append(QVariantMap{{u"input"_qs, QString(u"POV %1 %2"_qs).arg(hat + 1)
                 .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)))},
                 {u"output"_qs, QString(u"vJoy Button %1"_qs).arg(binding.target)}});
         }
+        if (hatMapped) ++mappedPovHats;
     }
+    const int profileControlButtons = static_cast<int>(std::count_if(m_configuration.profileTriggers.cbegin(),
+        m_configuration.profileTriggers.cend(), [&profileId](const ProfileTriggerBinding &binding) {
+            return binding.targetProfileId == profileId && profileTriggerBindingEnabled(binding);
+        }));
     QVariantList automations;
     for (const AutomationDefinition &automation : m_configuration.automations) {
         bool related = false;
@@ -2733,6 +2809,8 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
             {u"enabled"_qs, automation.enabled}});
     }
     const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile->outputLayoutId);
+    const int outputAxes = layout ? static_cast<int>(std::count(layout->requirements.axes.cbegin(),
+        layout->requirements.axes.cend(), true)) : 0;
     const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
     const int availableAxes = static_cast<int>(std::count(physical.axes.cbegin(), physical.axes.cend(), true));
     const bool compatible = !physical.connected || (availableAxes >= mappedAxes
@@ -2740,7 +2818,11 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"mappedAxes"_qs, mappedAxes);
     detail.insert(u"mappedButtons"_qs, mappedButtons);
     detail.insert(u"mappedPovs"_qs, mappedPovs);
+    detail.insert(u"mappedPovHats"_qs, mappedPovHats);
+    detail.insert(u"profileControlButtons"_qs, profileControlButtons);
+    detail.insert(u"directPovOutputs"_qs, 0);
     detail.insert(u"customCurves"_qs, customCurves);
+    detail.insert(u"automationCount"_qs, static_cast<int>(automations.size()));
     detail.insert(u"axes"_qs, axes);
     detail.insert(u"buttons"_qs, buttons);
     detail.insert(u"povs"_qs, povs);
@@ -2749,6 +2831,8 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"outputName"_qs, layout ? layout->name : u"Output unavailable"_qs);
     detail.insert(u"vjoyDevice"_qs, layout ? layout->requirements.deviceId : 0);
     detail.insert(u"vjoyReady"_qs, layout && m_worker.runtime().vjoyReady.load());
+    detail.insert(u"outputAxes"_qs, outputAxes);
+    detail.insert(u"unmappedOutputAxes"_qs, std::max(0, outputAxes - mappedAxes));
     detail.insert(u"compatibility"_qs, !physical.connected ? u"Review recommended — no current controller"_qs
         : compatible ? u"Fully compatible"_qs : u"Partial compatibility — review missing controls"_qs);
     detail.insert(u"controllerName"_qs, physical.name);
@@ -4306,21 +4390,22 @@ bool AppBackend::launchUninstaller()
 void AppBackend::evaluateGameDetection()
 {
     if (!m_configuration.automaticGameDetection) return;
-    const QString executable = foregroundExecutableName().trimmed();
-    // Only a material foreground executable change can trigger category
-    // selection. Manual category/profile choices therefore remain in effect
-    // until the foreground game actually changes.
-    if (!foregroundExecutableChanged(&m_lastDetectedExecutable, executable)) return;
-    if (executable.isEmpty()) return;
-    const GameCategoryMatch match = categoryForForegroundExecutable(m_configuration, executable);
-    if (match.ambiguous) {
-        appendEvent(u"Game detection found more than one matching category; no automatic switch was made"_qs);
-        return;
-    }
+    QStringList runningExecutables;
+    const QList<RunningApplication> snapshot = runningApplicationSnapshot();
+    runningExecutables.reserve(snapshot.size());
+    for (const RunningApplication &application : snapshot) runningExecutables.append(application.executable);
+    runningExecutables.sort(Qt::CaseInsensitive);
+    // A process snapshot is control-plane work (once per second) and is
+    // deliberately kept out of the report loop. Ignore unchanged snapshots
+    // so an already selected category is never re-applied every timer tick.
+    if (runningExecutables == m_lastDetectedExecutables) return;
+    m_lastDetectedExecutables = runningExecutables;
+    const GameCategoryMatch match = categoryForRunningExecutables(m_configuration, runningExecutables,
+                                                                   activeCategoryId());
     if (match.categoryId.isEmpty() || match.categoryId == activeCategoryId()) return;
     const ProfileCategory *category = findProfileCategory(m_configuration, match.categoryId);
     if (category && activateProfileCategory(match.categoryId)) {
-        appendEvent(QString(u"Game detection selected category: %1 (%2)"_qs).arg(category->name, executable));
+        appendEvent(QString(u"Game detection selected category: %1"_qs).arg(category->name));
     }
 }
 

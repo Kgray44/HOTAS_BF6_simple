@@ -371,6 +371,7 @@ public:
     Q_INVOKABLE bool setCategoryDefaultProfile(const QString &categoryId, const QString &profileId);
     Q_INVOKABLE bool setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile);
     Q_INVOKABLE bool setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules);
+    Q_INVOKABLE QVariantList runningApplications() const;
     Q_INVOKABLE void setAutomaticGameDetection(bool enabled);
     Q_INVOKABLE QVariantMap profileDetail(const QString &profileId) const;
     Q_INVOKABLE QVariantMap profileRelationships(const QString &profileId) const;
@@ -553,7 +554,7 @@ private:
     QTimer m_snapshotTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
-    QString m_lastDetectedExecutable;
+    QStringList m_lastDetectedExecutables;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;

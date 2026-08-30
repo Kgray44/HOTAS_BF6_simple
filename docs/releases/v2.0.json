@@ -283,10 +283,10 @@
     "releaseTitle": "v2.1.2",
     "title": "Deep Tray & Runtime Efficiency",
     "summary": "HOTAS BF6 v2.1.2 makes minimized and tray-hidden presentation work sleep aggressively while preserving the fully awake, allocation-free DirectInput-to-vJoy mapper.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.1.3",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.2 has local/CI lifecycle, startup, QML, portability, and synthetic mapper validation. Physical controller, game, installer, signing, public updater, and measured resource acceptance remain machine- or release-specific checks.",
+    "statusNote": "Superseded by v2.1.3 Profiles, Categories & Game Detection UX. v2.1.2 remains the Deep Tray and runtime-efficiency baseline; upgrade for the clearer Profile/Category workflow and smarter game detection.",
     "highlights": [
       "Introduces explicit Visible, Minimized, and Tray Hidden presentation lifecycle states outside the mapper. Snapshot projection remains responsive while visible, reduces to 200 ms while minimized, and stops in Deep Tray Sleep.",
       "Restoring from the tray immediately projects current runtime state and resumes visible presentation cadence without restarting MappingWorker, changing Mapping On/Off intent, releasing vJoy, or mutating profiles and configuration.",
@@ -295,6 +295,26 @@
       "Adapts presentation controller discovery to visible, minimized, and tray-hidden cadence while leaving worker-owned physical reconnect correctness independent of the UI timer.",
       "Stops the optional foreground game-category detection timer when the feature is disabled; enabled detection remains a separate one-second control-plane sample.",
       "Does not alter DirectInput polling, transforms, Automation runtime evaluation, vJoy report scheduling, output-layout behavior, HidHide configuration, persistence, or the synthetic report path."
+    ]
+  },
+  {
+    "version": "2.1.3",
+    "tag": "v2.1.3",
+    "releaseTitle": "v2.1.3",
+    "title": "Profiles, Categories & Game Detection UX",
+    "summary": "HOTAS BF6 v2.1.3 makes game-aware configuration clear and direct: categories show their activation behavior, game rules are managed in place, and profile detail becomes a compact configuration dashboard without changing the real-time DirectInput-to-vJoy mapper.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.3 has local/CI model, QML, portability, and synthetic mapper validation. Physical controller, game, installer, signing, public updater, and measured resource acceptance remain machine- or release-specific checks.",
+    "highlights": [
+      "Profile Library cards now explain Game Detection to Category to Profile to Virtual Output, summarizing linked games, activation behavior, profile counts, and the active context without exposing implementation detail.",
+      "Category pages separate Automatic Activation from the explicit Restore Last-used Profile or Always Use a Specific Profile choice. The default selector appears only for the fixed-profile behavior.",
+      "Add Game is a themed workflow for currently running applications, an EXE browser, or an advanced manual executable. Existing executable rules remain compatible and are normalized to Windows case-insensitive basenames.",
+      "The detector takes a bounded one-second process snapshot outside MappingWorker. An active matching category wins; otherwise persisted category order is the deterministic tie-breaker, and unchanged snapshots do not reapply a profile.",
+      "Themed Profile, Category, and Pack import/export choices preserve existing strict preview-before-apply validation and safe conflict decisions. Profile detail summarizes mappings, curves, Automation, output readiness, and game/category relationships instead of reproducing the editor.",
+      "Settings, Automation, Profiles, and Overview share the exact established Legacy card surface used by Axes, Buttons, Curve Editor, Calibration, and Diagnostics. Standard and Top Gun retain their existing theme treatments.",
+      "No DirectInput polling, vJoy report scheduling, configuration serialization migration, allocation, locking, file work, process enumeration, UI work, or logging was added to the mapper report loop."
     ]
   }
 ]

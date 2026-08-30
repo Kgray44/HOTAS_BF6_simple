@@ -1801,8 +1801,30 @@ void MappingCoreTests::gameCategoryDetectionIsPureLowFrequencyControlPlaneLogic(
     QVERIFY(foregroundExecutableChanged(&lastExecutable, QStringLiteral("bf6.exe")));
     QVERIFY(!foregroundExecutableChanged(&lastExecutable, QStringLiteral("BF6.EXE")));
     QVERIFY(foregroundExecutableChanged(&lastExecutable, QStringLiteral("other.exe")));
+
+    QString secondCategoryId;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Flight Simulator"), &secondCategoryId));
+    QString secondProfileId;
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Airliner"), secondCategoryId,
+                                    normalProfileId(), &secondProfileId));
+    ProfileCategory *secondCategory = findProfileCategory(configuration, secondCategoryId);
+    QVERIFY(secondCategory);
+    secondCategory->executableRules = {QStringLiteral("BF6.EXE")};
+    secondCategory->defaultProfileId = secondProfileId;
+    // Basename matching ignores the installation path and chooses persisted
+    // category order when several games match.
+    const QStringList running = {QStringLiteral("C:/EA Games/Battlefield 6/bf6.exe")};
+    QCOMPARE(categoryForRunningExecutables(configuration, running).categoryId, categoryId);
+    // Once a matching category is active it wins the deterministic tie-break,
+    // preventing a background game from making categories flap.
+    QVERIFY(activateCategoryProfile(configuration, secondCategoryId));
+    QCOMPARE(categoryForRunningExecutables(configuration, running, secondCategoryId).categoryId,
+             secondCategoryId);
     QVERIFY(activateProfile(configuration, helicopterId)); // Manual in-category selection remains valid.
-    category->enabled = false;
+    // Creating the second category may grow the underlying vector, so reacquire
+    // the first category instead of retaining the earlier pointer.
+    findProfileCategory(configuration, categoryId)->enabled = false;
+    secondCategory->enabled = false;
     QVERIFY(categoryForForegroundExecutable(configuration, QStringLiteral("bf6.exe")).categoryId.isEmpty());
 }
 

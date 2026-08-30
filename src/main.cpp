@@ -34,8 +34,9 @@ int main(int argc, char *argv[])
     if (const std::optional<int> repairExit = hotas::runElevatedRepairTransaction(argc, argv)) {
         return *repairExit;
     }
-    const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke");
-    if (hasArgument(argc, argv, "--startup-smoke-isolated")) {
+    const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
+    const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
+    if (isolatedStartupSmoke) {
         // Keep a local package smoke run away from the user's established
         // QSettings location. CI upgrade acceptance intentionally uses the
         // ordinary smoke argument so it can verify the seeded migration.

@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.2**
+**Current release: v2.1.3**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.3 — Profiles, Categories & Game Detection UX
+
+Makes Profiles and Categories immediately understandable with category-native game management, deterministic running-process matching, themed import/export flows, and consistent Legacy cards while preserving all existing portable configuration formats and the allocation-free DirectInput-to-vJoy mapper.
+
+- The shared Profile Library now presents the Game Detection to Category to Profile to Virtual Output relationship, concise category behavior, active context, and balanced profile summaries across Legacy, Standard, and Top Gun.
+- Categories manage named executable rules directly: add a currently running application, browse for an EXE, or enter a manual rule. Rules continue to store the executable basename, so moved or reinstalled games remain detectable.
+- The low-frequency one-second control-plane detector uses a Windows process snapshot, keeps an active matching category selected, and otherwise uses persisted category order as a stable tie-breaker. It does not run on the mapper/report path.
+- Import/export now exposes Profile, Category, and Pack intent in a compact themed flow while retaining validate-preview-confirm behavior, atomic application, safe collision handling, and existing .hbf6profile/.hbf6pack compatibility.
+- Settings, Automation, Profiles, and Overview reuse the established Legacy card surface from Axes, Buttons, Curves, and Diagnostics without changing Standard or Top Gun styling.
 
 ## v2.1.2 — Deep Tray & Runtime Efficiency
 

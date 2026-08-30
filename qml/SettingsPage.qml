@@ -48,7 +48,10 @@ Flickable {
         property string detail: ""
         property color accent: root.borderColor
         implicitHeight: body.implicitHeight + 30
-        radius: root.legacy ? 3 : theme.panelRadius; color: root.panelColor; border.color: accent
+        radius: root.legacy ? 6 : theme.panelRadius; color: root.legacy ? "transparent" : root.panelColor; border.color: root.legacy ? "transparent" : accent
+        // The Legacy reference pages use this exact shared card treatment.
+        // Keep Settings visually coupled to Axes, Buttons, Curves, and Diagnostics.
+        LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
         ColumnLayout { id: body; anchors.fill: parent; anchors.margins: 15; spacing: 9
             Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
             Text { visible: parent.parent.detail.length > 0; text: parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
