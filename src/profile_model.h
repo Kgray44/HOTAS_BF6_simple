@@ -34,4 +34,15 @@ QString uniqueCloneProfileName(const MapperConfiguration &configuration, const Q
 QString uniqueCloneProfileName(const MapperConfiguration &configuration, const QString &sourceName,
                                const QString &categoryId);
 
+// Low-frequency foreground-window code uses these pure helpers so matching
+// and change suppression are testable without process enumeration. They are
+// never consulted by MappingWorker while handling a DirectInput report.
+struct GameCategoryMatch {
+    QString categoryId;
+    bool ambiguous = false;
+};
+GameCategoryMatch categoryForForegroundExecutable(const MapperConfiguration &configuration,
+                                                  const QString &executable);
+bool foregroundExecutableChanged(QString *lastExecutable, const QString &currentExecutable);
+
 } // namespace hotas

@@ -2,6 +2,7 @@
 
 #include "mapping_types.h"
 
+#include <QHash>
 #include <QVariantMap>
 
 namespace hotas {
@@ -19,6 +20,8 @@ struct PortableConfigurationBundle {
     QString name;
     QString description;
     QString exporterVersion;
+    QString exportedAtUtc;
+    QVariantMap sourceController;
     std::vector<ProfileCategory> categories;
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> curves;
@@ -31,10 +34,23 @@ struct PortableConfigurationBundle {
     bool includesCalibration = false;
 };
 
+enum class PortableCategoryConflictMode {
+    Merge,
+    ImportAsNew,
+    Replace,
+};
+
 struct PortableImportOptions {
     QString destinationCategoryId;
     bool replaceMatchingProfiles = false;
+    // Retained for source compatibility with the v2.1.0 API. New callers use
+    // the explicit mode so a category replacement can never be implicit.
     bool mergeCategories = true;
+    PortableCategoryConflictMode categoryConflictMode = PortableCategoryConflictMode::Merge;
+    // Descriptor index -> explicitly selected local saved-controller record.
+    // IDs never leave this control-plane import plan.
+    QHash<int, QString> deviceSelections;
+    bool applyImportedCalibration = false;
 };
 
 class ProfilePortability final {
@@ -44,6 +60,8 @@ public:
     static bool exportPack(const MapperConfiguration &configuration, const QStringList &categoryIds,
                            const QStringList &profileIds, const QString &name,
                            const QString &description, bool includeDevices, bool includeCalibration,
+                           bool includeAutomations, bool includeProfileRelationships,
+                           bool includeGameDetection,
                            const QString &fileName, QString *error = nullptr);
     static bool inspect(const QString &fileName, PortableConfigurationBundle *bundle,
                         QString *error = nullptr);

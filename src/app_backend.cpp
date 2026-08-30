@@ -883,6 +883,7 @@ QVariantList AppBackend::povInputs() const
 
 QVariantList AppBackend::profiles() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_profileGetterCalls;
     QVariantList result;
     for (const ControllerProfile &profile : m_configuration.profiles) {
         int mappedAxes = 0;
@@ -943,6 +944,7 @@ QVariantList AppBackend::profiles() const
 
 QVariantList AppBackend::profileCategories() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_categoryGetterCalls;
     QVariantList result;
     for (const ProfileCategory &category : m_configuration.profileCategories) {
         QVariantMap item;
@@ -2735,6 +2737,17 @@ QVariantMap AppBackend::profileRelationships(const QString &profileId) const
                     .arg(profileTriggerModeLabel(binding.mode))}});
         }
     }
+    for (int hat = 0; hat < static_cast<int>(m_configuration.povProfileTriggers.size()); ++hat) {
+        for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+            const ProfileTriggerBinding &binding =
+                m_configuration.povProfileTriggers[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
+            if (binding.targetProfileId != profileId) continue;
+            referencedBy.append(QVariantMap{{u"profile"_qs, u"Global profile control"_qs},
+                {u"via"_qs, QString(u"POV %1 · %2 · %3"_qs).arg(hat + 1)
+                    .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)))
+                    .arg(profileTriggerModeLabel(binding.mode))}});
+        }
+    }
     for (const AutomationDefinition &automation : m_configuration.automations) {
         bool source = false;
         for (const AutomationConditionDefinition &condition : automation.conditions) source = source || condition.profileId == profileId;
@@ -2768,11 +2781,14 @@ bool AppBackend::exportPortableProfile(const QString &profileId, const QString &
 
 bool AppBackend::exportPortablePack(const QStringList &categoryIds, const QStringList &profileIds,
                                     const QString &name, const QString &description, bool includeDevices,
-                                    bool includeCalibration, const QString &fileName)
+                                    bool includeCalibration, bool includeAutomations,
+                                    bool includeProfileRelationships, bool includeGameDetection,
+                                    const QString &fileName)
 {
     QString error;
     if (!ProfilePortability::exportPack(m_configuration, categoryIds, profileIds, name, description,
-                                        includeDevices, includeCalibration, fileName, &error)) {
+                                        includeDevices, includeCalibration, includeAutomations,
+                                        includeProfileRelationships, includeGameDetection, fileName, &error)) {
         m_portableImportStatus = error;
         emit stateChanged();
         return false;
@@ -2790,11 +2806,30 @@ bool AppBackend::loadPortableImportPreview(const QString &fileName)
     if (!ProfilePortability::inspect(fileName, bundle.get(), &error)) {
         m_pendingPortableImport.reset();
         m_portableImportPreview.clear();
+        m_portableImportDeviceSelections.clear();
         m_portableImportStatus = error;
         emit stateChanged();
         return false;
     }
+    m_portableImportDeviceSelections.clear();
     m_portableImportPreview = ProfilePortability::preview(*bundle, m_configuration);
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    m_portableImportPreview.insert(u"currentControllerName"_qs, physical.connected
+        ? physical.name : u"No current controller"_qs);
+    QVariantList profiles = m_portableImportPreview.value(u"profiles"_qs).toList();
+    for (QVariant &value : profiles) {
+        QVariantMap profile = value.toMap();
+        const int mappedAxes = profile.value(u"mappedAxes"_qs).toInt();
+        const int mappedButtons = profile.value(u"mappedButtons"_qs).toInt();
+        const int mappedPovs = profile.value(u"povMappings"_qs).toInt();
+        const int availableAxes = static_cast<int>(std::count(physical.axes.cbegin(), physical.axes.cend(), true));
+        profile.insert(u"compatibility"_qs, !physical.connected ? u"REVIEW RECOMMENDED — no current controller"_qs
+            : (availableAxes >= mappedAxes && physical.buttons >= mappedButtons
+               && physical.povs >= (mappedPovs > 0 ? 1 : 0)) ? u"FULLY COMPATIBLE"_qs
+                                                       : u"PARTIAL COMPATIBILITY — review missing controls"_qs);
+        value = profile;
+    }
+    m_portableImportPreview.insert(u"profiles"_qs, profiles);
     m_pendingPortableImport = std::move(bundle);
     m_portableImportStatus = u"Review the import preview before applying changes"_qs;
     emit stateChanged();
@@ -2802,13 +2837,25 @@ bool AppBackend::loadPortableImportPreview(const QString &fileName)
 }
 
 bool AppBackend::applyPortableImport(const QString &destinationCategoryId, bool replaceMatchingProfiles,
-                                     bool mergeCategories)
+                                     const QString &categoryConflictMode,
+                                     bool applyImportedCalibration)
 {
     if (!m_pendingPortableImport) return false;
     PortableImportOptions options;
     options.destinationCategoryId = destinationCategoryId;
     options.replaceMatchingProfiles = replaceMatchingProfiles;
-    options.mergeCategories = mergeCategories;
+    const QString mode = categoryConflictMode.trimmed().toCaseFolded();
+    if (mode == u"new"_qs || mode == u"importasnew"_qs) {
+        options.categoryConflictMode = PortableCategoryConflictMode::ImportAsNew;
+    } else if (mode == u"replace"_qs) {
+        options.categoryConflictMode = PortableCategoryConflictMode::Replace;
+    } else if (mode != u"merge"_qs) {
+        m_portableImportStatus = u"Choose Merge, Import as New, or Replace for existing Categories"_qs;
+        emit stateChanged();
+        return false;
+    }
+    options.deviceSelections = m_portableImportDeviceSelections;
+    options.applyImportedCalibration = applyImportedCalibration;
     QStringList warnings;
     QString error;
     if (!ProfilePortability::apply(&m_configuration, *m_pendingPortableImport, options, &warnings, &error)) {
@@ -2821,7 +2868,34 @@ bool AppBackend::applyPortableImport(const QString &destinationCategoryId, bool 
                                                  : warnings.join(u"\n"_qs);
     m_pendingPortableImport.reset();
     m_portableImportPreview.clear();
+    m_portableImportDeviceSelections.clear();
     appendEvent(u"Imported portable "_qs + (m_portableImportStatus.isEmpty() ? u"configuration"_qs : u"configuration"_qs));
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::selectPortableImportDevice(int descriptorIndex, const QString &savedControllerId)
+{
+    if (!m_pendingPortableImport || descriptorIndex < 0 || savedControllerId.trimmed().isEmpty()) return false;
+    QVariantList devices = m_portableImportPreview.value(u"devices"_qs).toList();
+    if (descriptorIndex >= devices.size()) return false;
+    QVariantMap device = devices.at(descriptorIndex).toMap();
+    bool validSelection = false;
+    QString selectedName;
+    for (const QVariant &choiceValue : device.value(u"choices"_qs).toList()) {
+        const QVariantMap choice = choiceValue.toMap();
+        if (choice.value(u"id"_qs).toString() == savedControllerId) {
+            validSelection = true;
+            selectedName = choice.value(u"name"_qs).toString();
+            break;
+        }
+    }
+    if (!validSelection) return false;
+    m_portableImportDeviceSelections.insert(descriptorIndex, savedControllerId);
+    device.insert(u"selectedControllerName"_qs, selectedName);
+    device.insert(u"state"_qs, u"USER-SELECTED LOCAL CONTROLLER"_qs);
+    devices[descriptorIndex] = device;
+    m_portableImportPreview.insert(u"devices"_qs, devices);
     emit stateChanged();
     return true;
 }
@@ -4204,24 +4278,17 @@ void AppBackend::evaluateGameDetection()
     // Only a material foreground executable change can trigger category
     // selection. Manual category/profile choices therefore remain in effect
     // until the foreground game actually changes.
-    if (executable.compare(m_lastDetectedExecutable, Qt::CaseInsensitive) == 0) return;
-    m_lastDetectedExecutable = executable;
+    if (!foregroundExecutableChanged(&m_lastDetectedExecutable, executable)) return;
     if (executable.isEmpty()) return;
-    const ProfileCategory *match = nullptr;
-    for (const ProfileCategory &category : m_configuration.profileCategories) {
-        if (!category.enabled) continue;
-        const bool matches = std::any_of(category.executableRules.cbegin(), category.executableRules.cend(),
-            [&executable](const QString &rule) { return rule.compare(executable, Qt::CaseInsensitive) == 0; });
-        if (!matches) continue;
-        if (match) {
-            appendEvent(u"Game detection found more than one matching category; no automatic switch was made"_qs);
-            return;
-        }
-        match = &category;
+    const GameCategoryMatch match = categoryForForegroundExecutable(m_configuration, executable);
+    if (match.ambiguous) {
+        appendEvent(u"Game detection found more than one matching category; no automatic switch was made"_qs);
+        return;
     }
-    if (!match || match->id == activeCategoryId()) return;
-    if (activateProfileCategory(match->id)) {
-        appendEvent(QString(u"Game detection selected category: %1 (%2)"_qs).arg(match->name, executable));
+    if (match.categoryId.isEmpty() || match.categoryId == activeCategoryId()) return;
+    const ProfileCategory *category = findProfileCategory(m_configuration, match.categoryId);
+    if (category && activateProfileCategory(match.categoryId)) {
+        appendEvent(QString(u"Game detection selected category: %1 (%2)"_qs).arg(category->name, executable));
     }
 }
 
@@ -4406,6 +4473,8 @@ QVariantMap AppBackend::uiPerformanceCounters() const
     if (!m_uiPerformanceInstrumentationEnabled) return {};
     return {{u"controllerGetterCalls"_qs, QVariant::fromValue(m_controllerGetterCalls)},
             {u"controllerModelRebuilds"_qs, QVariant::fromValue(m_controllerUiModelRebuilds)},
+            {u"profileGetterCalls"_qs, QVariant::fromValue(m_profileGetterCalls)},
+            {u"categoryGetterCalls"_qs, QVariant::fromValue(m_categoryGetterCalls)},
             {u"stateChanged"_qs, QVariant::fromValue(m_stateChangedNotifications)},
             {u"telemetryChanged"_qs, QVariant::fromValue(m_telemetryChangedNotifications)},
             {u"inputTelemetryChanged"_qs, QVariant::fromValue(m_inputTelemetryChangedNotifications)},
@@ -4417,6 +4486,8 @@ void AppBackend::resetUiPerformanceCounters()
     if (!m_uiPerformanceInstrumentationEnabled) return;
     m_controllerGetterCalls = 0;
     m_controllerUiModelRebuilds = 0;
+    m_profileGetterCalls = 0;
+    m_categoryGetterCalls = 0;
     m_stateChangedNotifications = 0;
     m_telemetryChangedNotifications = 0;
     m_inputTelemetryChangedNotifications = 0;

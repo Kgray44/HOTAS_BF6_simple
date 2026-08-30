@@ -27,6 +27,7 @@ private slots:
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void installerUpgradeAcceptanceTracksSchema19();
+    void profileLibraryPortabilityIsSharedAndThemed();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -239,6 +240,34 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
         QVERIFY(page.contains(QStringLiteral("backend.physicalAxisCapabilitySummary")));
         QVERIFY(page.contains(QStringLiteral("assignProfileOutputLayout")));
     }
+}
+
+void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
+{
+    const QString library = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString portability = sourceFile(QStringLiteral("src/profile_portability.cpp"));
+    QVERIFY(library.contains(QStringLiteral("PROFILE LIBRARY")));
+    QVERIFY(library.contains(QStringLiteral("Profile Detail")));
+    QVERIFY(library.contains(QStringLiteral("selectedPackCategoryIds")));
+    QVERIFY(library.contains(QStringLiteral("togglePackProfile")));
+    QVERIFY(library.contains(QStringLiteral("RELATED CONFIGURATION")));
+    QVERIFY(library.contains(QStringLiteral("IMPORT AS NEW")));
+    QVERIFY(library.contains(QStringLiteral("APPLY IMPORTED CALIBRATION")));
+    QVERIFY(library.contains(QStringLiteral("id: renameCategoryDialog")));
+    QVERIFY(library.contains(QStringLiteral("id: deleteCategoryDialog")));
+    QVERIFY(library.contains(QStringLiteral("component SelectionToggle")));
+    QVERIFY(library.contains(QStringLiteral("component ThemedComboBox")));
+    QVERIFY(!library.contains(QStringLiteral("CheckBox")));
+    QVERIFY(!library.contains(QStringLiteral("\n                    ComboBox { id:")));
+    QVERIFY(standard.contains(QStringLiteral("ProfileLibrary")));
+    QVERIFY(legacy.contains(QStringLiteral("ProfileLibrary")));
+    QVERIFY(backend.contains(QStringLiteral("selectPortableImportDevice")));
+    QVERIFY(portability.contains(QStringLiteral("kPortableProfileSchemaVersion")));
+    QVERIFY(portability.contains(QStringLiteral("kPortablePackSchemaVersion")));
+    QVERIFY(portability.contains(QStringLiteral("USER SELECTION REQUIRED")));
 }
 
 void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema19()

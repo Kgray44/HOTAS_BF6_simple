@@ -245,10 +245,10 @@
     "releaseTitle": "v2.1.0",
     "title": "Profile Library & Portable Configuration",
     "summary": "HOTAS BF6 v2.1.0 adds a game-aware Profile Library and validated portable Profile/Pack configuration exchange without changing the DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.1.1",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.0 has local/CI validation for configuration migration, Profile/Pack round-trip, application startup, QML startup, and synthetic mapper behavior. Physical controller, game, installer, signing, and public updater acceptance remain machine- or release-specific checks.",
+    "statusNote": "Superseded by v2.1.1 Profile Library Completion & Portable Pack Safety. v2.1.0 established the profile-category and portable configuration foundation; v2.1.1 completes selective export, compatibility preview, explicit conflicts, and opt-in calibration handling.",
     "highlights": [
       "Introduces category-aware profiles with scoped names, defaults, restore-last behavior, safe moves/duplicates/deletes, optional enable state, and stable references for mapping controls and Automation.",
       "Adds a shared Profile Library across Legacy, Standard, and Top Gun for cards, category behavior, profile detail, curve/Automation/output context, and direct navigation to existing editors.",
@@ -256,6 +256,25 @@
       "Exports and imports versioned .hbf6profile and .hbf6pack files with strict bounds, preview-before-apply, atomic validation, collision-safe ID remapping, and conservative local-data preservation. Device descriptors and calibration are off by default, and imported calibration is retained only for review.",
       "Schema 19 migrates existing user profiles into General without guessing game names or changing mappings, curves, buttons, POVs, Automation, output layouts, controller memory, vJoy configuration, or hardware drivers.",
       "No mapper report-loop work was added: profile category management, portability, UI details, detection, persistence, and device/calibration handling remain on control/configuration paths."
+    ]
+  },
+  {
+    "version": "2.1.1",
+    "tag": "v2.1.1",
+    "releaseTitle": "v2.1.1",
+    "title": "Profile Library Completion & Portable Pack Safety",
+    "summary": "HOTAS BF6 v2.1.1 completes the Profile Library portability workflow with selective pack export, independent strict Profile/Pack schemas, detailed pre-apply preview, explicit category/profile conflict decisions, compatible controller matching, and opt-in calibration application without changing the DirectInput-to-vJoy report path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.1 has local/CI validation for configuration migration, strict Profile/Pack inspection, selective export/import, atomic conflict handling, application startup, three-theme QML startup, and synthetic mapper behavior. Physical controller, game, installer, signing, and public updater acceptance remain machine- or release-specific checks.",
+    "highlights": [
+      "Pack export selects whole categories or individual profiles and carries only the requested related configuration; required custom curves and vJoy contracts remain closed over so a selected profile cannot be exported with broken dependencies.",
+      "The transfer center previews category rules, profile mapping/POV/Automation counts, profile-control relationships, curves, vJoy requirements, source/current controller compatibility, conflicts, and warnings before import can mutate saved configuration.",
+      "Profile and Pack schemas are independently versioned and reject unsupported future formats, dangling relationship references, invalid vJoy layouts, duplicate dependencies, and unsafe device descriptors before the atomic candidate is committed.",
+      "Existing categories use explicit Merge, Import as New, or protected Replace behavior. Profile collisions use renamed copies by default; destructive category/profile replacement requires a separate confirmation.",
+      "Devices and calibration are opt-in on export. Calibration remains local by default and can apply only to an explicitly selected compatible saved controller; ambiguous matches never select by controller name.",
+      "No work was added to mapper report processing. The synthetic report benchmark covers all built-in curve families plus profile controls and Automation with zero hot-path allocations."
     ]
   }
 ]

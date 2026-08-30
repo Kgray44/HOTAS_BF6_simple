@@ -1,5 +1,7 @@
 #include "profile_model.h"
 
+#include <algorithm>
+
 namespace hotas {
 
 namespace {
@@ -41,6 +43,36 @@ QString categoryProfileLabel(const MapperConfiguration &configuration, const QSt
     if (!profile) return u"Unavailable profile"_qs;
     const ProfileCategory *category = findProfileCategory(configuration, profile->categoryId);
     return category ? QString(u"%1 / %2"_qs).arg(category->name, profile->name) : profile->name;
+}
+
+GameCategoryMatch categoryForForegroundExecutable(const MapperConfiguration &configuration,
+                                                  const QString &executable)
+{
+    GameCategoryMatch result;
+    const QString normalized = executable.trimmed();
+    if (normalized.isEmpty()) return result;
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (!category.enabled) continue;
+        const bool matches = std::any_of(category.executableRules.cbegin(), category.executableRules.cend(),
+            [&normalized](const QString &rule) { return rule.compare(normalized, Qt::CaseInsensitive) == 0; });
+        if (!matches) continue;
+        if (!result.categoryId.isEmpty()) {
+            result.categoryId.clear();
+            result.ambiguous = true;
+            return result;
+        }
+        result.categoryId = category.id;
+    }
+    return result;
+}
+
+bool foregroundExecutableChanged(QString *lastExecutable, const QString &currentExecutable)
+{
+    if (!lastExecutable) return false;
+    const QString normalized = currentExecutable.trimmed();
+    if (normalized.compare(*lastExecutable, Qt::CaseInsensitive) == 0) return false;
+    *lastExecutable = normalized;
+    return true;
 }
 
 bool createProfileCategory(MapperConfiguration &configuration, const QString &name, QString *createdId)
