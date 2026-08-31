@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "controller_manager.h"
 #include "event_log.h"
+#include "input_learning.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
 #include "profile_portability.h"
@@ -128,6 +129,8 @@ private slots:
     void v12ProfileConfigurationMigratesWithSafeAxisDefaults();
     void virtualControllersAreNeverEligibleAsPhysicalInput();
     void implicitButtonsDefaultToMatchingVjoyTargets();
+    void inputLearningSelectsDeliberateAxisWithoutGuessing();
+    void inputLearningSelectsAReleasedThenPressedButton();
     void configurationRoundTrips();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
@@ -1312,6 +1315,58 @@ void MappingCoreTests::eventLogIsBoundedAndOrdered()
     QCOMPARE(events.maximumEntries(), 3);
     QCOMPARE(events.entries(), QStringList({QStringLiteral("second"), QStringLiteral("third"),
                                              QStringLiteral("fourth")}));
+}
+
+void MappingCoreTests::inputLearningSelectsDeliberateAxisWithoutGuessing()
+{
+    std::array<float, kPhysicalAxisCount> baseline{};
+    std::array<float, kPhysicalAxisCount> current{};
+    std::array<bool, kPhysicalAxisCount> available{};
+    std::array<PhysicalAxisActivity, kPhysicalAxisCount> activity{};
+    available.fill(true);
+    activity.fill(PhysicalAxisActivity::Active);
+
+    current[0] = 0.03F;
+    QCOMPARE(selectLearnedAxis(baseline, current, available, activity).result,
+             AxisLearningResult::Waiting);
+
+    current[0] = 0.74F;
+    current[1] = 0.04F;
+    const AxisLearningSelection selected = selectLearnedAxis(baseline, current, available, activity);
+    QCOMPARE(selected.result, AxisLearningResult::Candidate);
+    QCOMPARE(selected.axis, 0);
+
+    current[1] = 0.57F;
+    QCOMPARE(selectLearnedAxis(baseline, current, available, activity).result,
+             AxisLearningResult::Ambiguous);
+
+    activity[0] = PhysicalAxisActivity::Fixed;
+    current[1] = 0.74F;
+    const AxisLearningSelection fixedExcluded = selectLearnedAxis(baseline, current, available, activity);
+    QCOMPARE(fixedExcluded.result, AxisLearningResult::Candidate);
+    QCOMPARE(fixedExcluded.axis, 1);
+
+    available[1] = false;
+    QCOMPARE(selectLearnedAxis(baseline, current, available, activity).result,
+             AxisLearningResult::Waiting);
+}
+
+void MappingCoreTests::inputLearningSelectsAReleasedThenPressedButton()
+{
+    std::array<bool, kMaximumPhysicalButtons> baseline{};
+    std::array<bool, kMaximumPhysicalButtons> current{};
+    std::array<bool, kMaximumPhysicalButtons> available{};
+    available.fill(true);
+
+    baseline[5] = true;
+    current[5] = true;
+    QCOMPARE(selectLearnedButton(baseline, current, available), 0);
+
+    current[18] = true;
+    QCOMPARE(selectLearnedButton(baseline, current, available), 19);
+
+    available[18] = false;
+    QCOMPARE(selectLearnedButton(baseline, current, available), 0);
 }
 
 void MappingCoreTests::physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnavailable()

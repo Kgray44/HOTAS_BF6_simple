@@ -267,6 +267,16 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
         ? findOutputLayout(configuration, active->outputLayoutId) : nullptr;
     if (layout) {
         requirements = requirementsFor(layout->requirements);
+        // Output-layout button counts are provisioned capacity, not a live
+        // mapping requirement. Keep the exact layout axes, then derive the
+        // minimum button floor from every profile that can switch onto this
+        // same descriptor without a driver reconfiguration.
+        requirements.buttons = 0;
+        for (const ControllerProfile &profile : configuration.profiles) {
+            if (profile.outputLayoutId != layout->id) continue;
+            requirements.buttons = std::max(requirements.buttons, highestButton(profile.buttons));
+            requirements.buttons = std::max(requirements.buttons, highestPovButton(profile.povs));
+        }
     } else {
         // Pre-migration/malformed callers retain the old conservative route
         // union, but valid v2.0.10 configurations always take the exact
@@ -289,6 +299,7 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
         }
     }
     for (const AutomationDefinition &automation : configuration.automations) {
+        if (!automation.enabled) continue;
         for (const AutomationActionDefinition &action : automation.actions) {
             if (action.type == AutomationActionType::VJoyButtonHold
                 || action.type == AutomationActionType::VJoyButtonToggle

@@ -27,6 +27,7 @@ private slots:
     void profileOverflowMenuUsesThemedControlContract();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
+    void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void installerUpgradeAcceptanceTracksSchema19();
     void profileLibraryPortabilityIsSharedAndThemed();
 };
@@ -312,6 +313,37 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(portability.contains(QStringLiteral("kPortableProfileSchemaVersion")));
     QVERIFY(portability.contains(QStringLiteral("kPortablePackSchemaVersion")));
     QVERIFY(portability.contains(QStringLiteral("USER SELECTION REQUIRED")));
+}
+
+void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
+{
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString readiness = sourceFile(QStringLiteral("src/controller_readiness.cpp"));
+
+    for (const QString &ui : {standard, legacy}) {
+        QVERIFY(ui.contains(QStringLiteral("component LiveDraftTextInput")));
+        QVERIFY(ui.contains(QStringLiteral("property string persistedText")));
+        QVERIFY(ui.contains(QStringLiteral("onPersistedTextChanged: if (!editing")));
+        QVERIFY(ui.contains(QStringLiteral("Keys.onEscapePressed")));
+        QVERIFY(ui.contains(QStringLiteral("persistedText: processingPanel.info.customName || \"\"")));
+        QVERIFY(ui.contains(QStringLiteral("persistedText: processingPanel.info.outputAlias || \"\"")));
+        QVERIFY(ui.contains(QStringLiteral("GAME OUTPUT NAME")));
+        QVERIFY(ui.contains(QStringLiteral("buttonCard.info.customName ? buttonCard.info.customName.toUpperCase()")));
+        QVERIFY(ui.contains(QStringLiteral("buttonNameEditor")));
+        QVERIFY(!ui.contains(QStringLiteral("text: buttonCard.info.customName || \"\"")));
+        QVERIFY(ui.contains(QStringLiteral("text: \"LEARN\"")));
+        QVERIFY(ui.contains(QStringLiteral("QUICK ASSIGN")));
+    }
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantMap inputLearning")));
+    QVERIFY(header.contains(QStringLiteral("void processInputLearning();")));
+    QVERIFY(backend.contains(QStringLiteral("selectLearnedAxis(m_inputLearning.axisBaseline")));
+    QVERIFY(backend.contains(QStringLiteral("processInputLearning();")));
+    QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(QStringLiteral("InputLearning")));
+    QVERIFY(readiness.contains(QStringLiteral("Output-layout button counts are provisioned capacity")));
+    QVERIFY(readiness.contains(QStringLiteral("requirements.buttons = 0;")));
 }
 
 void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema19()

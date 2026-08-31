@@ -467,5 +467,18 @@
       "The offscreen lifecycle qualification cycles all nine pages 20 times in Legacy, Standard, and Top Gun; it proves one loaded page and no retained QML objects after each cycle, preserves draft/import state, and records working-set and private-byte samples. Live packaged-memory acceptance remains machine-specific.",
       "No DirectInput polling, transforms, Automation report evaluation, vJoy writes, filesystem work, process inspection, UI signals, allocations, or locks were added to the mapper report loop."
     ]
+  },
+  {
+    "version": "2.1.5",
+    "title": "Input Learning, Quick Assign & vJoy Capacity Correction",
+    "summary": "Makes the existing mapping model substantially easier to operate with control-plane input learning, guided axis assignment, clearer control naming, and a corrected minimum vJoy button-capacity calculation while preserving the allocation-free DirectInput-to-vJoy mapper.",
+    "highlights": [
+      "Learn Input observes the existing UI/control-plane physical snapshot: deliberate dominant axis movement, physical button presses, and POV directions are assigned through the existing mapping setters and conflict behavior without adding report-loop work.",
+      "Quick Assign guides the active output layout's axes one at a time and uses configured game-output aliases when available, with skip, retry, back, cancel, and immediate assignment feedback.",
+      "Button custom names are now inline-editable card titles with the immutable physical button number retained as secondary identity; Axis Name and Game Output Name retain dedicated editors with stable local editing drafts protected from live telemetry refresh.",
+      "vJoy readiness now keeps exact selected-layout axis descriptors but calculates button requirements from actual button/POV routes across profiles sharing that layout plus enabled Automation actions, rather than treating a generous provisioned layout count as required capacity.",
+      "A healthy vJoy device with more buttons than currently required remains Ready; first-time physical-button passthrough safety and high virtual button targets remain enforced.",
+      "No DirectInput polling, mapping evaluation, vJoy write, allocation, lock, string, UI, or learning-state branch was added to MappingWorker's report path."
+    ]
   }
 ]

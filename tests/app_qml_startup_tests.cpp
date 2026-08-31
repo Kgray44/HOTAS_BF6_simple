@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QEvent>
 #include <QEventLoop>
+#include <QFile>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -14,6 +15,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QStringList>
 #include <QStandardPaths>
 #include <QTimer>
@@ -136,11 +138,13 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
 
     if (!selectPage(surface, 7)) return false;
     const QString automationId = backend.createAutomation();
+    settlePresentation();
     QObject *automation = pageItem(surface, 7);
-    if (automationId.isEmpty() || !automation
-        || !evaluateEditorFunction(automation,
+    if (automationId.isEmpty()) return failPresentationLifecycleTest(QStringLiteral("backend could not create an Automation draft"));
+    if (!automation) return failPresentationLifecycleTest(QStringLiteral("Automation page was not available for its draft"));
+    if (!evaluateEditorFunction(automation,
             QStringLiteral("openRuleById('%1'); setBehaviorMode(1)").arg(automationId))) {
-        return failPresentationLifecycleTest(QStringLiteral("automation draft could not be prepared"));
+        return failPresentationLifecycleTest(QStringLiteral("Automation page could not open its draft"));
     }
     if (!automation->property("editing").toBool() || !automation->property("draftDirty").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("automation draft was not dirty before unload"));
@@ -224,7 +228,7 @@ bool verifyAutomationEditorInteraction(hotas::AppBackend &backend)
         delete root;
         return failAutomationEditorTest(QStringLiteral("backend could not create an Automation draft"));
     }
-    QCoreApplication::processEvents();
+    settlePresentation();
     QQmlExpression openEditor(qmlContext(root), root,
         QStringLiteral("openRuleById('%1')").arg(automationId));
     openEditor.evaluate();
@@ -288,6 +292,16 @@ int main(int argc, char *argv[])
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+
+    // ConfigStore owns an explicit INI under AppConfigLocation rather than
+    // QSettings' default location. The lifecycle test creates persisted
+    // Automation drafts, so remove that test-only INI before AppBackend loads
+    // it and a prior run can exhaust the rule cap.
+    QSettings testSettings;
+    testSettings.clear();
+    testSettings.sync();
+    QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + QStringLiteral("/settings.ini"));
 
     hotas::AppBackend backend;
     hotas::ThemeManager themeManager;

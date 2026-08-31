@@ -274,6 +274,33 @@ Page {
                 : (flightTextInput.hovered ? theme.borderStrong : theme.border)
         }
     }
+    component LiveDraftTextInput: FlightTextInput {
+        id: liveDraft
+        property string persistedText: ""
+        property string draft: ""
+        property bool editing: false
+        signal editCommitted(string value)
+        function beginEdit() {
+            if (editing) return
+            editing = true
+            draft = persistedText
+            text = draft
+        }
+        function finishEdit() {
+            if (!editing) return
+            const value = text
+            editing = false
+            draft = value
+            if (value !== persistedText) editCommitted(value)
+        }
+        function cancelEdit() { editing = false; draft = persistedText; text = persistedText }
+        Component.onCompleted: { draft = persistedText; text = persistedText }
+        onPersistedTextChanged: if (!editing && text !== persistedText) { draft = persistedText; text = persistedText }
+        onActiveFocusChanged: { if (activeFocus) beginEdit(); else finishEdit() }
+        onTextEdited: draft = text
+        onAccepted: { finishEdit(); focus = false }
+        Keys.onEscapePressed: function(event) { cancelEdit(); focus = false; event.accepted = true }
+    }
     component FlightNumericStepper: Item {
         id: flightStepper
         property real value: 0
@@ -755,8 +782,14 @@ Page {
     component ButtonCard: Panel {
         id: buttonCard
         property var info: null
+        property bool nameEditing: false
+        function beginNameEdit() {
+            nameEditing = true
+            buttonNameEditor.forceActiveFocus()
+            buttonNameEditor.selectAll()
+        }
         Layout.fillWidth: true
-        Layout.preferredHeight: 204
+        Layout.preferredHeight: 166
         color: info && info.pressed ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
         border.color: info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border
         ColumnLayout {
@@ -765,9 +798,20 @@ Page {
             anchors.margins: 13
             spacing: 7
             RowLayout { Layout.fillWidth: true
-                Text { text: "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
-                    color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: theme.topGun ? 16 : 13; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family }
-                Item { Layout.fillWidth: true }
+                Item { Layout.fillWidth: true; Layout.preferredHeight: 29
+                    Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width; visible: !buttonCard.nameEditing
+                        text: buttonCard.info.customName ? buttonCard.info.customName.toUpperCase() : "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
+                        elide: Text.ElideRight; color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: theme.topGun ? 16 : 13; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family
+                        MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: buttonCard.beginNameEdit() }
+                    }
+                    LiveDraftTextInput { id: buttonNameEditor; anchors.fill: parent; visible: buttonCard.nameEditing
+                        persistedText: buttonCard.info.customName || ""; placeholderText: buttonCard.info.hardwareLabel || "Controller button"
+                        onEditCommitted: function(value) { backend.setButtonCustomName(buttonCard.info.index, value); buttonCard.nameEditing = false }
+                        onEditingFinished: buttonCard.nameEditing = false
+                    }
+                }
+                Text { visible: !!buttonCard.info.customName; text: ("0" + buttonCard.info.index).slice(-2)
+                    color: theme.textMuted; font.pixelSize: 10; font.family: theme.telemetryFont; font.bold: true }
                 Row { spacing: 5
                     StatusDot { tone: buttonCard.info.pressed ? theme.cyan : theme.textFaint }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
@@ -781,6 +825,9 @@ Page {
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
+                Text { visible: buttonCard.info.target > 0; text: "LEARN"; color: theme.textMuted; font.pixelSize: 9; font.bold: true
+                    MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startButtonLearning(buttonCard.info.target) }
+                }
                 FlightComboBox {
                     id: buttonDestination
                     Layout.preferredWidth: 126
@@ -809,12 +856,6 @@ Page {
                     : "VIRTUAL    UNROUTED"
                 color: buttonCard.info.virtualPressed ? theme.ready : theme.textFaint
                 font.pixelSize: 9; font.family: theme.telemetryFont; font.bold: buttonCard.info.virtualPressed }
-            FineLine { Layout.fillWidth: true }
-            RowLayout { Layout.fillWidth: true
-                Text { text: "BUTTON NAME"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true; Layout.preferredWidth: 108 }
-                FlightTextInput { Layout.fillWidth: true; text: buttonCard.info.customName || ""; placeholderText: buttonCard.info.hardwareLabel || "Controller button"
-                    onEditingFinished: backend.setButtonCustomName(buttonCard.info.index, text) }
-            }
         }
     }
 
@@ -882,6 +923,9 @@ Page {
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
+                Text { visible: povCard.info.target > 0; text: "LEARN"; color: theme.textMuted; font.pixelSize: 9; font.bold: true
+                    MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startPovLearning(povCard.info.target) }
+                }
                 FlightComboBox { id: povDestination; Layout.preferredWidth: 142
                     model: root.buttonOutputChoices; currentIndex: povCard.info.target
                     onActivated: {
@@ -1294,6 +1338,7 @@ Page {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
+                    CommandButton { label: "QUICK ASSIGN"; onTriggered: quickAssignDialog.open() }
                 }
                 Panel { width: parent.width; height: 90
                     color: theme.topGun ? "#e4191714" : "#e51a2328"; border.color: theme.topGun ? theme.orange : "#46657980"
@@ -1402,6 +1447,9 @@ Page {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "ROUTE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { visible: processingPanel.info.target !== "Disabled"; text: "LEARN"; color: theme.textMuted; font.pixelSize: 9; font.bold: true
+                                        MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startAxisLearning(processingPanel.info.target) }
+                                    }
                                     FlightComboBox {
                                         id: selectedAxisDestination
                                         Layout.fillWidth: true; Layout.preferredHeight: 31
@@ -1421,8 +1469,8 @@ Page {
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "AXIS NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightTextInput { Layout.fillWidth: true; text: processingPanel.info.customName || ""; placeholderText: processingPanel.info.hardwareLabel || "Controller axis"
-                                        onEditingFinished: backend.setAxisCustomName(processingPanel.info.index, text) }
+                                    LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.customName || ""; placeholderText: processingPanel.info.hardwareLabel || "Controller axis"
+                                        onEditCommitted: function(value) { backend.setAxisCustomName(processingPanel.info.index, value) } }
                                 }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "RANGE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
@@ -1431,9 +1479,9 @@ Page {
                                         onActivated: backend.setAxisRangeMode(processingPanel.info.index, currentText) }
                                 }
                                 RowLayout { Layout.fillWidth: true; visible: processingPanel.info.target !== "Disabled"
-                                    Text { text: "VJOY NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    FlightTextInput { Layout.fillWidth: true; text: processingPanel.info.outputAlias || ""; placeholderText: processingPanel.info.target + " alias (e.g. R Up/Down)"
-                                        onEditingFinished: backend.setVirtualAxisAlias(processingPanel.info.target, text) }
+                                    Text { text: "GAME OUTPUT NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 132 }
+                                    LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.outputAlias || ""; placeholderText: processingPanel.info.target + " alias (e.g. R Up/Down)"
+                                        onEditCommitted: function(value) { backend.setVirtualAxisAlias(processingPanel.info.target, value) } }
                                 }
                                 Text { visible: processingPanel.info.target !== "Disabled" && !processingPanel.info.targetAvailable
                                     text: "The selected vJoy device does not expose this axis."; color: theme.warning; font.pixelSize: 9; Layout.fillWidth: true }
@@ -2142,6 +2190,79 @@ Page {
             }
         }
         background: Panel { color: "#241b1b"; border.color: "#44bd7777" }
+    }
+    Connections {
+        target: backend
+        function onInputLearningChanged() {
+            if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
+            if (backend.inputLearning.active && !quickAssignDialog.opened) inputLearningDialog.open()
+            if (!backend.inputLearning.active) inputLearningDialog.close()
+        }
+    }
+    Dialog {
+        id: inputLearningDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 420
+        title: "LEARN INPUT"
+        standardButtons: Dialog.NoButton
+        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened) backend.cancelInputLearning()
+        contentItem: Column { width: 368; spacing: 12
+            Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+            Text { width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: theme.text; font.pixelSize: 12 }
+            Text { visible: backend.inputLearning.phase === "assigned"; width: parent.width; text: backend.inputLearning.sourceLabel; color: theme.ready; font.pixelSize: 12; font.bold: true }
+            Row { width: parent.width; spacing: 8
+                CommandButton { visible: backend.inputLearning.phase === "ambiguous"; label: "RETRY"; onTriggered: backend.retryInputLearning() }
+                CommandButton { visible: backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict(true) }
+                Item { width: parent.width - 180; height: 1 }
+                CommandButton { label: backend.inputLearning.phase === "assigned" ? "DONE" : "CANCEL"; subdued: backend.inputLearning.phase !== "assigned"; onTriggered: { backend.cancelInputLearning(); inputLearningDialog.close() } }
+            }
+        }
+        background: Panel { color: theme.topGun ? "#10171b" : theme.panel; border.color: theme.topGun ? theme.orange : theme.borderStrong }
+    }
+    Dialog {
+        id: quickAssignDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(560, root.width - 36)
+        property var targets: []
+        property var assignments: []
+        property int step: 0
+        property bool complete: false
+        title: "QUICK AXIS ASSIGNMENT"
+        standardButtons: Dialog.NoButton
+        function startCurrent() {
+            if (!complete && step < targets.length) backend.startAxisLearning(targets[step].target)
+        }
+        function acceptAssignment() {
+            if (backend.inputLearning.phase !== "assigned") return
+            assignments[step] = backend.inputLearning.sourceLabel
+            if (step + 1 >= targets.length) { complete = true; backend.cancelInputLearning() }
+            else { ++step; startCurrent() }
+        }
+        onOpened: { targets = backend.quickAssignAxisTargets; assignments = []; step = 0; complete = targets.length === 0; if (!complete) startCurrent() }
+        onClosed: backend.cancelInputLearning()
+        contentItem: Column { width: quickAssignDialog.width - 52; spacing: 14
+            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " / " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 19; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+            Text { visible: !quickAssignDialog.complete; text: quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].technicalLabel : ""; color: theme.textMuted; font.pixelSize: 10 }
+            Text { visible: !quickAssignDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: theme.text; font.pixelSize: 12 }
+            Column { visible: quickAssignDialog.complete; width: parent.width; spacing: 6
+                Text { text: "ASSIGNMENTS COMPLETE"; color: theme.ready; font.pixelSize: 16; font.bold: true }
+                Repeater { model: quickAssignDialog.targets; delegate: Text { width: parent.width; text: modelData.label + "    " + quickAssignDialog.assignments[index]; color: theme.text; font.pixelSize: 12 } }
+            }
+            Row { width: parent.width; spacing: 8
+                CommandButton { visible: !quickAssignDialog.complete && quickAssignDialog.step > 0; label: "BACK"; subdued: true; onTriggered: { --quickAssignDialog.step; backend.cancelInputLearning(); quickAssignDialog.startCurrent() } }
+                CommandButton { visible: !quickAssignDialog.complete && backend.inputLearning.phase === "ambiguous"; label: "RETRY"; subdued: true; onTriggered: backend.retryInputLearning() }
+                CommandButton { visible: !quickAssignDialog.complete && backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict(true) }
+                CommandButton { visible: !quickAssignDialog.complete; label: "SKIP"; subdued: true; onTriggered: { backend.cancelInputLearning(); if (quickAssignDialog.step + 1 >= quickAssignDialog.targets.length) quickAssignDialog.complete = true; else { ++quickAssignDialog.step; quickAssignDialog.startCurrent() } } }
+                Item { width: 1; height: 1; Layout.fillWidth: true }
+                CommandButton { label: quickAssignDialog.complete ? "DONE" : "CANCEL"; subdued: !quickAssignDialog.complete; onTriggered: quickAssignDialog.close() }
+            }
+        }
+        background: Panel { color: theme.topGun ? "#10171b" : theme.panel; border.color: theme.topGun ? theme.orange : theme.borderStrong }
     }
     Dialog {
         id: axisConflictDialog
