@@ -151,7 +151,7 @@ private slots:
     void buttonsNineThroughFifteenPropagatePressAndRelease();
     void stoppingMappingReleasesVirtualButtons();
     void disabledAndInvalidButtonsDoNotMap();
-    void duplicateButtonDestinationIsRejected();
+    void buttonRouteDecisionsAreAtomicAndSupportFanIn();
     void buttonConfigurationRoundTripsAndMigratesV1();
     void malformedButtonConfigurationPreservesAxisConfiguration();
     void povRawValuesCompileToLogicalDirections();
@@ -1134,12 +1134,69 @@ void MappingCoreTests::disabledAndInvalidButtonsDoNotMap()
     for (bool pressed : output) QVERIFY(!pressed);
 }
 
-void MappingCoreTests::duplicateButtonDestinationIsRejected()
+void MappingCoreTests::buttonRouteDecisionsAreAtomicAndSupportFanIn()
 {
-    ButtonBindings bindings{{ButtonActionType::VirtualButton, 2}, {ButtonActionType::VirtualButton, 2}};
-    QVERIFY(hasButtonMappingConflict(bindings, 1, 2, 4));
-    QVERIFY(!normalizeButtonMappings(bindings, 4));
-    QCOMPARE(bindings[1].type, ButtonActionType::Disabled);
+    // B3 -> V1 displaces B1 -> V1 while B3 previously owned V3: Replace is
+    // an atomic swap, not a silent disable of B1.
+    ButtonBindings swap{{ButtonActionType::VirtualButton, 1}, {}, {ButtonActionType::VirtualButton, 3}};
+    const ButtonRouteChange swapChange = analyzeButtonRouteChange(swap, 2, 1, 32);
+    QVERIFY(swapChange.valid);
+    QVERIFY(swapChange.requiresResolution);
+    QVERIFY(swapChange.canSwap);
+    const ButtonBindings beforeCancel = swap;
+    QVERIFY(!applyButtonRouteChange(swap, swapChange, ButtonRouteResolution::Cancel));
+    QCOMPARE(swap[0].target, beforeCancel[0].target);
+    QCOMPARE(swap[2].target, beforeCancel[2].target);
+    QVERIFY(applyButtonRouteChange(swap, swapChange, ButtonRouteResolution::Replace));
+    QCOMPARE(swap[0].target, 3);
+    QCOMPARE(swap[2].target, 1);
+
+    // A disabled incoming source has no reciprocal output, so Replace moves
+    // the route and leaves only the displaced source disabled.
+    ButtonBindings fallback{{ButtonActionType::VirtualButton, 1}, {}};
+    const ButtonRouteChange fallbackChange = analyzeButtonRouteChange(fallback, 1, 1, 32);
+    QVERIFY(fallbackChange.requiresResolution);
+    QVERIFY(!fallbackChange.canSwap);
+    QVERIFY(applyButtonRouteChange(fallback, fallbackChange, ButtonRouteResolution::Replace));
+    QCOMPARE(fallback[0].type, ButtonActionType::Disabled);
+    QCOMPARE(fallback[1].target, 1);
+
+    // Ignore deliberately creates fan-in; persisted configuration and the
+    // fixed table must retain both inputs and aggregate with logical OR.
+    ButtonBindings shared{{ButtonActionType::VirtualButton, 1}, {}, {ButtonActionType::VirtualButton, 3}};
+    const ButtonRouteChange sharedChange = analyzeButtonRouteChange(shared, 2, 1, 32);
+    QVERIFY(applyButtonRouteChange(shared, sharedChange, ButtonRouteResolution::Ignore));
+    QVERIFY(normalizeButtonMappings(shared, 32));
+    QCOMPARE(shared[0].target, 1);
+    QCOMPARE(shared[2].target, 1);
+    const RuntimeButtonTargets targets = buildRuntimeButtonTargets(shared, 32);
+    PhysicalButtonStates physical{};
+    QVERIFY(!mapButtonStates(physical, targets, 32)[1]);
+    physical[0] = true;
+    QVERIFY(mapButtonStates(physical, targets, 32)[1]);
+    physical[0] = false;
+    physical[2] = true;
+    QVERIFY(mapButtonStates(physical, targets, 32)[1]);
+    physical[0] = true;
+    QVERIFY(mapButtonStates(physical, targets, 32)[1]);
+    physical[0] = false; // Releasing B1 must not overwrite B3's pressed state.
+    QVERIFY(mapButtonStates(physical, targets, 32)[1]);
+
+    MapperConfiguration persisted = defaultConfiguration();
+    activeProfile(persisted).buttons = shared;
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(persisted), &valid);
+    QVERIFY(valid);
+    QCOMPARE(activeProfile(restored).buttons[0].target, 1);
+    QCOMPARE(activeProfile(restored).buttons[2].target, 1);
+
+    // The target is independent from the detected physical source number.
+    ButtonBindings frozen{{ButtonActionType::VirtualButton, 3}};
+    const ButtonRouteChange frozenChange = analyzeButtonRouteChange(frozen, 6, 3, 32);
+    QVERIFY(frozenChange.valid);
+    QCOMPARE(frozenChange.targetVirtualButton, 3);
+    QVERIFY(applyButtonRouteChange(frozen, frozenChange, ButtonRouteResolution::Replace));
+    QCOMPARE(frozen[6].target, 3);
 }
 
 void MappingCoreTests::buttonConfigurationRoundTripsAndMigratesV1()

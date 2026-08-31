@@ -167,6 +167,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
     Q_PROPERTY(QVariantMap inputLearning READ inputLearning NOTIFY inputLearningChanged)
     Q_PROPERTY(QVariantList quickAssignAxisTargets READ quickAssignAxisTargets NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList quickMapButtonTargets READ quickMapButtonTargets NOTIFY stateChanged)
 
 public:
     explicit AppBackend(QObject *parent = nullptr);
@@ -300,6 +301,7 @@ public:
     QStringList profileTriggerBehaviorChoices() const;
     QVariantMap inputLearning() const;
     QVariantList quickAssignAxisTargets() const;
+    QVariantList quickMapButtonTargets() const;
     bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
     QVariantMap portableImportPreview() const;
     QString portableImportStatus() const { return m_portableImportStatus; }
@@ -320,7 +322,7 @@ public:
     Q_INVOKABLE bool startPovLearning(int virtualButton);
     Q_INVOKABLE void retryInputLearning();
     Q_INVOKABLE void cancelInputLearning();
-    Q_INVOKABLE bool resolveInputLearningConflict(bool replace);
+    Q_INVOKABLE bool resolveInputLearningConflict(const QString &resolution);
     Q_INVOKABLE void setSelectedAxis(int physicalAxis);
     Q_INVOKABLE void setAxisInverted(int physicalAxis, bool inverted);
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
@@ -355,6 +357,8 @@ public:
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
+    Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
+                                              const QString &resolution);
     Q_INVOKABLE void setButtonCustomName(int physicalButton, const QString &name);
     Q_INVOKABLE bool setMappingControl(int physicalButton, const QString &action);
     Q_INVOKABLE bool setPovMapping(int povHat, int direction, int virtualButton,
@@ -483,7 +487,7 @@ private:
     };
 
     enum class InputLearningKind { None, Axis, Button, Pov };
-    enum class InputLearningPhase { Idle, Waiting, Ambiguous, Conflict, Assigned };
+    enum class InputLearningPhase { Idle, Arming, Waiting, Ambiguous, Conflict, Assigned };
 
     struct InputLearningState {
         InputLearningKind kind = InputLearningKind::None;
@@ -496,6 +500,7 @@ private:
         PovDirection sourcePovDirection = PovDirection::Centered;
         QString sourceLabel;
         QString message;
+        qint64 armingStableSinceMs = 0;
         std::array<float, kPhysicalAxisCount> axisBaseline{};
         std::array<bool, kPhysicalAxisCount> axisAvailable{};
         std::array<PhysicalAxisActivity, kPhysicalAxisCount> axisActivity{};
@@ -521,6 +526,7 @@ private:
     void rebuildButtonUiModel();
     bool refreshButtonUiModelRuntimeState();
     void captureInputLearningBaseline();
+    void enterInputLearningArming();
     void processInputLearning();
     bool applyLearnedInput();
     QString learnedAxisLabel(int physicalAxis) const;

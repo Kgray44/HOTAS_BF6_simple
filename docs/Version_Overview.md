@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.5**
+**Current release: v2.1.6**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.6 — Input Learning & Quick Map Correction
+
+Corrects physical-versus-virtual button identity, makes route conflicts explicit and safe, adds guided Button Quick Map, and polishes themed learning controls while preserving the allocation-free DirectInput-to-vJoy mapper.
+
+- Learn Input freezes its intended virtual button before physical detection; manual changes, Learn Input, and Quick Map use the same Replace, Ignore, and Cancel button-route semantics.
+- Replace atomically swaps a valid reciprocal destination and otherwise disables only the displaced source; Ignore intentionally allows multiple physical buttons to drive one virtual button. Shared outputs compile into the fixed mapping table and use logical OR aggregation.
+- Axis Quick Map now re-arms after a bounded stability window, Button Quick Map waits for held buttons to be released, and both workflows keep completed assignments when exited early.
+- Axes and Buttons use the unified QUICK MAP terminology, Learn Input has visible secondary-button affordance, mapping dialogs use themed headers, progress is explicit, and disabled button routes carry a subtle text badge without hiding physical state.
+- Button Quick Map uses meaningful active-profile destinations rather than unused vJoy capacity. Exact axis-layout safety and the 15-required / 30-available button-capacity behavior remain unchanged.
+- Learning, conflict decisions, naming, dialogs, and Quick Map state remain on the UI/control plane; no learning-state checks, strings, locks, allocations, or conflict work were added to MappingWorker.
 
 ## v2.1.5 — Input Learning, Quick Assign & vJoy Capacity Correction
 

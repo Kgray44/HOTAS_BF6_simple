@@ -10,6 +10,21 @@ using PhysicalButtonStates = std::array<bool, kMaximumPhysicalButtons>;
 using VirtualButtonStates = std::array<bool, kMaximumVirtualButtons + 1>;
 using RuntimeButtonTargets = std::array<int, kMaximumPhysicalButtons>;
 
+// Route decisions are made while editing a profile, never while processing a
+// DirectInput report.  A duplicate target is valid only after the user chose
+// Ignore; the compiled table still stays fixed-size and allocation-free.
+enum class ButtonRouteResolution { Replace, Ignore, Cancel };
+
+struct ButtonRouteChange {
+    bool valid = false;
+    bool requiresResolution = false;
+    bool canSwap = false;
+    int sourceIndex = -1;
+    int targetVirtualButton = 0;
+    int previousVirtualButton = 0;
+    int displacedSourceIndex = -1;
+};
+
 struct ButtonCapacityStatus {
     int physicalButtons = 0;
     int virtualButtons = 0;
@@ -31,9 +46,17 @@ bool needsDefaultButtonMappings(const ButtonBindings &bindings, int physicalButt
                                 int vjoyButtonCapacity);
 
 bool isButtonBindingValid(const ButtonBinding &binding, int vjoyButtonCapacity);
-// Removes malformed, out-of-capacity, and duplicate destinations. The first
-// source retains a destination so a release can never be ambiguous.
+// Removes malformed and out-of-capacity destinations. Multiple physical
+// sources may intentionally share a virtual button after an Ignore decision.
 bool normalizeButtonMappings(ButtonBindings &bindings, int vjoyButtonCapacity);
+ButtonRouteChange analyzeButtonRouteChange(const ButtonBindings &bindings, int sourceIndex,
+                                           int candidateVirtualButton,
+                                           int vjoyButtonCapacity);
+// Applies a previously analyzed configuration-time decision atomically.  A
+// Replace swaps the displaced source back onto the incoming source's previous
+// output whenever that reciprocal route remains valid; Ignore keeps fan-in.
+bool applyButtonRouteChange(ButtonBindings &bindings, const ButtonRouteChange &change,
+                            ButtonRouteResolution resolution);
 bool hasButtonMappingConflict(const ButtonBindings &bindings, int sourceIndex,
                               int candidateVirtualButton, int vjoyButtonCapacity);
 bool hasButtonMappingConflict(const ButtonBindings &buttons, const PovBindings &povs,
@@ -50,6 +73,8 @@ int requiredVirtualButtonCount(const ButtonBindings &buttons, const PovBindings 
                                int physicalButtonCount);
 
 // Converts persisted bindings to a compact, allocation-free hot-path table.
+// A negative entry is an internal shared-destination marker; ordinary routes
+// retain the original direct assignment fast path.
 RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
                                                int vjoyButtonCapacity);
 // A configured global profile control consumes its physical source while

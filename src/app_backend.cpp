@@ -1718,6 +1718,35 @@ QVariantList AppBackend::quickAssignAxisTargets() const
     return targets;
 }
 
+QVariantList AppBackend::quickMapButtonTargets() const
+{
+    QSet<int> destinations;
+    const int physicalCount = std::min(buttonCount(), kMaximumPhysicalButtons);
+    const ControllerProfile &profile = currentProfile();
+    for (int source = 0; source < std::min(physicalCount, static_cast<int>(profile.buttons.size())); ++source) {
+        const ButtonBinding &binding = profile.buttons[static_cast<size_t>(source)];
+        if (binding.type == ButtonActionType::VirtualButton && binding.target > 0
+            && binding.target <= vjoyButtonCount()) {
+            destinations.insert(binding.target);
+        }
+    }
+    // A fresh profile has no explicit bindings yet; its meaningful intent is
+    // the existing one-to-one default floor, not every available vJoy button.
+    if (destinations.isEmpty()) {
+        for (int button = 1; button <= std::min(physicalCount, vjoyButtonCount()); ++button) {
+            destinations.insert(button);
+        }
+    }
+    QList<int> ordered = destinations.values();
+    std::sort(ordered.begin(), ordered.end());
+    QVariantList targets;
+    for (const int destination : ordered) {
+        targets.append(QVariantMap{{u"virtualButton"_qs, destination},
+            {u"label"_qs, QString(u"vJoy Button %1"_qs).arg(destination)}});
+    }
+    return targets;
+}
+
 QVariantMap AppBackend::inputLearning() const
 {
     const auto kindName = [this] {
@@ -1731,6 +1760,7 @@ QVariantMap AppBackend::inputLearning() const
     };
     const auto phaseName = [this] {
         switch (m_inputLearning.phase) {
+        case InputLearningPhase::Arming: return u"arming"_qs;
         case InputLearningPhase::Waiting: return u"waiting"_qs;
         case InputLearningPhase::Ambiguous: return u"ambiguous"_qs;
         case InputLearningPhase::Conflict: return u"conflict"_qs;
@@ -1895,10 +1925,8 @@ bool AppBackend::startAxisLearning(const QString &target)
     }
     m_inputLearning = {};
     m_inputLearning.kind = InputLearningKind::Axis;
-    m_inputLearning.phase = InputLearningPhase::Waiting;
     m_inputLearning.target = virtualAxisLabel(axis);
-    m_inputLearning.message = u"Move the physical control you want to assign."_qs;
-    captureInputLearningBaseline();
+    enterInputLearningArming();
     emit inputLearningChanged();
     return true;
 }
@@ -1908,10 +1936,8 @@ bool AppBackend::startButtonLearning(int virtualButton)
     if (!physicalConnected() || virtualButton <= 0 || virtualButton > vjoyButtonCount()) return false;
     m_inputLearning = {};
     m_inputLearning.kind = InputLearningKind::Button;
-    m_inputLearning.phase = InputLearningPhase::Waiting;
     m_inputLearning.virtualButton = virtualButton;
-    m_inputLearning.message = u"Press the physical button you want to use."_qs;
-    captureInputLearningBaseline();
+    enterInputLearningArming();
     emit inputLearningChanged();
     return true;
 }
@@ -1924,10 +1950,8 @@ bool AppBackend::startPovLearning(int virtualButton)
     }
     m_inputLearning = {};
     m_inputLearning.kind = InputLearningKind::Pov;
-    m_inputLearning.phase = InputLearningPhase::Waiting;
     m_inputLearning.virtualButton = virtualButton;
-    m_inputLearning.message = u"Move the hat in the desired direction."_qs;
-    captureInputLearningBaseline();
+    enterInputLearningArming();
     emit inputLearningChanged();
     return true;
 }
@@ -1935,25 +1959,11 @@ bool AppBackend::startPovLearning(int virtualButton)
 void AppBackend::retryInputLearning()
 {
     if (m_inputLearning.kind == InputLearningKind::None) return;
-    m_inputLearning.phase = InputLearningPhase::Waiting;
     m_inputLearning.sourceAxis = -1;
     m_inputLearning.sourceButton = 0;
     m_inputLearning.sourcePovHat = 0;
     m_inputLearning.sourceLabel.clear();
-    switch (m_inputLearning.kind) {
-    case InputLearningKind::Axis:
-        m_inputLearning.message = u"Move only the physical control you want to assign."_qs;
-        break;
-    case InputLearningKind::Button:
-        m_inputLearning.message = u"Press the physical button you want to use."_qs;
-        break;
-    case InputLearningKind::Pov:
-        m_inputLearning.message = u"Move the hat in the desired direction."_qs;
-        break;
-    case InputLearningKind::None:
-        break;
-    }
-    captureInputLearningBaseline();
+    enterInputLearningArming();
     emit inputLearningChanged();
 }
 
@@ -1964,10 +1974,10 @@ void AppBackend::cancelInputLearning()
     emit inputLearningChanged();
 }
 
-bool AppBackend::resolveInputLearningConflict(bool replace)
+bool AppBackend::resolveInputLearningConflict(const QString &resolution)
 {
     if (m_inputLearning.phase != InputLearningPhase::Conflict) return false;
-    if (!replace) {
+    if (resolution == u"cancel"_qs) {
         cancelInputLearning();
         return true;
     }
@@ -1977,10 +1987,11 @@ bool AppBackend::resolveInputLearningConflict(bool replace)
         assigned = setMapping(m_inputLearning.sourceAxis, m_inputLearning.target, true);
         break;
     case InputLearningKind::Button:
-        assigned = setButtonMapping(m_inputLearning.sourceButton, m_inputLearning.virtualButton, true);
+        assigned = resolveButtonRouteChange(m_inputLearning.sourceButton,
+            m_inputLearning.virtualButton, resolution);
         break;
     case InputLearningKind::Pov:
-        assigned = setPovMapping(m_inputLearning.sourcePovHat,
+        assigned = resolution == u"replace"_qs && setPovMapping(m_inputLearning.sourcePovHat,
             povDirectionIndex(m_inputLearning.sourcePovDirection), m_inputLearning.virtualButton, true);
         break;
     case InputLearningKind::None:
@@ -2490,40 +2501,62 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
     }
     const int source = physicalButton - 1;
     ButtonBindings &bindings = currentProfile().buttons;
-    if (bindings.size() <= static_cast<size_t>(source)) {
-        bindings.resize(static_cast<size_t>(source + 1));
+    const ButtonRouteChange change = analyzeButtonRouteChange(bindings, source, virtualButton,
+                                                               vjoyButtonCount());
+    const bool povConflict = hasButtonMappingConflict(bindings, currentProfile().povs, source,
+                                                       virtualButton, vjoyButtonCount())
+        && !change.requiresResolution;
+    if (change.requiresResolution || povConflict) {
+        return explicitOverride && resolveButtonRouteChange(physicalButton, virtualButton, u"replace"_qs);
     }
-    if (hasButtonMappingConflict(bindings, currentProfile().povs, source, virtualButton,
-                                 vjoyButtonCount())) {
-        if (!explicitOverride) return false;
-        for (int index = 0; index < static_cast<int>(bindings.size()); ++index) {
-            ButtonBinding &binding = bindings[static_cast<size_t>(index)];
-            if (index != source && binding.type == ButtonActionType::VirtualButton
-                && binding.target == virtualButton) {
-                binding = {};
-                // Replacing a destination intentionally leaves its former source unused.
-                // Keep that choice from being treated as an implicit default on reconnect.
-                binding.explicitlyConfigured = true;
-            }
+    return resolveButtonRouteChange(physicalButton, virtualButton, u"replace"_qs);
+}
+
+bool AppBackend::resolveButtonRouteChange(int physicalButton, int virtualButton,
+                                          const QString &resolution)
+{
+    if (!validPhysicalButton(physicalButton) || virtualButton < 0
+        || virtualButton > vjoyButtonCount()) {
+        return false;
+    }
+    ButtonRouteResolution decision = ButtonRouteResolution::Cancel;
+    if (resolution == u"replace"_qs) decision = ButtonRouteResolution::Replace;
+    else if (resolution == u"ignore"_qs) decision = ButtonRouteResolution::Ignore;
+    if (decision == ButtonRouteResolution::Cancel) return false;
+
+    const int source = physicalButton - 1;
+    ButtonBindings &bindings = currentProfile().buttons;
+    const ButtonRouteChange change = analyzeButtonRouteChange(bindings, source, virtualButton,
+                                                               vjoyButtonCount());
+    if (!change.valid) return false;
+
+    // POV routes retain their existing exclusive contract.  They are never
+    // silently displaced, and physical-button Ignore is intentionally limited
+    // to the documented many-physical-sources fan-in case.
+    bool povConflict = false;
+    for (const PovDirectionBindings &hat : currentProfile().povs) {
+        for (const ButtonBinding &binding : hat) {
+            povConflict = povConflict || (virtualButton > 0
+                && binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton);
         }
+    }
+    if (povConflict && decision != ButtonRouteResolution::Replace) return false;
+    if (povConflict) {
         for (PovDirectionBindings &hat : currentProfile().povs) {
             for (ButtonBinding &binding : hat) {
-                if (binding.type == ButtonActionType::VirtualButton
-                    && binding.target == virtualButton) {
-                    binding = {};
+                if (binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton) {
+                    binding.type = ButtonActionType::Disabled;
+                    binding.target = 0;
                     binding.explicitlyConfigured = true;
                 }
             }
         }
     }
-    ButtonBinding &updated = bindings[static_cast<size_t>(source)];
-    const QString customName = updated.customName;
-    updated = virtualButton > 0
-        ? ButtonBinding{ButtonActionType::VirtualButton, virtualButton} : ButtonBinding{};
-    updated.customName = customName;
-    updated.explicitlyConfigured = true;
+    if (!applyButtonRouteChange(bindings, change, decision)) return false;
     persistAndApply();
-    appendEvent(QString(u"Button %1 → %2"_qs).arg(physicalButton).arg(
+    const QString action = decision == ButtonRouteResolution::Ignore
+        ? u"shared with"_qs : (change.canSwap && change.requiresResolution ? u"swapped with"_qs : u"routed to"_qs);
+    appendEvent(QString(u"Button %1 %2 %3"_qs).arg(physicalButton).arg(action).arg(
         virtualButton > 0 ? QString(u"vJoy %1"_qs).arg(virtualButton) : u"Disabled"_qs));
     return true;
 }
@@ -4932,6 +4965,26 @@ void AppBackend::captureInputLearningBaseline()
     }
 }
 
+void AppBackend::enterInputLearningArming()
+{
+    captureInputLearningBaseline();
+    m_inputLearning.phase = InputLearningPhase::Arming;
+    m_inputLearning.armingStableSinceMs = 0;
+    switch (m_inputLearning.kind) {
+    case InputLearningKind::Axis:
+        m_inputLearning.message = u"HOLD CONTROLS STEADY…"_qs;
+        break;
+    case InputLearningKind::Button:
+        m_inputLearning.message = u"RELEASE HELD BUTTONS…"_qs;
+        break;
+    case InputLearningKind::Pov:
+        m_inputLearning.message = u"RETURN THE HAT TO NEUTRAL…"_qs;
+        break;
+    case InputLearningKind::None:
+        break;
+    }
+}
+
 QString AppBackend::learnedAxisLabel(int physicalAxis) const
 {
     if (!validAxis(physicalAxis)) return {};
@@ -4976,6 +5029,68 @@ bool AppBackend::applyLearnedInput()
 
 void AppBackend::processInputLearning()
 {
+    if (m_inputLearning.phase == InputLearningPhase::Arming) {
+        const AtomicRuntimeState &runtime = m_worker.runtime();
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        switch (m_inputLearning.kind) {
+        case InputLearningKind::Axis: {
+            constexpr float stabilityTolerance = 0.03F;
+            bool stable = true;
+            for (int index = 0; index < kPhysicalAxisCount; ++index) {
+                const size_t slot = static_cast<size_t>(index);
+                if (!m_inputLearning.axisAvailable[slot]
+                    || m_inputLearning.axisActivity[slot] == PhysicalAxisActivity::Fixed) {
+                    continue;
+                }
+                const float current = runtime.normalized[slot].load();
+                if (std::abs(current - m_inputLearning.axisBaseline[slot]) > stabilityTolerance) {
+                    m_inputLearning.axisBaseline[slot] = current;
+                    stable = false;
+                }
+            }
+            if (!stable || m_inputLearning.armingStableSinceMs == 0) {
+                m_inputLearning.armingStableSinceMs = now;
+                return;
+            }
+            if (now - m_inputLearning.armingStableSinceMs < 300) return;
+            captureInputLearningBaseline();
+            m_inputLearning.phase = InputLearningPhase::Waiting;
+            m_inputLearning.message = u"MOVE THE PHYSICAL AXIS YOU WANT TO USE."_qs;
+            emit inputLearningChanged();
+            return;
+        }
+        case InputLearningKind::Button: {
+            bool allReleased = true;
+            for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+                const size_t slot = static_cast<size_t>(index);
+                if (runtime.buttonAvailable[slot].load() && runtime.physicalButtonPressed[slot].load()) {
+                    allReleased = false;
+                    break;
+                }
+            }
+            if (!allReleased) return;
+            captureInputLearningBaseline();
+            m_inputLearning.phase = InputLearningPhase::Waiting;
+            m_inputLearning.message = u"PRESS THE PHYSICAL BUTTON YOU WANT TO USE."_qs;
+            emit inputLearningChanged();
+            return;
+        }
+        case InputLearningKind::Pov:
+            for (int index = 0; index < std::min(povCount(), kMaximumPhysicalPovs); ++index) {
+                if (povDirectionFromRaw(runtime.povValues[static_cast<size_t>(index)].load())
+                    != PovDirection::Centered) {
+                    return;
+                }
+            }
+            captureInputLearningBaseline();
+            m_inputLearning.phase = InputLearningPhase::Waiting;
+            m_inputLearning.message = u"MOVE THE HAT IN THE DESIRED DIRECTION."_qs;
+            emit inputLearningChanged();
+            return;
+        case InputLearningKind::None:
+            return;
+        }
+    }
     if (m_inputLearning.phase != InputLearningPhase::Waiting) return;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     switch (m_inputLearning.kind) {

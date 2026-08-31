@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.1.5**
+**Current release: v2.1.6**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.1.5 adds input learning and guided axis assignment from existing published snapshots, promotes custom control names into the visible mapping identity, and corrects vJoy button requirements to calculate actual routed capacity rather than generous provisioned layout capacity. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification while preserving the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.1.6 makes Learn Input and Quick Map safer and clearer with explicit physical-to-virtual button identity, Replace/Ignore/Cancel conflict decisions, shared-output fan-in, and re-arming between guided steps. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification while preserving the allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 
@@ -63,7 +63,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **Real-Time Mapping Runtime** — A dedicated DirectInput-to-vJoy worker owns report processing so controller output is not scheduled by the UI.
 - **Axis Routing and Processing** — Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
 - **Mapping Safety Controls** — Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.
-- **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit ownership.
+- **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit, user-confirmed ownership or shared-output fan-in.
 - **POV / Hat Support** — DirectInput POV hats can act as discrete logical directions, profile controls, or native vJoy POV outputs.
 - **Profiles and Profile Library** — Profiles package gameplay mapping and a selected reusable virtual-output layout into deterministic configurations, organized in game-aware categories.
 - **Response Curves** — Each profile/axis can use compiled response curves with both preset-based and point-based editing.

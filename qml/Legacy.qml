@@ -781,6 +781,8 @@ Page {
                 }
                 Text { visible: !!buttonCard.info.customName; text: ("0" + buttonCard.info.index).slice(-2)
                     color: "#8ca6ae"; font.pixelSize: 10; font.family: "Consolas"; font.bold: true }
+                Text { visible: buttonCard.info.target === 0; text: "DISABLED"
+                    color: "#8ca6ae"; font.pixelSize: 9; font.bold: true }
                 Row { spacing: 5
                     StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
@@ -794,9 +796,8 @@ Page {
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
-                Text { visible: buttonCard.info.target > 0; text: "LEARN"; color: "#8ca6ae"; font.pixelSize: 9; font.bold: true
-                    MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startButtonLearning(buttonCard.info.target) }
-                }
+                CommandButton { visible: buttonCard.info.target > 0; label: "LEARN INPUT"; subdued: true
+                    onTriggered: backend.startButtonLearning(buttonCard.info.target) }
                 FlightComboBox {
                     id: buttonDestination
                     Layout.preferredWidth: 126
@@ -1211,7 +1212,7 @@ Page {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: "QUICK ASSIGN"; onTriggered: quickAssignDialog.open() }
+                    CommandButton { label: "QUICK MAP"; onTriggered: quickAssignDialog.open() }
                 }
                 Panel { width: parent.width; height: 90
                     color: "#e51a2328"; border.color: "#46657980"
@@ -1312,9 +1313,8 @@ Page {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
-                                    Text { visible: processingPanel.info.target !== "Disabled"; text: "LEARN"; color: "#8ca6ae"; font.pixelSize: 9; font.bold: true
-                                        MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startAxisLearning(processingPanel.info.target) }
-                                    }
+                                    CommandButton { visible: processingPanel.info.target !== "Disabled"; label: "LEARN INPUT"; subdued: true
+                                        onTriggered: backend.startAxisLearning(processingPanel.info.target) }
                                     FlightComboBox {
                                         id: selectedAxisDestination
                                         Layout.fillWidth: true; Layout.preferredHeight: 31
@@ -1440,10 +1440,9 @@ Page {
                     PageTitle { heading: "Buttons"
  detail: "Physical DirectInput state is visible even while vJoy is offline · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
-                    CommandButton { label: "RESET MAPPINGS"
+                    CommandButton { label: "QUICK MAP"
  commandEnabled: backend.buttonCount > 0
- subdued: true
- onTriggered: backend.resetButtonMappings() }
+ onTriggered: quickMapButtonDialog.open() }
                 }
                 Text { visible: backend.legacyControlMigrationWarning.length > 0; width: parent.width
                     text: backend.legacyControlMigrationWarning + " Configure a replacement in Automation."
@@ -2046,7 +2045,8 @@ Page {
         target: backend
         function onInputLearningChanged() {
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
-            if (backend.inputLearning.active && !quickAssignDialog.opened) inputLearningDialog.open()
+            if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
+            if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened) inputLearningDialog.open()
             if (!backend.inputLearning.active) inputLearningDialog.close()
         }
     }
@@ -2058,14 +2058,17 @@ Page {
         width: 420
         title: "LEARN INPUT"
         standardButtons: Dialog.NoButton
-        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened) backend.cancelInputLearning()
+        header: Item { implicitHeight: 0 }
+        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened) backend.cancelInputLearning()
         contentItem: Column { width: 368; spacing: 12
-            Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { width: parent.width; text: "LEARN INPUT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 11; font.bold: true }
             Text { width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
             Text { visible: backend.inputLearning.phase === "assigned"; width: parent.width; text: backend.inputLearning.sourceLabel; color: "#b9dcc2"; font.pixelSize: 12; font.bold: true }
             Row { width: parent.width; spacing: 8
                 CommandButton { visible: backend.inputLearning.phase === "ambiguous"; label: "RETRY"; onTriggered: backend.retryInputLearning() }
-                CommandButton { visible: backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict(true) }
+                CommandButton { visible: backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict("replace") }
+                CommandButton { visible: backend.inputLearning.phase === "conflict" && backend.inputLearning.kind === "button"; label: "IGNORE"; subdued: true; onTriggered: backend.resolveInputLearningConflict("ignore") }
                 Item { width: parent.width - 180; height: 1 }
                 CommandButton { label: backend.inputLearning.phase === "assigned" ? "DONE" : "CANCEL"; subdued: backend.inputLearning.phase !== "assigned"; onTriggered: { backend.cancelInputLearning(); inputLearningDialog.close() } }
             }
@@ -2082,8 +2085,9 @@ Page {
         property var assignments: []
         property int step: 0
         property bool complete: false
-        title: "QUICK AXIS ASSIGNMENT"
+        title: "QUICK MAP — AXES"
         standardButtons: Dialog.NoButton
+        header: Item { implicitHeight: 0 }
         function startCurrent() {
             if (!complete && step < targets.length) backend.startAxisLearning(targets[step].target)
         }
@@ -2096,8 +2100,11 @@ Page {
         onOpened: { targets = backend.quickAssignAxisTargets; assignments = []; step = 0; complete = targets.length === 0; if (!complete) startCurrent() }
         onClosed: backend.cancelInputLearning()
         contentItem: Column { width: quickAssignDialog.width - 52; spacing: 14
+            Text { text: "QUICK MAP — AXES"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
-            Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " / " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: "#d8e8ea"; font.pixelSize: 19; font.bold: true }
+            Rectangle { visible: !quickAssignDialog.complete; width: parent.width; height: 6; radius: 3; color: "#273136"
+                Rectangle { width: parent.width * (quickAssignDialog.targets.length ? quickAssignDialog.step / quickAssignDialog.targets.length : 0); height: parent.height; radius: 3; color: "#829da5" } }
+            Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " OF " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: "#d8e8ea"; font.pixelSize: 19; font.bold: true }
             Text { visible: !quickAssignDialog.complete; text: quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].technicalLabel : ""; color: "#8ca6ae"; font.pixelSize: 10 }
             Text { visible: !quickAssignDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
             Column { visible: quickAssignDialog.complete; width: parent.width; spacing: 6
@@ -2107,11 +2114,61 @@ Page {
             Row { width: parent.width; spacing: 8
                 CommandButton { visible: !quickAssignDialog.complete && quickAssignDialog.step > 0; label: "BACK"; subdued: true; onTriggered: { --quickAssignDialog.step; backend.cancelInputLearning(); quickAssignDialog.startCurrent() } }
                 CommandButton { visible: !quickAssignDialog.complete && backend.inputLearning.phase === "ambiguous"; label: "RETRY"; subdued: true; onTriggered: backend.retryInputLearning() }
-                CommandButton { visible: !quickAssignDialog.complete && backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict(true) }
+                CommandButton { visible: !quickAssignDialog.complete && backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict("replace") }
                 CommandButton { visible: !quickAssignDialog.complete; label: "SKIP"; subdued: true; onTriggered: { backend.cancelInputLearning(); if (quickAssignDialog.step + 1 >= quickAssignDialog.targets.length) quickAssignDialog.complete = true; else { ++quickAssignDialog.step; quickAssignDialog.startCurrent() } } }
                 Item { width: 1; height: 1; Layout.fillWidth: true }
-                CommandButton { label: quickAssignDialog.complete ? "DONE" : "CANCEL"; subdued: !quickAssignDialog.complete; onTriggered: quickAssignDialog.close() }
+                CommandButton { label: quickAssignDialog.complete ? "DONE" : "EXIT"; subdued: !quickAssignDialog.complete; onTriggered: quickAssignDialog.close() }
             }
+        }
+        background: Panel { color: "#182a30"; border.color: "#52717c" }
+    }
+    Dialog {
+        id: quickMapButtonDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(560, root.width - 36)
+        title: "QUICK MAP — BUTTONS"
+        standardButtons: Dialog.NoButton
+        header: Item { implicitHeight: 0 }
+        property var targets: []
+        property var assignments: []
+        property int step: 0
+        property bool complete: false
+        function startCurrent() {
+            if (!complete && step < targets.length) backend.startButtonLearning(targets[step].virtualButton)
+        }
+        function acceptAssignment() {
+            if (backend.inputLearning.phase !== "assigned") return
+            assignments[step] = backend.inputLearning.sourceLabel
+            if (step + 1 >= targets.length) { complete = true; backend.cancelInputLearning() }
+            else { ++step; startCurrent() }
+        }
+        onOpened: { targets = backend.quickMapButtonTargets; assignments = []; step = 0; complete = targets.length === 0; if (!complete) startCurrent() }
+        onClosed: backend.cancelInputLearning()
+        contentItem: Column { width: quickMapButtonDialog.width - 52; spacing: 12
+            Text { text: "QUICK MAP — BUTTONS"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            Rectangle { visible: !quickMapButtonDialog.complete; width: parent.width; height: 6; radius: 3; color: "#273136"
+                Rectangle { width: parent.width * (quickMapButtonDialog.targets.length ? quickMapButtonDialog.step / quickMapButtonDialog.targets.length : 0); height: parent.height; radius: 3; color: "#829da5" } }
+            Text { visible: !quickMapButtonDialog.complete; text: (quickMapButtonDialog.step + 1) + " OF " + quickMapButtonDialog.targets.length; color: "#d8e8ea"; font.pixelSize: 18; font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; text: "CURRENT OUTPUT"; color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; text: quickMapButtonDialog.targets.length ? quickMapButtonDialog.targets[quickMapButtonDialog.step].label : ""; color: "#d5e0e3"; font.pixelSize: 13; font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+            Column { visible: quickMapButtonDialog.assignments.length > 0; width: parent.width; spacing: 4
+                Text { text: "COMPLETED"; color: "#b9dcc2"; font.pixelSize: 10; font.bold: true }
+                Repeater { model: quickMapButtonDialog.assignments; delegate: Text { visible: modelData !== undefined; text: "✓ " + quickMapButtonDialog.targets[index].label + "    " + modelData; color: "#d5e0e3"; font.pixelSize: 11 } }
+            }
+            Row { width: parent.width; spacing: 8
+                CommandButton { visible: !quickMapButtonDialog.complete && quickMapButtonDialog.step > 0; label: "BACK"; subdued: true; onTriggered: { --quickMapButtonDialog.step; backend.cancelInputLearning(); quickMapButtonDialog.startCurrent() } }
+                CommandButton { visible: !quickMapButtonDialog.complete && backend.inputLearning.phase === "ambiguous"; label: "RETRY"; subdued: true; onTriggered: backend.retryInputLearning() }
+                CommandButton { visible: !quickMapButtonDialog.complete && backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict("replace") }
+                CommandButton { visible: !quickMapButtonDialog.complete && backend.inputLearning.phase === "conflict"; label: "IGNORE"; subdued: true; onTriggered: backend.resolveInputLearningConflict("ignore") }
+                Item { width: 1; height: 1; Layout.fillWidth: true }
+                CommandButton { label: quickMapButtonDialog.complete ? "DONE" : "EXIT"; subdued: !quickMapButtonDialog.complete; onTriggered: quickMapButtonDialog.close() }
+            }
+            CommandButton { label: "RESET BUTTON MAPPINGS"; subdued: true; commandEnabled: backend.buttonCount > 0
+                onTriggered: backend.resetButtonMappings() }
         }
         background: Panel { color: "#182a30"; border.color: "#52717c" }
     }
@@ -2121,19 +2178,23 @@ Page {
  anchors.centerIn: parent
  modal: true
  width: 390
-        title: "Replace axis route?"
- standardButtons: Dialog.Cancel
+        title: "AXIS ROUTE CONFLICT"
+ standardButtons: Dialog.NoButton
+ header: Item { implicitHeight: 0 }
         contentItem: Column { width: 340
  spacing: 14
+            Text { text: "AXIS ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width
  text: "This vJoy axis already has a source. Replacing it disables the earlier route."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
  font.pixelSize: 12 }
-            CommandButton { width: parent.width
- label: "REPLACE ROUTE"
+            Row { spacing: 8
+            CommandButton { label: "REPLACE"
  onTriggered: { backend.setMapping(root.conflictingAxis, root.conflictingTarget, true)
  axisConflictDialog.close() } }
+            CommandButton { label: "CANCEL"; subdued: true; onTriggered: axisConflictDialog.close() }
+            }
         }
         background: Panel { color: "#1b2126"
  border.color: "#3adce5e8" }
@@ -2144,25 +2205,31 @@ Page {
  anchors.centerIn: parent
  modal: true
  width: 390
-        title: "Replace button route?"
- standardButtons: Dialog.Cancel
+        title: "BUTTON ROUTE CONFLICT"
+ standardButtons: Dialog.NoButton
+ header: Item { implicitHeight: 0 }
         contentItem: Column { width: 340
  spacing: 14
+            Text { text: "BUTTON ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width
- text: "This virtual button already has a physical source. Replacing it disables the earlier source."
+ text: "Choose how to handle the existing physical route for this vJoy button. Replace swaps a valid prior output; Ignore allows both physical buttons to drive it."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
  font.pixelSize: 12 }
-            CommandButton { width: parent.width
- label: "REPLACE ROUTE"
+            Row { spacing: 8
+            CommandButton { label: "REPLACE"
  onTriggered: {
      if (root.conflictingPovHat > 0) {
          backend.setPovMapping(root.conflictingPovHat, root.conflictingPovDirection,
                                root.conflictingVirtualButton, true)
      } else {
-         backend.setButtonMapping(root.conflictingButton, root.conflictingVirtualButton, true)
+         backend.resolveButtonRouteChange(root.conflictingButton, root.conflictingVirtualButton, "replace")
      }
  buttonConflictDialog.close() } }
+            CommandButton { visible: root.conflictingPovHat === 0; label: "IGNORE"; subdued: true
+                onTriggered: { backend.resolveButtonRouteChange(root.conflictingButton, root.conflictingVirtualButton, "ignore"); buttonConflictDialog.close() } }
+            CommandButton { label: "CANCEL"; subdued: true; onTriggered: buttonConflictDialog.close() }
+            }
         }
         background: Panel { color: "#1b2126"
  border.color: "#3adce5e8" }

@@ -334,12 +334,19 @@ void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
         QVERIFY(ui.contains(QStringLiteral("buttonCard.info.customName ? buttonCard.info.customName.toUpperCase()")));
         QVERIFY(ui.contains(QStringLiteral("buttonNameEditor")));
         QVERIFY(!ui.contains(QStringLiteral("text: buttonCard.info.customName || \"\"")));
-        QVERIFY(ui.contains(QStringLiteral("text: \"LEARN\"")));
-        QVERIFY(ui.contains(QStringLiteral("QUICK ASSIGN")));
+        QVERIFY(ui.contains(QStringLiteral("label: \"LEARN INPUT\"")));
+        QVERIFY(ui.contains(QStringLiteral("QUICK MAP — AXES")));
+        QVERIFY(ui.contains(QStringLiteral("QUICK MAP — BUTTONS")));
+        QVERIFY(ui.contains(QStringLiteral("text: \"DISABLED\"")));
+        QVERIFY(ui.contains(QStringLiteral("header: Item { implicitHeight: 0 }")));
     }
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantMap inputLearning")));
+    QVERIFY(header.contains(QStringLiteral("quickMapButtonTargets")));
     QVERIFY(header.contains(QStringLiteral("void processInputLearning();")));
     QVERIFY(backend.contains(QStringLiteral("selectLearnedAxis(m_inputLearning.axisBaseline")));
+    QVERIFY(backend.contains(QStringLiteral("InputLearningPhase::Arming")));
+    QVERIFY(backend.contains(QStringLiteral("HOLD CONTROLS STEADY")));
+    QVERIFY(backend.contains(QStringLiteral("RELEASE HELD BUTTONS")));
     QVERIFY(backend.contains(QStringLiteral("processInputLearning();")));
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(QStringLiteral("InputLearning")));
     QVERIFY(readiness.contains(QStringLiteral("Output-layout button counts are provisioned capacity")));

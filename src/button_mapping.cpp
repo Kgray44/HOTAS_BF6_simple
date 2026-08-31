@@ -12,8 +12,19 @@ int boundedCount(int value, int maximum)
 
 void disable(ButtonBinding &binding)
 {
+    const QString customName = binding.customName;
     binding.type = ButtonActionType::Disabled;
     binding.target = 0;
+    binding.explicitlyConfigured = true;
+    binding.customName = customName;
+}
+
+void assign(ButtonBinding &binding, int target)
+{
+    const QString customName = binding.customName;
+    binding = target > 0 ? ButtonBinding{ButtonActionType::VirtualButton, target} : ButtonBinding{};
+    binding.explicitlyConfigured = true;
+    binding.customName = customName;
 }
 
 } // namespace
@@ -94,25 +105,79 @@ bool isButtonBindingValid(const ButtonBinding &binding, int vjoyButtonCapacity)
 bool normalizeButtonMappings(ButtonBindings &bindings, int vjoyButtonCapacity)
 {
     const int capacity = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
-    std::array<bool, kMaximumVirtualButtons + 1> occupied{};
     bool clean = true;
     for (ButtonBinding &binding : bindings) {
         if (!isButtonBindingValid(binding, capacity)) {
             clean = false;
             disable(binding);
-            continue;
         }
-        if (binding.type == ButtonActionType::Disabled) {
-            continue;
-        }
-        if (occupied[static_cast<size_t>(binding.target)]) {
-            clean = false;
-            disable(binding);
-            continue;
-        }
-        occupied[static_cast<size_t>(binding.target)] = true;
     }
     return clean;
+}
+
+ButtonRouteChange analyzeButtonRouteChange(const ButtonBindings &bindings, int sourceIndex,
+                                           int candidateVirtualButton,
+                                           int vjoyButtonCapacity)
+{
+    ButtonRouteChange change;
+    const int capacity = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    if (sourceIndex < 0 || sourceIndex >= kMaximumPhysicalButtons
+        || candidateVirtualButton < 0 || candidateVirtualButton > capacity) {
+        return change;
+    }
+    change.valid = true;
+    change.sourceIndex = sourceIndex;
+    change.targetVirtualButton = candidateVirtualButton;
+    if (sourceIndex < static_cast<int>(bindings.size())) {
+        const ButtonBinding &source = bindings[static_cast<size_t>(sourceIndex)];
+        if (source.type == ButtonActionType::VirtualButton) change.previousVirtualButton = source.target;
+    }
+    if (candidateVirtualButton == 0) return change;
+
+    int displacedCount = 0;
+    bool previousTargetOccupied = false;
+    for (int index = 0; index < static_cast<int>(bindings.size()); ++index) {
+        if (index == sourceIndex) continue;
+        const ButtonBinding &binding = bindings[static_cast<size_t>(index)];
+        if (binding.type != ButtonActionType::VirtualButton) continue;
+        if (binding.target == candidateVirtualButton) {
+            change.requiresResolution = true;
+            change.displacedSourceIndex = index;
+            ++displacedCount;
+        }
+        if (change.previousVirtualButton > 0 && binding.target == change.previousVirtualButton) {
+            previousTargetOccupied = true;
+        }
+    }
+    change.canSwap = change.requiresResolution && displacedCount == 1
+        && change.previousVirtualButton > 0 && !previousTargetOccupied;
+    return change;
+}
+
+bool applyButtonRouteChange(ButtonBindings &bindings, const ButtonRouteChange &change,
+                            ButtonRouteResolution resolution)
+{
+    if (!change.valid || resolution == ButtonRouteResolution::Cancel) return false;
+    if (bindings.size() <= static_cast<size_t>(change.sourceIndex)) {
+        bindings.resize(static_cast<size_t>(change.sourceIndex + 1));
+    }
+    if (change.requiresResolution && resolution == ButtonRouteResolution::Replace) {
+        for (int index = 0; index < static_cast<int>(bindings.size()); ++index) {
+            if (index == change.sourceIndex) continue;
+            ButtonBinding &binding = bindings[static_cast<size_t>(index)];
+            if (binding.type != ButtonActionType::VirtualButton
+                || binding.target != change.targetVirtualButton) {
+                continue;
+            }
+            if (change.canSwap && index == change.displacedSourceIndex) {
+                assign(binding, change.previousVirtualButton);
+            } else {
+                disable(binding);
+            }
+        }
+    }
+    assign(bindings[static_cast<size_t>(change.sourceIndex)], change.targetVirtualButton);
+    return true;
 }
 
 bool hasButtonMappingConflict(const ButtonBindings &bindings, int sourceIndex,
@@ -231,16 +296,22 @@ RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
                                                int vjoyButtonCapacity)
 {
     RuntimeButtonTargets targets{};
-    std::array<bool, kMaximumVirtualButtons + 1> occupied{};
     const int count = std::min(static_cast<int>(bindings.size()), kMaximumPhysicalButtons);
     for (int index = 0; index < count; ++index) {
         const ButtonBinding &binding = bindings[static_cast<size_t>(index)];
-        if (isButtonBindingValid(binding, vjoyButtonCapacity)
-            && binding.type == ButtonActionType::VirtualButton
-            && !occupied[static_cast<size_t>(binding.target)]) {
-            targets[static_cast<size_t>(index)] = binding.target;
-            occupied[static_cast<size_t>(binding.target)] = true;
+        if (!isButtonBindingValid(binding, vjoyButtonCapacity)
+            || binding.type != ButtonActionType::VirtualButton) {
+            continue;
         }
+        bool shared = false;
+        for (int previous = 0; previous < index; ++previous) {
+            int &existing = targets[static_cast<size_t>(previous)];
+            if (existing == binding.target || existing == -binding.target) {
+                existing = -binding.target;
+                shared = true;
+            }
+        }
+        targets[static_cast<size_t>(index)] = shared ? -binding.target : binding.target;
     }
     return targets;
 }
@@ -268,6 +339,9 @@ VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
         const int target = targets[static_cast<size_t>(source)];
         if (target >= 1 && target <= capacity) {
             virtualStates[static_cast<size_t>(target)] = physical[static_cast<size_t>(source)];
+        } else if (target <= -1 && target >= -capacity) {
+            virtualStates[static_cast<size_t>(-target)] = virtualStates[static_cast<size_t>(-target)]
+                || physical[static_cast<size_t>(source)];
         }
     }
     return virtualStates;
