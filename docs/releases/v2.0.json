@@ -320,7 +320,7 @@
   {
     "version": "2.1.4",
     "tag": "v2.1.4",
-    "releaseTitle": "HOTAS BF6 Simple v2.1.4 — Runtime Responsiveness & GUI Efficiency",
+    "releaseTitle": "v2.1.4",
     "title": "Runtime Responsiveness & GUI Efficiency",
     "summary": "HOTAS BF6 v2.1.4 removes unnecessary GUI-thread work and high-frequency presentation churn, then unloads inactive QML page trees, so the mapper remains responsive while games, browsers, launchers, Discord, and other desktop applications are running.",
     "status": "current",
