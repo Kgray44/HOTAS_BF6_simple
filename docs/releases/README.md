@@ -6,10 +6,11 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.1.3 | Current | Profiles, Categories & Game Detection UX; recommended published release |
-| v2.1.2 | Superseded | Deep Tray & Runtime Efficiency; upgrade to v2.1.3 for the clearer Profile/Category workflow and smart game management |
-| v2.1.1 | Superseded | Profile Library Completion & Portable Pack Safety; upgrade to v2.1.3 for the completed, clearer Profile/Category workflow |
-| v2.1.0 | Superseded | Profile Library & Portable Configuration foundation; upgrade to v2.1.3 for clearer game detection and category behavior |
+| v2.1.4 | Current | Runtime Responsiveness, GUI Efficiency & unloadable page lifecycle; recommended published release |
+| v2.1.3 | Superseded | Profiles, Categories & Game Detection UX; upgrade to v2.1.4 for asynchronous discovery and lower-churn presentation |
+| v2.1.2 | Superseded | Deep Tray & Runtime Efficiency; upgrade to v2.1.4 for the responsive control-plane follow-through |
+| v2.1.1 | Superseded | Profile Library Completion & Portable Pack Safety; upgrade to v2.1.4 for the current responsive runtime |
+| v2.1.0 | Superseded | Profile Library & Portable Configuration foundation; upgrade to v2.1.4 for the current runtime |
 | v2.0.12 | Superseded | Automation Editor Interaction Qualification; upgrade to v2.1.3 for the completed Profile Library and efficient tray runtime |
 | v2.0.7 | Superseded | Published Manifest Transport Hotfix; upgrade to v2.1.3 for the current release |
 | v2.0.6 | Superseded | Published Manifest Readiness Hotfix; upgrade to v2.0.7 for correct hosted-runner manifest decoding |
@@ -40,6 +41,17 @@ The JSON files in this directory are the authoritative source for historical Git
 | v1.2 | Historical source release | Retroactive tag/Release at verified v1.2 baseline; no installer asset |
 | v1.1 | Historical source release | Retroactive notes only; no installer asset |
 | v1.0 | Pre-repository milestone | No exact Git source snapshot exists; do not fabricate a tag/Release |
+
+## v2.1.4 page-lifecycle memory qualification
+
+Run this as a machine-specific acceptance check against a fresh packaged build; it complements, but does not replace, the offscreen lifecycle test.
+
+1. Record the mapper process's **Working Set** and **Private Bytes** immediately after launch and after it is idle.
+2. Visit Overview, Settings, Profiles, Axes, Buttons, Calibration, Curve Editor, Automation, and Diagnostics. Return to Overview and repeat the sequence several times.
+3. While leaving Automation with an unsaved edit and Profiles with an unfinished import choice, reopen each page and confirm the draft is still present.
+4. Record Working Set and Private Bytes again after returning to Overview. Confirm only the active page is live, no inactive diagnostics/button/Canvas tree continues telemetry or rendering, and memory does not keep increasing over repeated completed cycles.
+
+Fresh installs normally aim for roughly 100–160 MB Working Set, typical interactive use for roughly 120–180 MB, and a post-navigation result below 200 MB where the machine and Qt graphics stack permit. These are diagnostic targets, not portable hard failures: record both measures and explain material machine-specific differences.
 
 ## Rules
 

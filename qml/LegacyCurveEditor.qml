@@ -26,6 +26,8 @@ Item {
     property real dragOutput: 0
     property real graphContextInput: 0
     property real graphContextOutput: 0
+    property var presentationState: ({})
+    signal presentationStateCaptured(var state)
 
     onLiveTelemetryChanged: graph.requestPaint()
     onResponseViewChanged: graph.requestPaint()
@@ -195,6 +197,29 @@ Item {
     }
 
     function tone(ok) { return ok ? "#9fc9bb" : "#d49b62" }
+    function restorePresentationState() {
+        const saved = presentationState || ({})
+        if (!saved.initialized) return
+        selectedPoint = Number(saved.selectedPoint)
+        responseView = !!saved.responseView
+        showEffective = !!saved.showEffective
+        signalPathVisible = !!saved.signalPathVisible
+        characteristicsVisible = !!saved.characteristicsVisible
+        snapIncrement = Number(saved.snapIncrement || 0.01)
+    }
+    function capturePresentationState() {
+        presentationStateCaptured({
+            initialized: true,
+            selectedPoint: selectedPoint,
+            responseView: responseView,
+            showEffective: showEffective,
+            signalPathVisible: signalPathVisible,
+            characteristicsVisible: characteristicsVisible,
+            snapIncrement: snapIncrement
+        })
+    }
+    Component.onCompleted: restorePresentationState()
+    Component.onDestruction: capturePresentationState()
     function percent(value) {
         const n = Number(value)
         if (editorState.unipolar) return (n * 100).toFixed(1) + "%"

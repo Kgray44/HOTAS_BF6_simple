@@ -24,7 +24,11 @@ Flickable {
     property bool replaceCategoryConfirmed: false
     property bool replaceProfilesConfirmed: false
     property var runningApplications: []
+    // The shell owns this compact snapshot while the heavy page Loader is
+    // inactive. It intentionally excludes delegates, dialogs, and models.
+    property var presentationState: ({})
     signal navigateToPage(int page)
+    signal presentationStateCaptured(var state)
 
     anchors.fill: parent
     contentWidth: width
@@ -57,6 +61,49 @@ Flickable {
         for (let i = 0; i < profiles.length; ++i) if (profiles[i].categoryId === id) result.push(profiles[i])
         return result
     }
+    function copyValue(value) { return JSON.parse(JSON.stringify(value)) }
+    function restorePresentationState() {
+        const saved = presentationState || ({})
+        if (!saved.view) return
+        view = saved.view
+        selectedCategoryId = saved.selectedCategoryId || ""
+        selectedProfileId = saved.selectedProfileId || ""
+        transferMode = saved.transferMode || "import"
+        transferKind = saved.transferKind || "profile"
+        transferFile = saved.transferFile || ""
+        transferProfileId = saved.transferProfileId || ""
+        transferCategoryId = saved.transferCategoryId || ""
+        selectedPackCategoryIds = copyValue(saved.selectedPackCategoryIds || [])
+        selectedPackProfileIds = copyValue(saved.selectedPackProfileIds || [])
+        categoryConflictMode = saved.categoryConflictMode || "merge"
+        applyImportedCalibration = !!saved.applyImportedCalibration
+        replaceCategoryConfirmed = !!saved.replaceCategoryConfirmed
+        replaceProfilesConfirmed = !!saved.replaceProfilesConfirmed
+        contentY = Number(saved.contentY || 0)
+        if (saved.transferDialogOpen) Qt.callLater(function() { transferDialog.open() })
+    }
+    function capturePresentationState() {
+        presentationStateCaptured({
+            view: view,
+            selectedCategoryId: selectedCategoryId,
+            selectedProfileId: selectedProfileId,
+            transferMode: transferMode,
+            transferKind: transferKind,
+            transferFile: transferFile,
+            transferProfileId: transferProfileId,
+            transferCategoryId: transferCategoryId,
+            selectedPackCategoryIds: copyValue(selectedPackCategoryIds),
+            selectedPackProfileIds: copyValue(selectedPackProfileIds),
+            categoryConflictMode: categoryConflictMode,
+            applyImportedCalibration: applyImportedCalibration,
+            replaceCategoryConfirmed: replaceCategoryConfirmed,
+            replaceProfilesConfirmed: replaceProfilesConfirmed,
+            contentY: contentY,
+            transferDialogOpen: transferDialog.visible
+        })
+    }
+    Component.onCompleted: restorePresentationState()
+    Component.onDestruction: capturePresentationState()
     function returnToLibrary() { view = "library"; selectedCategoryId = ""; selectedProfileId = "" }
     function openCategory(id) { selectedCategoryId = id; selectedProfileId = ""; view = "category"; refreshRunningApplications() }
     function openProfile(id) { selectedProfileId = id; view = "profile" }
@@ -91,7 +138,17 @@ Flickable {
         }
         return null
     }
-    function refreshRunningApplications() { if (backendObject) runningApplications = backendObject.runningApplications() }
+    function refreshRunningApplications() {
+        if (!backendObject) return
+        runningApplications = backendObject.runningApplications()
+        backendObject.refreshRunningApplications()
+    }
+    Connections {
+        target: backendObject
+        function onRunningApplicationsChanged() {
+            root.runningApplications = backendObject.runningApplications()
+        }
+    }
     function saveGameRule(rawRule, previousRule) {
         if (!root.selectedCategory) return false
         const rules = root.selectedCategory.executableRules.slice()

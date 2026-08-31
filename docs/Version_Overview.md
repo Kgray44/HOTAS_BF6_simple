@@ -2,11 +2,24 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.3**
+**Current release: v2.1.4**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.4 — Runtime Responsiveness & GUI Efficiency
+
+Keeps HOTAS BF6 responsive under realistic desktop load by moving discovery off the Qt event loop, reducing presentation cadence, making expensive presentation models change-driven, and unloading inactive QML pages while preserving the allocation-free DirectInput-to-vJoy mapper.
+
+- Automatic game detection now samples Windows processes on a low-priority control-plane thread at 2.5 seconds visible, 5 seconds minimized, and 7.5 seconds tray-hidden. It matches stable executable basenames, preserves deterministic category tie-breaking, and ignores unchanged executable sets.
+- DirectInput controller inventory enumeration now runs on a low-priority control-plane thread and applies a completed inventory only when it actually changes; MappingWorker remains independent of discovery.
+- Visible analog and POV presentation is limited to approximately 30 Hz, numeric telemetry to 10 Hz, and percentile sampling to four times per second. Minimized and tray-hidden Deep Tray Sleep behavior remains intact.
+- The 128-button configuration model is cached separately from live pressed state, so axis telemetry no longer reconstructs button cards or wakes their QML bindings.
+- Every main page now unloads when it is left, including diagnostics, button cards, calibration, curve editing, and Automation. Profile import and unsaved Automation-editor values survive as compact root-owned state rather than retained QML object trees.
+- Test-only event-loop heartbeat and notification counters expose UI delay thresholds, background discovery completion, notification cadence, and structural-model rebuilds without production diagnostic work.
+- The offscreen lifecycle qualification cycles all nine pages 20 times in Legacy, Standard, and Top Gun; it proves one loaded page and no retained QML objects after each cycle, preserves draft/import state, and records working-set and private-byte samples. Live packaged-memory acceptance remains machine-specific.
+- No DirectInput polling, transforms, Automation report evaluation, vJoy writes, filesystem work, process inspection, UI signals, allocations, or locks were added to the mapper report loop.
 
 ## v2.1.3 — Profiles, Categories & Game Detection UX
 

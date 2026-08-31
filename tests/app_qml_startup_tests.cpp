@@ -4,6 +4,8 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QEvent>
+#include <QEventLoop>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -19,11 +21,16 @@
 #include <QVariantMap>
 #include <QWindow>
 
+#include <windows.h>
+#include <psapi.h>
+
 #include <cstdio>
 
 using namespace Qt::StringLiterals;
 
 namespace {
+
+bool evaluateEditorFunction(QObject *root, const QString &expression);
 
 bool failAutomationEditorTest(const QString &message)
 {
@@ -32,6 +39,146 @@ bool failAutomationEditorTest(const QString &message)
     std::fputc('\n', stderr);
     qCritical().noquote() << QStringLiteral("Automation QML interaction test failed: %1").arg(message);
     return false;
+}
+
+bool failPresentationLifecycleTest(const QString &message)
+{
+    const QByteArray encoded = message.toUtf8();
+    std::fputs(encoded.constData(), stderr);
+    std::fputc('\n', stderr);
+    qCritical().noquote() << QStringLiteral("Presentation lifecycle test failed: %1").arg(message);
+    return false;
+}
+
+void settlePresentation()
+{
+    for (int iteration = 0; iteration < 3; ++iteration) {
+        QCoreApplication::sendPostedEvents();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+    }
+}
+
+struct ProcessMemoryFootprint {
+    quint64 workingSetBytes = 0;
+    quint64 privateBytes = 0;
+};
+
+ProcessMemoryFootprint currentProcessMemoryFootprint()
+{
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+            reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters), sizeof(counters))) {
+        return {};
+    }
+    return {static_cast<quint64>(counters.WorkingSetSize), static_cast<quint64>(counters.PrivateUsage)};
+}
+
+QObject *pageItem(QObject *surface, int page)
+{
+    QQmlExpression expression(qmlContext(surface), surface,
+        QStringLiteral("pageItem(%1)").arg(page));
+    const QVariant value = expression.evaluate();
+    if (expression.hasError()) return nullptr;
+    return qvariant_cast<QObject *>(value);
+}
+
+bool selectPage(QObject *surface, int page)
+{
+    if (!surface->setProperty("currentPage", page)) {
+        return failPresentationLifecycleTest(QStringLiteral("currentPage was not writable"));
+    }
+    settlePresentation();
+    if (surface->property("loadedPageCount").toInt() != 1) {
+        return failPresentationLifecycleTest(QStringLiteral("page %1 left more than one loaded page").arg(page));
+    }
+    if (!pageItem(surface, page)) {
+        return failPresentationLifecycleTest(QStringLiteral("page %1 did not load on entry").arg(page));
+    }
+    return true;
+}
+
+bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QString &theme)
+{
+    QObject *presentation = shell->findChild<QObject *>(QStringLiteral("presentationLoader"));
+    if (!presentation) return failPresentationLifecycleTest(QStringLiteral("presentation Loader was not found"));
+    QObject *surface = qvariant_cast<QObject *>(presentation->property("item"));
+    if (!surface) return failPresentationLifecycleTest(QStringLiteral("theme surface was not loaded"));
+
+    const ProcessMemoryFootprint fresh = currentProcessMemoryFootprint();
+    const int freshObjectCount = surface->findChildren<QObject *>().size();
+    for (int cycle = 0; cycle < 20; ++cycle) {
+        for (int page = 0; page <= 8; ++page) {
+            if (!selectPage(surface, page)) return false;
+        }
+    }
+    settlePresentation();
+    const ProcessMemoryFootprint afterNavigation = currentProcessMemoryFootprint();
+    const int afterNavigationObjectCount = surface->findChildren<QObject *>().size();
+    const QString memoryLog = QStringLiteral("presentation_lifecycle_memory theme=%1 fresh_working_set_mb=%2 fresh_private_mb=%3 fresh_objects=%4 after_20_cycles_working_set_mb=%5 after_20_cycles_private_mb=%6 after_20_cycles_objects=%7")
+        .arg(theme)
+        .arg(fresh.workingSetBytes / (1024.0 * 1024.0), 0, 'f', 1)
+        .arg(fresh.privateBytes / (1024.0 * 1024.0), 0, 'f', 1)
+        .arg(freshObjectCount)
+        .arg(afterNavigation.workingSetBytes / (1024.0 * 1024.0), 0, 'f', 1)
+        .arg(afterNavigation.privateBytes / (1024.0 * 1024.0), 0, 'f', 1)
+        .arg(afterNavigationObjectCount);
+    qInfo().noquote() << memoryLog;
+    std::fprintf(stderr, "%s\n", qPrintable(memoryLog));
+    if (fresh.workingSetBytes == 0 || fresh.privateBytes == 0) {
+        return failPresentationLifecycleTest(QStringLiteral("Windows memory counters were unavailable"));
+    }
+    if (afterNavigationObjectCount != freshObjectCount) {
+        return failPresentationLifecycleTest(QStringLiteral("unloaded pages retained %1 QML objects")
+            .arg(afterNavigationObjectCount - freshObjectCount));
+    }
+
+    if (!selectPage(surface, 7)) return false;
+    const QString automationId = backend.createAutomation();
+    QObject *automation = pageItem(surface, 7);
+    if (automationId.isEmpty() || !automation
+        || !evaluateEditorFunction(automation,
+            QStringLiteral("openRuleById('%1'); setBehaviorMode(1)").arg(automationId))) {
+        return failPresentationLifecycleTest(QStringLiteral("automation draft could not be prepared"));
+    }
+    if (!automation->property("editing").toBool() || !automation->property("draftDirty").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("automation draft was not dirty before unload"));
+    }
+    if (!selectPage(surface, 8) || pageItem(surface, 7)) {
+        return failPresentationLifecycleTest(QStringLiteral("automation page remained loaded after navigation"));
+    }
+    if (!selectPage(surface, 7)) return false;
+    automation = pageItem(surface, 7);
+    const QVariantMap restoredAutomationDraft = automation ? automation->property("draft").toMap() : QVariantMap{};
+    if (!automation || !automation->property("editing").toBool()
+        || !automation->property("draftDirty").toBool()
+        || automation->property("editingId").toString() != automationId
+        || restoredAutomationDraft.value(QStringLiteral("activationMode")).toInt() != 1) {
+        return failPresentationLifecycleTest(QStringLiteral("automation draft was not preserved across unload"));
+    }
+
+    if (!selectPage(surface, 5)) return false;
+    QObject *profiles = pageItem(surface, 5);
+    if (!profiles
+        || !profiles->setProperty("view", QStringLiteral("category"))
+        || !profiles->setProperty("transferFile", QStringLiteral("C:/draft.hbf6pack"))
+        || !profiles->setProperty("categoryConflictMode", QStringLiteral("replace"))
+        || !profiles->setProperty("applyImportedCalibration", true)) {
+        return failPresentationLifecycleTest(QStringLiteral("profile import state could not be prepared"));
+    }
+    if (!selectPage(surface, 8) || pageItem(surface, 5)) {
+        return failPresentationLifecycleTest(QStringLiteral("profile page remained loaded after navigation"));
+    }
+    if (!selectPage(surface, 5)) return false;
+    profiles = pageItem(surface, 5);
+    if (!profiles || profiles->property("view").toString() != QStringLiteral("category")
+        || profiles->property("transferFile").toString() != QStringLiteral("C:/draft.hbf6pack")
+        || profiles->property("categoryConflictMode").toString() != QStringLiteral("replace")
+        || !profiles->property("applyImportedCalibration").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
+    }
+    return selectPage(surface, 8);
 }
 
 QVariantMap draftRow(QObject *root, const char *collection, int index)
@@ -160,7 +307,9 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty()
             || !qobject_cast<QWindow *>(engine.rootObjects().constFirst())) return 1;
 
-        application.processEvents();
+        settlePresentation();
+        if (!verifyPageLifecycle(backend,
+                qobject_cast<QWindow *>(engine.rootObjects().constFirst()), theme)) return 1;
     }
 
     if (!verifyAutomationEditorInteraction(backend)) return 1;
