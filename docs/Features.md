@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.1.4**
+**Current release: v2.1.5**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -49,6 +49,8 @@ Physical DirectInput axes can be routed only to the selected profile layout's av
 - Centered or One-Sided axis domain selectable per profile and per axis.
 - Direct decimal Output Min/Max entry with 0.1% step adjustment.
 - Per-profile custom physical-axis names and game-facing virtual-axis aliases.
+- Control-plane Input Learning and Quick Assign observe existing published input snapshots, reject ambiguous axis travel, and apply through the existing route-conflict checks.
+- Axis Name and Game Output Name keep stable local drafts while live telemetry refreshes; physical names and virtual aliases remain separate persisted concepts.
 - Global Disabled Axis Value from -100.0% to +100.0% for parked unclaimed outputs.
 
 ## Mapping Safety Controls
@@ -70,6 +72,8 @@ Physical buttons are discovered from the active controller and routed to availab
 - Destination uniqueness avoids ambiguous releases from multiple physical sources.
 - Press-to-identify and live physical/output state in the UI.
 - Per-profile custom physical-button names.
+- Custom button names become inline-editable card titles while immutable physical button numbers remain visible.
+- Subtle Learn actions reuse the existing button route and conflict behavior.
 - Profile-control or mapping-control buttons are consumed from normal vJoy routing while their saved routes remain intact.
 
 ## POV / Hat Support

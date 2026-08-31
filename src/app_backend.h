@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "input_learning.h"
 #include "mapping_worker.h"
 
 #include <QElapsedTimer>
@@ -164,6 +165,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantMap portableImportPreview READ portableImportPreview NOTIFY stateChanged)
     Q_PROPERTY(QString portableImportStatus READ portableImportStatus NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
+    Q_PROPERTY(QVariantMap inputLearning READ inputLearning NOTIFY inputLearningChanged)
+    Q_PROPERTY(QVariantList quickAssignAxisTargets READ quickAssignAxisTargets NOTIFY stateChanged)
 
 public:
     explicit AppBackend(QObject *parent = nullptr);
@@ -295,6 +298,8 @@ public:
     QVariantList profileTriggerChoices() const;
     QVariantList nativePovTargetChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
+    QVariantMap inputLearning() const;
+    QVariantList quickAssignAxisTargets() const;
     bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
     QVariantMap portableImportPreview() const;
     QString portableImportStatus() const { return m_portableImportStatus; }
@@ -310,6 +315,12 @@ public:
     Q_INVOKABLE void setAxisCustomName(int physicalAxis, const QString &name);
     Q_INVOKABLE void setAxisRangeMode(int physicalAxis, const QString &mode);
     Q_INVOKABLE void setVirtualAxisAlias(const QString &target, const QString &alias);
+    Q_INVOKABLE bool startAxisLearning(const QString &target);
+    Q_INVOKABLE bool startButtonLearning(int virtualButton);
+    Q_INVOKABLE bool startPovLearning(int virtualButton);
+    Q_INVOKABLE void retryInputLearning();
+    Q_INVOKABLE void cancelInputLearning();
+    Q_INVOKABLE bool resolveInputLearningConflict(bool replace);
     Q_INVOKABLE void setSelectedAxis(int physicalAxis);
     Q_INVOKABLE void setAxisInverted(int physicalAxis, bool inverted);
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
@@ -452,6 +463,7 @@ signals:
     void selectedAxisCurveChanged();
     void eventLogChanged();
     void presentationStateChanged();
+    void inputLearningChanged();
     // Setup presentation must keep the discovered controller identity instead
     // of inferring a target from whichever controller is currently active.
     void controllerSetupRequested(const QStringList &targetDirectInputIds);
@@ -470,6 +482,31 @@ private:
         TrayHidden,
     };
 
+    enum class InputLearningKind { None, Axis, Button, Pov };
+    enum class InputLearningPhase { Idle, Waiting, Ambiguous, Conflict, Assigned };
+
+    struct InputLearningState {
+        InputLearningKind kind = InputLearningKind::None;
+        InputLearningPhase phase = InputLearningPhase::Idle;
+        QString target;
+        int virtualButton = 0;
+        int sourceAxis = -1;
+        int sourceButton = 0;
+        int sourcePovHat = 0;
+        PovDirection sourcePovDirection = PovDirection::Centered;
+        QString sourceLabel;
+        QString message;
+        std::array<float, kPhysicalAxisCount> axisBaseline{};
+        std::array<bool, kPhysicalAxisCount> axisAvailable{};
+        std::array<PhysicalAxisActivity, kPhysicalAxisCount> axisActivity{};
+        std::array<bool, kMaximumPhysicalButtons> buttonBaseline{};
+        std::array<int, kMaximumPhysicalPovs> povBaseline{[] {
+            std::array<int, kMaximumPhysicalPovs> values{};
+            values.fill(-1);
+            return values;
+        }()};
+    };
+
     void persistAndApply();
     void refreshControllerInventory();
     void evaluateGameDetection();
@@ -483,6 +520,11 @@ private:
     bool rebuildControllerUiModel();
     void rebuildButtonUiModel();
     bool refreshButtonUiModelRuntimeState();
+    void captureInputLearningBaseline();
+    void processInputLearning();
+    bool applyLearnedInput();
+    QString learnedAxisLabel(int physicalAxis) const;
+    QString learnedButtonLabel(int physicalButton) const;
     void rebuildCurveAxisChoices();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
     SavedControllerRecord *activeControllerRecord();
@@ -575,6 +617,7 @@ private:
     QVariantList m_runningApplications;
     QHash<QString, QString> m_runningApplicationPathCache;
     QVariantList m_buttonUiModel;
+    InputLearningState m_inputLearning;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;

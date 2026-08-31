@@ -8,6 +8,7 @@
 #include "controller_diagnostics.h"
 #include "controller_manager.h"
 #include "hotas_build_version.h"
+#include "input_learning.h"
 #include "launcher_core.h"
 #include "profile_model.h"
 #include "profile_portability.h"
@@ -1699,6 +1700,55 @@ QString AppBackend::virtualAxisStatus() const
         : u"Axes: "_qs + available.join(u" / "_qs);
 }
 
+QVariantList AppBackend::quickAssignAxisTargets() const
+{
+    QVariantList targets;
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    if (!layout) return targets;
+    const ControllerProfile &profile = currentProfile();
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        if (!layout->requirements.axes[static_cast<size_t>(index)]) continue;
+        const VirtualAxis axis = static_cast<VirtualAxis>(index);
+        const QString target = virtualAxisLabel(axis);
+        const QString alias = profile.virtualAxisAliases[static_cast<size_t>(index)].trimmed();
+        targets.append(QVariantMap{{u"target"_qs, target},
+            {u"label"_qs, alias.isEmpty() ? target : alias},
+            {u"technicalLabel"_qs, QString(u"vJoy %1"_qs).arg(target)}});
+    }
+    return targets;
+}
+
+QVariantMap AppBackend::inputLearning() const
+{
+    const auto kindName = [this] {
+        switch (m_inputLearning.kind) {
+        case InputLearningKind::Axis: return u"axis"_qs;
+        case InputLearningKind::Button: return u"button"_qs;
+        case InputLearningKind::Pov: return u"pov"_qs;
+        case InputLearningKind::None: return u"none"_qs;
+        }
+        return u"none"_qs;
+    };
+    const auto phaseName = [this] {
+        switch (m_inputLearning.phase) {
+        case InputLearningPhase::Waiting: return u"waiting"_qs;
+        case InputLearningPhase::Ambiguous: return u"ambiguous"_qs;
+        case InputLearningPhase::Conflict: return u"conflict"_qs;
+        case InputLearningPhase::Assigned: return u"assigned"_qs;
+        case InputLearningPhase::Idle: return u"idle"_qs;
+        }
+        return u"idle"_qs;
+    };
+    return {{u"active"_qs, m_inputLearning.kind != InputLearningKind::None},
+        {u"kind"_qs, kindName()}, {u"phase"_qs, phaseName()},
+        {u"target"_qs, m_inputLearning.target},
+        {u"targetLabel"_qs, m_inputLearning.kind == InputLearningKind::Axis
+            ? QString(u"vJoy %1"_qs).arg(m_inputLearning.target)
+            : QString(u"vJoy Button %1"_qs).arg(m_inputLearning.virtualButton)},
+        {u"sourceLabel"_qs, m_inputLearning.sourceLabel},
+        {u"message"_qs, m_inputLearning.message}};
+}
+
 QStringList AppBackend::mappingControlActionChoices() const
 {
     return {u"None"_qs, u"Mapping On"_qs, u"Mapping Off"_qs, u"Toggle Mapping"_qs};
@@ -1832,6 +1882,118 @@ void AppBackend::setVirtualAxisAlias(const QString &target, const QString &alias
     QString normalized = alias.trimmed().left(48);
     currentProfile().virtualAxisAliases[static_cast<size_t>(index)] = normalized;
     persistAndApply();
+}
+
+bool AppBackend::startAxisLearning(const QString &target)
+{
+    const VirtualAxis axis = virtualAxisFromString(target);
+    const int index = static_cast<int>(axis);
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    if (!physicalConnected() || index <= 0 || index >= kVirtualAxisSlotCount || !layout
+        || !layout->requirements.axes[static_cast<size_t>(index)]) {
+        return false;
+    }
+    m_inputLearning = {};
+    m_inputLearning.kind = InputLearningKind::Axis;
+    m_inputLearning.phase = InputLearningPhase::Waiting;
+    m_inputLearning.target = virtualAxisLabel(axis);
+    m_inputLearning.message = u"Move the physical control you want to assign."_qs;
+    captureInputLearningBaseline();
+    emit inputLearningChanged();
+    return true;
+}
+
+bool AppBackend::startButtonLearning(int virtualButton)
+{
+    if (!physicalConnected() || virtualButton <= 0 || virtualButton > vjoyButtonCount()) return false;
+    m_inputLearning = {};
+    m_inputLearning.kind = InputLearningKind::Button;
+    m_inputLearning.phase = InputLearningPhase::Waiting;
+    m_inputLearning.virtualButton = virtualButton;
+    m_inputLearning.message = u"Press the physical button you want to use."_qs;
+    captureInputLearningBaseline();
+    emit inputLearningChanged();
+    return true;
+}
+
+bool AppBackend::startPovLearning(int virtualButton)
+{
+    if (!physicalConnected() || povCount() <= 0 || virtualButton <= 0
+        || virtualButton > vjoyButtonCount()) {
+        return false;
+    }
+    m_inputLearning = {};
+    m_inputLearning.kind = InputLearningKind::Pov;
+    m_inputLearning.phase = InputLearningPhase::Waiting;
+    m_inputLearning.virtualButton = virtualButton;
+    m_inputLearning.message = u"Move the hat in the desired direction."_qs;
+    captureInputLearningBaseline();
+    emit inputLearningChanged();
+    return true;
+}
+
+void AppBackend::retryInputLearning()
+{
+    if (m_inputLearning.kind == InputLearningKind::None) return;
+    m_inputLearning.phase = InputLearningPhase::Waiting;
+    m_inputLearning.sourceAxis = -1;
+    m_inputLearning.sourceButton = 0;
+    m_inputLearning.sourcePovHat = 0;
+    m_inputLearning.sourceLabel.clear();
+    switch (m_inputLearning.kind) {
+    case InputLearningKind::Axis:
+        m_inputLearning.message = u"Move only the physical control you want to assign."_qs;
+        break;
+    case InputLearningKind::Button:
+        m_inputLearning.message = u"Press the physical button you want to use."_qs;
+        break;
+    case InputLearningKind::Pov:
+        m_inputLearning.message = u"Move the hat in the desired direction."_qs;
+        break;
+    case InputLearningKind::None:
+        break;
+    }
+    captureInputLearningBaseline();
+    emit inputLearningChanged();
+}
+
+void AppBackend::cancelInputLearning()
+{
+    if (m_inputLearning.kind == InputLearningKind::None) return;
+    m_inputLearning = {};
+    emit inputLearningChanged();
+}
+
+bool AppBackend::resolveInputLearningConflict(bool replace)
+{
+    if (m_inputLearning.phase != InputLearningPhase::Conflict) return false;
+    if (!replace) {
+        cancelInputLearning();
+        return true;
+    }
+    bool assigned = false;
+    switch (m_inputLearning.kind) {
+    case InputLearningKind::Axis:
+        assigned = setMapping(m_inputLearning.sourceAxis, m_inputLearning.target, true);
+        break;
+    case InputLearningKind::Button:
+        assigned = setButtonMapping(m_inputLearning.sourceButton, m_inputLearning.virtualButton, true);
+        break;
+    case InputLearningKind::Pov:
+        assigned = setPovMapping(m_inputLearning.sourcePovHat,
+            povDirectionIndex(m_inputLearning.sourcePovDirection), m_inputLearning.virtualButton, true);
+        break;
+    case InputLearningKind::None:
+        break;
+    }
+    if (assigned) {
+        m_inputLearning.phase = InputLearningPhase::Assigned;
+        m_inputLearning.message = QString(u"%1 assigned."_qs).arg(m_inputLearning.sourceLabel);
+    } else {
+        m_inputLearning.message = u"That assignment is not available for the current output layout."_qs;
+    }
+    emit inputLearningChanged();
+    return assigned;
 }
 
 void AppBackend::setSelectedAxis(int physicalAxis)
@@ -4750,11 +4912,135 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
     return physical;
 }
 
+void AppBackend::captureInputLearningBaseline()
+{
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const size_t slot = static_cast<size_t>(index);
+        m_inputLearning.axisBaseline[slot] = runtime.normalized[slot].load();
+        m_inputLearning.axisAvailable[slot] = runtime.axisAvailable[slot].load();
+        m_inputLearning.axisActivity[slot] = static_cast<PhysicalAxisActivity>(
+            runtime.axisActivity[slot].load());
+    }
+    for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+        m_inputLearning.buttonBaseline[static_cast<size_t>(index)] =
+            runtime.physicalButtonPressed[static_cast<size_t>(index)].load();
+    }
+    for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+        m_inputLearning.povBaseline[static_cast<size_t>(index)] =
+            runtime.povValues[static_cast<size_t>(index)].load();
+    }
+}
+
+QString AppBackend::learnedAxisLabel(int physicalAxis) const
+{
+    if (!validAxis(physicalAxis)) return {};
+    const QString custom = currentProfile().axes[static_cast<size_t>(physicalAxis)].customName.trimmed();
+    return custom.isEmpty() ? physicalAxisLabel(static_cast<PhysicalAxis>(physicalAxis)) : custom;
+}
+
+QString AppBackend::learnedButtonLabel(int physicalButton) const
+{
+    if (!validPhysicalButton(physicalButton)) return {};
+    const int source = physicalButton - 1;
+    const ButtonBindings &bindings = currentProfile().buttons;
+    const QString custom = source < static_cast<int>(bindings.size())
+        ? bindings[static_cast<size_t>(source)].customName.trimmed() : QString{};
+    return custom.isEmpty() ? QString(u"Button %1"_qs).arg(physicalButton) : custom;
+}
+
+bool AppBackend::applyLearnedInput()
+{
+    bool assigned = false;
+    switch (m_inputLearning.kind) {
+    case InputLearningKind::Axis:
+        assigned = setMapping(m_inputLearning.sourceAxis, m_inputLearning.target, false);
+        break;
+    case InputLearningKind::Button:
+        assigned = setButtonMapping(m_inputLearning.sourceButton, m_inputLearning.virtualButton, false);
+        break;
+    case InputLearningKind::Pov:
+        assigned = setPovMapping(m_inputLearning.sourcePovHat,
+            povDirectionIndex(m_inputLearning.sourcePovDirection), m_inputLearning.virtualButton, false);
+        break;
+    case InputLearningKind::None:
+        return false;
+    }
+    m_inputLearning.phase = assigned ? InputLearningPhase::Assigned : InputLearningPhase::Conflict;
+    m_inputLearning.message = assigned
+        ? QString(u"%1 assigned."_qs).arg(m_inputLearning.sourceLabel)
+        : QString(u"%1 conflicts with an existing route."_qs).arg(m_inputLearning.sourceLabel);
+    emit inputLearningChanged();
+    return assigned;
+}
+
+void AppBackend::processInputLearning()
+{
+    if (m_inputLearning.phase != InputLearningPhase::Waiting) return;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    switch (m_inputLearning.kind) {
+    case InputLearningKind::Axis: {
+        std::array<float, kPhysicalAxisCount> current{};
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            current[static_cast<size_t>(index)] = runtime.normalized[static_cast<size_t>(index)].load();
+        }
+        const AxisLearningSelection selection = selectLearnedAxis(m_inputLearning.axisBaseline,
+            current, m_inputLearning.axisAvailable, m_inputLearning.axisActivity);
+        if (selection.result == AxisLearningResult::Waiting) return;
+        if (selection.result == AxisLearningResult::Ambiguous) {
+            m_inputLearning.phase = InputLearningPhase::Ambiguous;
+            m_inputLearning.message = u"MULTIPLE AXES DETECTED — Move only the control you want to assign."_qs;
+            emit inputLearningChanged();
+            return;
+        }
+        m_inputLearning.sourceAxis = selection.axis;
+        m_inputLearning.sourceLabel = learnedAxisLabel(selection.axis);
+        applyLearnedInput();
+        return;
+    }
+    case InputLearningKind::Button:
+        {
+            std::array<bool, kMaximumPhysicalButtons> current{};
+            std::array<bool, kMaximumPhysicalButtons> available{};
+            for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+                const size_t slot = static_cast<size_t>(index);
+                current[slot] = runtime.physicalButtonPressed[slot].load();
+                available[slot] = runtime.buttonAvailable[slot].load();
+            }
+            const int button = selectLearnedButton(m_inputLearning.buttonBaseline, current, available);
+            if (button == 0) return;
+            m_inputLearning.sourceButton = button;
+            m_inputLearning.sourceLabel = learnedButtonLabel(button);
+            applyLearnedInput();
+            return;
+        }
+    case InputLearningKind::Pov:
+        for (int index = 0; index < std::min(povCount(), kMaximumPhysicalPovs); ++index) {
+            const int raw = runtime.povValues[static_cast<size_t>(index)].load();
+            const PovDirection direction = povDirectionFromRaw(raw);
+            if (direction == PovDirection::Centered
+                || raw == m_inputLearning.povBaseline[static_cast<size_t>(index)]) {
+                continue;
+            }
+            m_inputLearning.sourcePovHat = index + 1;
+            m_inputLearning.sourcePovDirection = direction;
+            m_inputLearning.sourceLabel = QString(u"POV %1 %2"_qs).arg(index + 1)
+                .arg(povDirectionLabel(direction));
+            applyLearnedInput();
+            return;
+        }
+        return;
+    case InputLearningKind::None:
+        return;
+    }
+}
+
 void AppBackend::refreshUiSnapshot()
 {
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
+    processInputLearning();
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();

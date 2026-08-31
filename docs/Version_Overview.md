@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.4**
+**Current release: v2.1.5**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.5 — Input Learning, Quick Assign & vJoy Capacity Correction
+
+Makes the existing mapping model substantially easier to operate with control-plane input learning, guided axis assignment, clearer control naming, and a corrected minimum vJoy button-capacity calculation while preserving the allocation-free DirectInput-to-vJoy mapper.
+
+- Learn Input observes the existing UI/control-plane physical snapshot: deliberate dominant axis movement, physical button presses, and POV directions are assigned through the existing mapping setters and conflict behavior without adding report-loop work.
+- Quick Assign guides the active output layout's axes one at a time and uses configured game-output aliases when available, with skip, retry, back, cancel, and immediate assignment feedback.
+- Button custom names are now inline-editable card titles with the immutable physical button number retained as secondary identity; Axis Name and Game Output Name retain dedicated editors with stable local editing drafts protected from live telemetry refresh.
+- vJoy readiness now keeps exact selected-layout axis descriptors but calculates button requirements from actual button/POV routes across profiles sharing that layout plus enabled Automation actions, rather than treating a generous provisioned layout count as required capacity.
+- A healthy vJoy device with more buttons than currently required remains Ready; first-time physical-button passthrough safety and high virtual button targets remain enforced.
+- No DirectInput polling, mapping evaluation, vJoy write, allocation, lock, string, UI, or learning-state branch was added to MappingWorker's report path.
 
 ## v2.1.4 — Runtime Responsiveness & GUI Efficiency
 

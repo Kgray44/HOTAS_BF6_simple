@@ -248,6 +248,7 @@ private slots:
     void diagnosticsAreScopedSanitizedAndCopyable();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
+    void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisDescriptorsMustMatchExactly();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
@@ -689,6 +690,55 @@ void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxe
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(configuration);
     QVERIFY(requirements.axes[static_cast<int>(VirtualAxis::Slider1)]);
     QCOMPARE(requirements.buttons, 64);
+}
+
+void ControllerReadinessTests::buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &primary = configuration.profiles.front();
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 0);
+
+    ButtonBinding button;
+    button.type = ButtonActionType::VirtualButton;
+    button.target = 28;
+    primary.buttons = {button};
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 28);
+
+    primary.povs.resize(1);
+    primary.povs.front()[static_cast<size_t>(povDirectionIndex(PovDirection::Right))] =
+        ButtonBinding{ButtonActionType::VirtualButton, 29};
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 29);
+
+    AutomationDefinition automation;
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonTap;
+    action.virtualButton = 30;
+    automation.actions = {action};
+    configuration.automations = {automation};
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 30);
+
+    VirtualOutputLayout otherLayout = configuration.outputLayouts.front();
+    otherLayout.id = QStringLiteral("other-layout");
+    configuration.outputLayouts.push_back(otherLayout);
+    ControllerProfile other = primary;
+    other.id = QStringLiteral("other-profile");
+    other.outputLayoutId = otherLayout.id;
+    other.buttons.front().target = 64;
+    configuration.profiles.push_back(other);
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 30);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.buttons = 30;
+    const ControllerReadinessPlan ready = ControllerReadinessService::planFor(
+        connectedController(), ControllerReadinessService::requirementsFor(configuration), vjoy, readyHidHide());
+    QVERIFY(!ready.vjoyNeedsChanges);
+    vjoy.buttons = 15;
+    const ControllerReadinessPlan insufficient = ControllerReadinessService::planFor(
+        connectedController(), ControllerReadinessService::requirementsFor(configuration), vjoy, readyHidHide());
+    QVERIFY(insufficient.vjoyNeedsChanges);
+
+    configuration.automations.front().enabled = false;
+    QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 29);
 }
 
 void ControllerReadinessTests::virtualAxisDescriptorsMustMatchExactly()

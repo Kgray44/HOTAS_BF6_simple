@@ -38,6 +38,8 @@ set(HOTAS_MAPPER_SOURCES
     src/button_mapping.cpp
     src/physical_input_monitor.h
     src/physical_input_monitor.cpp
+    src/input_learning.h
+    src/input_learning.cpp
     src/profile_model.h
     src/profile_model.cpp
     src/profile_portability.h
@@ -186,6 +188,8 @@ if (BUILD_TESTING)
         src/button_mapping.cpp
         src/physical_input_monitor.h
         src/physical_input_monitor.cpp
+        src/input_learning.h
+        src/input_learning.cpp
         src/profile_model.h
         src/profile_model.cpp
         src/profile_portability.h
