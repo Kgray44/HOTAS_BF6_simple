@@ -52,12 +52,16 @@ using namespace Qt::StringLiterals;
 
 namespace {
 
-constexpr int kVisibleSnapshotIntervalMs = 16;
-constexpr int kMinimizedSnapshotIntervalMs = 200;
-constexpr int kVisibleControllerDiscoveryIntervalMs = 1000;
-constexpr int kMinimizedControllerDiscoveryIntervalMs = 3500;
+constexpr int kVisibleSnapshotIntervalMs = 33;
+constexpr int kMinimizedSnapshotIntervalMs = 250;
+constexpr int kVisibleNumericTelemetryIntervalMs = 100;
+constexpr int kMinimizedNumericTelemetryIntervalMs = 500;
+constexpr int kVisibleControllerDiscoveryIntervalMs = 2500;
+constexpr int kMinimizedControllerDiscoveryIntervalMs = 5000;
 constexpr int kTrayHiddenControllerDiscoveryIntervalMs = 7500;
-constexpr int kGameDetectionIntervalMs = 1000;
+constexpr int kVisibleGameDetectionIntervalMs = 2500;
+constexpr int kMinimizedGameDetectionIntervalMs = 5000;
+constexpr int kTrayHiddenGameDetectionIntervalMs = 7500;
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
@@ -113,7 +117,8 @@ bool isUsefulRunningApplication(const QString &executable)
         && !excluded.contains(executable.toCaseFolded());
 }
 
-QList<RunningApplication> runningApplicationSnapshot()
+QList<RunningApplication> runningApplicationSnapshot(bool resolvePaths,
+                                                      QHash<QString, QString> *pathCache = nullptr)
 {
     QList<RunningApplication> result;
 #ifdef Q_OS_WIN
@@ -128,15 +133,22 @@ QList<RunningApplication> runningApplicationSnapshot()
             const QString key = executable.toCaseFolded();
             if (!isUsefulRunningApplication(executable) || seen.contains(key)) continue;
             seen.insert(key);
-            QString path;
-            const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
-            if (process) {
-                std::array<wchar_t, 32768> buffer{};
-                DWORD length = static_cast<DWORD>(buffer.size());
-                if (QueryFullProcessImageNameW(process, 0, buffer.data(), &length)) {
-                    path = QString::fromWCharArray(buffer.data(), static_cast<qsizetype>(length));
+            QString path = pathCache ? pathCache->value(key) : QString{};
+            // Automatic category matching needs only the basename. Avoiding
+            // OpenProcess and path resolution there removes the heaviest
+            // per-process work; the explicit Add Game view resolves a path
+            // only once per known executable identity.
+            if (resolvePaths && path.isEmpty()) {
+                const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+                if (process) {
+                    std::array<wchar_t, 32768> buffer{};
+                    DWORD length = static_cast<DWORD>(buffer.size());
+                    if (QueryFullProcessImageNameW(process, 0, buffer.data(), &length)) {
+                        path = QString::fromWCharArray(buffer.data(), static_cast<qsizetype>(length));
+                        if (pathCache && !path.isEmpty()) pathCache->insert(key, path);
+                    }
+                    CloseHandle(process);
                 }
-                CloseHandle(process);
             }
             result.append({friendlyApplicationName(executable), executable, path});
         } while (Process32NextW(snapshot, &entry));
@@ -347,6 +359,7 @@ AppBackend::AppBackend(QObject *parent)
         m_readiness.adoptPlan(std::move(pending));
     }
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
+    connect(&m_numericTelemetryTimer, &QTimer::timeout, this, &AppBackend::refreshNumericTelemetry);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
@@ -363,20 +376,34 @@ AppBackend::AppBackend(QObject *parent)
         connect(this, &AppBackend::stateChanged, this, [this] { ++m_stateChangedNotifications; });
         connect(this, &AppBackend::telemetryChanged, this, [this] { ++m_telemetryChangedNotifications; });
         connect(this, &AppBackend::inputTelemetryChanged, this, [this] { ++m_inputTelemetryChangedNotifications; });
+        connect(this, &AppBackend::buttonTelemetryChanged, this, [this] { ++m_buttonTelemetryChangedNotifications; });
         connect(this, &AppBackend::controllersChanged, this, [this] { ++m_controllersChangedNotifications; });
+        m_uiEventLoopHeartbeatClock.start();
+        m_uiEventLoopHeartbeatTimer.setInterval(16);
+        connect(&m_uiEventLoopHeartbeatTimer, &QTimer::timeout, this, [this] {
+            const qint64 elapsed = m_uiEventLoopHeartbeatClock.restart();
+            m_uiEventLoopMaxDelayMs = std::max(m_uiEventLoopMaxDelayMs, elapsed);
+            if (elapsed > 16) ++m_uiEventLoopDelayOver16Ms;
+            if (elapsed > 50) ++m_uiEventLoopDelayOver50Ms;
+            if (elapsed > 100) ++m_uiEventLoopDelayOver100Ms;
+            if (elapsed > 250) ++m_uiEventLoopDelayOver250Ms;
+        });
+        m_uiEventLoopHeartbeatTimer.start();
     }
     connect(&m_worker, &MappingWorker::buttonConfigurationSuggested, this,
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
     m_snapshotTimer.setInterval(kVisibleSnapshotIntervalMs);
     m_snapshotTimer.start();
+    m_numericTelemetryTimer.setInterval(kVisibleNumericTelemetryIntervalMs);
+    m_numericTelemetryTimer.start();
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
     m_controllerDiscoveryTimer.start();
     // Foreground-process sampling is low-frequency control-plane work. It is
-    // intentionally independent from the 16 ms presentation snapshot and
+    // intentionally independent from the presentation snapshot and
     // the DirectInput worker's report loop.
-    m_gameDetectionTimer.setInterval(kGameDetectionIntervalMs);
+    m_gameDetectionTimer.setInterval(kVisibleGameDetectionIntervalMs);
     if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
@@ -412,6 +439,7 @@ AppBackend::AppBackend(QObject *parent)
     rebuildSelectedAxisCurve();
     rebuildCurveAxisChoices();
     rebuildControllerUiModel();
+    rebuildButtonUiModel();
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
     // rebuilding editor data. HighPriority is intentionally below
@@ -427,7 +455,7 @@ AppBackend::AppBackend(QObject *parent)
     QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
     QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
     if (m_configuration.automaticGameDetection) {
-        QTimer::singleShot(kGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+        QTimer::singleShot(kVisibleGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
     }
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
@@ -452,6 +480,18 @@ AppBackend::~AppBackend()
     }
     if (m_controllerSelectionThread) {
         QThread *thread = m_controllerSelectionThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_controllerDiscoveryThread) {
+        QThread *thread = m_controllerDiscoveryThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_gameDetectionThread) {
+        QThread *thread = m_gameDetectionThread;
         thread->disconnect(this);
         thread->wait(5000);
         delete thread;
@@ -800,6 +840,12 @@ QVariantList AppBackend::curveCopyChoices() const
 
 QVariantList AppBackend::buttons() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_buttonGetterCalls;
+    return m_buttonUiModel;
+}
+
+void AppBackend::rebuildButtonUiModel()
+{
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const int capacity = vjoyButtonCount();
@@ -844,7 +890,42 @@ QVariantList AppBackend::buttons() const
         item.insert(u"mappingControlKey"_qs, mappingControlActionKey(mappingControl));
         result.append(item);
     }
-    return result;
+    if (m_buttonUiModel == result) return;
+    m_buttonUiModel = std::move(result);
+    if (m_uiPerformanceInstrumentationEnabled) ++m_buttonUiModelRebuilds;
+    emit buttonTelemetryChanged();
+}
+
+bool AppBackend::refreshButtonUiModelRuntimeState()
+{
+    bool changed = false;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const ProfileTriggerMode activeMode = static_cast<ProfileTriggerMode>(runtime.profileOverrideMode.load());
+    for (qsizetype index = 0; index < m_buttonUiModel.size(); ++index) {
+        QVariantMap item = m_buttonUiModel[index].toMap();
+        const int source = item.value(u"index"_qs).toInt() - 1;
+        if (source < 0 || source >= kMaximumPhysicalButtons) continue;
+        const int target = item.value(u"target"_qs).toInt();
+        const bool pressed = runtime.physicalButtonPressed[static_cast<size_t>(source)].load();
+        const bool virtualPressed = target > 0
+            && runtime.virtualButtonPressed[static_cast<size_t>(target - 1)].load();
+        const ProfileTriggerBinding trigger = source < static_cast<int>(m_configuration.profileTriggers.size())
+            ? m_configuration.profileTriggers[static_cast<size_t>(source)] : ProfileTriggerBinding{};
+        const bool profileControlActive = profileTriggerBindingEnabled(trigger)
+            && runtime.profileOverrideButton.load() == source + 1
+            && activeMode == trigger.mode;
+        if (item.value(u"pressed"_qs).toBool() == pressed
+            && item.value(u"virtualPressed"_qs).toBool() == virtualPressed
+            && item.value(u"profileControlActive"_qs).toBool() == profileControlActive) {
+            continue;
+        }
+        item.insert(u"pressed"_qs, pressed);
+        item.insert(u"virtualPressed"_qs, virtualPressed);
+        item.insert(u"profileControlActive"_qs, profileControlActive);
+        m_buttonUiModel[index] = std::move(item);
+        changed = true;
+    }
+    return changed;
 }
 
 QVariantList AppBackend::povs() const
@@ -2702,14 +2783,12 @@ bool AppBackend::setCategoryGameDetectionRules(const QString &categoryId, const 
 
 QVariantList AppBackend::runningApplications() const
 {
-    QVariantList applications;
-    const QList<RunningApplication> snapshot = runningApplicationSnapshot();
-    for (const RunningApplication &application : snapshot) {
-        applications.append(QVariantMap{{u"name"_qs, application.name},
-                                        {u"executable"_qs, application.executable},
-                                        {u"path"_qs, application.path}});
-    }
-    return applications;
+    return m_runningApplications;
+}
+
+void AppBackend::refreshRunningApplications()
+{
+    startRunningApplicationSnapshot(true);
 }
 
 void AppBackend::setAutomaticGameDetection(bool enabled)
@@ -2718,13 +2797,66 @@ void AppBackend::setAutomaticGameDetection(bool enabled)
     m_configuration.automaticGameDetection = enabled;
     m_lastDetectedExecutables.clear();
     if (enabled) {
-        m_gameDetectionTimer.start(kGameDetectionIntervalMs);
+        const int interval = m_presentationLifecycle == PresentationLifecycleState::Visible
+            ? kVisibleGameDetectionIntervalMs
+            : m_presentationLifecycle == PresentationLifecycleState::Minimized
+                ? kMinimizedGameDetectionIntervalMs : kTrayHiddenGameDetectionIntervalMs;
+        m_gameDetectionTimer.start(interval);
+        startRunningApplicationSnapshot(false);
     } else {
         m_gameDetectionTimer.stop();
     }
     persistAndApply();
     appendEvent(enabled ? u"Automatic game category detection enabled"_qs
                         : u"Automatic game category detection disabled"_qs);
+}
+
+void AppBackend::startRunningApplicationSnapshot(bool resolvePaths)
+{
+    if (m_gameDetectionInProgress) return;
+    m_gameDetectionInProgress = true;
+    if (m_uiPerformanceInstrumentationEnabled) ++m_gameDetectionBackgroundRuns;
+    QHash<QString, QString> pathCache = m_runningApplicationPathCache;
+    QThread *thread = QThread::create([this, resolvePaths, pathCache]() mutable {
+        QList<RunningApplication> snapshot = runningApplicationSnapshot(resolvePaths, &pathCache);
+        QVariantList applications;
+        QStringList runningExecutables;
+        applications.reserve(snapshot.size());
+        runningExecutables.reserve(snapshot.size());
+        for (const RunningApplication &application : snapshot) {
+            applications.append(QVariantMap{{u"name"_qs, application.name},
+                                            {u"executable"_qs, application.executable},
+                                            {u"path"_qs, application.path}});
+            runningExecutables.append(application.executable);
+        }
+        runningExecutables.sort(Qt::CaseInsensitive);
+        QMetaObject::invokeMethod(this, [this, applications = std::move(applications),
+                                         runningExecutables = std::move(runningExecutables),
+                                         pathCache = std::move(pathCache)] () mutable {
+            m_gameDetectionInProgress = false;
+            m_runningApplicationPathCache = std::move(pathCache);
+            if (m_runningApplications != applications) {
+                m_runningApplications = std::move(applications);
+                emit runningApplicationsChanged();
+            }
+            if (!m_configuration.automaticGameDetection
+                || runningExecutables == m_lastDetectedExecutables) return;
+            m_lastDetectedExecutables = runningExecutables;
+            const GameCategoryMatch match = categoryForRunningExecutables(
+                m_configuration, runningExecutables, activeCategoryId());
+            if (match.categoryId.isEmpty() || match.categoryId == activeCategoryId()) return;
+            const ProfileCategory *category = findProfileCategory(m_configuration, match.categoryId);
+            if (category && activateProfileCategory(match.categoryId)) {
+                appendEvent(QString(u"Game detection selected category: %1"_qs).arg(category->name));
+            }
+        }, Qt::QueuedConnection);
+    });
+    m_gameDetectionThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_gameDetectionThread == thread) m_gameDetectionThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start(QThread::LowPriority);
 }
 
 QVariantMap AppBackend::profileDetail(const QString &profileId) const
@@ -4389,29 +4521,31 @@ bool AppBackend::launchUninstaller()
 
 void AppBackend::evaluateGameDetection()
 {
-    if (!m_configuration.automaticGameDetection) return;
-    QStringList runningExecutables;
-    const QList<RunningApplication> snapshot = runningApplicationSnapshot();
-    runningExecutables.reserve(snapshot.size());
-    for (const RunningApplication &application : snapshot) runningExecutables.append(application.executable);
-    runningExecutables.sort(Qt::CaseInsensitive);
-    // A process snapshot is control-plane work (once per second) and is
-    // deliberately kept out of the report loop. Ignore unchanged snapshots
-    // so an already selected category is never re-applied every timer tick.
-    if (runningExecutables == m_lastDetectedExecutables) return;
-    m_lastDetectedExecutables = runningExecutables;
-    const GameCategoryMatch match = categoryForRunningExecutables(m_configuration, runningExecutables,
-                                                                   activeCategoryId());
-    if (match.categoryId.isEmpty() || match.categoryId == activeCategoryId()) return;
-    const ProfileCategory *category = findProfileCategory(m_configuration, match.categoryId);
-    if (category && activateProfileCategory(match.categoryId)) {
-        appendEvent(QString(u"Game detection selected category: %1"_qs).arg(category->name));
-    }
+    if (m_configuration.automaticGameDetection) startRunningApplicationSnapshot(false);
 }
 
 void AppBackend::refreshControllerInventory()
 {
-    const QList<DiscoveredController> latestInventory = ControllerDiscovery::enumerate();
+    if (m_controllerDiscoveryInProgress) return;
+    m_controllerDiscoveryInProgress = true;
+    if (m_uiPerformanceInstrumentationEnabled) ++m_controllerDiscoveryBackgroundRuns;
+    QThread *thread = QThread::create([this] {
+        QList<DiscoveredController> latestInventory = ControllerDiscovery::enumerate();
+        QMetaObject::invokeMethod(this, [this, latestInventory = std::move(latestInventory)] () mutable {
+            m_controllerDiscoveryInProgress = false;
+            applyControllerInventory(std::move(latestInventory));
+        }, Qt::QueuedConnection);
+    });
+    m_controllerDiscoveryThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_controllerDiscoveryThread == thread) m_controllerDiscoveryThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start(QThread::LowPriority);
+}
+
+void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInventory)
+{
     const bool inventoryChanged = !sameControllerInventory(m_discoveredControllers, latestInventory);
     if (inventoryChanged) m_discoveredControllers = latestInventory;
     QStringList newlyDiscoveredUnverifiedIds;
@@ -4538,7 +4672,11 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
     case PresentationLifecycleState::Visible:
         restorePresentationResources();
         m_snapshotTimer.start(kVisibleSnapshotIntervalMs);
+        m_numericTelemetryTimer.start(kVisibleNumericTelemetryIntervalMs);
         m_controllerDiscoveryTimer.start(kVisibleControllerDiscoveryIntervalMs);
+        if (m_configuration.automaticGameDetection) {
+            m_gameDetectionTimer.start(kVisibleGameDetectionIntervalMs);
+        }
         // Project the latest worker atomics before the visible QML tree has a
         // chance to render. This is presentation work only; MappingWorker has
         // remained awake and independent throughout the transition.
@@ -4546,11 +4684,19 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         break;
     case PresentationLifecycleState::Minimized:
         m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);
+        m_numericTelemetryTimer.start(kMinimizedNumericTelemetryIntervalMs);
         m_controllerDiscoveryTimer.start(kMinimizedControllerDiscoveryIntervalMs);
+        if (m_configuration.automaticGameDetection) {
+            m_gameDetectionTimer.start(kMinimizedGameDetectionIntervalMs);
+        }
         break;
     case PresentationLifecycleState::TrayHidden:
         m_snapshotTimer.stop();
+        m_numericTelemetryTimer.stop();
         m_controllerDiscoveryTimer.start(kTrayHiddenControllerDiscoveryIntervalMs);
+        if (m_configuration.automaticGameDetection) {
+            m_gameDetectionTimer.start(kTrayHiddenGameDetectionIntervalMs);
+        }
         releasePresentationResources();
         break;
     }
@@ -4606,12 +4752,43 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
 
 void AppBackend::refreshUiSnapshot()
 {
-    // Range and center statistics are sampled here at presentation cadence.
-    // The worker publishes raw atomics only; no calibration calculation is
-    // performed during DirectInput-to-vJoy report processing.
+    // The worker publishes raw atomics only; no calibration calculation or
+    // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
-    // Percentiles are diagnostic telemetry; four updates per second avoids
-    // turning their presentation into a source of GUI-side CPU pressure.
+    const bool selectedAxisChanged = fallBackToAvailableAxis();
+    if (selectedAxisChanged) emit selectedAxisCurveChanged();
+    const bool connected = m_worker.runtime().physicalConnected.load();
+    const bool connectionChanged = connected != m_physicalControllerWasConnected;
+    if (ControllerReadinessService::isNewPhysicalControllerArrival(
+            m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
+        m_pendingControllerArrivalId = deviceId();
+        appendEvent(u"Physical controller arrived; evaluating setup readiness"_qs);
+        startQuickVerification();
+    } else if (!connected) {
+        m_pendingControllerArrivalId.clear();
+    }
+    m_physicalControllerWasConnected = connected;
+    if (connectionChanged) {
+        rebuildControllerUiModel();
+        rebuildButtonUiModel();
+    }
+    if (refreshButtonUiModelRuntimeState()) emit buttonTelemetryChanged();
+    const bool workerRequested = m_worker.mappingRequested();
+    const bool mappingIntentChanged = workerRequested != m_mappingDesired;
+    if (mappingIntentChanged) m_mappingDesired = workerRequested;
+    const int effectiveMappingState = m_worker.runtime().mappingEffectiveState.load();
+    const bool mappingEffectiveChanged = effectiveMappingState != m_presentedMappingEffectiveState;
+    if (mappingEffectiveChanged) m_presentedMappingEffectiveState = effectiveMappingState;
+    if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();
+    // Analog and POV presentation is useful at 30 Hz; this broad property no
+    // longer wakes QML at the former 62.5 Hz snapshot rate.
+    emit inputTelemetryChanged();
+}
+
+void AppBackend::refreshNumericTelemetry()
+{
+    // Percentiles are diagnostic telemetry. Sampling them four times per
+    // second keeps statistics fresh without making them a render workload.
     if (m_latencyPercentileClock.elapsed() >= 250) {
         const MappingLatencyPercentiles percentiles = m_worker.latencyPercentiles();
         m_latencyP95Us = percentiles.p95Us;
@@ -4637,46 +4814,19 @@ void AppBackend::refreshUiSnapshot()
             m_lastPhysicalUpdateAgeMs = -1;
         }
     }
-    // Overview intentionally consumes already-published metrics at a human
-    // cadence. The time-aware filter is presentation-only and is never
-    // visible to the DirectInput-to-vJoy report path or its timing metrics.
-    if (m_overviewMetricsClock.elapsed() >= 75) {
-        constexpr double kSmoothingTimeConstantMs = 325.0;
-        const double elapsedMs = std::max(1.0, static_cast<double>(m_overviewMetricsClock.restart()));
-        const double alpha = 1.0 - std::exp(-elapsedMs / kSmoothingTimeConstantMs);
-        const double rawLatency = static_cast<double>(m_worker.runtime().latencyAverageUs.load());
-        if (!m_worker.runtime().physicalConnected.load() || !mappingRequested()) {
-            m_overviewInputRate = 0.0;
-            m_overviewOutputRate = 0.0;
-        } else {
-            m_overviewInputRate += alpha * (m_inputReportsPerSecond - m_overviewInputRate);
-            m_overviewOutputRate += alpha * (m_vjoyWritesPerSecond - m_overviewOutputRate);
-        }
-        m_overviewMapperLatencyUs += alpha * (rawLatency - m_overviewMapperLatencyUs);
+    constexpr double kSmoothingTimeConstantMs = 325.0;
+    const double elapsedMs = std::max(1.0, static_cast<double>(m_overviewMetricsClock.restart()));
+    const double alpha = 1.0 - std::exp(-elapsedMs / kSmoothingTimeConstantMs);
+    const double rawLatency = static_cast<double>(m_worker.runtime().latencyAverageUs.load());
+    if (!m_worker.runtime().physicalConnected.load() || !mappingRequested()) {
+        m_overviewInputRate = 0.0;
+        m_overviewOutputRate = 0.0;
+    } else {
+        m_overviewInputRate += alpha * (m_inputReportsPerSecond - m_overviewInputRate);
+        m_overviewOutputRate += alpha * (m_vjoyWritesPerSecond - m_overviewOutputRate);
     }
-    const bool selectedAxisChanged = fallBackToAvailableAxis();
-    if (selectedAxisChanged) emit selectedAxisCurveChanged();
-    const bool connected = m_worker.runtime().physicalConnected.load();
-    const bool connectionChanged = connected != m_physicalControllerWasConnected;
-    if (ControllerReadinessService::isNewPhysicalControllerArrival(
-            m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
-        m_pendingControllerArrivalId = deviceId();
-        appendEvent(u"Physical controller arrived; evaluating setup readiness"_qs);
-        startQuickVerification();
-    } else if (!connected) {
-        m_pendingControllerArrivalId.clear();
-    }
-    m_physicalControllerWasConnected = connected;
-    if (connectionChanged) rebuildControllerUiModel();
+    m_overviewMapperLatencyUs += alpha * (rawLatency - m_overviewMapperLatencyUs);
     refreshTrayStatus();
-    const bool workerRequested = m_worker.mappingRequested();
-    const bool mappingIntentChanged = workerRequested != m_mappingDesired;
-    if (mappingIntentChanged) m_mappingDesired = workerRequested;
-    const int effectiveMappingState = m_worker.runtime().mappingEffectiveState.load();
-    const bool mappingEffectiveChanged = effectiveMappingState != m_presentedMappingEffectiveState;
-    if (mappingEffectiveChanged) m_presentedMappingEffectiveState = effectiveMappingState;
-    if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();
-    emit inputTelemetryChanged();
     emit telemetryChanged();
 }
 
@@ -4685,12 +4835,22 @@ QVariantMap AppBackend::uiPerformanceCounters() const
     if (!m_uiPerformanceInstrumentationEnabled) return {};
     return {{u"controllerGetterCalls"_qs, QVariant::fromValue(m_controllerGetterCalls)},
             {u"controllerModelRebuilds"_qs, QVariant::fromValue(m_controllerUiModelRebuilds)},
+            {u"buttonGetterCalls"_qs, QVariant::fromValue(m_buttonGetterCalls)},
+            {u"buttonModelRebuilds"_qs, QVariant::fromValue(m_buttonUiModelRebuilds)},
             {u"profileGetterCalls"_qs, QVariant::fromValue(m_profileGetterCalls)},
             {u"categoryGetterCalls"_qs, QVariant::fromValue(m_categoryGetterCalls)},
             {u"stateChanged"_qs, QVariant::fromValue(m_stateChangedNotifications)},
             {u"telemetryChanged"_qs, QVariant::fromValue(m_telemetryChangedNotifications)},
             {u"inputTelemetryChanged"_qs, QVariant::fromValue(m_inputTelemetryChangedNotifications)},
-            {u"controllersChanged"_qs, QVariant::fromValue(m_controllersChangedNotifications)}};
+            {u"buttonTelemetryChanged"_qs, QVariant::fromValue(m_buttonTelemetryChangedNotifications)},
+            {u"controllersChanged"_qs, QVariant::fromValue(m_controllersChangedNotifications)},
+            {u"controllerDiscoveryBackgroundRuns"_qs, QVariant::fromValue(m_controllerDiscoveryBackgroundRuns)},
+            {u"gameDetectionBackgroundRuns"_qs, QVariant::fromValue(m_gameDetectionBackgroundRuns)},
+            {u"uiEventLoopMaxDelayMs"_qs, m_uiEventLoopMaxDelayMs},
+            {u"uiEventLoopDelayOver16Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver16Ms)},
+            {u"uiEventLoopDelayOver50Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver50Ms)},
+            {u"uiEventLoopDelayOver100Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver100Ms)},
+            {u"uiEventLoopDelayOver250Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver250Ms)}};
 }
 
 void AppBackend::resetUiPerformanceCounters()
@@ -4698,12 +4858,23 @@ void AppBackend::resetUiPerformanceCounters()
     if (!m_uiPerformanceInstrumentationEnabled) return;
     m_controllerGetterCalls = 0;
     m_controllerUiModelRebuilds = 0;
+    m_buttonGetterCalls = 0;
+    m_buttonUiModelRebuilds = 0;
     m_profileGetterCalls = 0;
     m_categoryGetterCalls = 0;
     m_stateChangedNotifications = 0;
     m_telemetryChangedNotifications = 0;
     m_inputTelemetryChangedNotifications = 0;
+    m_buttonTelemetryChangedNotifications = 0;
     m_controllersChangedNotifications = 0;
+    m_controllerDiscoveryBackgroundRuns = 0;
+    m_gameDetectionBackgroundRuns = 0;
+    m_uiEventLoopMaxDelayMs = 0;
+    m_uiEventLoopDelayOver16Ms = 0;
+    m_uiEventLoopDelayOver50Ms = 0;
+    m_uiEventLoopDelayOver100Ms = 0;
+    m_uiEventLoopDelayOver250Ms = 0;
+    m_uiEventLoopHeartbeatClock.restart();
 }
 
 void AppBackend::appendEvent(const QString &event)
@@ -4758,6 +4929,7 @@ void AppBackend::persistAndApply()
     m_worker.updateConfiguration(m_configuration);
     rebuildSelectedAxisCurve();
     rebuildCurveAxisChoices();
+    rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit stateChanged();
 }

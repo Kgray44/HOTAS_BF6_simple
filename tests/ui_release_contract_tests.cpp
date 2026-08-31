@@ -94,8 +94,10 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("void controllersChanged();")));
     QVERIFY(header.contains(QStringLiteral("void telemetryChanged();")));
+    QVERIFY(header.contains(QStringLiteral("void buttonTelemetryChanged();")));
     QVERIFY(backend.contains(QStringLiteral("return m_controllerUiModel;")));
     QVERIFY(backend.contains(QStringLiteral("sameControllerInventory")));
     QVERIFY(backend.contains(QStringLiteral("if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();")));
@@ -109,6 +111,11 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(snapshot.contains(QStringLiteral("if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();")));
     QVERIFY(snapshot.contains(QStringLiteral("emit telemetryChanged();")));
     QVERIFY(snapshot.contains(QStringLiteral("emit inputTelemetryChanged();")));
+    QVERIFY(backend.contains(QStringLiteral("void AppBackend::rebuildButtonUiModel()")));
+    QVERIFY(backend.contains(QStringLiteral("bool AppBackend::refreshButtonUiModelRuntimeState()")));
+    QVERIFY(backend.contains(QStringLiteral("QThread::create([this]")));
+    QVERIFY(backend.contains(QStringLiteral("ControllerDiscovery::enumerate()")));
+    QVERIFY(backend.contains(QStringLiteral("startRunningApplicationSnapshot(false)")));
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
     QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
@@ -123,23 +130,37 @@ void UiReleaseContractTests::presentationLifecycleSleepsOnlyTheGuiControlPlane()
     QVERIFY(header.contains(QStringLiteral("presentationState READ presentationState NOTIFY presentationStateChanged")));
     QVERIFY(header.contains(QStringLiteral("enum class PresentationLifecycleState")));
     QVERIFY(header.contains(QStringLiteral("Q_INVOKABLE void restoreFromTray()")));
-    QVERIFY(backend.contains(QStringLiteral("kVisibleSnapshotIntervalMs = 16")));
-    QVERIFY(backend.contains(QStringLiteral("kMinimizedSnapshotIntervalMs = 200")));
+    QVERIFY(backend.contains(QStringLiteral("kVisibleSnapshotIntervalMs = 33")));
+    QVERIFY(backend.contains(QStringLiteral("kMinimizedSnapshotIntervalMs = 250")));
+    QVERIFY(backend.contains(QStringLiteral("kVisibleNumericTelemetryIntervalMs = 100")));
     QVERIFY(backend.contains(QStringLiteral("kTrayHiddenControllerDiscoveryIntervalMs = 7500")));
     QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.stop();")));
     QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);")));
     QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kVisibleSnapshotIntervalMs);")));
     QVERIFY(backend.contains(QStringLiteral("quickWindow->releaseResources();")));
     QVERIFY(backend.contains(QStringLiteral("quickWindow->setPersistentSceneGraph(false);")));
-    QVERIFY(backend.contains(QStringLiteral("if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();")));
+    QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.start(kVisibleGameDetectionIntervalMs);")));
     QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.stop();")));
     for (const QString &page : {sourceFile(QStringLiteral("qml/Standard.qml")),
                                 sourceFile(QStringLiteral("qml/Legacy.qml"))}) {
-        QVERIFY(page.count(QStringLiteral("active: root.currentPage")) >= 5);
-        QVERIFY(page.contains(QStringLiteral("|| item !== null")));
-        QVERIFY(page.contains(QStringLiteral("unsaved editor/import draft"))
-                 || page.contains(QStringLiteral("in-progress editor draft")));
+        QVERIFY(page.count(QStringLiteral("active: root.currentPage")) >= 9);
+        QVERIFY(!page.contains(QStringLiteral("|| item !== null")));
+        QVERIFY(page.contains(QStringLiteral("id: axesPageLoader")));
+        QVERIFY(page.contains(QStringLiteral("id: buttonsPageLoader")));
+        QVERIFY(page.contains(QStringLiteral("id: calibrationPageLoader")));
+        QVERIFY(page.contains(QStringLiteral("id: diagnosticsPageLoader")));
+        QVERIFY(page.contains(QStringLiteral("loadedPageCount")));
+        QVERIFY(page.contains(QStringLiteral("profileLibraryPresentationState")));
+        QVERIFY(page.contains(QStringLiteral("automationPresentationState")));
+        QVERIFY(!page.contains(QStringLiteral("id: profilesPage")));
+        QVERIFY(!page.contains(QStringLiteral("id: settingsPage\n")));
     }
+    const QString profiles = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
+    const QString automation = sourceFile(QStringLiteral("qml/AutomationPage.qml"));
+    QVERIFY(profiles.contains(QStringLiteral("Component.onDestruction: capturePresentationState()")));
+    QVERIFY(profiles.contains(QStringLiteral("transferDialogOpen")));
+    QVERIFY(automation.contains(QStringLiteral("Component.onDestruction: capturePresentationState()")));
+    QVERIFY(automation.contains(QStringLiteral("draft: editing ? clone(draft)")));
     QVERIFY(!worker.contains(QStringLiteral("presentationState")));
     QVERIFY(!worker.contains(QStringLiteral("presentationLifecycle")));
 }
@@ -171,34 +192,19 @@ void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPain
 
 void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
 {
+    const QString library = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
-    for (const QString &page : {standard, legacy}) {
-        const qsizetype menuStart = page.indexOf(QStringLiteral("Menu { id: profileActionMenu"));
-        QVERIFY(menuStart >= 0);
-        const qsizetype menuEnd = page.indexOf(QStringLiteral("Dialog {"), menuStart);
-        QVERIFY(menuEnd > menuStart);
-        const QString menu = page.mid(menuStart, menuEnd - menuStart);
-        QVERIFY(menu.contains(QStringLiteral("y: parent.height + 4")));
-        QVERIFY(menu.contains(QStringLiteral("x: parent.width - width")));
-        QVERIFY(menu.contains(QStringLiteral("implicitWidth: 174")));
-        QVERIFY(menu.contains(QStringLiteral("background: Rectangle")));
-        QVERIFY(menu.contains(QStringLiteral("renameProfileMenuItem")));
-        QVERIFY(menu.contains(QStringLiteral("cloneProfileMenuItem")));
-        QVERIFY(menu.contains(QStringLiteral("deleteProfileMenuItem")));
-        QVERIFY(menu.contains(QStringLiteral("MenuSeparator")));
-        QVERIFY(menu.contains(QStringLiteral("!deleteProfileMenuItem.enabled")));
-        QVERIFY(menu.contains(QStringLiteral("onTriggered: backend.cloneProfile(modelData.id)")));
-    }
-    QVERIFY(standard.contains(QStringLiteral("theme.topGun ? theme.orange : theme.borderStrong")));
-    QVERIFY(standard.contains(QStringLiteral("theme.danger")));
-    QVERIFY(legacy.contains(QStringLiteral("color: \"#182a30\"")));
-    QVERIFY(legacy.contains(QStringLiteral("color: \"#ca9090\"")));
-    for (const QString &page : {standard, legacy}) {
-        QVERIFY(page.contains(QStringLiteral("id: renameProfileDialog")));
-        QVERIFY(page.contains(QStringLiteral("id: deleteProfileDialog")));
-        QVERIFY(page.contains(QStringLiteral("id: renameProfileField")));
-    }
+    QVERIFY(standard.contains(QStringLiteral("ProfileLibrary")));
+    QVERIFY(legacy.contains(QStringLiteral("ProfileLibrary")));
+    QVERIFY(library.contains(QStringLiteral("ActionButton { label: \"RENAME\"")));
+    QVERIFY(library.contains(QStringLiteral("ActionButton { label: \"DUPLICATE\"")));
+    QVERIFY(library.contains(QStringLiteral("ActionButton { label: \"MOVE CATEGORY\"")));
+    QVERIFY(library.contains(QStringLiteral("ActionButton { label: \"DELETE\"")));
+    QVERIFY(library.contains(QStringLiteral("id: renameProfileDialog")));
+    QVERIFY(library.contains(QStringLiteral("id: deleteProfileDialog")));
+    QVERIFY(library.contains(QStringLiteral("legacy ? \"#182126\"")));
+    QVERIFY(library.contains(QStringLiteral("theme.danger")));
 }
 
 void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()
@@ -269,7 +275,6 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
         QVERIFY(page.contains(QStringLiteral("NOT ROUTED")));
         QVERIFY(page.contains(QStringLiteral("UNMAPPED VJOY AXES PARKED")));
         QVERIFY(page.contains(QStringLiteral("backend.physicalAxisCapabilitySummary")));
-        QVERIFY(page.contains(QStringLiteral("assignProfileOutputLayout")));
     }
 }
 

@@ -52,7 +52,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY inputTelemetryChanged)
+    // Button configuration is cached separately from its small live pressed
+    // state. Axis updates must never force QML to rebuild up to 128 cards.
+    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)
     Q_PROPERTY(QVariantList povs READ povs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
@@ -372,6 +374,7 @@ public:
     Q_INVOKABLE bool setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile);
     Q_INVOKABLE bool setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules);
     Q_INVOKABLE QVariantList runningApplications() const;
+    Q_INVOKABLE void refreshRunningApplications();
     Q_INVOKABLE void setAutomaticGameDetection(bool enabled);
     Q_INVOKABLE QVariantMap profileDetail(const QString &profileId) const;
     Q_INVOKABLE QVariantMap profileRelationships(const QString &profileId) const;
@@ -443,7 +446,9 @@ signals:
     void stateChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
+    void buttonTelemetryChanged();
     void controllersChanged();
+    void runningApplicationsChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
     void presentationStateChanged();
@@ -468,11 +473,16 @@ private:
     void persistAndApply();
     void refreshControllerInventory();
     void evaluateGameDetection();
+    void refreshNumericTelemetry();
+    void applyControllerInventory(QList<DiscoveredController> latestInventory);
+    void startRunningApplicationSnapshot(bool resolvePaths);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
     void releasePresentationResources();
     void restorePresentationResources();
     bool rebuildControllerUiModel();
+    void rebuildButtonUiModel();
+    bool refreshButtonUiModelRuntimeState();
     void rebuildCurveAxisChoices();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
     SavedControllerRecord *activeControllerRecord();
@@ -551,15 +561,27 @@ private:
     QPointer<QThread> m_verificationThread;
     bool m_controllerSelectionInProgress = false;
     QPointer<QThread> m_controllerSelectionThread;
+    // Discovery and process inspection are intentionally short-lived,
+    // low-priority control-plane threads. They never touch MappingWorker.
+    QPointer<QThread> m_controllerDiscoveryThread;
+    QPointer<QThread> m_gameDetectionThread;
+    bool m_controllerDiscoveryInProgress = false;
+    bool m_gameDetectionInProgress = false;
     QTimer m_snapshotTimer;
+    QTimer m_numericTelemetryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
     QStringList m_lastDetectedExecutables;
+    QVariantList m_runningApplications;
+    QHash<QString, QString> m_runningApplicationPathCache;
+    QVariantList m_buttonUiModel;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
     QElapsedTimer m_overviewMetricsClock;
     QElapsedTimer m_calibrationFinalizationClock;
+    QTimer m_uiEventLoopHeartbeatTimer;
+    QElapsedTimer m_uiEventLoopHeartbeatClock;
     CalibrationStageState m_calibrationStage = CalibrationStageState::Idle;
     std::array<CalibrationCaptureAxis, kPhysicalAxisCount> m_calibrationCapture{};
     QString m_calibrationStatus = u"Move each control through its complete range before capturing center."_qs;
@@ -605,12 +627,22 @@ private:
     bool m_uiPerformanceInstrumentationEnabled = false;
     mutable quint64 m_controllerGetterCalls = 0;
     quint64 m_controllerUiModelRebuilds = 0;
+    mutable quint64 m_buttonGetterCalls = 0;
+    quint64 m_buttonUiModelRebuilds = 0;
     mutable quint64 m_profileGetterCalls = 0;
     mutable quint64 m_categoryGetterCalls = 0;
     quint64 m_stateChangedNotifications = 0;
     quint64 m_telemetryChangedNotifications = 0;
     quint64 m_inputTelemetryChangedNotifications = 0;
+    quint64 m_buttonTelemetryChangedNotifications = 0;
     quint64 m_controllersChangedNotifications = 0;
+    quint64 m_controllerDiscoveryBackgroundRuns = 0;
+    quint64 m_gameDetectionBackgroundRuns = 0;
+    qint64 m_uiEventLoopMaxDelayMs = 0;
+    quint64 m_uiEventLoopDelayOver16Ms = 0;
+    quint64 m_uiEventLoopDelayOver50Ms = 0;
+    quint64 m_uiEventLoopDelayOver100Ms = 0;
+    quint64 m_uiEventLoopDelayOver250Ms = 0;
 };
 
 } // namespace hotas

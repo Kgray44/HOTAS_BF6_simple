@@ -6,6 +6,7 @@ import QtQuick.Controls 6.5
 // v1.6.3 surface. Neither path owns mapper state or the worker.
 ApplicationWindow {
     id: shell
+    objectName: "hotasShell"
     width: 1320
     height: 840
     minimumWidth: 900
@@ -32,6 +33,7 @@ ApplicationWindow {
 
     Loader {
         id: presentation
+        objectName: "presentationLoader"
         anchors.fill: parent
         sourceComponent: themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface
     }

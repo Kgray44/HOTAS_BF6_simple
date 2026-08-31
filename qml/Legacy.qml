@@ -9,10 +9,15 @@ Page {
 
     property int currentPage: 8
     property bool menuOpen: false
-    property var allAxes: backend.axes
-    property var allButtons: backend.buttons
-    property var allPovs: backend.povs
-    property var allPovInputs: backend.povInputs
+    // Retain only compact values across page unloads, never page object trees.
+    property var profileLibraryPresentationState: ({})
+    property var automationPresentationState: ({})
+    property var curveEditorPresentationState: ({})
+    // Do not materialize telemetry-shaped models when their page is unloaded.
+    property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3) ? backend.axes : []
+    property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
+    property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
+    property var allPovInputs: (currentPage === 1 || currentPage === 3) ? backend.povInputs : []
     property int conflictingAxis: -1
     property string conflictingTarget: "Disabled"
     property int conflictingButton: -1
@@ -26,6 +31,31 @@ Page {
     readonly property var nativePovTargetChoices: backend.nativePovTargetChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
     readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
+    readonly property int loadedPageCount: (overviewPageLoader.item ? 1 : 0)
+        + (settingsPageLoader.item ? 1 : 0)
+        + (profileLibraryLoader.item ? 1 : 0)
+        + (axesPageLoader.item ? 1 : 0)
+        + (buttonsPageLoader.item ? 1 : 0)
+        + (calibrationPageLoader.item ? 1 : 0)
+        + (diagnosticsPageLoader.item ? 1 : 0)
+        + (curveEditorLoader.item ? 1 : 0)
+        + (automationPageLoader.item ? 1 : 0)
+
+    function pageItem(page) {
+        switch (page) {
+        case 0: return axesPageLoader.item
+        case 1: return buttonsPageLoader.item
+        case 2: return calibrationPageLoader.item
+        case 3: return diagnosticsPageLoader.item
+        case 4: return settingsPageLoader.item
+        case 5: return profileLibraryLoader.item
+        case 6: return curveEditorLoader.item
+        case 7: return automationPageLoader.item
+        case 8: return overviewPageLoader.item
+        }
+        return null
+    }
+    function loadedPage(page) { return pageItem(page) !== null }
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -1086,12 +1116,12 @@ Page {
         id: pageHost
         anchors.fill: parent
  anchors.margins: 24
-        // Defer optional heavy pages until their first visit, but retain them
-        // afterwards so navigation cannot drop an in-progress editor draft.
+        // The selected page is the only page with a live QML object tree.
+        // Editor and import drafts are copied into lightweight root state.
         Loader {
             id: overviewPageLoader
             anchors.fill: parent
-            active: root.currentPage === 8 || item !== null
+            active: root.currentPage === 8
             sourceComponent: Component {
                 OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
             }
@@ -1099,7 +1129,7 @@ Page {
         Loader {
             id: settingsPageLoader
             anchors.fill: parent
-            active: root.currentPage === 4 || item !== null
+            active: root.currentPage === 4
             sourceComponent: Component {
                 SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
             }
@@ -1107,12 +1137,19 @@ Page {
         Loader {
             id: profileLibraryLoader
             anchors.fill: parent
-            active: root.currentPage === 5 || item !== null
+            active: root.currentPage === 5
             sourceComponent: Component {
                 ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: true
+                    presentationState: root.profileLibraryPresentationState
+                    onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
                     onNavigateToPage: function(page) { root.currentPage = page } }
             }
         }
+        Loader {
+            id: axesPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 0
+            sourceComponent: Component {
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1331,6 +1368,13 @@ Page {
                 }
             }
         }
+            }
+        }
+        Loader {
+            id: buttonsPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 1
+            sourceComponent: Component {
         Flickable {
             id: buttonsPage
             anchors.fill: parent
@@ -1411,6 +1455,13 @@ Page {
                 }
             }
         }
+            }
+        }
+        Loader {
+            id: calibrationPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 2
+            sourceComponent: Component {
         Flickable {
             id: calibrationPage
             anchors.fill: parent
@@ -1521,6 +1572,13 @@ Page {
                 }
             }
         }
+            }
+        }
+        Loader {
+            id: diagnosticsPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 3
+            sourceComponent: Component {
         Flickable {
             id: diagnosticsPage
             anchors.fill: parent
@@ -1535,7 +1593,7 @@ Page {
  width: diagnosticsPage.width - 10
  spacing: 14
                 PageTitle { heading: "Diagnostics"
- detail: "Worker-side DirectInput telemetry; presentation samples the latest snapshot at 60 Hz" }
+                detail: "Worker-side DirectInput telemetry; presentation samples the latest snapshot at 30 Hz" }
                 GridLayout { width: parent.width
  columns: width >= 1100 ? 5 : (width >= 760 ? 3 : 2)
  columnSpacing: 10
@@ -1786,417 +1844,26 @@ Page {
                 }
             }
         }
-        Flickable {
-            id: profilesPage
-            anchors.fill: parent
-            visible: false
-            contentWidth: width
-            contentHeight: profilesContent.implicitHeight + 18
-            clip: true
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            Column {
-                id: profilesContent
-                x: 1
-                width: profilesPage.width - 10
-                spacing: 14
-                RowLayout { width: parent.width
-                    PageTitle { heading: "Profiles"
-                        detail: "Independent mapping configurations; calibration remains tied to the physical controller" }
-                    Item { Layout.fillWidth: true }
-                    CommandButton { label: "+ NEW PROFILE"
-                        onTriggered: newProfileDialog.open() }
-                }
-                Text { text: "BASE PROFILE"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-                Panel { width: parent.width; height: 102
-                    color: "#e51a352f"; border.color: "#4a91a8a0"
-                    RowLayout { anchors.fill: parent; anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: backend.activeProfileName.toUpperCase()
-                                color: "#e8f3f2"; font.pixelSize: 16; font.bold: true }
-                            Text { text: backend.effectiveProfileName === backend.activeProfileName
-                                ? "Current controller configuration · Axes and Buttons edit this profile"
-                                : "Effective: " + backend.effectiveProfileName + " · " + backend.profileSourceLabel
-                                color: "#9db8bd"; font.pixelSize: 10; elide: Text.ElideRight
-                                Layout.fillWidth: true }
-                        }
-                        Row { spacing: 7
-                            StatusDot { tone: "#98d1bd" }
-                            Text { text: "BASE"; color: "#add8c5"; font.pixelSize: 10; font.bold: true }
-                        }
-                    }
-                }
-                Text { text: "AVAILABLE PROFILES"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
-                GridLayout { width: parent.width
-                    columns: width >= 1080 ? 3 : (width >= 700 ? 2 : 1)
-                    columnSpacing: 12; rowSpacing: 12
-                    Repeater { model: backend.profiles
-                        delegate: Panel { Layout.fillWidth: true; Layout.preferredHeight: 194
-                            color: modelData.active ? "#e51a352f" : "#ed182128"
-                            border.color: modelData.active ? "#4a91a8a0" : "#41546770"
-                            ColumnLayout { anchors.fill: parent; anchors.margins: 14; spacing: 7
-                                RowLayout { Layout.fillWidth: true
-                                    Text { text: modelData.name.toUpperCase()
-                                        color: "#e8eeee"; font.pixelSize: 13; font.bold: true
-                                        elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Row { visible: modelData.effective; spacing: 5
-                                        StatusDot { tone: "#98d1bd" }
-                                        Text { text: modelData.effectiveSource.toUpperCase(); color: "#add8c5"; font.pixelSize: 9; font.bold: true }
-                                    }
-                                    ToolButton { text: "⋯"; font.pixelSize: 17
-                                        contentItem: Text { text: parent.text; color: "#a9bbc0"
-                                            font.pixelSize: parent.font.pixelSize
-                                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                        background: Rectangle { radius: 3; color: parent.hovered ? "#2b393f" : "transparent" }
-                                        onClicked: profileActionMenu.open()
-                                        Menu { id: profileActionMenu
-                                            y: parent.height + 4; x: parent.width - width; implicitWidth: 174; padding: 6
-                                            background: Rectangle { color: "#182a30"; border.color: "#78aab9"; radius: 4 }
-                                            MenuItem { id: renameProfileMenuItem; text: "Rename"; enabled: !modelData.protected; implicitHeight: 34; leftPadding: 11; rightPadding: 11
-                                                contentItem: Text { text: renameProfileMenuItem.text; color: !renameProfileMenuItem.enabled ? "#71848b" : "#e7f0f1"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
-                                                background: Rectangle { radius: 3; color: renameProfileMenuItem.pressed ? "#37626a" : (renameProfileMenuItem.highlighted ? "#2b454c" : "transparent"); border.color: renameProfileMenuItem.highlighted && renameProfileMenuItem.enabled ? "#78aab9" : "transparent" }
-                                                onTriggered: { renameProfileDialog.profileId = modelData.id; renameProfileDialog.profileName = modelData.name; renameProfileDialog.open() } }
-                                            MenuItem { id: cloneProfileMenuItem; text: "Clone"; implicitHeight: 34; leftPadding: 11; rightPadding: 11
-                                                contentItem: Text { text: cloneProfileMenuItem.text; color: "#e7f0f1"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
-                                                background: Rectangle { radius: 3; color: cloneProfileMenuItem.pressed ? "#37626a" : (cloneProfileMenuItem.highlighted ? "#2b454c" : "transparent"); border.color: cloneProfileMenuItem.highlighted ? "#78aab9" : "transparent" }
-                                                onTriggered: backend.cloneProfile(modelData.id) }
-                                            MenuSeparator { topPadding: 5; bottomPadding: 5; contentItem: Rectangle { implicitHeight: 1; color: "#435660" } }
-                                            MenuItem { id: deleteProfileMenuItem; text: "Delete"; enabled: !modelData.protected && !modelData.active; implicitHeight: 34; leftPadding: 11; rightPadding: 11
-                                                contentItem: Text { text: deleteProfileMenuItem.text; color: !deleteProfileMenuItem.enabled ? "#71848b" : "#ca9090"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; font.bold: true }
-                                                background: Rectangle { radius: 3; color: deleteProfileMenuItem.pressed ? "#5a3539" : (deleteProfileMenuItem.highlighted ? "#432c32" : "transparent"); border.color: deleteProfileMenuItem.highlighted && deleteProfileMenuItem.enabled ? "#ca9090" : "transparent" }
-                                                onTriggered: { deleteProfileDialog.profileId = modelData.id; deleteProfileDialog.profileName = modelData.name; deleteProfileDialog.open() } }
-                                        }
-                                    }
-                                }
-                                Text { text: modelData.mappedAxes + " mapped axes"
-                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
-                                Text { text: modelData.mappedButtons + " mapped buttons"
-                                    color: "#a4bdc3"; font.pixelSize: 10; font.family: "Consolas" }
-                                RowLayout { Layout.fillWidth: true; spacing: 7
-                                    Text { text: "OUTPUT"; color: "#71848b"; font.pixelSize: 8; font.bold: true; Layout.preferredWidth: 48 }
-                                    ComboBox { Layout.fillWidth: true; implicitHeight: 28; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
-                                        currentIndex: {
-                                            for (let index = 0; index < model.length; ++index) if (model[index].id === modelData.outputLayoutId) return index
-                                            return 0
-                                        }
-                                        onActivated: backend.assignProfileOutputLayout(modelData.id, currentValue)
-                                        contentItem: Text { leftPadding: 7; text: parent.displayText + " · vJoy " + modelData.outputDeviceId; color: "#e7f0f1"; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-                                        background: Rectangle { color: "#0d1216"; border.color: "#546d78"; radius: 3 }
-                                    }
-                                }
-                                Item { Layout.fillHeight: true }
-                                RowLayout { Layout.fillWidth: true
-                                    Text { visible: modelData.protected; text: "PROTECTED FALLBACK"
-                                        color: "#72858b"; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
-                                    Item { visible: !modelData.protected; Layout.fillWidth: true }
-                                    CommandButton { label: modelData.active ? "BASE" : "ACTIVATE"
-                                        subdued: modelData.active
-                                        commandEnabled: !modelData.active
-                                        onTriggered: backend.activateProfile(modelData.id) }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Flickable {
-            id: settingsPage
-            anchors.fill: parent
-            // Replaced by the shared responsive SettingsPage above. Retaining
-            // the old tree dormant avoids unrelated editor-page churn.
-            visible: false
- contentWidth: width
- contentHeight: settingsContent.implicitHeight + 18
- clip: true
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            Column {
-                id: settingsContent
-                x: 1
- width: settingsPage.width - 10
- spacing: 14
-                PageTitle { heading: "Settings"
- detail: "Persistent device selection and safe mapping defaults" }
-                Panel { width: parent.width; height: 94
-                    color: "#182a30"; border.color: "#536975"
-                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "CONTROLLER SETUP & VERIFICATION"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Verify your selected controller, vJoy, and HidHide configuration."
-                                color: "#9dafb4"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                            Text { text: backend.controllerReadinessStatus; color: backend.controllerReadinessState === "READY" ? "#8fd5c9" : backend.controllerReadinessState === "ACTION REQUIRED" ? "#ca9090" : "#d4ad69"; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
-                        }
-                        CommandButton { label: "VERIFY CONTROLLER SETUP"; onTriggered: { controllerSetupDialog.open(); backend.verifyHotasSetup() } }
-                    }
-                }
-                Panel { width: parent.width; height: Math.max(138, 80 + legacyControllerManagerRepeater.count * 64)
-                    color: "#182a30"; border.color: "#536975"
-                    ColumnLayout { anchors.fill: parent; anchors.margins: 16; spacing: 7
-                        RowLayout { Layout.fillWidth: true
-                            ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                Text { text: "INPUT CONTROLLERS"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                                Text { text: "Connected controllers, saved devices, active input, and setup state."; color: "#9dafb4"; font.pixelSize: 10 }
-                            }
-                            CommandButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshControllers() }
-                        }
-                        Repeater { id: legacyControllerManagerRepeater; model: backend.controllers
-                            delegate: Rectangle { Layout.fillWidth: true; implicitHeight: 56; radius: 4
-                                color: modelData.active ? "#244650" : "#10171b"; border.color: modelData.active ? "#78aab9" : "#435660"
-                                RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
-                                    ColumnLayout { Layout.fillWidth: true; spacing: 1
-                                        Text { text: modelData.name; color: "#e8eeee"; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                        Text { text: modelData.state + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.povCount + " POV"; color: "#9dafb4"; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    }
-                                    CommandButton { visible: !modelData.verified && modelData.connected; label: "SET UP"; onTriggered: backend.selectNewController(modelData.directInputId) }
-                                    CommandButton { visible: modelData.verified && modelData.connected && !modelData.active; label: "SET ACTIVE"; subdued: true; onTriggered: backend.setActiveController(modelData.id) }
-                                    CommandButton { visible: modelData.verified; label: "FORGET"; subdued: true; onTriggered: backend.forgetController(modelData.id) }
-                                }
-                            }
-                        }
-                        Text { visible: legacyControllerManagerRepeater.count === 0; text: "No physical DirectInput controllers detected. vJoy is excluded from this list."; color: "#9dafb4"; font.pixelSize: 10 }
-                    }
-                }
-                Panel { width: parent.width; height: 70
-                    RowLayout { anchors.fill: parent; anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "AUTO-SWITCH VERIFIED CONTROLLER"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Switch only to one unambiguous remembered controller when the active one is unavailable."; color: "#9dafb4"; font.pixelSize: 10 }
-                        }
-                        Switch { checked: backend.autoSwitchVerifiedController; onToggled: backend.setAutoSwitchVerifiedController(checked) }
-                    }
-                }
-                Panel { width: parent.width; height: 70
-                    RowLayout { anchors.fill: parent; anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "KEEP RUNNING IN SYSTEM TRAY"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is not available in this Windows session."; color: "#9dafb4"; font.pixelSize: 10 }
-                        }
-                        Switch { enabled: backend.trayAvailable; checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
-                    }
-                }
-                Panel { width: parent.width; height: 92
-                    color: "#2c2223"; border.color: "#ca9090"
-                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 12
-                        ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "TROUBLESHOOTING & UNINSTALL"; color: "#f0d7d5"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Forget controllers or reset only this device calibration without touching profiles. The normal uninstaller retains vJoy, HidHide, and user data by default."; color: "#ab999d"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        }
-                        Column { spacing: 5
-                            CommandButton { label: "FORGET CONTROLLERS"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "forget"; legacyDeviceActionDialog.open() } }
-                            CommandButton { label: "RESET CALIBRATION"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "calibration"; legacyDeviceActionDialog.open() } }
-                            CommandButton { label: "UNINSTALL HOTAS BF6"; subdued: true; onTriggered: { legacyDeviceActionDialog.action = "uninstall"; legacyDeviceActionDialog.open() } }
-                        }
-                    }
-                }
-                Panel { width: parent.width; height: 84
-                    RowLayout { anchors.fill: parent; anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "APPEARANCE"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Choose Legacy, Standard, or Top Gun without changing mapper configuration."
-                                color: "#9dafb4"; font.pixelSize: 10 }
-                        }
-                        FlightComboBox {
-                            id: legacyThemeSelection
-                            width: 188
-                            model: themeManager.themeChoices
-                            currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme))
-                            onActivated: themeManager.setCurrentTheme(currentText)
-                        }
-                    }
-                }
-                Panel { width: parent.width
-   height: backend.updateAvailable ? 146 : 122
-                    RowLayout { anchors.fill: parent
-   anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "APPLICATION UPDATE"
-  color: "#e8eeee"
-  font.pixelSize: 12
-  font.bold: true }
-                            Text { text: "Current Version  ·  v" + Qt.application.version
-  color: "#9dafb4"
-  font.pixelSize: 10 }
-                            Text { text: backend.updateChecking ? "Checking for updates…" : backend.updateStatusText
-                                color: backend.updateCheckFailed ? "#d3a06c" : (backend.updateAvailable ? "#9fcfbe" : "#9dafb4")
-                                font.pixelSize: 10 }
-                            Text { visible: backend.updateAvailable; text: "Update Available  ·  " + backend.updateAvailableVersion
-                                color: "#dcefeb"; font.pixelSize: 10; font.bold: true }
-                        }
-                        Column { spacing: 7
-                            CommandButton { label: backend.updateChecking ? "CHECKING…" : "CHECK FOR UPDATES"
-                                subdued: true; commandEnabled: !backend.updateChecking; onTriggered: backend.checkForUpdates() }
-                            CommandButton { visible: backend.updateAvailable; label: "UPDATE TO " + backend.updateAvailableVersion
-                                onTriggered: backend.handoffToLauncher() }
-                        }
-                    }
-                }
-                Panel { width: parent.width; height: 102
-                    color: "#e516252c"; border.color: "#3b65717a"
-                    RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
-                        ColumnLayout { Layout.fillWidth: true; spacing: 4
-                            Text { text: "DISABLED AXIS VALUE"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "Output value held by virtual axes that have no active mapping."
-                                color: "#9dafb4"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                            Text { text: "Global safety setting · applies immediately · not stored in profiles"
-                                color: "#72858b"; font.pixelSize: 9 }
-                        }
-                        FlightTextInput { id: legacyDisabledAxisValue; Layout.preferredWidth: 108
-                            text: Number(backend.disabledAxisValue).toFixed(1)
-                            inputMethodHints: Qt.ImhFormattedNumbersOnly
-                            validator: DoubleValidator { bottom: -100.0; top: 100.0; decimals: 1 }
-                            onEditingFinished: {
-                                backend.setDisabledAxisValue(Number(text))
-                                text = Number(backend.disabledAxisValue).toFixed(1)
-                            } }
-                        Text { text: "%"; color: "#b6c7ca"; font.pixelSize: 12; font.bold: true }
-                    }
-                }
-                Panel { width: parent.width
- height: 84
-                    RowLayout { anchors.fill: parent
- anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "PREFERRED PHYSICAL DEVICE"
- color: "#e8eeee"
- font.pixelSize: 12
- font.bold: true }
-                            Text { text: backend.deviceId.length > 0 ? backend.deviceName + " · " + backend.deviceId : "Automatic selection: prefers T.Flight HOTAS One"
- color: "#8e9ba1"
- font.pixelSize: 10
- elide: Text.ElideRight
- Layout.fillWidth: true }
-                        }
-                        CommandButton { label: "USE CONNECTED"
- subdued: true
- onTriggered: backend.useConnectedDevice() }
-                    }
-                }
-                Panel { width: parent.width
- height: 68
-                    RowLayout { anchors.fill: parent
- anchors.margins: 16
-                        Text { text: "START MAPPING AUTOMATICALLY"
- color: "#e8eeee"
- font.pixelSize: 12
- font.bold: true
- Layout.fillWidth: true }
-                        Switch {
-                            id: startMappingToggle
-                            checked: backend.startMappingOnLaunch
-                            onToggled: backend.setStartMappingOnLaunch(checked)
-                            indicator: Rectangle { implicitWidth: 36
- implicitHeight: 18
- radius: 9
- color: startMappingToggle.checked ? "#476d78" : "#30383d"
- border.color: "#33dce5e8"
-                                Rectangle { width: 14
- height: 14
- radius: 7
- x: startMappingToggle.checked ? 19 : 3
- anchors.verticalCenter: parent.verticalCenter
- color: "#e4ecee" }
-                            }
-                        }
-                    }
-                }
-                Panel { width: parent.width
- height: 136
-                    color: root.vjoyCardColor()
-                    border.color: root.vjoyCardBorder()
-                    RowLayout { anchors.fill: parent
- anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true
-                            Row { spacing: 7
-                                Text { text: "VJOY DEVICE"; color: "#e8eeee"; font.pixelSize: 12; font.bold: true }
-                                StatusDot { tone: root.capacityColor() }
-                                Text { text: backend.vjoyStatusSeverity.toUpperCase()
-                                    color: root.capacityColor(); font.pixelSize: 10; font.bold: true }
-                            }
-                            Text { text: "Device " + backend.vjoyDeviceId
-                                color: backend.vjoyReady ? "#d9ebe7" : root.capacityColor(); font.pixelSize: 13; font.bold: true }
-                            Text { text: "X / Y / Z / Rz"
-                                color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
-                            Text { text: backend.virtualAxisStatus + "   ·   " + backend.vjoyButtonCount + " buttons   ·   Required " + backend.vjoyRequiredButtonCount
-                                color: "#9dafb4"; font.pixelSize: 10; font.family: "Consolas" }
-                            Text { text: backend.vjoyReady ? (backend.vjoyStatusSeverity === "ready"
-                                ? "Virtual output is ready." : root.capacityState()) : backend.vjoyStatus
-                                color: root.capacityColor(); font.pixelSize: 10; font.bold: true }
-                        }
-                        Column { spacing: 7
-                            SpinBox { from: 1
-                                to: 16
-                                value: backend.vjoyDeviceId
-                                onValueModified: backend.setVjoyDeviceId(value) }
-                            CommandButton { label: "CONFIGURE VJOY"
-                                subdued: true
-                                onTriggered: backend.openVjoyConfiguration() }
-                        }
-                    }
-                }
-                Panel { width: parent.width
- height: 118
-                    color: !backend.hidhideAvailable ? "#e52d2419" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#e51a352f" : "#ed182128"
-                    border.color: !backend.hidhideAvailable ? "#c28b624f" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#3c9ca8a0" : "#41546770"
-                    RowLayout { anchors.fill: parent
- anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "HIDHIDE"
- color: "#e8eeee"
- font.pixelSize: 12
- font.bold: true }
-                            Text { text: !backend.hidhideAvailable ? "NOT DETECTED" : !backend.hidhideCloakStateKnown ? "INSTALLED · CLOAK STATE UNAVAILABLE" : backend.hidhideCloaked ? (backend.hidhideMapperAllowed ? "CLOAKING ACTIVE · MAPPER ALLOWED" : "CLOAKING ACTIVE · MAPPER BLOCKED") : "CLOAKING OFF"
-                                color: !backend.hidhideAvailable ? "#d49b62" : backend.hidhideCloakStateKnown && backend.hidhideCloaked ? "#8fd5c9" : "#b7d8df"; font.pixelSize: 12; font.bold: true }
-                            Text { text: "The mapper registers only its own executable when cloaking is active, so reconnects do not depend on a build-folder path."
-                                color: "#9dafb4"; font.pixelSize: 10; wrapMode: Text.WordWrap
- Layout.fillWidth: true }
-                        }
-                        Column { spacing: 7
-                            CommandButton { label: "REFRESH STATUS"
- subdued: true
- onTriggered: backend.refreshHidHideStatus() }
-                            CommandButton { label: "OPEN HIDHIDE"
- subdued: true
- onTriggered: backend.openHidHideConfiguration() }
-                        }
-                    }
-                }
-                Panel { width: parent.width
- height: 84
- color: "#ef251a1a"
- border.color: "#44bd7777"
-                    RowLayout { anchors.fill: parent
- anchors.margins: 16
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "RESET APPLICATION CONFIGURATION"
- color: "#f0d7d5"
- font.pixelSize: 12
- font.bold: true }
-                            Text { text: "Restore default routes and clear saved calibration."
- color: "#ab999d"
- font.pixelSize: 10 }
-                        }
-                        CommandButton { label: "RESET"
- subdued: true
- onTriggered: resetDialog.open() }
-                    }
-                }
             }
         }
         Loader {
             id: curveEditorLoader
             anchors.fill: parent
-            active: root.currentPage === 6 || item !== null
+            active: root.currentPage === 6
             sourceComponent: Component {
-                LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend }
+                LegacyCurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend
+                    presentationState: root.curveEditorPresentationState
+                    onPresentationStateCaptured: function(state) { root.curveEditorPresentationState = state } }
             }
         }
         Loader {
             id: automationPageLoader
             anchors.fill: parent
-            active: root.currentPage === 7 || item !== null
+            active: root.currentPage === 7
             sourceComponent: Component {
-                AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true }
+                AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true
+                    presentationState: root.automationPresentationState
+                    onPresentationStateCaptured: function(state) { root.automationPresentationState = state } }
             }
         }
     }

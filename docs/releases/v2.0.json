@@ -303,10 +303,10 @@
     "releaseTitle": "v2.1.3",
     "title": "Profiles, Categories & Game Detection UX",
     "summary": "HOTAS BF6 v2.1.3 makes game-aware configuration clear and direct: categories show their activation behavior, game rules are managed in place, and profile detail becomes a compact configuration dashboard without changing the real-time DirectInput-to-vJoy mapper.",
-    "status": "current",
-    "replacement": null,
+    "status": "superseded",
+    "replacement": "v2.1.4",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.3 has local/CI model, QML, portability, and synthetic mapper validation. Physical controller, game, installer, signing, public updater, and measured resource acceptance remain machine- or release-specific checks.",
+    "statusNote": "Superseded by v2.1.4 Runtime Responsiveness & GUI Efficiency. v2.1.3 retains the Profile/Category workflow while v2.1.4 moves discovery off the GUI event loop and reduces presentation churn. Physical controller, game, installer, signing, public updater, and measured resource acceptance remain machine- or release-specific checks.",
     "highlights": [
       "Profile Library cards now explain Game Detection to Category to Profile to Virtual Output, summarizing linked games, activation behavior, profile counts, and the active context without exposing implementation detail.",
       "Category pages separate Automatic Activation from the explicit Restore Last-used Profile or Always Use a Specific Profile choice. The default selector appears only for the fixed-profile behavior.",
@@ -315,6 +315,27 @@
       "Themed Profile, Category, and Pack import/export choices preserve existing strict preview-before-apply validation and safe conflict decisions. Profile detail summarizes mappings, curves, Automation, output readiness, and game/category relationships instead of reproducing the editor.",
       "Settings, Automation, Profiles, and Overview share the exact established Legacy card surface used by Axes, Buttons, Curve Editor, Calibration, and Diagnostics. Standard and Top Gun retain their existing theme treatments.",
       "No DirectInput polling, vJoy report scheduling, configuration serialization migration, allocation, locking, file work, process enumeration, UI work, or logging was added to the mapper report loop."
+    ]
+  },
+  {
+    "version": "2.1.4",
+    "tag": "v2.1.4",
+    "releaseTitle": "HOTAS BF6 Simple v2.1.4 — Runtime Responsiveness & GUI Efficiency",
+    "title": "Runtime Responsiveness & GUI Efficiency",
+    "summary": "HOTAS BF6 v2.1.4 removes unnecessary GUI-thread work and high-frequency presentation churn, then unloads inactive QML page trees, so the mapper remains responsive while games, browsers, launchers, Discord, and other desktop applications are running.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.1.4 has focused local/CI control-plane, QML lifecycle/memory, and synthetic mapper validation. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain machine- or release-specific checks.",
+    "highlights": [
+      "Windows process enumeration and DirectInput controller inventory discovery run on low-priority control-plane threads. The Qt/UI thread receives completed snapshots only, while MappingWorker remains independent.",
+      "Automatic game detection keeps case-insensitive basename matching, active-category preference, deterministic category tie-breaking, unchanged-set suppression, and slower visible/minimized/tray-hidden cadence. The explicit Add Game list also receives asynchronous cached snapshots.",
+      "Visible analog and POV presentation runs at approximately 30 Hz, numeric telemetry at 10 Hz, and percentile sampling at four Hz. Minimized and tray-hidden control-plane work remains reduced or asleep.",
+      "The 128-button presentation model is cached and changes only for configuration, topology, or an actual button/runtime state transition; broad axis telemetry cannot rebuild it.",
+      "Leaving any main page unloads its QML tree, including diagnostics, Canvas-backed curve editing, and button-card delegates. Unsaved Automation editing and Profile Library import choices are retained only as compact shell-owned state and restore when their page is reopened.",
+      "Focused test instrumentation records UI notification rates, discovery background completions, structural rebuild counts, and Qt event-loop delays above 16, 50, 100, and 250 milliseconds only when enabled for tests.",
+      "The offscreen page-lifecycle qualification cycles all nine pages 20 times across Legacy, Standard, and Top Gun; it requires one live page and no retained QML objects after a completed cycle, checks draft/import preservation, and records Windows working-set and private-byte samples.",
+      "No DirectInput report-loop, transform, Automation, vJoy scheduling, allocation, mutex, storage, process-inspection, or UI-control change was made to MappingWorker."
     ]
   }
 ]

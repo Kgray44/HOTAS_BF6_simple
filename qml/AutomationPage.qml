@@ -17,6 +17,10 @@ Item {
     property var draft: ({})
     property string editingId: ""
     property bool advancedOpen: false
+    // Keep an unsaved editor value without retaining the page, its dialogs,
+    // or its large repeater tree while another page is active.
+    property var presentationState: ({})
+    signal presentationStateCaptured(var state)
 
     readonly property color panelFill: legacy ? "#e9161d23" : (themeTokens ? (topGun ? "#d80b1b20" : "#ed182128") : "#1a1d23")
     readonly property color raisedFill: legacy ? "#1b2a31" : (themeTokens ? themeTokens.panelRaised : "#20282d")
@@ -48,6 +52,26 @@ Item {
     readonly property var directions: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
 
     function clone(value) { return JSON.parse(JSON.stringify(value)) }
+    function restorePresentationState() {
+        const saved = presentationState || ({})
+        if (!saved.editing) return
+        editing = true
+        draftDirty = !!saved.draftDirty
+        draft = clone(saved.draft || ({}))
+        editingId = saved.editingId || ""
+        advancedOpen = !!saved.advancedOpen
+    }
+    function capturePresentationState() {
+        presentationStateCaptured({
+            editing: editing,
+            draftDirty: draftDirty,
+            draft: editing ? clone(draft) : ({}),
+            editingId: editingId,
+            advancedOpen: advancedOpen
+        })
+    }
+    Component.onCompleted: restorePresentationState()
+    Component.onDestruction: capturePresentationState()
     function setDraft(value) { draft = clone(value); draftDirty = true }
     function defaultRequirement(type) { return ({ type: type === undefined ? -1 : type, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "", pressCount: 2, multiPressWindowMs: 350, longPressDurationMs: 600 }) }
     function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1, tapDurationMs: 80 }) }

@@ -368,6 +368,7 @@ if (BUILD_TESTING)
         dxguid
         advapi32
         shell32
+        psapi
     )
     target_include_directories(app_qml_startup_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

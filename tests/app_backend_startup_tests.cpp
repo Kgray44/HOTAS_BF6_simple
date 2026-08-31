@@ -28,15 +28,15 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         const bool visibleLifecycle = backend.presentationState() == QStringLiteral("Visible")
             && backend.presentationSnapshotActive()
-            && backend.presentationSnapshotIntervalMs() == 16
-            && backend.controllerDiscoveryIntervalMs() == 1000;
+            && backend.presentationSnapshotIntervalMs() == 33
+            && backend.controllerDiscoveryIntervalMs() == 2500;
 
         lifecycleWindow->showMinimized();
         QTimer::singleShot(0, &application, [&, lifecycleWindow, visibleLifecycle] {
             const bool minimizedLifecycle = backend.presentationState() == QStringLiteral("Minimized")
                 && backend.presentationSnapshotActive()
-                && backend.presentationSnapshotIntervalMs() == 200
-                && backend.controllerDiscoveryIntervalMs() == 3500;
+                && backend.presentationSnapshotIntervalMs() == 250
+                && backend.controllerDiscoveryIntervalMs() == 5000;
             const bool mappingWasRequested = backend.mappingRequested();
             backend.hideToTray();
             QTimer::singleShot(50, &application, [&, lifecycleWindow, visibleLifecycle,
@@ -65,13 +65,13 @@ int main(int argc, char *argv[])
                         && trayCounters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() == 0;
 
                     backend.restoreFromTray();
-                    QTimer::singleShot(50, &application, [&, lifecycleWindow, visibleLifecycle,
+                    QTimer::singleShot(150, &application, [&, lifecycleWindow, visibleLifecycle,
                                                           minimizedLifecycle, trayLifecycle, mappingWasRequested] {
                         const QVariantMap restoredCounters = backend.uiPerformanceCounters();
                         const bool restoredLifecycle = backend.presentationState() == QStringLiteral("Visible")
                             && backend.presentationSnapshotActive()
-                            && backend.presentationSnapshotIntervalMs() == 16
-                            && backend.controllerDiscoveryIntervalMs() == 1000
+                            && backend.presentationSnapshotIntervalMs() == 33
+                            && backend.controllerDiscoveryIntervalMs() == 2500
                             && backend.mappingRequested() == mappingWasRequested
                             && restoredCounters.value(QStringLiteral("telemetryChanged")).toULongLong() >= 1
                             && restoredCounters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() >= 1;
@@ -79,7 +79,6 @@ int main(int argc, char *argv[])
                         const bool gameDetectionStopsWhenDisabled = !backend.gameDetectionTimerActive();
                         backend.setAutomaticGameDetection(true);
                         const bool gameDetectionRunsWhenEnabled = backend.gameDetectionTimerActive();
-                        backend.setAutomaticGameDetection(false);
                         delete lifecycleWindow;
 
                         if (!(visibleLifecycle && minimizedLifecycle && trayLifecycle
@@ -99,9 +98,11 @@ int main(int argc, char *argv[])
         // One explicit cached read establishes the getter baseline. During the
         // following ten seconds no telemetry refresh may invoke it again.
                         const QVariantList steadyControllerModel = backend.controllers();
+                        const QVariantList steadyButtonModel = backend.buttons();
                         const QVariantList steadyProfiles = backend.profiles();
                         const QVariantList steadyCategories = backend.profileCategories();
                         Q_UNUSED(steadyControllerModel);
+                        Q_UNUSED(steadyButtonModel);
                         Q_UNUSED(steadyProfiles);
                         Q_UNUSED(steadyCategories);
                         QTimer::singleShot(10'000, &application, [&] {
@@ -109,32 +110,48 @@ int main(int argc, char *argv[])
             const qulonglong controllerGetterCalls = counters.value(QStringLiteral("controllerGetterCalls")).toULongLong();
             const qulonglong controllerRebuilds = counters.value(QStringLiteral("controllerModelRebuilds")).toULongLong();
             const qulonglong controllerNotifications = counters.value(QStringLiteral("controllersChanged")).toULongLong();
+            const qulonglong buttonGetterCalls = counters.value(QStringLiteral("buttonGetterCalls")).toULongLong();
+            const qulonglong buttonRebuilds = counters.value(QStringLiteral("buttonModelRebuilds")).toULongLong();
             const qulonglong profileGetterCalls = counters.value(QStringLiteral("profileGetterCalls")).toULongLong();
             const qulonglong categoryGetterCalls = counters.value(QStringLiteral("categoryGetterCalls")).toULongLong();
             const qulonglong telemetryNotifications = counters.value(QStringLiteral("telemetryChanged")).toULongLong();
             const qulonglong inputNotifications = counters.value(QStringLiteral("inputTelemetryChanged")).toULongLong();
+            const qulonglong buttonNotifications = counters.value(QStringLiteral("buttonTelemetryChanged")).toULongLong();
             const qulonglong stateNotifications = counters.value(QStringLiteral("stateChanged")).toULongLong();
+            const qulonglong controllerBackgroundRuns = counters.value(QStringLiteral("controllerDiscoveryBackgroundRuns")).toULongLong();
+            const qulonglong gameBackgroundRuns = counters.value(QStringLiteral("gameDetectionBackgroundRuns")).toULongLong();
+            const qulonglong uiStallsOver250Ms = counters.value(QStringLiteral("uiEventLoopDelayOver250Ms")).toULongLong();
             std::fprintf(stderr,
-                         "ui_steady_state_seconds=10 controller_getter_calls=%llu profile_getter_calls=%llu category_getter_calls=%llu controller_model_rebuilds=%llu controllers_changed=%llu "
-                         "telemetry_changed=%llu input_telemetry_changed=%llu state_changed=%llu\n",
+                         "ui_steady_state_seconds=10 controller_getter_calls=%llu button_getter_calls=%llu profile_getter_calls=%llu category_getter_calls=%llu controller_model_rebuilds=%llu button_model_rebuilds=%llu controllers_changed=%llu "
+                         "telemetry_changed=%llu input_telemetry_changed=%llu button_telemetry_changed=%llu state_changed=%llu controller_background_runs=%llu game_background_runs=%llu ui_stalls_over_250ms=%llu\n",
                          static_cast<unsigned long long>(controllerGetterCalls),
+                         static_cast<unsigned long long>(buttonGetterCalls),
                          static_cast<unsigned long long>(profileGetterCalls),
                          static_cast<unsigned long long>(categoryGetterCalls),
                          static_cast<unsigned long long>(controllerRebuilds),
+                         static_cast<unsigned long long>(buttonRebuilds),
                          static_cast<unsigned long long>(controllerNotifications),
                          static_cast<unsigned long long>(telemetryNotifications),
                          static_cast<unsigned long long>(inputNotifications),
-                         static_cast<unsigned long long>(stateNotifications));
-            // Telemetry remains live while the cached controller model stays
-            // completely quiet. A few state notifications are permitted for
-            // normal asynchronous startup/control-plane completion, but never
-            // presentation-cadence churn. The offscreen test host is not a
-            // frame-rate benchmark, so it asserts live notifications rather
-            // than a machine-specific callback count.
-            passed = controllerGetterCalls == 1 && profileGetterCalls == 1 && categoryGetterCalls == 1
-                && controllerRebuilds == 0 && controllerNotifications == 0
-                && telemetryNotifications >= 10 && inputNotifications >= 10
-                && stateNotifications < telemetryNotifications / 4;
+                         static_cast<unsigned long long>(buttonNotifications),
+                         static_cast<unsigned long long>(stateNotifications),
+                         static_cast<unsigned long long>(controllerBackgroundRuns),
+                         static_cast<unsigned long long>(gameBackgroundRuns),
+                         static_cast<unsigned long long>(uiStallsOver250Ms));
+            // Live analog presentation is capped near 30 Hz and numeric
+            // telemetry near 10 Hz. Neither cached controller nor 128-button
+            // structure may rebuild during that activity, and both discovery
+            // paths must have completed background samples without a long UI
+            // heartbeat stall.
+            passed = controllerGetterCalls == 1 && buttonGetterCalls == 1
+                && profileGetterCalls == 1 && categoryGetterCalls == 1
+                && controllerRebuilds == 0 && buttonRebuilds == 0 && controllerNotifications == 0
+                && telemetryNotifications >= 80 && telemetryNotifications <= 130
+                && inputNotifications >= 100 && inputNotifications <= 340
+                && stateNotifications < telemetryNotifications / 4
+                && controllerBackgroundRuns >= 1 && gameBackgroundRuns >= 1
+                && uiStallsOver250Ms == 0;
+            backend.setAutomaticGameDetection(false);
             QCoreApplication::quit();
         });
                     });
