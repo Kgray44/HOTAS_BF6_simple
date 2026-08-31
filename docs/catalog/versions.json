@@ -493,5 +493,18 @@
       "Button Quick Map uses meaningful active-profile destinations rather than unused vJoy capacity. Exact axis-layout safety and the 15-required / 30-available button-capacity behavior remain unchanged.",
       "Learning, conflict decisions, naming, dialogs, and Quick Map state remain on the UI/control plane; no learning-state checks, strings, locks, allocations, or conflict work were added to MappingWorker."
     ]
+  },
+  {
+    "version": "2.1.7",
+    "title": "Destination-First Button Learning & Live Signal Flow",
+    "summary": "Simplifies the Buttons workspace around virtual game outputs: one page-level Learn Button selects a vJoy destination before listening, while every card clearly shows its live physical-to-virtual route.",
+    "highlights": [
+      "Per-card Learn Input controls are removed from Legacy, Standard, and Top Gun; matching page-level Learn Button and Quick Map actions now distinguish one-output learning from multi-output configuration.",
+      "Learn Button first selects an available vJoy output, shows all current physical sources, then explicitly starts the existing safe listener. The selected destination remains fixed when a physical button is detected, including high virtual button numbers.",
+      "Learn Button, manual route editing, and Quick Map continue to use the existing Replace, Ignore, and Cancel route decisions. Shared-output fan-in, atomic swaps, partial Quick Map progress, and re-arming behavior are unchanged.",
+      "Button cards retain custom names, immutable physical IDs, the top-right physical Pressed/Released state, physical card activation, Game Output selection, and Disabled badge while replacing raw UP telemetry with a readable Physical Input to Virtual Output signal-flow strip.",
+      "The virtual endpoint reads the actual published vJoy-button state, so a shared destination can correctly show a released local physical source while another source holds the virtual output pressed. Disabled routes retain physical state and display a muted dashed route to Disabled.",
+      "The visual workflow uses the existing bounded UI snapshot and themed modal shells; it adds no timers, polling, learning checks, conflict work, allocations, locks, strings, or UI callbacks to the DirectInput-to-vJoy report path."
+    ]
   }
 ]

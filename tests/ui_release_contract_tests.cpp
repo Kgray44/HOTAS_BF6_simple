@@ -28,6 +28,7 @@ private slots:
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
+    void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void installerUpgradeAcceptanceTracksSchema19();
     void profileLibraryPortabilityIsSharedAndThemed();
 };
@@ -351,6 +352,53 @@ void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(QStringLiteral("InputLearning")));
     QVERIFY(readiness.contains(QStringLiteral("Output-layout button counts are provisioned capacity")));
     QVERIFY(readiness.contains(QStringLiteral("requirements.buttons = 0;")));
+}
+
+void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    for (const QString &ui : {sourceFile(QStringLiteral("qml/Standard.qml")),
+                              sourceFile(QStringLiteral("qml/Legacy.qml"))}) {
+        const qsizetype cardStart = ui.indexOf(QStringLiteral("component ButtonCard: Panel"));
+        const qsizetype cardEnd = ui.indexOf(QStringLiteral("component PovNativeCard: Panel"), cardStart);
+        QVERIFY(cardStart >= 0);
+        QVERIFY(cardEnd > cardStart);
+        const QString card = ui.mid(cardStart, cardEnd - cardStart);
+        QVERIFY(!card.contains(QStringLiteral("LEARN INPUT")));
+        QVERIFY(!card.contains(QStringLiteral("PHYSICAL   ")));
+        QVERIFY(!card.contains(QStringLiteral("VIRTUAL    ")));
+        QVERIFY(card.contains(QStringLiteral("PHYSICAL INPUT")));
+        QVERIFY(card.contains(QStringLiteral("VIRTUAL OUTPUT")));
+        QVERIFY(card.contains(QStringLiteral("PRESSED")));
+        QVERIFY(card.contains(QStringLiteral("RELEASED")));
+        QVERIFY(card.contains(QStringLiteral("DISABLED")));
+        QVERIFY(card.contains(QStringLiteral("text: \"▶\"")));
+        QVERIFY(card.contains(QStringLiteral("buttonCard.info.virtualPressed")));
+        QVERIFY(card.contains(QStringLiteral("buttonCard.info.pressed || buttonCard.info.virtualPressed")));
+        QVERIFY(ui.contains(QStringLiteral("label: \"LEARN BUTTON\"")));
+        QVERIFY(ui.contains(QStringLiteral("id: learnButtonDialog")));
+        QVERIFY(ui.contains(QStringLiteral("model: root.buttonOutputChoices.slice(1)")));
+        QVERIFY(ui.contains(QStringLiteral("enabled: !backend.inputLearning.active")));
+        QVERIFY(ui.contains(QStringLiteral("CURRENT PHYSICAL INPUT")));
+        QVERIFY(ui.contains(QStringLiteral("backend.startButtonLearning(learnButtonDialog.selectedTarget)")));
+        QVERIFY(ui.contains(QStringLiteral("backend.resolveInputLearningConflict(\"ignore\")")));
+    }
+
+    const qsizetype buttonLearningStart = backend.indexOf(QStringLiteral("bool AppBackend::startButtonLearning"));
+    const qsizetype buttonLearningEnd = backend.indexOf(QStringLiteral("bool AppBackend::startPovLearning"), buttonLearningStart);
+    QVERIFY(buttonLearningStart >= 0);
+    QVERIFY(buttonLearningEnd > buttonLearningStart);
+    const QString buttonLearning = backend.mid(buttonLearningStart, buttonLearningEnd - buttonLearningStart);
+    QVERIFY(buttonLearning.contains(QStringLiteral("m_inputLearning.virtualButton = virtualButton")));
+
+    const qsizetype learningProcessingStart = backend.indexOf(QStringLiteral("void AppBackend::processInputLearning()"));
+    const qsizetype learningProcessingEnd = backend.indexOf(QStringLiteral("void AppBackend::refreshUiSnapshot()"), learningProcessingStart);
+    QVERIFY(learningProcessingStart >= 0);
+    QVERIFY(learningProcessingEnd > learningProcessingStart);
+    const QString learningProcessing = backend.mid(learningProcessingStart, learningProcessingEnd - learningProcessingStart);
+    QVERIFY(learningProcessing.contains(QStringLiteral("m_inputLearning.sourceButton = button")));
+    QVERIFY(learningProcessing.contains(QStringLiteral("applyLearnedInput();")));
+    QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
 void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema19()

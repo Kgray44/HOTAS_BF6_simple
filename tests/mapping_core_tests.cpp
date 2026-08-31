@@ -1197,6 +1197,15 @@ void MappingCoreTests::buttonRouteDecisionsAreAtomicAndSupportFanIn()
     QCOMPARE(frozenChange.targetVirtualButton, 3);
     QVERIFY(applyButtonRouteChange(frozen, frozenChange, ButtonRouteResolution::Replace));
     QCOMPARE(frozen[6].target, 3);
+
+    // A high selected destination remains independent from a low detected
+    // source, which is the destination-first Learn Button contract.
+    ButtonBindings highDestination{};
+    const ButtonRouteChange highDestinationChange = analyzeButtonRouteChange(highDestination, 1, 28, 32);
+    QVERIFY(highDestinationChange.valid);
+    QCOMPARE(highDestinationChange.targetVirtualButton, 28);
+    QVERIFY(applyButtonRouteChange(highDestination, highDestinationChange, ButtonRouteResolution::Replace));
+    QCOMPARE(highDestination[1].target, 28);
 }
 
 void MappingCoreTests::buttonConfigurationRoundTripsAndMigratesV1()
