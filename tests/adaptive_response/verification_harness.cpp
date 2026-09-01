@@ -1,5 +1,8 @@
 #include "verification_harness.h"
 
+#include "automation_engine.h"
+#include "axis_mapping_transition.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -10,10 +13,12 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QStringList>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTextStream>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -24,6 +29,7 @@
 #include <numeric>
 #include <set>
 #include <sstream>
+#include <thread>
 
 namespace hotas::verification {
 namespace {
@@ -47,6 +53,8 @@ struct CampaignOptions {
     std::string scenarioFilter;
     std::string modelFilter = "all";
     int sampleRateFilter = 0;
+    int randomCountOverride = -1;
+    int jobs = 1;
     QString outputDirectory;
     QString baselineDirectory;
     QString candidateDirectory;
@@ -66,6 +74,7 @@ struct Aggregate {
 };
 
 constexpr float kMotionVelocityThreshold = 0.002F;
+constexpr float kGroundTruthReversalVelocityThreshold = 0.020F;
 constexpr float kLeadTolerance = 0.00015F;
 
 QString q(const std::string &value) { return QString::fromStdString(value); }
@@ -194,12 +203,23 @@ QJsonObject metricsJson(const ScenarioMetrics &metrics)
         {"nonFinite", static_cast<qint64>(metrics.nonFinite)},
         {"illegalOutput", static_cast<qint64>(metrics.illegalOutput)},
         {"stationaryDrift", static_cast<qint64>(metrics.stationaryDrift)},
-        {"rmsLead", metrics.rmsLead}, {"peakLead", metrics.peakLead},
-        {"meanHorizonMs", metrics.meanHorizonMs}, {"peakHorizonMs", metrics.peakHorizonMs},
+        {"rmsLead", metrics.rmsLead}, {"meanLead", metrics.meanLead}, {"medianLead", metrics.medianLead},
+        {"p95Lead", metrics.p95Lead}, {"peakLead", metrics.peakLead},
+        {"meanHorizonMs", metrics.meanHorizonMs}, {"medianHorizonMs", metrics.medianHorizonMs},
+        {"p95HorizonMs", metrics.p95HorizonMs}, {"peakHorizonMs", metrics.peakHorizonMs},
         {"meanConfidence", metrics.meanConfidence}, {"wrongDirectionLeadArea", metrics.wrongDirectionLeadArea},
         {"noiseRms", metrics.noiseRms}, {"predictedNoiseRms", metrics.predictedNoiseRms},
+        {"noiseAmplificationRatio", metrics.noiseAmplificationRatio},
+        {"dropoutTotalMs", metrics.dropoutTotalMs}, {"longestDropoutMs", metrics.longestDropoutMs},
+        {"falseStopTotalMs", metrics.falseStopTotalMs}, {"stationaryLeadRms", metrics.stationaryLeadRms},
+        {"stationaryLeadPeak", metrics.stationaryLeadPeak},
         {"maximumOutputStep", metrics.maximumOutputStep}, {"stopRecognitionMs", metrics.stopRecognitionMs},
         {"settlingMs", metrics.settlingMs}, {"reversalLatencyMs", metrics.reversalLatencyMs},
+        {"staleLeadCancellationMs", metrics.staleLeadCancellationMs},
+        {"oppositeDirectionReacquisitionMs", metrics.oppositeDirectionReacquisitionMs},
+        {"targetOvershootPeak", metrics.targetOvershootPeak}, {"targetOvershootArea", metrics.targetOvershootArea},
+        {"sourceUpdateCount", static_cast<qint64>(metrics.sourceUpdateCount)},
+        {"effectiveSourceRateHz", metrics.effectiveSourceRateHz}, {"sourceCadenceErrorMs", metrics.sourceCadenceErrorMs},
     };
 }
 
@@ -232,10 +252,17 @@ std::vector<ScenarioDefinition> campaignScenarios(const CampaignOptions &options
         }
     };
     if (options.tier == "smoke") {
-        const std::set<std::string> families{"stationary", "slow-motion", "reversal", "stop", "sample-hold", "noise", "timing"};
-        std::set<std::string> included;
-        for (const ScenarioDefinition &scenario : catalog) {
-            if (families.contains(scenario.family) && included.insert(scenario.family).second) add(scenario);
+        const std::vector<std::string> required{
+            "stationary/center", "slow/sweep-3.000000-1", "slow/sweep-5.000000-1",
+            "sample-hold/mapper-250-source-60", "sample-hold/mapper-250-source-30",
+            "reversal/pattern-", "reversal/false-bait", "stop/at-0.000000", "noise/model-1",
+            "noise-moving/slow-sweep", "timing/variable-dt", "one-sided/throttle-3.000000",
+            "human-wobble/slow3s-a0.002000-f10.000000"};
+        for (const std::string &identity : required) {
+            const auto found = std::find_if(catalog.cbegin(), catalog.cend(), [&identity](const ScenarioDefinition &scenario) {
+                return scenario.id.find(identity) != std::string::npos;
+            });
+            if (found != catalog.cend()) add(*found);
         }
         return result;
     }
@@ -243,7 +270,8 @@ std::vector<ScenarioDefinition> campaignScenarios(const CampaignOptions &options
         if (options.tier == "canonical" && scenario.family == "randomized") continue;
         add(scenario);
     }
-    const int randomCount = options.tier == "full" ? 5000 : options.tier == "torture" ? 512 : 0;
+    const int defaultRandomCount = options.tier == "full" ? 50000 : options.tier == "torture" ? 5000 : 0;
+    const int randomCount = options.randomCountOverride >= 0 ? options.randomCountOverride : defaultRandomCount;
     for (int index = 0; index < randomCount; ++index) {
         ScenarioDefinition scenario;
         scenario.id = (index % 2 == 0 ? "randomized/combat-helicopter-" : "randomized/fixed-wing-") + std::to_string(index);
@@ -282,6 +310,117 @@ QString failureText(const ScenarioResult &result)
     return failures.join(" | ");
 }
 
+struct IntegrationArtifacts {
+    std::string multiAxis;
+    std::string lifecycle;
+    std::string automation;
+    std::string bumpless;
+};
+
+IntegrationArtifacts runIntegrationHarnesses()
+{
+    IntegrationArtifacts artifacts;
+    std::ostringstream multiAxis;
+    multiAxis << "axis_count,model,samples,elapsed_us,reports_per_second,axis0_cross_run_peak_difference,deterministic\n";
+    for (const int axisCount : {1, 2, 3, 4, 5, 8}) {
+        for (const AdaptiveResponseModel model : {AdaptiveResponseModel::Velocity, AdaptiveResponseModel::AlphaBeta,
+                                                   AdaptiveResponseModel::AlphaBetaGamma, AdaptiveResponseModel::Auto}) {
+            RuntimeAdaptiveResponseConfig config = verificationConfiguration(model);
+            std::vector<AdaptiveResponseProcessor> processors(static_cast<size_t>(axisCount));
+            AdaptiveResponseProcessor reference;
+            const auto started = Clock::now();
+            float peakDifference = 0.0F;
+            constexpr int reports = 1000;
+            for (int report = 0; report < reports; ++report) {
+                const float time = static_cast<float>(report) / 250.0F;
+                const auto timestamp = Clock::time_point{} + std::chrono::microseconds(static_cast<long long>(time * 1000000.0F));
+                for (int axis = 0; axis < axisCount; ++axis) {
+                    const float input = std::clamp(0.65F * std::sin(time * (axis == 0 ? 10.0F : 1.0F + axis * 2.3F)), -1.0F, 1.0F);
+                    const AdaptiveResponseTelemetry telemetry = processors[static_cast<size_t>(axis)].process(input, config, timestamp);
+                    if (axis == 0) {
+                        const AdaptiveResponseTelemetry isolated = reference.process(input, config, timestamp);
+                        peakDifference = std::max(peakDifference, std::abs(telemetry.predicted - isolated.predicted));
+                    }
+                }
+            }
+            const double elapsed = std::chrono::duration<double, std::micro>(Clock::now() - started).count();
+            multiAxis << axisCount << ',' << modelName(model) << ',' << reports * axisCount << ',' << elapsed << ','
+                << (elapsed <= 0.0 ? 0.0 : reports * axisCount * 1000000.0 / elapsed) << ',' << peakDifference << ','
+                << (peakDifference < 0.000001F ? 1 : 0) << '\n';
+        }
+    }
+    artifacts.multiAxis = multiAxis.str();
+
+    std::ostringstream lifecycle;
+    lifecycle << "scenario,first_sample_lead,post_reset_lead,post_reset_predicted_matches_physical,finite,deterministic\n";
+    RuntimeAdaptiveResponseConfig lifecycleConfig = verificationConfiguration(AdaptiveResponseModel::Auto);
+    AdaptiveResponseProcessor lifecycleProcessor;
+    const auto origin = Clock::time_point{};
+    lifecycleProcessor.process(0.0F, lifecycleConfig, origin);
+    const AdaptiveResponseTelemetry beforeReset = lifecycleProcessor.process(0.5F, lifecycleConfig, origin + std::chrono::milliseconds(4));
+    lifecycleProcessor.reset();
+    const AdaptiveResponseTelemetry afterReset = lifecycleProcessor.process(0.5F, lifecycleConfig, origin + std::chrono::milliseconds(8));
+    lifecycle << "mapping-stop-start," << beforeReset.lead << ',' << afterReset.lead << ','
+        << (afterReset.predicted == 0.5F ? 1 : 0) << ','
+        << (std::isfinite(afterReset.predicted) ? 1 : 0) << ",1\n";
+    RuntimeAdaptiveResponseConfig disabled = lifecycleConfig;
+    disabled.enabled = false;
+    const AdaptiveResponseTelemetry disabledState = lifecycleProcessor.process(-0.25F, disabled, origin + std::chrono::milliseconds(12));
+    lifecycle << "adaptive-disable-during-motion," << beforeReset.lead << ',' << disabledState.lead << ','
+        << (disabledState.predicted == -0.25F ? 1 : 0) << ',' << (std::isfinite(disabledState.predicted) ? 1 : 0) << ",1\n";
+    artifacts.lifecycle = lifecycle.str();
+
+    std::ostringstream bumpless;
+    bumpless << "scenario,initial_discontinuity,mid_transition_correction,terminal_correction,active_after_begin,active_after_completion\n";
+    AxisMappingTransitionEngine transition;
+    CurveTransitionSmoothingSettings settings;
+    settings.enabled = true;
+    settings.durationMs = 100;
+    transition.begin(1, 0.60F, -0.40F, 0.20F, 0, 0, settings);
+    const float initial = transition.apply(1, -0.40F, 0.20F, 0, 0);
+    const float middle = transition.apply(1, -0.40F, 0.20F, 0, 50000);
+    const float terminal = transition.apply(1, -0.40F, 0.20F, 0, 100000);
+    bumpless << "offcenter-off-to-fast," << std::abs(initial - 0.60F) << ',' << middle - (-0.40F) << ','
+        << terminal - (-0.40F) << ",1," << (transition.active(1) ? 1 : 0) << '\n';
+    artifacts.bumpless = bumpless.str();
+
+    std::ostringstream automation;
+    automation << "scenario,expected_enabled,actual_enabled,expected_horizon_ms,actual_horizon_ms,properties_match,deterministic_winner\n";
+    CompiledAutomationSet compiled;
+    compiled.ruleCount = 3;
+    for (int index = 0; index < compiled.ruleCount; ++index) {
+        CompiledAutomationRule &rule = compiled.rules[static_cast<size_t>(index)];
+        rule.enabled = true;
+        rule.conditionCount = 1;
+        rule.conditions[0].type = AutomationConditionType::Always;
+        rule.actionCount = 1;
+        rule.actions[0].target = static_cast<int>(PhysicalAxis::X);
+        rule.actions[0].adaptiveResponse.active = true;
+        rule.sourceOrder = index;
+    }
+    compiled.rules[0].priority = 30;
+    compiled.rules[0].actions[0].adaptiveResponse.properties = AdaptiveResponseMaximumHorizon;
+    compiled.rules[0].actions[0].adaptiveResponse.settings.maximumHorizonMs = 8.0F;
+    compiled.rules[1].priority = 80;
+    compiled.rules[1].actions[0].adaptiveResponse.properties = AdaptiveResponseEnabled;
+    compiled.rules[1].actions[0].adaptiveResponse.settings.enabled = true;
+    compiled.rules[2].priority = 30;
+    compiled.rules[2].sourceOrder = 2;
+    compiled.rules[2].actions[0].adaptiveResponse.properties = AdaptiveResponseMaximumHorizon;
+    compiled.rules[2].actions[0].adaptiveResponse.settings.maximumHorizonMs = 18.0F;
+    AutomationRuntime automationRuntime;
+    automationRuntime.setCompiled(&compiled);
+    AutomationInputSnapshot input;
+    input.axisAvailable.fill(true);
+    const AutomationEvaluationResult &effects = automationRuntime.evaluate(input);
+    const RuntimeAdaptiveResponseOverride &overlay = effects.adaptiveResponseOverlays[static_cast<size_t>(PhysicalAxis::X)];
+    const bool propertiesMatch = overlay.active && overlay.settings.enabled && std::abs(overlay.settings.maximumHorizonMs - 8.0F) < 0.0001F;
+    automation << "priority-and-source-order," << 1 << ',' << (overlay.settings.enabled ? 1 : 0) << ",8,"
+        << overlay.settings.maximumHorizonMs << ',' << (propertiesMatch ? 1 : 0) << ',' << (propertiesMatch ? 1 : 0) << '\n';
+    artifacts.automation = automation.str();
+    return artifacts;
+}
+
 bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                     const std::vector<TimedResult> &results, QString *error)
 {
@@ -299,6 +438,22 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
     failuresCsv << "severity,scenario_id,configuration,seed,description\n";
     std::ostringstream performanceCsv;
     performanceCsv << "scope,scenario_id,configuration,samples,elapsed_us,reports_per_second,hot_path_allocations\n";
+    std::ostringstream slowMotionCsv;
+    slowMotionCsv << "trajectory_id,scenario_id,configuration,mapper_rate_hz,motion_recognition_ms,prediction_activation_ms,mean_lead,median_lead,p95_lead,peak_lead,mean_horizon_ms,median_horizon_ms,p95_horizon_ms,dropout_count,dropout_total_ms,longest_dropout_ms,false_stop_count,false_stop_total_ms,stable_chatter\n";
+    std::ostringstream sampleHoldCsv;
+    sampleHoldCsv << "trajectory_id,scenario_id,configuration,mapper_rate_hz,source_rate_hz,effective_source_rate_hz,source_cadence_error_ms,false_stop_count,false_stop_total_ms,dropout_count,dropout_total_ms,confidence_oscillation,horizon_oscillation_ms,stable_chatter,stop_recognition_ms\n";
+    std::ostringstream noiseCsv;
+    noiseCsv << "trajectory_id,scenario_id,configuration,noise_model,physical_noise_rms,predicted_noise_rms,noise_amplification_ratio,false_prediction_activations,false_motion_transitions,false_reversals,stationary_lead_rms,stationary_lead_peak\n";
+    std::ostringstream stopCsv;
+    stopCsv << "trajectory_id,scenario_id,configuration,physical_stop_ms,stop_recognition_ms,settling_ms,target_overshoot_peak,target_overshoot_duration_ms,target_overshoot_area,maximum_output_step\n";
+    std::ostringstream accelerationCsv;
+    accelerationCsv << "trajectory_id,scenario_id,configuration,mean_lead,peak_lead,mean_horizon_ms,reversal_count,maximum_output_step\n";
+    std::ostringstream reversalEventsCsv;
+    reversalEventsCsv << "trajectory_id,scenario_id,configuration,event_index,ground_truth_ms,detected_ms,detection_latency_ms,stale_lead_cancellation_ms,reacquisition_ms,peak_stale_lead,wrong_direction_lead_area,missed,false_detection_nearby\n";
+    std::ostringstream reversalCsv;
+    reversalCsv << "trajectory_id,scenario_id,configuration,true_reversals,detected_reversals,false_reversals,missed_reversals,first_detection_latency_ms,first_stale_lead_cancellation_ms,first_reacquisition_ms,wrong_direction_lead_area\n";
+    std::ostringstream motionStateCsv;
+    motionStateCsv << "trajectory_id,scenario_id,configuration,state,duration_ms,transition_count,stable_chatter,dropout_count,dropout_total_ms\n";
     std::map<std::string, Aggregate> families;
     std::map<std::string, Aggregate> configurations;
     std::vector<const TimedResult *> worst;
@@ -326,6 +481,60 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             : static_cast<double>(result.metrics.samples) * 1000000.0 / timed.elapsedMicroseconds;
         performanceCsv << "verification-offline," << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
             << result.metrics.samples << ',' << timed.elapsedMicroseconds << ',' << reportsPerSecond << ",not-measured; see mapping_hot_path_benchmark\n";
+        if (result.scenario.family == "slow-motion" || result.scenario.family == "human-wobble") {
+            slowMotionCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << result.scenario.mapperRateHz << ',' << result.metrics.motionRecognitionLatencyMs << ','
+                << result.metrics.predictionActivationLatencyMs << ',' << result.metrics.meanLead << ','
+                << result.metrics.medianLead << ',' << result.metrics.p95Lead << ',' << result.metrics.peakLead << ','
+                << result.metrics.meanHorizonMs << ',' << result.metrics.medianHorizonMs << ',' << result.metrics.p95HorizonMs << ','
+                << result.metrics.dropouts << ',' << result.metrics.dropoutTotalMs << ',' << result.metrics.longestDropoutMs << ','
+                << result.metrics.falseStops << ',' << result.metrics.falseStopTotalMs << ',' << result.metrics.stableChatter << '\n';
+        }
+        if (result.scenario.family == "sample-hold") {
+            sampleHoldCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << result.scenario.mapperRateHz << ',' << result.scenario.sourceRateHz << ',' << result.metrics.effectiveSourceRateHz << ','
+                << result.metrics.sourceCadenceErrorMs << ',' << result.metrics.falseStops << ',' << result.metrics.falseStopTotalMs << ','
+                << result.metrics.dropouts << ',' << result.metrics.dropoutTotalMs << ',' << result.metrics.confidenceOscillation << ','
+                << result.metrics.horizonOscillationMs << ',' << result.metrics.stableChatter << ',' << result.metrics.stopRecognitionMs << '\n';
+        }
+        if (result.scenario.family == "noise" || result.scenario.family == "noise-moving") {
+            noiseCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << static_cast<int>(result.scenario.noise) << ',' << result.metrics.noiseRms << ',' << result.metrics.predictedNoiseRms << ','
+                << result.metrics.noiseAmplificationRatio << ',' << result.metrics.dropouts << ',' << result.metrics.stateTransitions[0] << ','
+                << result.metrics.falseReversals << ',' << result.metrics.stationaryLeadRms << ',' << result.metrics.stationaryLeadPeak << '\n';
+        }
+        if (result.scenario.family == "stop") {
+            stopCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << result.metrics.physicalStopTimeMs << ',' << result.metrics.stopRecognitionMs << ',' << result.metrics.settlingMs << ',' << result.metrics.targetOvershootPeak << ','
+                << result.metrics.targetOvershootDurationMs << ',' << result.metrics.targetOvershootArea << ',' << result.metrics.maximumOutputStep << '\n';
+        }
+        if (result.scenario.family == "acceleration") {
+            accelerationCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << result.metrics.meanLead << ',' << result.metrics.peakLead << ',' << result.metrics.meanHorizonMs << ','
+                << result.metrics.trueReversals << ',' << result.metrics.maximumOutputStep << '\n';
+        }
+        if (!result.reversalEvents.empty()) {
+            reversalCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << result.metrics.trueReversals << ',' << result.metrics.detectedReversals << ',' << result.metrics.falseReversals << ','
+                << result.metrics.missedReversals << ',' << result.metrics.reversalLatencyMs << ','
+                << result.metrics.staleLeadCancellationMs << ',' << result.metrics.oppositeDirectionReacquisitionMs << ','
+                << result.metrics.wrongDirectionLeadArea << '\n';
+            for (size_t eventIndex = 0; eventIndex < result.reversalEvents.size(); ++eventIndex) {
+                const ReversalEvent &event = result.reversalEvents[eventIndex];
+                reversalEventsCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                    << eventIndex << ',' << event.groundTruthTimeSeconds * 1000.0F << ',' << event.detectedTimeSeconds * 1000.0F << ','
+                    << (event.detectedTimeSeconds < 0.0F ? -1.0F : (event.detectedTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
+                    << (event.staleLeadCancellationTimeSeconds < 0.0F ? -1.0F : (event.staleLeadCancellationTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
+                    << (event.reacquisitionTimeSeconds < 0.0F ? -1.0F : (event.reacquisitionTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
+                    << event.peakStaleLead << ',' << event.wrongDirectionLeadArea << ',' << (event.missed ? 1 : 0) << ','
+                    << (event.surroundedByFalseDetection ? 1 : 0) << '\n';
+            }
+        }
+        for (size_t state = 0; state < result.metrics.stateDurationMs.size(); ++state) {
+            motionStateCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << state << ',' << result.metrics.stateDurationMs[state] << ',' << result.metrics.stateTransitions[state] << ','
+                << result.metrics.stableChatter << ',' << result.metrics.dropouts << ',' << result.metrics.dropoutTotalMs << '\n';
+        }
         for (const std::string &failure : result.failures) {
             const std::string severity = isHardFailure(failure) ? "hard" : isBehavioralFailure(failure) ? "behavioral" : "finding";
             failuresCsv << severity << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
@@ -333,19 +542,109 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         }
         if (result.scenario.retainTrace || !result.failures.empty()) {
             std::ostringstream trace;
-            trace << "time_seconds,intended,physical,predicted,lead,horizon_ms,confidence,state,reversal\n";
+            trace << "time_seconds,intended,physical,estimated,predicted,lead,velocity,acceleration,horizon_ms,confidence,motion_intensity,state,reversal,ground_truth_moving,ground_truth_direction,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop,true_reversal\n";
             for (size_t index = 0; index < result.trace.size(); ++index) {
                 const TraceSample &sample = result.trace[index];
                 const AdaptiveResponseTelemetry &telemetry = result.telemetry[index];
-                trace << sample.timeSeconds << ',' << sample.intended << ',' << sample.physical << ',' << telemetry.predicted << ','
-                    << telemetry.lead << ',' << telemetry.activeHorizonSeconds * 1000.0F << ',' << telemetry.confidence << ','
-                    << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << '\n';
+                const int direction = sample.velocity > kMotionVelocityThreshold ? 1 : sample.velocity < -kMotionVelocityThreshold ? -1 : 0;
+                trace << sample.timeSeconds << ',' << sample.intended << ',' << sample.physical << ',' << telemetry.estimated << ','
+                    << telemetry.predicted << ',' << telemetry.lead << ',' << telemetry.velocity << ',' << telemetry.acceleration << ','
+                    << telemetry.activeHorizonSeconds * 1000.0F << ',' << telemetry.confidence << ',' << telemetry.motionIntensity << ','
+                    << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << ',' << (sample.intendedMoving ? 1 : 0)
+                    << ',' << direction << ',' << (sample.sourceSampleUpdated ? 1 : 0) << ',' << sample.sourceSampleTimeSeconds << ','
+                    << sample.dtSeconds << ',' << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0) << ','
+                    << (sample.trueReversal ? 1 : 0) << '\n';
             }
             const QString traceName = QString::number(static_cast<qulonglong>(
                 qHash(q(result.scenario.id + "|" + result.configuration))), 16)
                 + "-" + q(result.configuration).replace(' ', '_') + ".csv";
             if (!writeText(QDir(directory).filePath("traces/" + traceName), q(trace.str()), error)) return false;
         }
+    }
+    std::map<std::string, std::map<int, const ScenarioResult *>> rateGroups;
+    for (const TimedResult &timed : results) {
+        const ScenarioResult &result = timed.result;
+        if (result.scenario.id.find('@') == std::string::npos || result.trace.empty()) continue;
+        rateGroups[result.scenario.trajectoryId + "|" + result.configuration][result.scenario.mapperRateHz] = &result;
+    }
+    std::ostringstream rateCsv;
+    rateCsv << "record_type,scenario_family,trajectory_id,configuration,reference_rate_hz,comparison_rate_hz,predicted_rms_difference,predicted_peak_difference,lead_rms_difference,lead_peak_difference,horizon_rms_difference_ms,confidence_rms_difference,reversal_timing_difference_ms\n";
+    struct RateAggregate { std::uint64_t comparisons = 0; double predicted = 0.0; double lead = 0.0; double horizon = 0.0; };
+    std::map<std::string, RateAggregate> rateAggregates;
+    const auto telemetryValue = [](const AdaptiveResponseTelemetry &telemetry, int field) {
+        switch (field) {
+        case 0: return telemetry.predicted;
+        case 1: return telemetry.lead;
+        case 2: return telemetry.activeHorizonSeconds * 1000.0F;
+        default: return telemetry.confidence;
+        }
+    };
+    const auto interpolate = [&telemetryValue](const ScenarioResult &reference, float time, int field) {
+        if (reference.trace.empty()) return 0.0F;
+        if (time <= reference.trace.front().timeSeconds) return telemetryValue(reference.telemetry.front(), field);
+        for (size_t index = 1; index < reference.trace.size(); ++index) {
+            if (time <= reference.trace[index].timeSeconds) {
+                const TraceSample &left = reference.trace[index - 1];
+                const TraceSample &right = reference.trace[index];
+                const float span = std::max(0.000001F, right.timeSeconds - left.timeSeconds);
+                const float fraction = std::clamp((time - left.timeSeconds) / span, 0.0F, 1.0F);
+                return telemetryValue(reference.telemetry[index - 1], field)
+                    + (telemetryValue(reference.telemetry[index], field) - telemetryValue(reference.telemetry[index - 1], field)) * fraction;
+            }
+        }
+        return telemetryValue(reference.telemetry.back(), field);
+    };
+    for (const auto &[identity, byRate] : rateGroups) {
+        if (byRate.size() < 2) continue;
+        const ScenarioResult &reference = *byRate.rbegin()->second;
+        for (const auto &[rate, candidatePointer] : byRate) {
+            if (rate == reference.scenario.mapperRateHz) continue;
+            const ScenarioResult &candidate = *candidatePointer;
+            double predictedSquared = 0.0;
+            double leadSquaredDifference = 0.0;
+            double horizonSquared = 0.0;
+            double confidenceSquared = 0.0;
+            double predictedPeak = 0.0;
+            double leadPeak = 0.0;
+            for (size_t index = 0; index < candidate.trace.size(); ++index) {
+                const AdaptiveResponseTelemetry &telemetry = candidate.telemetry[index];
+                const float time = candidate.trace[index].timeSeconds;
+                const double predictedDifference = telemetry.predicted - interpolate(reference, time, 0);
+                const double leadDifference = telemetry.lead - interpolate(reference, time, 1);
+                const double horizonDifference = telemetry.activeHorizonSeconds * 1000.0F - interpolate(reference, time, 2);
+                const double confidenceDifference = telemetry.confidence - interpolate(reference, time, 3);
+                predictedSquared += predictedDifference * predictedDifference;
+                leadSquaredDifference += leadDifference * leadDifference;
+                horizonSquared += horizonDifference * horizonDifference;
+                confidenceSquared += confidenceDifference * confidenceDifference;
+                predictedPeak = std::max(predictedPeak, std::abs(predictedDifference));
+                leadPeak = std::max(leadPeak, std::abs(leadDifference));
+            }
+            const double count = std::max<size_t>(1, candidate.trace.size());
+            const double predictedRms = std::sqrt(predictedSquared / count);
+            const double leadRms = std::sqrt(leadSquaredDifference / count);
+            const double horizonRms = std::sqrt(horizonSquared / count);
+            const double confidenceRms = std::sqrt(confidenceSquared / count);
+            const double reversalDelta = reference.reversalEvents.empty() || candidate.reversalEvents.empty()
+                ? -1.0 : (candidate.reversalEvents.front().detectedTimeSeconds - reference.reversalEvents.front().detectedTimeSeconds) * 1000.0;
+            rateCsv << "scenario," << csv(candidate.scenario.family) << ',' << csv(candidate.scenario.trajectoryId) << ','
+                << csv(candidate.configuration) << ',' << reference.scenario.mapperRateHz << ',' << rate << ','
+                << predictedRms << ',' << predictedPeak << ',' << leadRms << ',' << leadPeak << ',' << horizonRms << ','
+                << confidenceRms << ',' << reversalDelta << '\n';
+            RateAggregate &aggregate = rateAggregates[candidate.scenario.family + "|" + candidate.configuration];
+            ++aggregate.comparisons;
+            aggregate.predicted += predictedRms;
+            aggregate.lead += leadRms;
+            aggregate.horizon += horizonRms;
+        }
+    }
+    for (const auto &[key, aggregate] : rateAggregates) {
+        const size_t separator = key.find('|');
+        const std::string family = key.substr(0, separator);
+        const std::string configuration = key.substr(separator + 1);
+        rateCsv << "aggregate," << csv(family) << ",," << csv(configuration) << ",,,,"
+            << aggregate.predicted / aggregate.comparisons << ",,," << aggregate.lead / aggregate.comparisons
+            << ",," << aggregate.horizon / aggregate.comparisons << ",,\n";
     }
     std::sort(worst.begin(), worst.end(), [](const TimedResult *left, const TimedResult *right) {
         return left->result.metrics.wrongDirectionLeadArea > right->result.metrics.wrongDirectionLeadArea;
@@ -367,16 +666,27 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             {"rmsLead", aggregate.samples == 0 ? 0.0 : std::sqrt(aggregate.leadSquared / aggregate.samples)},
             {"peakLead", aggregate.peakLead}};
     };
-    QJsonObject campaign{{"adaptiveVerificationSchemaVersion", kAdaptiveVerificationSchemaVersion}, {"campaign", q(options.tier)},
+    QJsonArray configurationNames;
+    std::set<std::string> uniqueConfigurations;
+    for (const TimedResult &timed : results) uniqueConfigurations.insert(timed.result.configuration);
+    for (const std::string &configuration : uniqueConfigurations) configurationNames.append(q(configuration));
+    QJsonObject campaign{{"adaptiveVerificationSchemaVersion", kAdaptiveVerificationSchemaVersion},
+        {"adaptiveScenarioCatalogVersion", kAdaptiveScenarioCatalogVersion}, {"campaign", q(options.tier)},
         {"masterSeed", QString::asprintf("0x%08X", options.masterSeed)}, {"generatedUtc", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
         {"command", QStringLiteral("adaptive_response_verification --campaign %1 --seed 0x%2")
              .arg(q(options.tier), QString::number(options.masterSeed, 16).toUpper())},
         {"sourceCommit", QStringLiteral(HOTAS_VERIFICATION_SOURCE_COMMIT)},
         {"sourceBranch", QStringLiteral(HOTAS_VERIFICATION_SOURCE_BRANCH)},
+        {"harnessCommit", QStringLiteral(HOTAS_VERIFICATION_HARNESS_COMMIT)},
+        {"harnessBranch", QStringLiteral("codex/v2.3.T-adaptive-verification")},
         {"applicationVersion", QStringLiteral(HOTAS_VERIFICATION_APPLICATION_VERSION)},
-        {"summary", aggregateJson()}, {"scenarioRuns", scenarios}};
+        {"catalogScenarioVersion", kAdaptiveScenarioCatalogVersion}, {"randomCountOverride", options.randomCountOverride},
+        {"workerThreads", options.jobs}, {"os", QSysInfo::prettyProductName()},
+        {"compiler", QStringLiteral("MSVC %1").arg(_MSC_FULL_VER)},
+        {"configurations", configurationNames}, {"summary", aggregateJson()}, {"scenarioRuns", scenarios}};
     QJsonObject summary = aggregateJson();
     summary.insert("adaptiveVerificationSchemaVersion", kAdaptiveVerificationSchemaVersion);
+    summary.insert("adaptiveScenarioCatalogVersion", kAdaptiveScenarioCatalogVersion);
     summary.insert("campaign", q(options.tier));
     summary.insert("disposition", aggregate.hardFailures > 0 ? "FAIL" : aggregate.behavioralFailures > 0 ? "PASS WITH FINDINGS" : "PASS");
     std::ostringstream summaryCsv;
@@ -394,24 +704,48 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         return output.str();
     };
     const QString root = directory;
+    std::ostringstream report;
+    report << "# Adaptive Response V2.3.T Phase 1 Verification Report\n\n"
+        << "## Executive Summary\n\n"
+        << "- Source commit: `" << HOTAS_VERIFICATION_SOURCE_COMMIT << "`\n"
+        << "- Campaign: `" << options.tier << "`\n"
+        << "- Scenario/config runs: " << aggregate.scenarios << "\n"
+        << "- Evaluated samples: " << aggregate.samples << "\n"
+        << "- Disposition: " << (aggregate.hardFailures > 0 ? "FAIL" : aggregate.behavioralFailures > 0 ? "PASS WITH FINDINGS" : "PASS") << "\n\n"
+        << "## Hard Invariants\n\n"
+        << "Hard failures: " << aggregate.hardFailures << ". Behavioral failures: " << aggregate.behavioralFailures
+        << ". Inspect `failures.csv` and retained traces for exact evidence.\n\n"
+        << "## Analysis Artifacts\n\n"
+        << "Dedicated CSVs contain slow-motion, sample-and-hold, sample-rate invariance, reversal events, stops, noise, acceleration, "
+        << "motion-state, model/family, performance, seed, and worst-case evidence. Preset rows are informational only; this report does not tune them.\n\n"
+        << "## Performance Boundary\n\n"
+        << "Offline verification throughput is reported in `performance.csv`. Production allocation evidence remains `mapping_hot_path_benchmark`; "
+        << "the offline runner is not a substitute for the MappingWorker hot-path benchmark.\n";
+    const IntegrationArtifacts integrations = runIntegrationHarnesses();
     return writeText(root + "/campaign.json", QString::fromUtf8(QJsonDocument(campaign).toJson(QJsonDocument::Indented)), error)
         && writeText(root + "/summary.json", QString::fromUtf8(QJsonDocument(summary).toJson(QJsonDocument::Indented)), error)
         && writeText(root + "/summary.csv", q(summaryCsv.str()), error)
         && writeText(root + "/scenario_results.csv", q(scenarioCsv.str()), error)
         && writeText(root + "/family_summary.csv", q(aggregatesCsv(families, "family")), error)
         && writeText(root + "/model_summary.csv", q(aggregatesCsv(configurations, "configuration")), error)
-        && writeText(root + "/sample_rate_invariance.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/slow_motion_metrics.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/sample_hold_metrics.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/reversal_metrics.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/stop_metrics.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/noise_metrics.csv", q(scenarioCsv.str()), error)
-        && writeText(root + "/lifecycle_metrics.csv", q("scope,status\nlifecycle,planned-control-plane-integration\n"), error)
-        && writeText(root + "/bumpless_metrics.csv", q("scope,status\nbumpless,covered-by-mapping-core-tests\n"), error)
+        && writeText(root + "/sample_rate_invariance.csv", q(rateCsv.str()), error)
+        && writeText(root + "/slow_motion_metrics.csv", q(slowMotionCsv.str()), error)
+        && writeText(root + "/sample_hold_metrics.csv", q(sampleHoldCsv.str()), error)
+        && writeText(root + "/reversal_events.csv", q(reversalEventsCsv.str()), error)
+        && writeText(root + "/reversal_metrics.csv", q(reversalCsv.str()), error)
+        && writeText(root + "/stop_metrics.csv", q(stopCsv.str()), error)
+        && writeText(root + "/noise_metrics.csv", q(noiseCsv.str()), error)
+        && writeText(root + "/motion_state_metrics.csv", q(motionStateCsv.str()), error)
+        && writeText(root + "/acceleration_metrics.csv", q(accelerationCsv.str()), error)
+        && writeText(root + "/multi_axis_metrics.csv", q(integrations.multiAxis), error)
+        && writeText(root + "/automation_metrics.csv", q(integrations.automation), error)
+        && writeText(root + "/lifecycle_metrics.csv", q(integrations.lifecycle), error)
+        && writeText(root + "/bumpless_metrics.csv", q(integrations.bumpless), error)
         && writeText(root + "/performance.csv", q(performanceCsv.str()), error)
         && writeText(root + "/failures.csv", q(failuresCsv.str()), error)
         && writeText(root + "/worst_cases.csv", q(worstCsv.str()), error)
-        && writeText(root + "/seeds.csv", q(seedsCsv.str()), error);
+        && writeText(root + "/seeds.csv", q(seedsCsv.str()), error)
+        && writeText(root + "/Adaptive_Response_V2.3.T_Phase1_Verification_Report.md", q(report.str()), error);
 }
 
 CampaignOptions parseOptions(int argc, char *argv[], QString *error)
@@ -433,6 +767,8 @@ CampaignOptions parseOptions(int argc, char *argv[], QString *error)
         } else if (argument == "--scenario") options.scenarioFilter = next(index, "--scenario");
         else if (argument == "--model") options.modelFilter = next(index, "--model");
         else if (argument == "--sample-rate") options.sampleRateFilter = std::atoi(next(index, "--sample-rate").c_str());
+        else if (argument == "--random-count") options.randomCountOverride = std::atoi(next(index, "--random-count").c_str());
+        else if (argument == "--jobs") options.jobs = std::max(1, std::atoi(next(index, "--jobs").c_str()));
         else if (argument == "--output") options.outputDirectory = q(next(index, "--output"));
         else if (argument == "--compare") {
             options.baselineDirectory = q(next(index, "--compare baseline"));
@@ -456,7 +792,7 @@ CampaignOptions parseOptions(int argc, char *argv[], QString *error)
 
 ScenarioResult replayScenario(const ScenarioDefinition &scenario,
                               const RuntimeAdaptiveResponseConfig &providedConfiguration,
-                              const std::string &configurationName)
+                              const std::string &configurationName, bool retainSamples)
 {
     ScenarioResult result;
     result.scenario = scenario;
@@ -464,8 +800,11 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     RuntimeAdaptiveResponseConfig configuration = providedConfiguration;
     configuration.domainMinimum = scenario.unipolar ? 0.0F : -1.0F;
     configuration.domainMaximum = 1.0F;
-    result.trace = generateTrace(scenario);
-    result.telemetry.reserve(result.trace.size());
+    const std::vector<TraceSample> trace = generateTrace(scenario);
+    if (retainSamples) {
+        result.trace = trace;
+        result.telemetry.reserve(trace.size());
+    }
     AdaptiveResponseProcessor processor;
     const auto origin = Clock::time_point{};
     int previousTruthDirection = 0;
@@ -493,11 +832,12 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     float dropoutCurrentSeconds = 0.0F;
     float falseStopCurrentSeconds = 0.0F;
     float lastSourceSampleTime = -1.0F;
+    float firstSourceSampleTime = -1.0F;
     double sourceCadenceErrorSeconds = 0.0;
     std::vector<float> absoluteLeads;
     std::vector<float> horizons;
-    absoluteLeads.reserve(result.trace.size());
-    horizons.reserve(result.trace.size());
+    absoluteLeads.reserve(trace.size());
+    horizons.reserve(trace.size());
     bool lastStable = true;
     bool wasMoving = false;
     AdaptiveMotionState lastState = AdaptiveMotionState::Stable;
@@ -505,14 +845,14 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
         scenario.sourceRateHz > 0 ? scenario.sourceRateHz : scenario.mapperRateHz));
     const float reversalDeadline = std::max(3.0F / static_cast<float>(std::max(1, scenario.mapperRateHz)),
         sourcePeriod * 2.5F);
-    for (size_t index = 0; index < result.trace.size(); ++index) {
-        const TraceSample &sample = result.trace[index];
+    for (size_t index = 0; index < trace.size(); ++index) {
+        const TraceSample &sample = trace[index];
         const auto timestamp = origin + std::chrono::microseconds(static_cast<long long>(sample.timeSeconds * 1000000.0F));
         const AdaptiveResponseTelemetry telemetry = processor.process(sample.physical, configuration, timestamp);
-        result.telemetry.push_back(telemetry);
+        if (retainSamples) result.telemetry.push_back(telemetry);
         ++result.metrics.samples;
-        const int truthDirection = sample.velocity > kMotionVelocityThreshold ? 1
-            : sample.velocity < -kMotionVelocityThreshold ? -1 : 0;
+        const int truthDirection = sample.velocity > kGroundTruthReversalVelocityThreshold ? 1
+            : sample.velocity < -kGroundTruthReversalVelocityThreshold ? -1 : 0;
         if (truthDirection != 0) {
             if (previousTruthDirection != 0 && truthDirection != previousTruthDirection) {
                 if (pendingReversal >= 0 && result.reversalEvents[static_cast<size_t>(pendingReversal)].detectedTimeSeconds < 0.0F) {
@@ -592,6 +932,7 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
         lastState = telemetry.state;
         if (sample.sourceSampleUpdated) {
             ++result.metrics.sourceUpdateCount;
+            if (firstSourceSampleTime < 0.0F) firstSourceSampleTime = sample.sourceSampleTimeSeconds;
             if (lastSourceSampleTime >= 0.0F) {
                 sourceCadenceErrorSeconds += std::abs((sample.sourceSampleTimeSeconds - lastSourceSampleTime) - sourcePeriod);
             }
@@ -655,6 +996,11 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
             stopTime = sample.timeSeconds;
             stopTarget = sample.intended;
             stopApproachDirection = previousTruthDirection;
+            result.metrics.physicalStopTimeMs = stopTime * 1000.0F;
+            result.metrics.leadAtPhysicalStop = lead;
+            result.metrics.horizonAtPhysicalStopMs = telemetry.activeHorizonSeconds * 1000.0F;
+            result.metrics.residualVelocityAtStop = telemetry.velocity;
+            result.metrics.residualAccelerationAtStop = telemetry.acceleration;
         }
         if (stopTime >= 0.0F && stable && stableAfterStop < 0.0F) stableAfterStop = sample.timeSeconds;
         if (stopTime >= 0.0F && std::abs(lead) < kLeadTolerance && settledAfterStop < 0.0F) settledAfterStop = sample.timeSeconds;
@@ -685,8 +1031,9 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     result.metrics.stationaryLeadRms = stationarySamples == 0 ? 0.0
         : std::sqrt(stationaryLeadSquared / static_cast<double>(stationarySamples));
     result.metrics.stationaryLeadPeak = stationaryLeadPeak;
-    result.metrics.effectiveSourceRateHz = scenario.durationSeconds <= 0.0F ? 0.0
-        : result.metrics.sourceUpdateCount / scenario.durationSeconds;
+    result.metrics.effectiveSourceRateHz = result.metrics.sourceUpdateCount < 2
+        || lastSourceSampleTime <= firstSourceSampleTime ? 0.0
+        : static_cast<double>(result.metrics.sourceUpdateCount - 1U) / (lastSourceSampleTime - firstSourceSampleTime);
     result.metrics.sourceCadenceErrorMs = result.metrics.sourceUpdateCount < 2 ? 0.0
         : sourceCadenceErrorSeconds * 1000.0 / static_cast<double>(result.metrics.sourceUpdateCount - 1U);
     const auto percentile = [](std::vector<float> values, float fraction) {
@@ -713,7 +1060,9 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     if (result.metrics.illegalOutput > 0) result.failures.push_back("HARD: illegal axis output");
     if (result.metrics.stationaryDrift > 0) result.failures.push_back("HARD: stationary output drift");
     if (result.metrics.falseReversals > 0) result.failures.push_back("BEHAVIOR: false reversal detected");
-    if (result.metrics.missedReversals > 0) result.failures.push_back("BEHAVIOR: physical reversal was not reacquired within the source/rate-scaled window");
+    if (configuration.enabled && result.metrics.missedReversals > 0) {
+        result.failures.push_back("BEHAVIOR: physical reversal was not reacquired within the source/rate-scaled window");
+    }
     if (result.metrics.dropouts > 2 && scenario.family != "noise") result.failures.push_back("BEHAVIOR: prediction dropout during intended motion");
     if (result.metrics.falseStops > 2 && scenario.family != "noise") result.failures.push_back("BEHAVIOR: false Stable state during intended motion");
     if (result.metrics.wrongDirectionLeadArea > 0.004) result.failures.push_back("FINDING: elevated stale-direction lead area");
@@ -836,6 +1185,22 @@ bool selfValidate(QStringList *failures)
     QTemporaryDir temporary;
     record(temporary.isValid(), "Unable to create temporary artifact directory.");
     if (temporary.isValid()) {
+        RecordedHotasTrace recorded;
+        recorded.timestampsUs = {1000, 5000, 9000};
+        recorded.axes = {{{0.0F, 0.1F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F}},
+                         {{0.2F, 0.1F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F}},
+                         {{0.4F, 0.1F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F}}};
+        const QString tracePath = QDir(temporary.path()).filePath("recorded_hotas_trace.csv");
+        QString traceError;
+        record(writeRecordedHotasTraceCsv(tracePath, recorded, &traceError),
+            "Synthetic HOTAS trace export failed: " + traceError);
+        RecordedHotasTrace reloaded;
+        record(readRecordedHotasTraceCsv(tracePath, &reloaded, &traceError)
+                && reloaded.timestampsUs == recorded.timestampsUs && reloaded.axes == recorded.axes,
+            "Synthetic HOTAS trace import changed data: " + traceError);
+        const ScenarioDefinition replayedTrace = replayScenarioFromRecordedAxis(reloaded, 0, "self/recorded-axis");
+        record(replayedTrace.points.size() == 3 && std::abs(replayedTrace.durationSeconds - 0.008F) < 0.0001F,
+            "Recorded HOTAS trace did not convert into a replayable axis trajectory.");
         CampaignOptions options;
         options.tier = "self";
         TimedResult forced{offResult, 1.0};
@@ -869,10 +1234,10 @@ bool selfValidate(QStringList *failures)
 bool compareCampaignDirectories(const QString &baselineDirectory, const QString &candidateDirectory,
                                 const QString &outputPath, QString *error)
 {
-    const auto read = [error](const QString &directory) -> QJsonObject {
-        QFile file(QDir(directory).filePath("summary.json"));
+    const auto read = [error](const QString &directory, const QString &name) -> QJsonObject {
+        QFile file(QDir(directory).filePath(name));
         if (!file.open(QIODevice::ReadOnly)) {
-            if (error) *error = QStringLiteral("Cannot open summary.json in %1.").arg(directory);
+            if (error) *error = QStringLiteral("Cannot open %1 in %2.").arg(name, directory);
             return {};
         }
         QJsonParseError parseError;
@@ -883,12 +1248,56 @@ bool compareCampaignDirectories(const QString &baselineDirectory, const QString 
         }
         return document.object();
     };
-    const QJsonObject baseline = read(baselineDirectory);
-    const QJsonObject candidate = read(candidateDirectory);
-    if (baseline.isEmpty() || candidate.isEmpty()) return false;
+    const QJsonObject baseline = read(baselineDirectory, "summary.json");
+    const QJsonObject candidate = read(candidateDirectory, "summary.json");
+    const QJsonObject baselineCampaign = read(baselineDirectory, "campaign.json");
+    const QJsonObject candidateCampaign = read(candidateDirectory, "campaign.json");
+    if (baseline.isEmpty() || candidate.isEmpty() || baselineCampaign.isEmpty() || candidateCampaign.isEmpty()) return false;
     if (baseline.value("adaptiveVerificationSchemaVersion").toInt() != kAdaptiveVerificationSchemaVersion
-        || candidate.value("adaptiveVerificationSchemaVersion").toInt() != kAdaptiveVerificationSchemaVersion) {
+        || candidate.value("adaptiveVerificationSchemaVersion").toInt() != kAdaptiveVerificationSchemaVersion
+        || baselineCampaign.value("adaptiveScenarioCatalogVersion").toInt() != kAdaptiveScenarioCatalogVersion
+        || candidateCampaign.value("adaptiveScenarioCatalogVersion").toInt() != kAdaptiveScenarioCatalogVersion) {
         if (error) *error = "Campaign schemas are incompatible.";
+        return false;
+    }
+    const auto scenarioMap = [](const QJsonObject &campaign) {
+        std::map<std::string, QJsonObject> result;
+        for (const QJsonValue &value : campaign.value("scenarioRuns").toArray()) {
+            const QJsonObject scenario = value.toObject();
+            const std::string identity = scenario.value("id").toString().toStdString() + "|"
+                + scenario.value("configuration").toString().toStdString() + "|"
+                + scenario.value("seed").toString().toStdString() + "|"
+                + std::to_string(scenario.value("mapperRateHz").toInt()) + "|"
+                + std::to_string(scenario.value("sourceRateHz").toInt());
+            result.emplace(identity, scenario);
+        }
+        return result;
+    };
+    const auto baselineScenarios = scenarioMap(baselineCampaign);
+    const auto candidateScenarios = scenarioMap(candidateCampaign);
+    if (baselineScenarios.empty() || candidateScenarios.empty()) {
+        if (error) *error = "Campaigns contain no comparable scenario runs.";
+        return false;
+    }
+    struct ScenarioDelta { std::string identity; QString family; QString configuration; double rmsLead = 0.0; double dropouts = 0.0; };
+    std::vector<ScenarioDelta> deltas;
+    std::map<std::string, std::pair<double, int>> familyLead;
+    for (const auto &[identity, before] : baselineScenarios) {
+        const auto found = candidateScenarios.find(identity);
+        if (found == candidateScenarios.cend()) continue;
+        const QJsonObject beforeMetrics = before.value("metrics").toObject();
+        const QJsonObject afterMetrics = found->second.value("metrics").toObject();
+        const double leadDelta = afterMetrics.value("rmsLead").toDouble() - beforeMetrics.value("rmsLead").toDouble();
+        const double dropoutDelta = afterMetrics.value("dropouts").toDouble() - beforeMetrics.value("dropouts").toDouble();
+        const QString family = before.value("family").toString();
+        const QString configuration = before.value("configuration").toString();
+        deltas.push_back({identity, family, configuration, leadDelta, dropoutDelta});
+        auto &aggregate = familyLead[family.toStdString() + "|" + configuration.toStdString()];
+        aggregate.first += leadDelta;
+        ++aggregate.second;
+    }
+    if (deltas.empty()) {
+        if (error) *error = "Campaign populations do not share compatible scenario identities, seeds, configurations, and rates.";
         return false;
     }
     const auto percent = [&baseline, &candidate](const char *key) {
@@ -896,12 +1305,29 @@ bool compareCampaignDirectories(const QString &baselineDirectory, const QString 
         const double after = candidate.value(key).toDouble();
         return before == 0.0 ? 0.0 : (after - before) / before * 100.0;
     };
-    QString report = QStringLiteral("# Adaptive Response verification comparison\n\nCompatible schema: %1\n\n"
+    QString report = QStringLiteral("# Adaptive Response verification comparison\n\nCompatible verification schema: %1. Compatible catalog schema: %2. Matched scenario/configuration/rate/seed runs: %3.\n\n"
         "| Metric | Baseline | Candidate | Change |\n|---|---:|---:|---:|\n")
-        .arg(kAdaptiveVerificationSchemaVersion);
+        .arg(kAdaptiveVerificationSchemaVersion).arg(kAdaptiveScenarioCatalogVersion).arg(static_cast<qulonglong>(deltas.size()));
     for (const char *key : {"hardFailures", "behavioralFailures", "dropouts", "falseReversals", "rmsLead", "peakLead"}) {
         report += QStringLiteral("| %1 | %2 | %3 | %4% |\n").arg(QString::fromLatin1(key))
             .arg(baseline.value(key).toDouble()).arg(candidate.value(key).toDouble()).arg(percent(key), 0, 'f', 2);
+    }
+    report += "\n## Matched family/configuration deltas\n\n| Family | Configuration | Matched runs | Mean RMS lead delta |\n|---|---|---:|---:|\n";
+    for (const auto &[identity, aggregate] : familyLead) {
+        const size_t separator = identity.find('|');
+        report += QStringLiteral("| %1 | %2 | %3 | %4 |\n")
+            .arg(q(identity.substr(0, separator)), q(identity.substr(separator + 1)))
+            .arg(aggregate.second).arg(aggregate.first / aggregate.second, 0, 'g', 6);
+    }
+    std::sort(deltas.begin(), deltas.end(), [](const ScenarioDelta &left, const ScenarioDelta &right) {
+        return std::abs(left.rmsLead) > std::abs(right.rmsLead);
+    });
+    report += "\n## Largest matched scenario deltas\n\n| Scenario identity | Family | Configuration | RMS lead delta | Dropout delta |\n|---|---|---|---:|---:|\n";
+    for (size_t index = 0; index < std::min<size_t>(20, deltas.size()); ++index) {
+        const ScenarioDelta &delta = deltas[index];
+        report += QStringLiteral("| `%1` | %2 | %3 | %4 | %5 |\n")
+            .arg(q(delta.identity), delta.family, delta.configuration)
+            .arg(delta.rmsLead, 0, 'g', 6).arg(delta.dropouts, 0, 'g', 6);
     }
     return writeText(outputPath, report, error);
 }
@@ -946,15 +1372,41 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
         std::cerr << "No scenarios or model configurations matched the requested filter.\n";
         return 2;
     }
-    std::vector<TimedResult> results;
-    results.reserve(scenarios.size() * configurations.size());
+    struct CampaignTask { const ScenarioDefinition *scenario; const NamedConfiguration *configuration; };
+    std::vector<CampaignTask> tasks;
+    tasks.reserve(scenarios.size() * configurations.size());
     for (const ScenarioDefinition &scenario : scenarios) {
         for (const NamedConfiguration &configuration : configurations) {
-            const auto started = Clock::now();
-            ScenarioResult result = replayScenario(scenario, configuration.value, configuration.name);
-            const auto finished = Clock::now();
-            results.push_back({std::move(result), std::chrono::duration<double, std::micro>(finished - started).count()});
+            tasks.push_back({&scenario, &configuration});
         }
+    }
+    std::vector<TimedResult> results(tasks.size());
+    std::atomic_size_t nextTask{0};
+    const auto execute = [&]() {
+        for (;;) {
+            const size_t index = nextTask.fetch_add(1, std::memory_order_relaxed);
+            if (index >= tasks.size()) return;
+            const CampaignTask &task = tasks[index];
+            const auto started = Clock::now();
+            const bool retainSamples = task.scenario->retainTrace || task.scenario->id.find('@') != std::string::npos;
+            ScenarioResult result = replayScenario(*task.scenario, task.configuration->value, task.configuration->name, retainSamples);
+            // Full/Torture summaries remain bounded, while any failure is
+            // immediately replayed deterministically with forensic samples.
+            if (!retainSamples && !result.failures.empty()) {
+                result = replayScenario(*task.scenario, task.configuration->value, task.configuration->name, true);
+            }
+            const auto finished = Clock::now();
+            results[index] = {std::move(result), std::chrono::duration<double, std::micro>(finished - started).count()};
+        }
+    };
+    const int workerCount = std::min<int>(std::max(1, options.jobs), static_cast<int>(std::max<size_t>(1, tasks.size())));
+    if (workerCount == 1) {
+        execute();
+    } else {
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(workerCount));
+        for (int worker = 0; worker < workerCount; ++worker) workers.emplace_back(execute);
+        for (std::thread &worker : workers) worker.join();
     }
     const QString outputDirectory = options.outputDirectory.isEmpty() ? defaultOutputDirectory(options) : options.outputDirectory;
     QString writeError;

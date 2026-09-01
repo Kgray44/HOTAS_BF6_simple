@@ -96,8 +96,13 @@ struct ScenarioMetrics {
     double stationaryLeadRms = 0.0;
     double stationaryLeadPeak = 0.0;
     double maximumOutputStep = 0.0;
+    double physicalStopTimeMs = -1.0;
     double stopRecognitionMs = -1.0;
     double settlingMs = -1.0;
+    double leadAtPhysicalStop = 0.0;
+    double horizonAtPhysicalStopMs = 0.0;
+    double residualVelocityAtStop = 0.0;
+    double residualAccelerationAtStop = 0.0;
     double reversalLatencyMs = -1.0;
     double motionRecognitionLatencyMs = -1.0;
     double predictionActivationLatencyMs = -1.0;
@@ -126,6 +131,11 @@ struct ReversalEvent {
     bool surroundedByFalseDetection = false;
 };
 
+struct RecordedHotasTrace {
+    std::vector<std::uint64_t> timestampsUs;
+    std::vector<std::array<float, 8>> axes;
+};
+
 struct ScenarioResult {
     ScenarioDefinition scenario;
     std::string configuration;
@@ -141,9 +151,14 @@ std::uint32_t deriveSeed(std::uint32_t masterSeed, const std::string &campaign,
                          const std::string &configuration);
 std::vector<ScenarioDefinition> canonicalScenarioCatalog(std::uint32_t masterSeed);
 std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario);
+bool writeRecordedHotasTraceCsv(const QString &path, const RecordedHotasTrace &trace, QString *error = nullptr);
+bool readRecordedHotasTraceCsv(const QString &path, RecordedHotasTrace *trace, QString *error = nullptr);
+ScenarioDefinition replayScenarioFromRecordedAxis(const RecordedHotasTrace &trace, int axis,
+                                                  const std::string &id, bool unipolar = false);
 ScenarioResult replayScenario(const ScenarioDefinition &scenario,
                               const RuntimeAdaptiveResponseConfig &configuration,
-                              const std::string &configurationName);
+                              const std::string &configurationName,
+                              bool retainSamples = true);
 
 bool selfValidate(QStringList *failures = nullptr);
 bool compareCampaignDirectories(const QString &baselineDirectory, const QString &candidateDirectory,

@@ -472,26 +472,32 @@ option(HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION
 if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
     execute_process(COMMAND git rev-parse HEAD
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE HOTAS_VERIFICATION_HARNESS_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND git rev-parse origin/codex/v2.3.0-adaptive-response
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_COMMIT
         OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    execute_process(COMMAND git branch --show-current
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_BRANCH
-        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if (NOT HOTAS_VERIFICATION_HARNESS_COMMIT)
+        set(HOTAS_VERIFICATION_HARNESS_COMMIT "unknown")
+    endif()
     if (NOT HOTAS_VERIFICATION_SOURCE_COMMIT)
         set(HOTAS_VERIFICATION_SOURCE_COMMIT "unknown")
     endif()
-    if (NOT HOTAS_VERIFICATION_SOURCE_BRANCH)
-        set(HOTAS_VERIFICATION_SOURCE_BRANCH "detached")
-    endif()
+    set(HOTAS_VERIFICATION_SOURCE_BRANCH "codex/v2.3.0-adaptive-response")
 
     set(HOTAS_ADAPTIVE_VERIFICATION_SOURCES
         tests/adaptive_response/verification_harness.h
         tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
         tests/adaptive_response/verification_harness.cpp
         src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
         src/adaptive_response.h
         src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
     )
     qt_add_executable(adaptive_response_verification
         tests/adaptive_response/verification_main.cpp
@@ -505,6 +511,7 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
     target_compile_definitions(adaptive_response_verification PRIVATE
         HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
         HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
         HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
     )
     set_target_properties(adaptive_response_verification PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -522,6 +529,7 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
         target_compile_definitions(adaptive_response_verification_tests PRIVATE
             HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
             HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+            HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
             HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
         )
         add_test(NAME adaptive_response_verification_tests COMMAND adaptive_response_verification_tests)

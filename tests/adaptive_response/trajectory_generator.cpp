@@ -163,6 +163,7 @@ std::vector<ControlPoint> personaPoints(const ScenarioDefinition &scenario)
 void addScenario(std::vector<ScenarioDefinition> &catalog, std::uint32_t masterSeed,
                  ScenarioDefinition scenario)
 {
+    if (scenario.trajectoryId.empty()) scenario.trajectoryId = scenario.id;
     scenario.seed = deriveSeed(masterSeed, "canonical", scenario.family,
                                static_cast<std::uint32_t>(catalog.size()), "trajectory");
     catalog.push_back(std::move(scenario));
@@ -244,6 +245,14 @@ std::vector<ScenarioDefinition> canonicalScenarioCatalog(std::uint32_t masterSee
         scenario.retainTrace = true;
         addScenario(catalog, masterSeed, std::move(scenario));
     }
+    ScenarioDefinition falseReversalBait;
+    falseReversalBait.id = "reversal/false-bait";
+    falseReversalBait.family = "reversal";
+    falseReversalBait.durationSeconds = 1.2F;
+    falseReversalBait.points = {{0.0F, 0.30F}, {0.20F, 0.35F}, {0.40F, 0.40F}, {0.60F, 0.399F},
+        {0.80F, 0.45F}, {1.0F, 0.50F}, {1.2F, 0.50F}};
+    falseReversalBait.retainTrace = true;
+    addScenario(catalog, masterSeed, std::move(falseReversalBait));
     for (const float stopAt : {-0.60F, 0.0F, 0.50F, 0.98F}) {
         ScenarioDefinition scenario = linear("stop/at-" + std::to_string(stopAt), "stop", -0.85F, stopAt, 0.35F);
         scenario.retainTrace = true;
@@ -282,6 +291,43 @@ std::vector<ScenarioDefinition> canonicalScenarioCatalog(std::uint32_t masterSee
         scenario.retainTrace = true;
         addScenario(catalog, masterSeed, std::move(scenario));
     }
+    for (const NoiseModel noise : {NoiseModel::WhiteJitter, NoiseModel::Quantized, NoiseModel::OppositeSpike}) {
+        ScenarioDefinition moving = linear("noise-moving/slow-sweep-" + std::to_string(static_cast<int>(noise)),
+            "noise-moving", 1.0F, 0.0F, 3.0F);
+        moving.noise = noise;
+        moving.noiseAmplitude = noise == NoiseModel::Quantized ? 0.01F : 0.002F;
+        moving.retainTrace = true;
+        addScenario(catalog, masterSeed, std::move(moving));
+    }
+    for (const float amplitude : {0.0005F, 0.001F, 0.002F, 0.005F, 0.010F}) {
+        for (const float frequency : {3.0F, 5.0F, 10.0F, 15.0F, 20.0F, 30.0F}) {
+            ScenarioDefinition wobble;
+            wobble.id = "human-wobble/slow3s-a" + std::to_string(amplitude) + "-f" + std::to_string(frequency);
+            wobble.family = "human-wobble";
+            wobble.durationSeconds = 3.5F;
+            for (int index = 0; index <= 350; ++index) {
+                const float time = static_cast<float>(index) * 0.01F;
+                const float base = time <= 3.0F ? 1.0F - time / 3.0F : 0.0F;
+                const float variation = time <= 3.0F ? amplitude * std::sin(time * frequency
+                    * 2.0F * std::numbers::pi_v<float>) : 0.0F;
+                wobble.points.push_back({time, std::clamp(base + variation, -1.0F, 1.0F)});
+            }
+            wobble.retainTrace = amplitude == 0.002F && frequency == 10.0F;
+            addScenario(catalog, masterSeed, std::move(wobble));
+        }
+    }
+    for (const std::vector<ControlPoint> &points : std::vector<std::vector<ControlPoint>>{
+             {{0.0F, -0.8F}, {0.5F, -0.6F}, {1.0F, 0.0F}, {1.5F, 0.6F}, {2.0F, 0.8F}, {2.5F, 0.8F}},
+             {{0.0F, -0.8F}, {0.5F, -0.1F}, {1.0F, 0.5F}, {1.5F, 0.8F}, {2.0F, 0.8F}},
+             {{0.0F, 0.8F}, {0.4F, 0.7F}, {0.8F, 0.3F}, {1.2F, -0.1F}, {1.6F, -0.6F}, {2.0F, -0.8F}, {2.5F, -0.8F}}}) {
+        ScenarioDefinition acceleration;
+        acceleration.id = "acceleration/fixture-" + std::to_string(catalog.size());
+        acceleration.family = "acceleration";
+        acceleration.durationSeconds = points.back().timeSeconds;
+        acceleration.points = points;
+        acceleration.retainTrace = true;
+        addScenario(catalog, masterSeed, std::move(acceleration));
+    }
     for (const float duration : {1.0F, 3.0F}) {
         ScenarioDefinition scenario = linear("one-sided/throttle-" + std::to_string(duration),
             "one-sided", 0.0F, 1.0F, duration, true);
@@ -296,6 +342,19 @@ std::vector<ScenarioDefinition> canonicalScenarioCatalog(std::uint32_t masterSee
         scenario.durationSeconds = index < 8 ? 5.0F : 3.0F;
         scenario.retainTrace = index == 8;
         addScenario(catalog, masterSeed, std::move(scenario));
+    }
+    for (const std::string &persona : {"precision-pilot", "fixed-wing", "helicopter-landing", "combat-helicopter",
+                                       "space-sim", "noisy-older-sensor"}) {
+        for (int index = 0; index < 4; ++index) {
+            ScenarioDefinition scenario;
+            scenario.id = "persona/" + persona + "-" + std::to_string(index);
+            scenario.family = "persona";
+            scenario.durationSeconds = persona == "combat-helicopter" ? 3.0F : 5.0F;
+            scenario.noise = persona == "noisy-older-sensor" ? NoiseModel::Quantized : NoiseModel::None;
+            scenario.noiseAmplitude = persona == "noisy-older-sensor" ? 0.005F : 0.0F;
+            scenario.retainTrace = index == 0;
+            addScenario(catalog, masterSeed, std::move(scenario));
+        }
     }
     ScenarioDefinition jitter = linear("timing/variable-dt", "timing", -0.65F, 0.65F, 1.0F);
     jitter.variableDt = true;
