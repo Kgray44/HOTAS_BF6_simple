@@ -52,8 +52,20 @@ struct ScenarioDefinition {
 
 struct TraceSample {
     float timeSeconds = 0.0F;
+    // Human intent is sampled from the authored trajectory before device
+    // cadence, sample-and-hold, quantization, or injected noise are applied.
     float intended = 0.0F;
+    float humanIntentVelocity = 0.0F;
+    float humanIntentAcceleration = 0.0F;
+    int humanIntentDirection = 0;
+    bool humanIntentReversal = false;
+    bool humanIntentStop = false;
+    // Observed device is what the mapper receives after the source pipeline.
     float physical = 0.0F;
+    float observedDeviceVelocity = 0.0F;
+    int observedDeviceDirection = 0;
+    bool observedDeviceReversal = false;
+    // Legacy aliases retained for existing trace consumers.
     float velocity = 0.0F;
     float dtSeconds = 0.0F;
     bool intendedMoving = false;
@@ -78,6 +90,12 @@ enum class ReversalQuality : std::uint8_t {
 
 struct ScenarioMetrics {
     std::uint64_t samples = 0;
+    std::uint64_t humanIntentReversals = 0;
+    std::uint64_t observedDeviceReversals = 0;
+    std::uint64_t intentReversalsConveyed = 0;
+    std::uint64_t intentReversalsNotConveyed = 0;
+    std::uint64_t observedDeviceReversalsWithoutIntent = 0;
+    std::uint64_t predictorMissedObservedReversals = 0;
     std::uint64_t trueReversals = 0;
     std::uint64_t detectedReversals = 0;
     std::uint64_t falseReversals = 0;
@@ -128,6 +146,10 @@ struct ScenarioMetrics {
     double sourceCadenceErrorMs = 0.0;
     double confidenceOscillation = 0.0;
     double horizonOscillationMs = 0.0;
+    double humanIntentMotionDurationMs = 0.0;
+    double longestHumanIntentMotionMs = 0.0;
+    double meanHumanIntentSpeed = 0.0;
+    double peakHumanIntentSpeed = 0.0;
     std::array<std::uint64_t, 6> reversalDetectionQuality{};
     std::array<std::uint64_t, 6> reversalReacquisitionQuality{};
     std::array<double, 8> stateDurationMs{};
@@ -135,7 +157,17 @@ struct ScenarioMetrics {
 };
 
 struct ReversalEvent {
+    // The observed-device event remains the configuration-independent timing
+    // anchor.  Human intent is matched after replay and never inferred from
+    // the sampled/noisy device stream.
     float groundTruthTimeSeconds = 0.0F;
+    float humanIntentTimeSeconds = -1.0F;
+    float intentToObservedLatencyMs = -1.0F;
+    float humanIntentVelocity = 0.0F;
+    int humanIntentDirection = 0;
+    int observedDeviceDirection = 0;
+    bool conveysHumanIntent = false;
+    bool predictorMissed = false;
     float detectedTimeSeconds = -1.0F;
     float staleLeadCancellationTimeSeconds = -1.0F;
     float reacquisitionTimeSeconds = -1.0F;
@@ -147,6 +179,14 @@ struct ReversalEvent {
     bool surroundedByFalseDetection = false;
 };
 
+struct HumanIntentReversalEvent {
+    float timeSeconds = 0.0F;
+    float velocity = 0.0F;
+    int direction = 0;
+    float observedDeviceTimeSeconds = -1.0F;
+    bool conveyedToDevice = false;
+};
+
 struct RecordedHotasTrace {
     std::vector<std::uint64_t> timestampsUs;
     std::vector<std::array<float, 8>> axes;
@@ -156,6 +196,7 @@ struct ScenarioResult {
     ScenarioDefinition scenario;
     std::string configuration;
     ScenarioMetrics metrics;
+    std::vector<HumanIntentReversalEvent> humanIntentReversals;
     std::vector<ReversalEvent> reversalEvents;
     std::vector<std::string> failures;
     std::vector<TraceSample> trace;
