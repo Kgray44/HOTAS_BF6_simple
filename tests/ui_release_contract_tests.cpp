@@ -34,6 +34,7 @@ private slots:
     void profileLibraryPortabilityIsSharedAndThemed();
     void allThemeSelectorsUseSkinnedDarkPopups();
     void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
+    void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -364,6 +365,44 @@ void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMe
     QVERIFY(backend.contains(QStringLiteral("const float futurePhysical")));
     QVERIFY(backend.contains(QStringLiteral("targetOvershoot")));
     QVERIFY(!backend.contains(QStringLiteral("std::abs(predicted) - 1.0F")));
+}
+
+void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane()
+{
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    QVERIFY(adaptive.contains(QStringLiteral("function axisModelIndex(physicalAxis)")));
+    QVERIFY(adaptive.contains(QStringLiteral("function selectAxisModelIndex(modelIndex)")));
+    QVERIFY(adaptive.contains(QStringLiteral("objectName: \"adaptiveAxisSelector\"")));
+    QVERIFY(adaptive.contains(QStringLiteral("property string staticPreviewView: \"predictor\"")));
+    QVERIFY(adaptive.contains(QStringLiteral("property bool showFinalTrace: false")));
+    QVERIFY(adaptive.contains(QStringLiteral("Includes the selected axis's active response curve and mapping transformations.")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED PREDICTION LEAD")));
+    QVERIFY(adaptive.contains(QStringLiteral("Scale is the configured maximum lead")));
+    QVERIFY(adaptive.contains(QStringLiteral("piecewise-linear resampling")));
+    QVERIFY(adaptive.contains(QStringLiteral("function staticTimeTickLabels()")));
+    QVERIFY(adaptive.contains(QStringLiteral("Human-Like Rapid Reversal")));
+    QVERIFY(adaptive.contains(QStringLiteral("INSTANTANEOUS REVERSAL — worst-case synthetic torture test")));
+    QVERIFY(adaptive.contains(QStringLiteral("Interactive simulator")));
+    QVERIFY(adaptive.contains(QStringLiteral("SLOW-MOTION PLAYBACK")));
+    QVERIFY(adaptive.contains(QStringLiteral("Replay speed")));
+    QVERIFY(adaptive.contains(QStringLiteral("CHRONOLOGICAL · NEWEST AT RIGHT")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ThemedSlider")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ThemedSwitch")));
+    for (const QString &metric : {QStringLiteral("PRE-REVERSAL LEAD"),
+                                  QStringLiteral("LEAD COLLAPSE"),
+                                  QStringLiteral("PREDICTOR-ONLY STEP"),
+                                  QStringLiteral("VIRTUAL OUTPUT STEP")}) {
+        QVERIFY(adaptive.contains(metric));
+    }
+    QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorStepAtContext")));
+    QVERIFY(header.contains(QStringLiteral("AdaptiveResponseSimulatorSample")));
+    QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulator.process")));
+    QVERIFY(backend.contains(QStringLiteral("A display timer may be slower than an emulated controller")));
+    QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulatorRecording")));
+    QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(
+        QStringLiteral("adaptiveResponseSimulator")));
 }
 
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()

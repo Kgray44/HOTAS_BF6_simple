@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -357,6 +358,9 @@ AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
 {
     m_adaptiveResponseHistoryClock.start();
+    m_adaptiveResponseSimulatorClock.start();
+    m_adaptiveResponseSimulatorHistory.resize(1800);
+    m_adaptiveResponseSimulatorRecording.resize(3000);
     QSettings settings;
     m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
     if (m_readiness.hasPendingRecovery()) {
@@ -1412,8 +1416,18 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
     for (int index = 0; index < samples; ++index) {
         const float t = static_cast<float>(index) / static_cast<float>(samples - 1);
         float value = minimum + span * t;
-        if (mode == u"rapid reversal"_qs) value = t < 0.46F ? minimum + span * (t / 0.46F)
+        if (mode == u"rapid reversal"_qs || mode == u"instant reversal torture"_qs) value = t < 0.46F ? minimum + span * (t / 0.46F)
             : runtime.domainMaximum - span * ((t - 0.46F) / 0.54F);
+        else if (mode == u"human-like rapid reversal"_qs) {
+            // A deliberately rounded hand movement: advance, briefly reverse
+            // through centre, then settle. It is distinct from the one-sample
+            // direction torture case above while exercising the same runtime
+            // estimator in this isolated preview.
+            const float progress = t < 0.42F ? t / 0.42F : (t - 0.42F) / 0.58F;
+            const float eased = 0.5F - 0.5F * std::cos(3.14159265359F * progress);
+            value = t < 0.42F ? minimum + span * (0.18F + 0.68F * eased)
+                : minimum + span * (0.86F - 0.62F * eased);
+        }
         else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
             ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
             : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));
@@ -1473,6 +1487,12 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
     float peakError = 0.0F;
     float targetOvershoot = 0.0F;
     float stationaryLead = 0.0F;
+    float preReversalLead = 0.0F;
+    float postReversalLead = 0.0F;
+    float maximumPhysicalDelta = 0.0F;
+    float maximumPredictedDelta = 0.0F;
+    float maximumArtificialPredictorStep = 0.0F;
+    float maximumVirtualOutputStep = 0.0F;
     std::vector<float> leadMagnitudes;
     leadMagnitudes.reserve(static_cast<size_t>(samples.size()));
     double reversalDetectedMs = -1.0;
@@ -1484,6 +1504,8 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
     bool havePreviousPhysical = false;
     float previousPhysical = 0.0F;
     float previousLead = 0.0F;
+    float previousPredicted = 0.0F;
+    float previousVirtualOutput = 0.0F;
     int previousDirection = 0;
     int reversalDirection = 0;
     int staleLeadDirection = 0;
@@ -1491,10 +1513,12 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
     int falseReversalCount = 0;
     double reversalStartMs = -1.0;
     double motionStartMs = -1.0;
+    int postReversalSampleCount = 0;
     for (qsizetype index = 0; index < samples.size(); ++index) {
         const QVariantMap sample = samples.at(index).toMap();
         const float physical = static_cast<float>(sample.value(u"physical"_qs).toDouble());
         const float predicted = static_cast<float>(sample.value(u"predicted"_qs).toDouble());
+        const float virtualOutput = static_cast<float>(sample.value(u"virtualOutput"_qs).toDouble());
         const float lead = static_cast<float>(sample.value(u"lead"_qs).toDouble());
         const double timeMs = sample.value(u"time"_qs).toDouble() * 1000.0;
         peakLead = std::max(peakLead, std::abs(lead));
@@ -1534,8 +1558,15 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             reversalStartMs = timeMs;
             reversalDirection = direction;
             staleLeadDirection = previousLead > 0.0001F ? 1 : previousLead < -0.0001F ? -1 : 0;
+            preReversalLead = std::abs(previousLead);
+            postReversalLead = std::abs(lead);
+            postReversalSampleCount = 1;
         }
         if (reversalStartMs >= 0.0) {
+            if (postReversalSampleCount < 8) {
+                postReversalLead = std::min(postReversalLead, std::abs(lead));
+                ++postReversalSampleCount;
+            }
             const int leadDirection = lead > 0.0001F ? 1 : lead < -0.0001F ? -1 : 0;
             if (staleLeadCancellationMs < 0.0
                 && (staleLeadDirection == 0 || leadDirection != staleLeadDirection)) {
@@ -1550,8 +1581,22 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             previousDirection = direction;
             motionDirection = direction;
         }
+        if (havePreviousPhysical) {
+            const float physicalDelta = physical - previousPhysical;
+            const float predictedDelta = predicted - previousPredicted;
+            maximumPhysicalDelta = std::max(maximumPhysicalDelta, std::abs(physicalDelta));
+            maximumPredictedDelta = std::max(maximumPredictedDelta, std::abs(predictedDelta));
+            // The predictor's own additional discontinuity, after subtracting
+            // the hand/source movement. This is diagnostic only.
+            maximumArtificialPredictorStep = std::max(maximumArtificialPredictorStep,
+                std::abs(predictedDelta - physicalDelta));
+            maximumVirtualOutputStep = std::max(maximumVirtualOutputStep,
+                std::abs(virtualOutput - previousVirtualOutput));
+        }
         previousPhysical = physical;
         previousLead = lead;
+        previousPredicted = predicted;
+        previousVirtualOutput = virtualOutput;
         havePreviousPhysical = true;
     }
     const float medianLead = leadMagnitudes.empty() ? 0.0F : [&leadMagnitudes]() {
@@ -1566,7 +1611,168 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             {u"motionRecognitionDelayMs"_qs, motionRecognitionDelayMs},
             {u"reversalDetectionMs"_qs, reversalDetectedMs}, {u"settlingTimeMs"_qs, settledMs},
             {u"staleLeadCancellationMs"_qs, staleLeadCancellationMs},
-            {u"oppositeDirectionReacquisitionMs"_qs, oppositeDirectionReacquisitionMs}};
+            {u"oppositeDirectionReacquisitionMs"_qs, oppositeDirectionReacquisitionMs},
+            {u"preReversalLead"_qs, preReversalLead},
+            {u"postReversalLead"_qs, postReversalLead},
+            {u"leadCollapseMagnitude"_qs, std::max(0.0F, preReversalLead - postReversalLead)},
+            {u"maximumPhysicalDelta"_qs, maximumPhysicalDelta},
+            {u"maximumPredictedDelta"_qs, maximumPredictedDelta},
+            {u"maximumArtificialPredictorStep"_qs, maximumArtificialPredictorStep},
+            {u"maximumVirtualOutputStep"_qs, maximumVirtualOutputStep}};
+}
+
+void AppBackend::adaptiveResponseSimulatorStepAtContext(double physical, const QString &scope,
+                                                        const QString &targetId, int physicalAxis,
+                                                        int sourceRateHz)
+{
+    // This intentionally does not touch MappingWorker. The Test Lab is an
+    // isolated UI/control-plane processor that receives the same resolved
+    // configuration and static final transform as its selected context.
+    const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
+    const RuntimeAdaptiveResponseConfig configuration =
+        adaptiveResponseConfigurationAtContext(scope, targetId, axis);
+    const int supportedRate = sourceRateHz <= 45 ? 30 : sourceRateHz <= 90 ? 60
+        : sourceRateHz <= 180 ? 125 : 250;
+    const qint64 periodMs = std::max<qint64>(1, 1000 / supportedRate);
+    const qint64 nowMs = m_adaptiveResponseSimulatorClock.elapsed();
+    if (m_adaptiveResponseSimulatorLastSourceMs < 0) {
+        m_adaptiveResponseSimulatorLastSourceMs = nowMs - periodMs;
+    }
+
+    const float sourceValue = std::clamp(static_cast<float>(physical), configuration.domainMinimum,
+                                         configuration.domainMaximum);
+    const auto runtimeProfiles = m_worker.runtimeProfileCache();
+    const int profile = std::clamp(m_worker.runtime().effectiveProfileIndex.load(), 0,
+        static_cast<int>(runtimeProfiles->profiles.size()) - 1);
+    const RuntimeAxisMapping &mapping = runtimeProfiles->profiles[static_cast<size_t>(profile)]
+        .axes[static_cast<size_t>(axis)];
+
+    // A display timer may be slower than an emulated controller. Generate
+    // every original source report timestamp rather than stretching time or
+    // feeding a presentation-rate approximation to the predictor.
+    int generated = 0;
+    while (m_adaptiveResponseSimulatorLastSourceMs + periodMs <= nowMs && generated < 64) {
+        m_adaptiveResponseSimulatorLastSourceMs += periodMs;
+        const auto timestamp = std::chrono::steady_clock::time_point{}
+            + std::chrono::milliseconds(m_adaptiveResponseSimulatorLastSourceMs);
+        const AdaptiveResponseTelemetry telemetry = m_adaptiveResponseSimulator.process(
+            sourceValue, configuration, timestamp);
+        AdaptiveResponseSimulatorSample sample;
+        sample.elapsedMs = m_adaptiveResponseSimulatorLastSourceMs;
+        sample.physical = telemetry.physical;
+        sample.estimated = telemetry.estimated;
+        sample.predicted = telemetry.predicted;
+        sample.virtualOutput = evaluateStaticAxisTransfer(telemetry.predicted, mapping);
+        sample.velocity = telemetry.velocity;
+        sample.acceleration = telemetry.acceleration;
+        sample.activeHorizonSeconds = telemetry.activeHorizonSeconds;
+        sample.maximumHorizonSeconds = configuration.maximumHorizonSeconds;
+        sample.lead = telemetry.lead;
+        sample.confidence = telemetry.confidence;
+        sample.motionIntensity = telemetry.motionIntensity;
+        sample.motionState = static_cast<int>(telemetry.state);
+        appendAdaptiveResponseSimulatorSample(sample);
+        ++generated;
+    }
+}
+
+void AppBackend::appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample)
+{
+    m_adaptiveResponseSimulatorHistory[static_cast<size_t>(m_adaptiveResponseSimulatorHistoryNext)] = sample;
+    m_adaptiveResponseSimulatorHistoryNext = (m_adaptiveResponseSimulatorHistoryNext + 1)
+        % static_cast<int>(m_adaptiveResponseSimulatorHistory.size());
+    m_adaptiveResponseSimulatorHistoryCount = std::min(m_adaptiveResponseSimulatorHistoryCount + 1,
+        static_cast<int>(m_adaptiveResponseSimulatorHistory.size()));
+    if (!m_adaptiveResponseSimulatorRecordingActive) return;
+    m_adaptiveResponseSimulatorRecording[static_cast<size_t>(m_adaptiveResponseSimulatorRecordingNext)] = sample;
+    m_adaptiveResponseSimulatorRecordingNext = (m_adaptiveResponseSimulatorRecordingNext + 1)
+        % static_cast<int>(m_adaptiveResponseSimulatorRecording.size());
+    m_adaptiveResponseSimulatorRecordingCount = std::min(m_adaptiveResponseSimulatorRecordingCount + 1,
+        static_cast<int>(m_adaptiveResponseSimulatorRecording.size()));
+}
+
+QVariantList AppBackend::adaptiveResponseSimulatorHistory() const
+{
+    QVariantList result;
+    result.reserve(m_adaptiveResponseSimulatorHistoryCount);
+    if (m_adaptiveResponseSimulatorHistoryCount == 0) return result;
+    const int capacity = static_cast<int>(m_adaptiveResponseSimulatorHistory.size());
+    const int first = (m_adaptiveResponseSimulatorHistoryNext - m_adaptiveResponseSimulatorHistoryCount
+        + capacity) % capacity;
+    const qint64 newest = m_adaptiveResponseSimulatorHistory[
+        static_cast<size_t>((m_adaptiveResponseSimulatorHistoryNext + capacity - 1) % capacity)].elapsedMs;
+    for (int offset = 0; offset < m_adaptiveResponseSimulatorHistoryCount; ++offset) {
+        const AdaptiveResponseSimulatorSample &sample = m_adaptiveResponseSimulatorHistory[
+            static_cast<size_t>((first + offset) % capacity)];
+        result.append(QVariantMap{{u"timeMs"_qs, sample.elapsedMs - newest},
+            {u"physical"_qs, sample.physical}, {u"estimated"_qs, sample.estimated},
+            {u"predicted"_qs, sample.predicted}, {u"virtualOutput"_qs, sample.virtualOutput},
+            {u"velocity"_qs, sample.velocity}, {u"acceleration"_qs, sample.acceleration},
+            {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
+            {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
+            {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
+                ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+            {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
+            {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
+    }
+    return result;
+}
+
+void AppBackend::adaptiveResponseSimulatorClear()
+{
+    m_adaptiveResponseSimulator.reset();
+    m_adaptiveResponseSimulatorHistoryNext = 0;
+    m_adaptiveResponseSimulatorHistoryCount = 0;
+    m_adaptiveResponseSimulatorRecordingNext = 0;
+    m_adaptiveResponseSimulatorRecordingCount = 0;
+    m_adaptiveResponseSimulatorLastSourceMs = -1;
+    m_adaptiveResponseSimulatorRecordingActive = false;
+    m_adaptiveResponseSimulatorClock.restart();
+}
+
+void AppBackend::adaptiveResponseSimulatorStartRecording()
+{
+    m_adaptiveResponseSimulatorRecordingNext = 0;
+    m_adaptiveResponseSimulatorRecordingCount = 0;
+    m_adaptiveResponseSimulatorRecordingActive = true;
+}
+
+void AppBackend::adaptiveResponseSimulatorStopRecording()
+{
+    m_adaptiveResponseSimulatorRecordingActive = false;
+}
+
+bool AppBackend::adaptiveResponseSimulatorRecordingActive() const
+{
+    return m_adaptiveResponseSimulatorRecordingActive;
+}
+
+QVariantList AppBackend::adaptiveResponseSimulatorRecording() const
+{
+    QVariantList result;
+    result.reserve(m_adaptiveResponseSimulatorRecordingCount);
+    if (m_adaptiveResponseSimulatorRecordingCount == 0) return result;
+    const int capacity = static_cast<int>(m_adaptiveResponseSimulatorRecording.size());
+    const int first = (m_adaptiveResponseSimulatorRecordingNext - m_adaptiveResponseSimulatorRecordingCount
+        + capacity) % capacity;
+    const qint64 firstTime = m_adaptiveResponseSimulatorRecording[static_cast<size_t>(first)].elapsedMs;
+    for (int offset = 0; offset < m_adaptiveResponseSimulatorRecordingCount; ++offset) {
+        const AdaptiveResponseSimulatorSample &sample = m_adaptiveResponseSimulatorRecording[
+            static_cast<size_t>((first + offset) % capacity)];
+        result.append(QVariantMap{{u"recordedElapsedMs"_qs, sample.elapsedMs - firstTime},
+            {u"physical"_qs, sample.physical}, {u"estimated"_qs, sample.estimated},
+            {u"predicted"_qs, sample.predicted}, {u"virtualOutput"_qs, sample.virtualOutput},
+            {u"velocity"_qs, sample.velocity}, {u"acceleration"_qs, sample.acceleration},
+            {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
+            {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
+            {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
+                ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+            {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
+            {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
+    }
+    return result;
 }
 
 QVariantList AppBackend::buttons() const

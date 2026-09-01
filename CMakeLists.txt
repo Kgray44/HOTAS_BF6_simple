@@ -272,7 +272,7 @@ if (BUILD_TESTING)
     add_test(NAME controller_readiness_tests COMMAND controller_readiness_tests)
     if (WIN32)
         set_tests_properties(controller_readiness_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(ui_release_contract_tests tests/ui_release_contract_tests.cpp)
@@ -297,7 +297,7 @@ if (BUILD_TESTING)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_published_updater_manifest_readiness_contract.cmake")
     if (WIN32)
         set_tests_properties(widgets_startup_contract_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(upgrade_configuration_fixture
@@ -349,7 +349,7 @@ if (BUILD_TESTING)
     add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
     if (WIN32)
         set_tests_properties(app_backend_startup_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(app_qml_startup_tests
@@ -399,7 +399,7 @@ if (BUILD_TESTING)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(theme_manager_tests

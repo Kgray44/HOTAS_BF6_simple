@@ -10,7 +10,7 @@ Item {
     property string editScope: "profile"
     property string targetId: ""
     property string renamePresetId: ""
-    property string scenario: "Rapid Reversal"
+    property string scenario: "Human-Like Rapid Reversal"
     property int contextEpoch: 0
     property int runtimeEpoch: 0
     property var liveState: backendObject.adaptiveResponseState
@@ -34,6 +34,22 @@ Item {
     property string comparisonScope: "preset"
     property string comparisonTargetId: "off"
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
+    property var comparisonTestLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
+    property string staticPreviewView: "predictor"
+    property bool showPhysicalTrace: true
+    property bool showEstimatedTrace: false
+    property bool showPredictedTrace: true
+    property bool showFinalTrace: false
+    property real simulatorInput: 0
+    property int simulatorSourceRate: 250
+    property bool simulatorPaused: true
+    property bool simulatorRecording: false
+    property bool simulatorReplaying: false
+    property int replaySlowdown: 1
+    property real replayPresentationMs: 0
+    property var simulatorSamples: []
+    property var simulatorRecordingSamples: []
+    property var simulatorDisplaySamples: []
 
     function effective() { return state.runtimeEffective || state.effective || ({}) }
     function numericOr(value, fallback) {
@@ -85,10 +101,88 @@ Item {
         for (let i = 0; i < choices.length; ++i) if (choices[i].scope === comparisonScope && choices[i].id === comparisonTargetId) return i
         return 0
     }
+    function axisModelIndex(physicalAxis) {
+        const choices = backendObject.axes || []
+        for (let index = 0; index < choices.length; ++index) {
+            if (Number(choices[index].index) === Number(physicalAxis)) return index
+        }
+        return 0
+    }
+    function selectAxisModelIndex(modelIndex) {
+        const choices = backendObject.axes || []
+        if (modelIndex < 0 || modelIndex >= choices.length) return false
+        const entry = choices[modelIndex]
+        if (!entry || entry.index === undefined || entry.index === null) return false
+        backendObject.setSelectedAxis(Number(entry.index))
+        root.setPreview()
+        return true
+    }
+    function setStaticPreviewView(view) {
+        staticPreviewView = view
+        showPhysicalTrace = true
+        showEstimatedTrace = view === "predictor"
+        showPredictedTrace = true
+        showFinalTrace = view === "pipeline"
+    }
+    function staticScenarioDurationMs() {
+        if (!previewSamples || previewSamples.length === 0) return 0
+        return root.numericOr(previewSamples[previewSamples.length - 1].time, 0) * 1000
+    }
+    function staticTimeTickLabels() {
+        const duration = staticScenarioDurationMs()
+        const labels = []
+        for (let index = 0; index < 6; ++index) labels.push(Math.round(duration * index / 5) + " ms")
+        return labels
+    }
+    function refreshSimulator() {
+        simulatorSamples = backendObject.adaptiveResponseSimulatorHistory()
+        if (!simulatorReplaying) simulatorDisplaySamples = simulatorSamples
+    }
+    function sampleSimulator() {
+        backendObject.adaptiveResponseSimulatorStepAtContext(simulatorInput, editScope, selectedTargetId(), backendObject.selectedAxisIndex, simulatorSourceRate)
+        refreshSimulator()
+    }
+    function simulatorCurrentSample() {
+        if (!simulatorDisplaySamples || simulatorDisplaySamples.length === 0) return ({})
+        return simulatorDisplaySamples[simulatorDisplaySamples.length - 1] || ({})
+    }
+    function simulatorMagnitude(fields, minimum) {
+        let maximum = minimum
+        for (let index = 0; index < simulatorDisplaySamples.length; ++index) {
+            for (let field = 0; field < fields.length; ++field) maximum = Math.max(maximum, Math.abs(root.numericOr(simulatorDisplaySamples[index][fields[field]], 0)))
+        }
+        return maximum
+    }
+    function startReplay() {
+        simulatorRecordingSamples = backendObject.adaptiveResponseSimulatorRecording()
+        if (simulatorRecordingSamples.length === 0) return
+        simulatorReplaying = true
+        simulatorPaused = false
+        replayPresentationMs = 0
+        simulatorDisplaySamples = [simulatorRecordingSamples[0]]
+    }
+    function updateReplayPresentation() {
+        if (!simulatorReplaying || simulatorPaused || simulatorRecordingSamples.length === 0) return
+        replayPresentationMs += 16
+        const originalElapsed = replayPresentationMs / Math.max(1, replaySlowdown)
+        const replayed = []
+        for (let index = 0; index < simulatorRecordingSamples.length; ++index) {
+            const sample = simulatorRecordingSamples[index]
+            if (root.numericOr(sample.recordedElapsedMs, 0) <= originalElapsed) replayed.push(sample)
+            else break
+        }
+        simulatorDisplaySamples = replayed.length > 0 ? replayed : [simulatorRecordingSamples[0]]
+        const finalSample = simulatorRecordingSamples[simulatorRecordingSamples.length - 1]
+        if (originalElapsed >= root.numericOr(finalSample.recordedElapsedMs, 0)) {
+            simulatorPaused = true
+            simulatorReplaying = false
+        }
+    }
     function setPreview() {
         previewSamples = backendObject.adaptiveResponsePreviewAtContext(scenario, editScope, selectedTargetId(), backendObject.selectedAxisIndex)
         testLabMetrics = backendObject.adaptiveResponseTestLabAtContext(scenario, editScope, selectedTargetId(), backendObject.selectedAxisIndex)
         comparisonSamples = backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
+        comparisonTestLabMetrics = backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     }
     function refreshHistory() {
         if (!historyPaused) historySamples = backendObject.adaptiveResponseHistory(historyWindowSeconds)
@@ -125,6 +219,8 @@ Item {
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
     Timer { interval: 50; running: !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory() }
+    Timer { interval: 16; running: !root.simulatorPaused && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: root.sampleSimulator() }
+    Timer { interval: 16; running: root.simulatorReplaying && !root.simulatorPaused; repeat: true; onTriggered: root.updateReplayPresentation() }
 
     component Card: Rectangle {
         default property alias content: contentHost.data
@@ -273,7 +369,147 @@ Item {
         }
         Connections { target: root; function onHistorySamplesChanged() { historyGraph.requestPaint() } function onHistoryInspectIndexChanged() { historyGraph.requestPaint() } }
     }
-    component TuneRow: Item {
+    component TimeAxis: RowLayout {
+        id: timeAxis
+        property int seconds: 5
+        Layout.fillWidth: true
+        Repeater {
+            model: 6
+            delegate: Caption {
+                required property int index
+                text: index === 5 ? "NOW" : "−" + Math.round(timeAxis.seconds * (1 - index / 5)) + " s"
+                Layout.fillWidth: true
+                horizontalAlignment: index === 0 ? Text.AlignLeft : index === 5 ? Text.AlignRight : Text.AlignHCenter
+            }
+        }
+    }
+    component SimulatorGraph: Canvas {
+        id: simulatorGraph
+        property var samples: []
+        property var series: []
+        property real lowerBound: -1
+        property real upperBound: 1
+        onSamplesChanged: requestPaint()
+        onSeriesChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            ctx.fillStyle = root.themeTokens.panelInset
+            ctx.fillRect(0, 0, width, height)
+            ctx.strokeStyle = root.themeTokens.divider
+            ctx.lineWidth = 1
+            const centre = lowerBound < 0 && upperBound > 0 ? height * (1 - (0 - lowerBound) / Math.max(0.0001, upperBound - lowerBound)) : height - 1
+            ctx.beginPath(); ctx.moveTo(0, centre); ctx.lineTo(width, centre); ctx.stroke()
+            for (let line = 0; line < series.length; ++line) {
+                if (!samples || samples.length === 0) continue
+                const descriptor = series[line]
+                ctx.strokeStyle = descriptor.color
+                ctx.lineWidth = 2
+                ctx.beginPath()
+                for (let index = 0; index < samples.length; ++index) {
+                    const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(samples[index][descriptor.field], 0)))
+                    const x = index * width / Math.max(1, samples.length - 1)
+                    const y = height * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound))
+                    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                }
+                ctx.stroke()
+            }
+        }
+    }
+    component VerticalSimulatorSlider: Slider {
+        id: verticalSlider
+        orientation: Qt.Vertical
+        from: -1
+        to: 1
+        implicitWidth: 54
+        implicitHeight: 250
+        topPadding: 9
+        bottomPadding: 9
+        background: Rectangle {
+            x: (verticalSlider.width - width) / 2
+            y: verticalSlider.topPadding
+            width: 8
+            height: verticalSlider.availableHeight
+            radius: 4
+            color: root.themeTokens.panelInset
+            border.color: root.themeTokens.border
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: verticalSlider.visualPosition < 0.5 ? parent.height * verticalSlider.visualPosition : parent.height / 2
+                width: parent.width
+                height: Math.abs(parent.height * (verticalSlider.visualPosition - 0.5))
+                radius: parent.radius
+                color: root.themeTokens.orange
+            }
+        }
+        handle: Rectangle {
+            x: (verticalSlider.width - width) / 2
+            y: verticalSlider.topPadding + (1 - (verticalSlider.value - verticalSlider.from) / (verticalSlider.to - verticalSlider.from)) * (verticalSlider.availableHeight - height)
+            width: 20
+            height: 16
+            radius: root.topGun ? 1 : 8
+            color: verticalSlider.pressed ? root.themeTokens.orange : root.themeTokens.buttonSurface
+            border.color: root.themeTokens.orange
+        }
+    }
+    component ThemedSlider: Slider {
+        id: themedSlider
+        implicitHeight: 26
+        leftPadding: 8
+        rightPadding: 8
+        background: Rectangle {
+            x: themedSlider.leftPadding
+            y: (themedSlider.height - height) / 2
+            width: themedSlider.availableWidth
+            height: 6
+            radius: 3
+            color: root.themeTokens.panelInset
+            border.color: root.themeTokens.border
+            Rectangle {
+                width: parent.width * Math.max(0, Math.min(1, themedSlider.visualPosition))
+                height: parent.height
+                radius: parent.radius
+                color: root.themeTokens.orange
+            }
+        }
+        handle: Rectangle {
+            x: themedSlider.leftPadding + themedSlider.visualPosition * (themedSlider.availableWidth - width)
+            y: (themedSlider.height - height) / 2
+            width: 16
+            height: 16
+            radius: root.topGun ? 1 : 8
+            color: themedSlider.pressed ? root.themeTokens.orange : root.themeTokens.buttonSurface
+            border.color: root.themeTokens.orange
+        }
+    }
+    component ThemedSwitch: Switch {
+        id: themedSwitch
+        implicitWidth: 48
+        implicitHeight: 28
+        indicator: Rectangle {
+            x: (themedSwitch.width - width) / 2
+            y: (themedSwitch.height - height) / 2
+            width: 42
+            height: 20
+            radius: root.topGun ? 1 : 10
+            color: themedSwitch.checked ? root.themeTokens.ready : root.themeTokens.controlDisabled
+            border.color: themedSwitch.checked ? root.themeTokens.ready : root.themeTokens.border
+            Rectangle {
+                width: 14
+                height: 14
+                radius: root.topGun ? 1 : 7
+                x: themedSwitch.checked ? parent.width - width - 3 : 3
+                anchors.verticalCenter: parent.verticalCenter
+                color: themedSwitch.checked ? root.themeTokens.panelInset : root.themeTokens.textMuted
+                Behavior on x { NumberAnimation { duration: 110 } }
+            }
+        }
+        contentItem: Item {}
+    }
+    component TuneRow: Rectangle {
+        id: tuneRow
         property string label: ""
         property string detail: ""
         property real value: 0
@@ -281,27 +517,60 @@ Item {
         property real to: 1
         property real step: 0.01
         property string propertyKey: ""
+        property string unit: "gain"
         signal changed(real value)
-        implicitHeight: 52
-        RowLayout { anchors.fill: parent; spacing: 12
-            ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { text: parent.parent.label; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
-                Text { text: parent.parent.detail + (root.editScope === "global" ? " · Default" : root.inheritedHere(parent.parent.propertyKey) ? " · Inherited" : " · Override"); color: root.themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+        function displayValue() {
+            const safe = root.numericOr(value, 0)
+            if (unit === "ms") return safe.toFixed(1) + " ms"
+            if (unit === "%") return (safe * 100).toFixed(1) + "%"
+            if (unit === "axis") return safe.toFixed(3) + " axis"
+            if (unit === "axis/s") return safe.toFixed(3) + " axis/s"
+            return safe.toFixed(2)
+        }
+        width: parent ? parent.width : implicitWidth
+        implicitHeight: 82
+        radius: root.themeTokens.controlRadius
+        color: root.themeTokens.panel
+        border.color: root.inheritedHere(propertyKey) && root.editScope !== "global" ? root.themeTokens.border : root.themeTokens.borderStrong
+        RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 12
+            ColumnLayout { Layout.preferredWidth: 300; Layout.maximumWidth: 360; Layout.fillWidth: true; spacing: 3
+                Text { text: tuneRow.label; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                Text { text: tuneRow.detail; color: root.themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere(tuneRow.propertyKey) ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
             }
-            Slider { id: slider; Layout.preferredWidth: 220; from: parent.parent.from; to: parent.parent.to; stepSize: parent.parent.step; value: parent.parent.value; onMoved: parent.parent.changed(value) }
-            Text { Layout.preferredWidth: 52; text: Number(parent.value).toFixed(parent.to <= 1 ? 2 : 1); color: root.themeTokens.textStrong; horizontalAlignment: Text.AlignRight; font.pixelSize: 11; font.family: root.themeTokens.telemetryFont }
+            ThemedSlider { id: slider; Layout.fillWidth: true; Layout.minimumWidth: 180; from: tuneRow.from; to: tuneRow.to; stepSize: tuneRow.step; value: tuneRow.value; onMoved: tuneRow.changed(value) }
+            Text { Layout.preferredWidth: 78; text: tuneRow.displayValue(); color: root.themeTokens.textStrong; horizontalAlignment: Text.AlignRight; font.pixelSize: 11; font.family: root.themeTokens.telemetryFont }
             ActionButton {
-                visible: parent.parent.propertyKey.length > 0
-                text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere(parent.parent.propertyKey) ? "INHERITED" : "INHERIT"
+                visible: tuneRow.propertyKey.length > 0
+                text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere(tuneRow.propertyKey) ? "INHERITED" : "INHERIT"
                 accent: false
-                enabled: root.editScope === "global" || !root.inheritedHere(parent.parent.propertyKey)
+                enabled: root.editScope === "global" || !root.inheritedHere(tuneRow.propertyKey)
                 implicitHeight: 28
                 padding: 8
                 onClicked: {
-                    backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, parent.parent.propertyKey, 0, true)
+                    backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, tuneRow.propertyKey, 0, true)
                     root.setPreview()
                 }
             }
+        }
+    }
+    component TuneGroup: Rectangle {
+        id: tuneGroup
+        property string title: ""
+        property string detail: ""
+        default property alias content: tuneGroupContent.data
+        width: parent ? parent.width : implicitWidth
+        implicitHeight: tuneGroupContent.implicitHeight + 24
+        radius: root.themeTokens.controlRadius
+        color: root.themeTokens.panelInset
+        border.color: root.themeTokens.border
+        Column {
+            id: tuneGroupContent
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 8
+            Text { text: tuneGroup.title; color: root.themeTokens.textStrong; font.pixelSize: 12; font.bold: true }
+            Text { visible: tuneGroup.detail.length > 0; text: tuneGroup.detail; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
         }
     }
 
@@ -341,9 +610,10 @@ Item {
                         Metric { caption: "PROFILE"; value: runtimeState.profile || "—" }
                         Metric { caption: "CATEGORY"; value: runtimeState.category || "General" }
                         Metric { caption: "AXIS"; value: runtimeState.axisLabel || "—" }
-                        Metric { caption: "MODEL"; value: String((runtimeState.runtimeEffective && runtimeState.runtimeEffective.model) || "auto").toUpperCase(); tone: root.themeTokens.orange }
-                        Metric { caption: "MAX HORIZON"; value: Number((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumHorizonMs) || 0).toFixed(1) + " ms" }
-                        Metric { caption: "MAX LEAD"; value: root.percent((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumLead) || 0) }
+                        Metric { caption: "STATUS"; value: runtimeState.runtimeEffective && runtimeState.runtimeEffective.enabled ? "ON" : "OFF"; tone: runtimeState.runtimeEffective && runtimeState.runtimeEffective.enabled ? root.themeTokens.ready : root.themeTokens.textMuted }
+                        Metric { caption: "PREDICTOR"; value: runtimeState.runtimeEffective && runtimeState.runtimeEffective.enabled ? String(runtimeState.runtimeEffective.model || "auto").toUpperCase() : "INACTIVE"; tone: root.themeTokens.orange }
+                        Metric { caption: runtimeState.runtimeEffective && runtimeState.runtimeEffective.enabled ? "MAX HORIZON" : "DORMANT HORIZON"; value: Number((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumHorizonMs) || 0).toFixed(1) + " ms" }
+                        Metric { caption: runtimeState.runtimeEffective && runtimeState.runtimeEffective.enabled ? "MAX LEAD" : "DORMANT LEAD"; value: root.percent((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumLead) || 0) }
                     }
                 }
             }
@@ -360,13 +630,93 @@ Item {
                     }
                     ColumnLayout { Layout.preferredWidth: 240
                         Caption { text: "AXIS" }
-                        ResponseCombo { id: axisSelector; Layout.fillWidth: true; model: backendObject.axes; textRole: "label"; valueRole: "index"; currentIndex: Math.max(0, backendObject.selectedAxisIndex); onActivated: backendObject.setSelectedAxis(currentValue) }
+                        ResponseCombo { id: axisSelector; objectName: "adaptiveAxisSelector"; Layout.fillWidth: true; model: backendObject.axes; textRole: "label"; valueRole: "index"; currentIndex: root.axisModelIndex(backendObject.selectedAxisIndex); onActivated: function(index) { root.selectAxisModelIndex(index) } }
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: root.themeTokens.divider }
                     ColumnLayout { Layout.fillWidth: true
                         Caption { text: "EDITING CONTEXT" }
                         Text { text: root.editScope === "preset" ? "Response Preset → " + root.selectedTargetName() + " → " + (state.axisLabel || "Axis") : "Editing " + root.editScope.toUpperCase() + " · " + root.selectedTargetName() + " · " + (scopeInfo().source || "Inherited") + " · " + (state.axisLabel || "Axis"); color: root.themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
+                }
+            }
+
+            Card {
+                Column { width: parent.width; spacing: 10
+                    RowLayout { width: parent.width
+                        ColumnLayout { Layout.fillWidth: true
+                            Text { text: "Interactive simulator"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
+                            Text { text: "An isolated production AdaptiveResponseProcessor. It uses the selected context but never writes mapper state, DirectInput state, or vJoy output."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Caption { text: root.simulatorReplaying ? "REPLAY" : root.simulatorRecording ? "RECORDING" : root.simulatorPaused ? "PAUSED" : "LIVE" }
+                    }
+                    RowLayout { width: parent.width; spacing: 7
+                        ActionButton { text: "LIVE"; implicitHeight: 28; padding: 8; accent: !root.simulatorPaused && !root.simulatorReplaying && !root.simulatorRecording; onClicked: { root.simulatorReplaying = false; root.simulatorRecording = false; backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorPaused = false; root.refreshSimulator() } }
+                        ActionButton { text: "RECORD"; implicitHeight: 28; padding: 8; accent: root.simulatorRecording; onClicked: { root.simulatorReplaying = false; backendObject.adaptiveResponseSimulatorStartRecording(); root.simulatorRecording = true; root.simulatorPaused = false; root.refreshSimulator() } }
+                        ActionButton { text: "STOP"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorPaused = true; root.refreshSimulator() } }
+                        ActionButton { text: "REPLAY"; implicitHeight: 28; padding: 8; accent: root.simulatorReplaying; enabled: backendObject.adaptiveResponseSimulatorRecording().length > 0; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.startReplay() } }
+                        ActionButton { text: root.simulatorPaused ? "RESUME" : "PAUSE"; implicitHeight: 28; padding: 8; accent: false; onClicked: root.simulatorPaused = !root.simulatorPaused }
+                        ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] } }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: "SYNTHETIC SOURCE RATE" }
+                        ResponseCombo { Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onActivated: root.simulatorSourceRate = Number(currentValue) }
+                    }
+                    GridLayout { width: parent.width; columns: 2; columnSpacing: 14; rowSpacing: 0
+                        ColumnLayout { Layout.row: 0; Layout.column: 1; Layout.preferredWidth: 112; Layout.alignment: Qt.AlignTop | Qt.AlignHCenter; spacing: 4
+                            Caption { text: "MANUAL INPUT"; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: "+100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
+                            VerticalSimulatorSlider { Layout.alignment: Qt.AlignHCenter; value: root.simulatorInput; onMoved: root.simulatorInput = value }
+                            Text { text: "0"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: "−100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont; Layout.alignment: Qt.AlignHCenter }
+                        }
+                        ColumnLayout { Layout.row: 0; Layout.column: 0; Layout.fillWidth: true; spacing: 7
+                            RowLayout { Layout.fillWidth: true
+                                Text { text: "SIMULATED SIGNAL PATH"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                                Caption { text: "OLDER  ←                 →  NEWEST" }
+                            }
+                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 148; samples: root.simulatorDisplaySamples; lowerBound: -1; upperBound: 1
+                                series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"estimated", color:root.themeTokens.cyan}, {field:"predicted", color:root.themeTokens.orange}, {field:"virtualOutput", color:root.themeTokens.ready}] }
+                            Row { spacing: 16
+                                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                                Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                                Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                                Text { text: "— Final output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                            }
+                            RowLayout { Layout.fillWidth: true; spacing: 10
+                                ColumnLayout { Layout.fillWidth: true
+                                    Caption { text: "MOTION · VELOCITY / ACCELERATION" }
+                                    SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["velocity", "acceleration"], 0.1); upperBound: root.simulatorMagnitude(["velocity", "acceleration"], 0.1); series: [{field:"velocity",color:root.themeTokens.cyan},{field:"acceleration",color:root.themeTokens.orange}] }
+                                }
+                                ColumnLayout { Layout.fillWidth: true
+                                    Caption { text: "ADAPTIVE · HORIZON / CONFIDENCE / LEAD" }
+                                    SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -1; upperBound: 1; series: [{field:"horizonRatio",color:root.themeTokens.orange},{field:"confidence",color:root.themeTokens.ready},{field:"lead",color:root.themeTokens.cyan}] }
+                                }
+                            }
+                            TimeAxis { seconds: 5 }
+                        }
+                    }
+                    RowLayout { width: parent.width; visible: root.simulatorRecordingSamples.length > 0 || root.simulatorReplaying
+                        Caption { text: "SLOW-MOTION PLAYBACK" }
+                        Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                        Repeater { model: [1, 2, 4, 6, 8, 10]
+                            delegate: ActionButton { required property var modelData; text: modelData + "×"; implicitHeight: 27; padding: 7; accent: root.replaySlowdown === modelData; onClicked: root.replaySlowdown = modelData }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: root.replaySlowdown === 1 ? "1× original presentation" : root.replaySlowdown + "× slower presentation · original timestamps and results" }
+                    }
+                    Flow { width: parent.width; spacing: 16
+                        Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(root.simulatorCurrentSample().physical, 0)) }
+                        Metric { caption: "ESTIMATED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().estimated, 0)) }
+                        Metric { caption: "PREDICTED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().predicted, 0)); tone: root.themeTokens.orange }
+                        Metric { caption: "FINAL OUTPUT"; value: root.percent(root.numericOr(root.simulatorCurrentSample().virtualOutput, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "VELOCITY"; value: root.numericOr(root.simulatorCurrentSample().velocity, 0).toFixed(2) + " /s" }
+                        Metric { caption: "ACCELERATION"; value: root.numericOr(root.simulatorCurrentSample().acceleration, 0).toFixed(1) + " /s²" }
+                        Metric { caption: "ACTIVE HORIZON"; value: root.numericOr(root.simulatorCurrentSample().activeHorizonMs, 0).toFixed(2) + " ms" }
+                        Metric { caption: "LEAD"; value: root.percent(root.numericOr(root.simulatorCurrentSample().lead, 0)) }
+                        Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(root.simulatorCurrentSample().confidence, 0) * 100) + "%" }
+                        Metric { caption: "STATE"; value: root.simulatorCurrentSample().state || "Stable" }
+                    }
+                    Text { text: "RECORD stores original source timestamps, physical values, and every resulting estimator/final-output sample in a bounded control-plane buffer. REPLAY draws those stored samples only; it does not recompute or time-stretch predictor output."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
                 }
             }
 
@@ -387,7 +737,7 @@ Item {
                     Row { spacing: 28
                         Metric { caption: "MAX HORIZON"; value: root.numericOr(effective().maximumHorizonMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.orange }
                         Metric { caption: "MAX LEAD"; value: percent(root.numericOr(effective().maximumLead, 0)) }
-                        Metric { caption: "PREDICTOR"; value: String(effective().model || "auto").toUpperCase() }
+                        Metric { caption: "PREDICTOR"; value: effective().enabled ? String(effective().model || "auto").toUpperCase() : "INACTIVE" }
                         Metric { caption: "REVERSAL"; value: Math.round(root.numericOr(effective().reversalResponse, 0) * 100) + "%" }
                     }
                 }
@@ -400,27 +750,99 @@ Item {
                             Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
                             Text { text: "Repeatable synthetic input uses the same lightweight estimator as runtime. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
-                        ResponseCombo { id: scenarioSelector; Layout.preferredWidth: 176; model: ["Slow Sweep", "Fast Sweep", "Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onActivated: { root.scenario = currentText; root.setPreview() } }
+                        ResponseCombo { id: scenarioSelector; Layout.preferredWidth: 206; model: ["Slow Sweep", "Fast Sweep", "Instant Reversal Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onActivated: { root.scenario = currentText; root.setPreview() } }
+                    }
+                    RowLayout { width: parent.width; spacing: 8
+                        Caption { text: "VIEW" }
+                        ActionButton { text: "PREDICTOR"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "predictor"; onClicked: root.setStaticPreviewView("predictor") }
+                        ActionButton { text: "FINAL PIPELINE"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "pipeline"; onClicked: root.setStaticPreviewView("pipeline") }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: root.staticPreviewView === "predictor" ? "Estimator view · no curve/output-stage dominance" : "Includes the selected axis's active response curve and mapping transformations." }
+                    }
+                    RowLayout { width: parent.width; spacing: 6
+                        Caption { text: "TRACES" }
+                        ActionButton { text: "PHYSICAL"; implicitHeight: 26; padding: 7; accent: root.showPhysicalTrace; onClicked: root.showPhysicalTrace = !root.showPhysicalTrace }
+                        ActionButton { text: "ESTIMATED"; implicitHeight: 26; padding: 7; accent: root.showEstimatedTrace; onClicked: root.showEstimatedTrace = !root.showEstimatedTrace }
+                        ActionButton { text: "PREDICTED"; implicitHeight: 26; padding: 7; accent: root.showPredictedTrace; onClicked: root.showPredictedTrace = !root.showPredictedTrace }
+                        ActionButton { text: "FINAL OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showFinalTrace; onClicked: root.showFinalTrace = !root.showFinalTrace }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: root.staticScenarioDurationMs().toFixed(0) + " ms synthetic scenario" }
                     }
                     Canvas { id: graph; width: parent.width; height: 220
                         onPaint: {
                             const ctx = getContext("2d"); ctx.reset(); ctx.fillStyle = root.themeTokens.panelInset; ctx.fillRect(0, 0, width, height);
                             ctx.strokeStyle = root.themeTokens.divider; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2); ctx.stroke();
-                            function trace(field, color) {
+                            function trace(field, color, weight, dashed) {
                                 if (!root.previewSamples || root.previewSamples.length === 0) return;
-                                ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
-                                for (let i = 0; i < root.previewSamples.length; ++i) { const point = root.previewSamples[i]; const v = Math.max(-1, Math.min(1, Number(point[field]))); const x = i * width / Math.max(1, root.previewSamples.length - 1); const y = height * (1 - (v + 1) * 0.5); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
-                                ctx.stroke();
+                                // Rendering-only piecewise-linear resampling. It never
+                                // enters AdaptiveResponseProcessor or Test Lab metrics;
+                                // original samples remain the endpoints of each segment.
+                                const sampleCount = root.previewSamples.length
+                                const renderCount = Math.max(sampleCount, Math.floor(width))
+                                ctx.strokeStyle = color; ctx.lineWidth = weight; ctx.setLineDash(dashed ? [5, 4] : []); ctx.beginPath();
+                                for (let renderIndex = 0; renderIndex < renderCount; ++renderIndex) {
+                                    const samplePosition = renderIndex * (sampleCount - 1) / Math.max(1, renderCount - 1)
+                                    const leftIndex = Math.floor(samplePosition)
+                                    const rightIndex = Math.min(sampleCount - 1, leftIndex + 1)
+                                    const fraction = samplePosition - leftIndex
+                                    const left = root.numericOr(root.previewSamples[leftIndex][field], 0)
+                                    const right = root.numericOr(root.previewSamples[rightIndex][field], 0)
+                                    const value = Math.max(-1, Math.min(1, left + (right - left) * fraction))
+                                    const x = renderIndex * width / Math.max(1, renderCount - 1)
+                                    const y = height * (1 - (value + 1) * 0.5)
+                                    if (renderIndex === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                                }
+                                ctx.stroke(); ctx.setLineDash([])
                             }
-                            trace("physical", root.themeTokens.textMuted); trace("estimated", root.themeTokens.cyan); trace("predicted", root.themeTokens.orange); trace("virtualOutput", root.themeTokens.ready);
+                            if (root.showPhysicalTrace) trace("physical", root.themeTokens.textStrong, 2.5, false)
+                            if (root.showEstimatedTrace) trace("estimated", root.themeTokens.cyan, 1.25, true)
+                            if (root.showPredictedTrace) trace("predicted", root.themeTokens.orange, 3, false)
+                            if (root.showFinalTrace) trace("virtualOutput", root.themeTokens.ready, 2.25, false)
                         }
-                        Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } }
+                        Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } function onStaticPreviewViewChanged() { graph.requestPaint() } function onShowPhysicalTraceChanged() { graph.requestPaint() } function onShowEstimatedTraceChanged() { graph.requestPaint() } function onShowPredictedTraceChanged() { graph.requestPaint() } function onShowFinalTraceChanged() { graph.requestPaint() } }
                     }
                     Row { spacing: 16
-                        Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                        Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                        Text { text: "— Virtual output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                        Text { visible: root.showPhysicalTrace; text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                        Text { visible: root.showEstimatedTrace; text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                        Text { visible: root.showPredictedTrace; text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                        Text { visible: root.showFinalTrace; text: "— Final output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                    }
+                    RowLayout { width: parent.width
+                        Repeater { model: root.staticTimeTickLabels()
+                            delegate: Caption { required property int index; required property var modelData; text: modelData; Layout.fillWidth: true; horizontalAlignment: index === 0 ? Text.AlignLeft : index === 5 ? Text.AlignRight : Text.AlignHCenter }
+                        }
+                    }
+                    Text { visible: root.scenario === "Instant Reversal Torture"; text: "INSTANTANEOUS REVERSAL — worst-case synthetic torture test; not representative of physically smooth human HOTAS movement."; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    Rectangle { width: parent.width; height: 1; color: root.themeTokens.divider }
+                    Column { id: staticLeadDetail; width: parent.width; spacing: 5
+                        property real configuredMaximum: Math.max(0.001, root.numericOr(root.effective().maximumLead, 0.01))
+                        property real currentLead: root.previewSamples && root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].lead, 0) : 0
+                        property real peakLead: {
+                            let peak = 0
+                            for (let index = 0; index < root.previewSamples.length; ++index) peak = Math.max(peak, Math.abs(root.numericOr(root.previewSamples[index].lead, 0)))
+                            return peak
+                        }
+                        RowLayout { width: parent.width
+                            ColumnLayout { Layout.fillWidth: true
+                                Text { text: "MAGNIFIED PREDICTION LEAD"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true }
+                                Text { text: "Scale is the configured maximum lead: ±" + root.percent(staticLeadDetail.configuredMaximum); color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                            }
+                            Caption { text: "CURRENT " + root.percent(staticLeadDetail.currentLead) + "  ·  PEAK " + root.percent(staticLeadDetail.peakLead) + "  ·  ACTIVE HORIZON " + (root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].horizonMs, 0).toFixed(1) : "0.0") + " ms" }
+                        }
+                        Canvas { id: previewLeadGraph; width: parent.width; height: 78
+                            onPaint: {
+                                const ctx = getContext("2d"); ctx.reset(); ctx.fillStyle = root.themeTokens.panelInset; ctx.fillRect(0, 0, width, height)
+                                ctx.strokeStyle = root.themeTokens.divider; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2); ctx.stroke()
+                                if (!root.previewSamples || root.previewSamples.length === 0) return
+                                const maxLead = Math.max(0.001, parent.configuredMaximum)
+                                const sampleCount = root.previewSamples.length
+                                const renderCount = Math.max(sampleCount, Math.floor(width))
+                                ctx.strokeStyle = root.themeTokens.cyan; ctx.lineWidth = 2; ctx.beginPath()
+                                for (let renderIndex = 0; renderIndex < renderCount; ++renderIndex) { const samplePosition = renderIndex * (sampleCount - 1) / Math.max(1, renderCount - 1); const leftIndex = Math.floor(samplePosition); const rightIndex = Math.min(sampleCount - 1, leftIndex + 1); const fraction = samplePosition - leftIndex; const left = root.numericOr(root.previewSamples[leftIndex].lead, 0); const right = root.numericOr(root.previewSamples[rightIndex].lead, 0); const value = Math.max(-maxLead, Math.min(maxLead, left + (right - left) * fraction)); const x = renderIndex * width / Math.max(1, renderCount - 1); const y = height * (0.5 - value / (2 * maxLead)); if (renderIndex === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y) }
+                                ctx.stroke()
+                            }
+                            Connections { target: root; function onPreviewSamplesChanged() { previewLeadGraph.requestPaint() } }
+                        }
                     }
                 }
             }
@@ -456,6 +878,14 @@ Item {
                         Text { text: "— A predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
                         Text { text: "– – B predicted"; color: root.themeTokens.ready; font.pixelSize: 10 }
                     }
+                    Flow { width: parent.width; spacing: 16
+                        Metric { caption: "A PEAK LEAD"; value: root.percent(root.numericOr(root.testLabMetrics.peakLead, 0)); tone: root.themeTokens.orange }
+                        Metric { caption: "A MEDIAN LEAD"; value: root.percent(root.numericOr(root.testLabMetrics.medianLead, 0)); tone: root.themeTokens.orange }
+                        Metric { caption: "B PEAK LEAD"; value: root.percent(root.numericOr(root.comparisonTestLabMetrics.peakLead, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "B MEDIAN LEAD"; value: root.percent(root.numericOr(root.comparisonTestLabMetrics.medianLead, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "PEAK DELTA A−B"; value: root.percent(root.numericOr(root.testLabMetrics.peakLead, 0) - root.numericOr(root.comparisonTestLabMetrics.peakLead, 0)) }
+                        Metric { caption: "MEDIAN DELTA A−B"; value: root.percent(root.numericOr(root.testLabMetrics.medianLead, 0) - root.numericOr(root.comparisonTestLabMetrics.medianLead, 0)) }
+                    }
                 }
             }
 
@@ -469,28 +899,42 @@ Item {
                         ActionButton { text: root.advancedExpanded ? "HIDE" : "SHOW"; accent: false; onClicked: root.advancedExpanded = !root.advancedExpanded }
                         ActionButton { text: "RESET LAYER"; accent: false; onClicked: backendObject.resetAdaptiveResponseAxisAtContext(root.editScope, root.selectedTargetId(), state.axis) }
                     }
-                    Column { visible: root.advancedExpanded; width: parent.width; spacing: 4
-                        RowLayout { width: parent.width
-                            Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
-                            ResponseCombo { Layout.preferredWidth: 190; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onActivated: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", currentText); root.setPreview() } }
-                            ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("model") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("model"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", "auto", true); root.setPreview() } }
+                    Column { visible: root.advancedExpanded; width: parent.width; spacing: 10
+                        TuneGroup { title: "MODE AND OWNERSHIP"; detail: "Enablement and estimator model are independent overrides. Each row states whether this editing context owns the value or inherits it."
+                            RowLayout { width: parent.width
+                                ColumnLayout { Layout.fillWidth: true; spacing: 2
+                                    Text { text: "Predictor enabled"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                                    Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("enabled") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
+                                }
+                                ThemedSwitch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", checked); root.setPreview() } }
+                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("enabled") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("enabled"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", false, true); root.setPreview() } }
+                            }
+                            RowLayout { width: parent.width
+                                ColumnLayout { Layout.fillWidth: true; spacing: 2
+                                    Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                                    Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("model") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
+                                }
+                                ResponseCombo { Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onActivated: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", currentText); root.setPreview() } }
+                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("model") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("model"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", "auto", true); root.setPreview() } }
+                            }
                         }
-                        RowLayout { width: parent.width
-                            Text { text: "Enabled"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
-                            Switch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", checked); root.setPreview() } }
-                            ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("enabled") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("enabled"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", false, true); root.setPreview() } }
+                        TuneGroup { title: "PREDICTION ENVELOPE"; detail: "Safety limits in time and normalized-axis headroom."
+                            TuneRow { label: "Maximum horizon"; detail: "Adaptive ceiling; active prediction can remain below it."; from: 0; to: 30; step: 0.5; unit: "ms"; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumHorizonMs", value); root.setPreview() } }
+                            TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis travel."; from: 0.01; to: 0.50; step: 0.01; unit: "%"; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumLead", value); root.setPreview() } }
+                            TuneRow { label: "Endpoint taper"; detail: "Tapers lead into the remaining output headroom."; from: 0.01; to: 1; step: 0.01; unit: "%"; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "endpointTaper", value); root.setPreview() } }
                         }
-                        TuneRow { label: "Maximum horizon"; detail: "0–30 ms adaptive ceiling"; from: 0; to: 30; step: 0.5; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumHorizonMs", value); root.setPreview() } }
-                        TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis units"; from: 0.01; to: 0.50; step: 0.01; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumLead", value); root.setPreview() } }
-                        TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement"; propertyKey: "velocityResponse"; value: root.numericOr(effective().velocityResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "velocityResponse", value); root.setPreview() } }
-                        TuneRow { label: "Acceleration response"; detail: "ABG acceleration contribution"; propertyKey: "accelerationResponse"; value: root.numericOr(effective().accelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "accelerationResponse", value); root.setPreview() } }
-                        TuneRow { label: "Motion sensitivity"; detail: "How much deliberate movement activates prediction"; from: 0.001; to: 2; step: 0.005; propertyKey: "motionSensitivity"; value: root.numericOr(effective().motionSensitivity, 0.035); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "motionSensitivity", value); root.setPreview() } }
-                        TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement when estimating motion"; from: 0; to: 0.50; step: 0.001; propertyKey: "noiseRejection"; value: root.numericOr(effective().noiseRejection, 0.012); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "noiseRejection", value); root.setPreview() } }
-                        TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead"; from: 0.001; to: 10; step: 0.01; propertyKey: "reversalDetection"; value: root.numericOr(effective().reversalDetection, 0.075); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalDetection", value); root.setPreview() } }
-                        TuneRow { label: "Reversal response"; detail: "Safety cancellation is always active; this controls new-direction reacquisition."; propertyKey: "reversalResponse"; value: root.numericOr(effective().reversalResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalResponse", value); root.setPreview() } }
-                        TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking"; propertyKey: "decelerationResponse"; value: root.numericOr(effective().decelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "decelerationResponse", value); root.setPreview() } }
-                        TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest"; propertyKey: "settlingResponse"; value: root.numericOr(effective().settlingResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "settlingResponse", value); root.setPreview() } }
-                        TuneRow { label: "Endpoint taper"; detail: "Tapers lead into available headroom"; from: 0.01; to: 1; step: 0.01; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "endpointTaper", value); root.setPreview() } }
+                        TuneGroup { title: "MOTION ESTIMATION"; detail: "Evidence thresholds and model gains; these rows are control-plane settings, not a live report loop."
+                            TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement."; propertyKey: "velocityResponse"; value: root.numericOr(effective().velocityResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "velocityResponse", value); root.setPreview() } }
+                            TuneRow { label: "Acceleration response"; detail: "Alpha-beta-gamma acceleration contribution."; propertyKey: "accelerationResponse"; value: root.numericOr(effective().accelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "accelerationResponse", value); root.setPreview() } }
+                            TuneRow { label: "Motion sensitivity"; detail: "Minimum deliberate motion that activates prediction."; from: 0.001; to: 2; step: 0.005; unit: "axis/s"; propertyKey: "motionSensitivity"; value: root.numericOr(effective().motionSensitivity, 0.035); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "motionSensitivity", value); root.setPreview() } }
+                            TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement while estimating motion."; from: 0; to: 0.50; step: 0.001; unit: "axis"; propertyKey: "noiseRejection"; value: root.numericOr(effective().noiseRejection, 0.012); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "noiseRejection", value); root.setPreview() } }
+                        }
+                        TuneGroup { title: "REVERSAL AND SETTLING"; detail: "Safety cancellation is always active; these parameters govern the evidence and recovery behaviour after that cancellation."
+                            TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead."; from: 0.001; to: 10; step: 0.01; unit: "axis/s"; propertyKey: "reversalDetection"; value: root.numericOr(effective().reversalDetection, 0.075); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalDetection", value); root.setPreview() } }
+                            TuneRow { label: "Reversal response"; detail: "Controls new-direction lead reacquisition after safety cancellation."; propertyKey: "reversalResponse"; value: root.numericOr(effective().reversalResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalResponse", value); root.setPreview() } }
+                            TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking."; propertyKey: "decelerationResponse"; value: root.numericOr(effective().decelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "decelerationResponse", value); root.setPreview() } }
+                            TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest."; propertyKey: "settlingResponse"; value: root.numericOr(effective().settlingResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "settlingResponse", value); root.setPreview() } }
+                        }
                     }
                 }
             }
@@ -502,7 +946,7 @@ Item {
                             Text { text: "Live telemetry"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
                             Text { text: "Sampled from an atomic latest-state snapshot at UI cadence. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
-                        Text { text: telemetry.state || "Stable"; color: root.themeTokens.orange; font.pixelSize: 16; font.bold: true }
+                        Text { text: telemetry.enabled ? (telemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: telemetry.enabled ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: 16; font.bold: true }
                     }
                     Flow { width: parent.width; spacing: 16
                         Metric { caption: "PHYSICAL"; value: percent(root.numericOr(telemetry.physical, 0)) }
@@ -512,17 +956,17 @@ Item {
                         Metric { caption: "VELOCITY"; value: root.numericOr(telemetry.velocity, 0).toFixed(2) }
                         Metric { caption: "ACCELERATION"; value: root.numericOr(telemetry.acceleration, 0).toFixed(1) }
                         Metric { caption: "MOTION"; value: Math.round(root.numericOr(telemetry.motionIntensity, 0) * 100) + "%" }
-                        Metric { caption: "ACTIVE HORIZON"; value: root.numericOr(telemetry.activeHorizonMs, 0).toFixed(2) + " ms" }
-                        Metric { caption: "MAX HORIZON"; value: root.numericOr(telemetry.maximumHorizonMs, 0).toFixed(1) + " ms" }
-                        Metric { caption: "LEAD"; value: percent(root.numericOr(telemetry.lead, 0)) }
-                        Metric { caption: "MAX LEAD"; value: percent(root.numericOr(telemetry.maximumLead, 0)) }
+                        Metric { caption: "ACTIVE PREDICTION"; value: (telemetry.enabled ? root.numericOr(telemetry.activeHorizonMs, 0) : 0).toFixed(2) + " ms" }
+                        Metric { caption: telemetry.enabled ? "MAX HORIZON" : "DORMANT HORIZON"; value: root.numericOr(telemetry.maximumHorizonMs, 0).toFixed(1) + " ms" }
+                        Metric { caption: "LEAD"; value: percent(telemetry.enabled ? root.numericOr(telemetry.lead, 0) : 0) }
+                        Metric { caption: telemetry.enabled ? "MAX LEAD" : "DORMANT LEAD"; value: percent(root.numericOr(telemetry.maximumLead, 0)) }
                         Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(telemetry.confidence, 0) * 100) + "%" }
                         Metric { caption: "REVERSALS"; value: root.numericOr(telemetry.reversalCount, 0) }
                         Metric { caption: "SAFETY CLAMPS"; value: root.numericOr(telemetry.safetyClampCount, 0) }
                     }
                     Flow { width: parent.width; spacing: 14
-                        Gauge { caption: "ACTIVE HORIZON"; value: root.numericOr(telemetry.activeHorizonMs, 0); maximum: Math.max(0.1, root.numericOr(telemetry.maximumHorizonMs, 0)); tone: root.themeTokens.orange }
-                        Gauge { caption: "PREDICTION LEAD"; value: Math.abs(root.numericOr(telemetry.lead, 0)); maximum: Math.max(0.001, root.numericOr(telemetry.maximumLead, 0)); tone: root.themeTokens.ready }
+                        Gauge { caption: "ACTIVE PREDICTION"; value: telemetry.enabled ? root.numericOr(telemetry.activeHorizonMs, 0) : 0; maximum: Math.max(0.1, root.numericOr(telemetry.maximumHorizonMs, 0)); tone: root.themeTokens.orange }
+                        Gauge { caption: "PREDICTION LEAD"; value: telemetry.enabled ? Math.abs(root.numericOr(telemetry.lead, 0)) : 0; maximum: Math.max(0.001, root.numericOr(telemetry.maximumLead, 0)); tone: root.themeTokens.ready }
                         Gauge { caption: "CONFIDENCE"; value: root.numericOr(telemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
                         Gauge { caption: "MOTION INTENSITY"; value: root.numericOr(telemetry.motionIntensity, 0); maximum: 1; tone: root.themeTokens.orange }
                     }
@@ -544,11 +988,12 @@ Item {
                     RowLayout { width: parent.width
                         Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || state.axisLabel || "Axis").toUpperCase() }
                         Item { Layout.fillWidth: true }
-                        Caption { text: "−" + root.historyWindowSeconds + "s   →   NOW · shared time axis" }
+                        Caption { text: "CHRONOLOGICAL · NEWEST AT RIGHT" }
                     }
                     Text { text: "AXIS POSITION  ·  normalized axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
                     HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 156; lowerBound: -1; upperBound: 1
                         series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"estimated", color:root.themeTokens.cyan}, {field:"predicted", color:root.themeTokens.orange}, {field:"virtualOutput", color:root.themeTokens.ready}] }
+                    TimeAxis { seconds: root.historyWindowSeconds }
                     Row { spacing: 16
                         Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
                         Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
@@ -579,7 +1024,7 @@ Item {
                         }
                     }
                     Column { visible: root.historyPaused && root.historySamples.length > 0; width: parent.width; spacing: 5
-                        Slider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
+                        ThemedSlider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
                         Flow { width: parent.width; spacing: 14
                             Metric { caption: "INSPECT TIME"; value: root.numericOr(root.inspectedHistorySample().timeMs, 0).toFixed(0) + " ms" }
                             Metric { caption: "PHYSICAL / ESTIMATE"; value: root.percent(root.numericOr(root.inspectedHistorySample().physical, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().estimated, 0)) }
@@ -597,7 +1042,7 @@ Item {
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "Test Lab"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Use the repeatable graph above to inspect sweep, reversal, stop, micro-adjustment, and center-fighting behavior before launching a game."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Compare an instantaneous reversal torture case with a rounded human-like reversal, then inspect prediction and final-output step metrics before launching a game."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { text: root.testLabExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.testLabExpanded = !root.testLabExpanded }
                     }
@@ -612,9 +1057,16 @@ Item {
                             Metric { caption: "FALSE REVERSALS"; value: root.numericOr(testLabMetrics.falseReversalCount, 0) }
                             Metric { caption: "STATIONARY LEAD"; value: percent(root.numericOr(testLabMetrics.stationaryLead, 0)) }
                             Metric { caption: "REVERSAL DETECTED"; value: root.numericOr(testLabMetrics.reversalDetectionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.reversalDetectionMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "PRE-REVERSAL LEAD"; value: percent(root.numericOr(testLabMetrics.preReversalLead, 0)) }
+                            Metric { caption: "POST-CANCEL LEAD"; value: percent(root.numericOr(testLabMetrics.postReversalLead, 0)); tone: root.themeTokens.ready }
+                            Metric { caption: "LEAD COLLAPSE"; value: percent(root.numericOr(testLabMetrics.leadCollapseMagnitude, 0)); tone: root.themeTokens.ready }
                             Metric { caption: "STALE LEAD CLEARED"; value: root.numericOr(testLabMetrics.staleLeadCancellationMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.staleLeadCancellationMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
                             Metric { caption: "OPPOSITE LEAD READY"; value: root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
                             Metric { caption: "SETTLING TIME"; value: root.numericOr(testLabMetrics.settlingTimeMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.settlingTimeMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "MAX PHYSICAL STEP"; value: percent(root.numericOr(testLabMetrics.maximumPhysicalDelta, 0)) }
+                            Metric { caption: "MAX PREDICTED STEP"; value: percent(root.numericOr(testLabMetrics.maximumPredictedDelta, 0)) }
+                            Metric { caption: "PREDICTOR-ONLY STEP"; value: percent(root.numericOr(testLabMetrics.maximumArtificialPredictorStep, 0)) }
+                            Metric { caption: "VIRTUAL OUTPUT STEP"; value: percent(root.numericOr(testLabMetrics.maximumVirtualOutputStep, 0)) }
                         }
                         Text { text: "The Test Lab uses the same fixed-size runtime estimator as mapping, but creates an isolated synthetic processor. Physical input always remains the final predictive baseline."; color: root.themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
                     }

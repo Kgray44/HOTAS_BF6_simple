@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "adaptive_response.h"
 #include "input_learning.h"
 #include "mapping_worker.h"
 
@@ -21,6 +22,7 @@
 #include <QWindow>
 
 #include <array>
+#include <vector>
 
 class QAction;
 class QMenu;
@@ -403,6 +405,20 @@ public:
                                                               const QString &scope,
                                                               const QString &targetId,
                                                               int physicalAxis) const;
+    // The simulator is a UI-thread-only control-plane instrument. It has its
+    // own production processor instance and bounded sample/recording rings;
+    // neither path reads or writes the mapper's live adaptive state.
+    Q_INVOKABLE void adaptiveResponseSimulatorStepAtContext(double physical,
+                                                             const QString &scope,
+                                                             const QString &targetId,
+                                                             int physicalAxis,
+                                                             int sourceRateHz);
+    Q_INVOKABLE QVariantList adaptiveResponseSimulatorHistory() const;
+    Q_INVOKABLE void adaptiveResponseSimulatorClear();
+    Q_INVOKABLE void adaptiveResponseSimulatorStartRecording();
+    Q_INVOKABLE void adaptiveResponseSimulatorStopRecording();
+    Q_INVOKABLE bool adaptiveResponseSimulatorRecordingActive() const;
+    Q_INVOKABLE QVariantList adaptiveResponseSimulatorRecording() const;
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
                                               const QString &resolution);
@@ -588,8 +604,25 @@ private:
         int motionState = 0;
     };
 
+    struct AdaptiveResponseSimulatorSample {
+        qint64 elapsedMs = 0;
+        float physical = 0.0F;
+        float estimated = 0.0F;
+        float predicted = 0.0F;
+        float virtualOutput = 0.0F;
+        float velocity = 0.0F;
+        float acceleration = 0.0F;
+        float activeHorizonSeconds = 0.0F;
+        float maximumHorizonSeconds = 0.0F;
+        float lead = 0.0F;
+        float confidence = 0.0F;
+        float motionIntensity = 0.0F;
+        int motionState = 0;
+    };
+
     void persistAndApply();
     void sampleAdaptiveResponseHistory();
+    void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
     RuntimeAdaptiveResponseConfig adaptiveResponseConfigurationAtContext(
         const QString &scope, const QString &targetId, int physicalAxis,
         AdaptiveResponseAxisOverride *contextOverride = nullptr,
@@ -716,6 +749,19 @@ private:
     std::array<AdaptiveResponseHistorySample, 900> m_adaptiveResponseHistory{};
     int m_adaptiveResponseHistoryNext = 0;
     int m_adaptiveResponseHistoryCount = 0;
+    QElapsedTimer m_adaptiveResponseSimulatorClock;
+    AdaptiveResponseProcessor m_adaptiveResponseSimulator;
+    // These deliberately live on the heap: AppBackend is constructed on the
+    // stack by its QML startup test, while the fixed bounds still ensure the
+    // control-plane simulator cannot grow without limit.
+    std::vector<AdaptiveResponseSimulatorSample> m_adaptiveResponseSimulatorHistory;
+    std::vector<AdaptiveResponseSimulatorSample> m_adaptiveResponseSimulatorRecording;
+    int m_adaptiveResponseSimulatorHistoryNext = 0;
+    int m_adaptiveResponseSimulatorHistoryCount = 0;
+    int m_adaptiveResponseSimulatorRecordingCount = 0;
+    int m_adaptiveResponseSimulatorRecordingNext = 0;
+    qint64 m_adaptiveResponseSimulatorLastSourceMs = -1;
+    bool m_adaptiveResponseSimulatorRecordingActive = false;
     QElapsedTimer m_calibrationFinalizationClock;
     QTimer m_uiEventLoopHeartbeatTimer;
     QElapsedTimer m_uiEventLoopHeartbeatClock;

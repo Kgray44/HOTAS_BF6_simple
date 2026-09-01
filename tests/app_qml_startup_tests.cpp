@@ -7,6 +7,7 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
+#include <QMetaObject>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -19,6 +20,7 @@
 #include <QStringList>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QThread>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWindow>
@@ -97,6 +99,84 @@ bool selectPage(QObject *surface, int page)
     }
     if (!pageItem(surface, page)) {
         return failPresentationLifecycleTest(QStringLiteral("page %1 did not load on entry").arg(page));
+    }
+    return true;
+}
+
+bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *surface)
+{
+    if (!selectPage(surface, 9)) return false;
+    QObject *adaptive = pageItem(surface, 9);
+    if (!adaptive) return failPresentationLifecycleTest(QStringLiteral("Adaptive Response page was not available"));
+    QObject *axisSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveAxisSelector"));
+    if (!axisSelector) return failPresentationLifecycleTest(QStringLiteral("Adaptive Response axis selector was not available"));
+    const QVariantList axes = backend.axes();
+    if (axes.size() < 3) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector did not expose Roll, Pitch, and Yaw"));
+    }
+    const int originalAxis = backend.selectedAxisIndex();
+    for (const int physicalAxis : {0, 1, 2}) {
+        int modelIndex = -1;
+        for (qsizetype index = 0; index < axes.size(); ++index) {
+            const QVariantMap entry = axes.at(index).toMap();
+            if (entry.value(QStringLiteral("index")).toInt() == physicalAxis) {
+                modelIndex = static_cast<int>(index);
+                break;
+            }
+        }
+        if (modelIndex < 0) {
+            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector lacks physical axis %1").arg(physicalAxis));
+        }
+        if (!axisSelector->setProperty("currentIndex", modelIndex)
+            || !QMetaObject::invokeMethod(axisSelector, "activated", Q_ARG(int, modelIndex))) {
+            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector could not activate model index %1").arg(modelIndex));
+        }
+        settlePresentation();
+        const QVariantMap state = adaptive->property("state").toMap();
+        const QVariantList preview = adaptive->property("previewSamples").toList();
+        if (backend.selectedAxisIndex() != physicalAxis
+            || state.value(QStringLiteral("axis")).toInt() != physicalAxis
+            || state.value(QStringLiteral("axisLabel")).toString().isEmpty()
+            || preview.isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Roll/Pitch/Yaw selection did not refresh backend, context, and preview together"));
+        }
+    }
+    backend.setSelectedAxis(originalAxis);
+    settlePresentation();
+    return true;
+}
+
+bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
+{
+    const QVariantMap mapperBefore = backend.adaptiveResponseTelemetry();
+    backend.adaptiveResponseSimulatorClear();
+    backend.adaptiveResponseSimulatorStartRecording();
+    for (int index = 0; index < 8; ++index) {
+        QThread::msleep(8);
+        backend.adaptiveResponseSimulatorStepAtContext(-0.75 + index * 0.20,
+            QStringLiteral("profile"), backend.activeProfileId(), 0, 250);
+    }
+    backend.adaptiveResponseSimulatorStopRecording();
+    const QVariantList history = backend.adaptiveResponseSimulatorHistory();
+    const QVariantList recording = backend.adaptiveResponseSimulatorRecording();
+    const QVariantMap mapperAfter = backend.adaptiveResponseTelemetry();
+    if (history.isEmpty() || recording.isEmpty()
+        || history.constLast().toMap().value(QStringLiteral("physical")).toDouble()
+            != recording.constLast().toMap().value(QStringLiteral("physical")).toDouble()
+        || mapperBefore.value(QStringLiteral("predicted")).toDouble()
+            != mapperAfter.value(QStringLiteral("predicted")).toDouble()) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response simulator did not retain isolated recorded production samples"));
+    }
+    qint64 previous = -1;
+    for (const QVariant &entry : recording) {
+        const qint64 timestamp = entry.toMap().value(QStringLiteral("recordedElapsedMs")).toLongLong();
+        if (timestamp < previous || !entry.toMap().contains(QStringLiteral("virtualOutput"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response simulator recording lost original timestamps or results"));
+        }
+        previous = timestamp;
+    }
+    if (recording != backend.adaptiveResponseSimulatorRecording()) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response replay data recomputed instead of returning the stored recording"));
     }
     return true;
 }
@@ -185,6 +265,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
         || !profiles->property("applyImportedCalibration").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
     }
+    if (!verifyAdaptiveResponseAxisSelection(backend, surface)) return false;
     return selectPage(surface, 8);
 }
 
@@ -330,6 +411,7 @@ int main(int argc, char *argv[])
                 qobject_cast<QWindow *>(engine.rootObjects().constFirst()), theme)) return 1;
     }
 
+    if (!verifyAdaptiveResponseSimulator(backend)) return 1;
     if (!verifyAutomationEditorInteraction(backend)) return 1;
 
     QTimer::singleShot(250, &application, &QCoreApplication::quit);
