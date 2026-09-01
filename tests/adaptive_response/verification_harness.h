@@ -62,6 +62,18 @@ struct TraceSample {
     bool targetArrival = false;
     bool physicalStop = false;
     bool trueReversal = false;
+    float physicalVelocity = 0.0F;
+    int physicalGroundTruthDirection = 0;
+    bool physicalTrueReversal = false;
+};
+
+enum class ReversalQuality : std::uint8_t {
+    NotApplicable,
+    Immediate,
+    Excellent,
+    Acceptable,
+    Poor,
+    Failure,
 };
 
 struct ScenarioMetrics {
@@ -116,6 +128,8 @@ struct ScenarioMetrics {
     double sourceCadenceErrorMs = 0.0;
     double confidenceOscillation = 0.0;
     double horizonOscillationMs = 0.0;
+    std::array<std::uint64_t, 6> reversalDetectionQuality{};
+    std::array<std::uint64_t, 6> reversalReacquisitionQuality{};
     std::array<double, 8> stateDurationMs{};
     std::array<std::uint64_t, 8> stateTransitions{};
 };
@@ -127,6 +141,8 @@ struct ReversalEvent {
     float reacquisitionTimeSeconds = -1.0F;
     float peakStaleLead = 0.0F;
     double wrongDirectionLeadArea = 0.0;
+    ReversalQuality detectionQuality = ReversalQuality::NotApplicable;
+    ReversalQuality reacquisitionQuality = ReversalQuality::NotApplicable;
     bool missed = false;
     bool surroundedByFalseDetection = false;
 };
