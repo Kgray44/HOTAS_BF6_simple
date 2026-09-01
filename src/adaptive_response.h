@@ -28,6 +28,9 @@ struct AdaptiveResponseTelemetry {
     float lead = 0.0F;
     float confidence = 0.0F;
     float motionIntensity = 0.0F;
+    float motionCoherence = 0.0F;
+    float sourceUpdatePeriodSeconds = 0.0F;
+    float quietDurationSeconds = 0.0F;
     AdaptiveMotionState state = AdaptiveMotionState::Stable;
     bool reversal = false;
     bool safetyLimited = false;
@@ -49,10 +52,22 @@ public:
 private:
     bool m_initialized = false;
     float m_lastPhysical = 0.0F;
+    float m_lastMeaningfulPhysical = 0.0F;
     float m_estimatedPosition = 0.0F;
     float m_velocity = 0.0F;
     float m_acceleration = 0.0F;
+    float m_directionalTrend = 0.0F;
+    float m_absoluteTrend = 0.0F;
+    float m_trendAgeSeconds = 0.0F;
+    float m_sourceUpdatePeriodSeconds = 0.008F;
+    float m_quietDurationSeconds = 0.0F;
+    float m_holdConfidence = 1.0F;
+    float m_softReversalMotion = 0.0F;
+    std::uint8_t m_oppositeEvidenceCount = 0;
+    int m_motionDirection = 0;
     std::chrono::steady_clock::time_point m_lastTimestamp{};
+    std::chrono::steady_clock::time_point m_lastMeaningfulTimestamp{};
+    std::chrono::steady_clock::time_point m_lastSourceTimestamp{};
     std::uint64_t m_reversalCount = 0;
     std::uint64_t m_safetyClampCount = 0;
 };

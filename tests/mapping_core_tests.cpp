@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -140,6 +141,12 @@ private slots:
     void adaptiveResponseCancelsStaleLeadAtReversal();
     void adaptiveResponseTapersAndClampsAtEndpoint();
     void adaptiveResponsePersistsAndResolvesLayeredSettings();
+    void adaptiveResponseRecognizesSlowMotionAcrossSampleRates();
+    void adaptiveResponsePreservesSlowWobbleAcrossSampleRates();
+    void adaptiveResponseHandlesSampleAndHoldSourcesThenSettles();
+    void adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike();
+    void adaptiveResponseHandlesHardGentleAndRepeatedReversals();
+    void adaptiveResponseConvergesEstimatorsAfterStopAndResume();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -582,8 +589,12 @@ void MappingCoreTests::adaptiveResponsePredictsThenConvergesToPhysicalInput()
     QVERIFY(moving.predicted > moving.physical);
     QVERIFY(moving.activeHorizonSeconds > 0.0F);
 
-    const AdaptiveResponseTelemetry stopped = processor.process(
+    const AdaptiveResponseTelemetry held = processor.process(
         0.12F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(held.predicted > held.physical);
+    QVERIFY(held.velocity > 0.0F);
+    const AdaptiveResponseTelemetry stopped = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(60));
     QVERIFY(nearlyEqual(stopped.predicted, stopped.physical));
     QVERIFY(nearlyEqual(stopped.velocity, 0.0F));
 }
@@ -617,9 +628,13 @@ void MappingCoreTests::adaptiveResponseUsesDistinctAlphaBetaAndAlphaBetaGammaEst
     alphaBetaGamma.process(0.18F, configuration, origin + std::chrono::milliseconds(4));
     const AdaptiveResponseTelemetry abgSecond = alphaBetaGamma.process(
         0.34F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry abThird = alphaBeta.process(
+        0.46F, configuration, origin + std::chrono::milliseconds(12));
+    const AdaptiveResponseTelemetry abgThird = alphaBetaGamma.process(
+        0.46F, configuration, origin + std::chrono::milliseconds(12));
     QVERIFY(!nearlyEqual(abgSecond.estimated, abgSecond.physical));
     QVERIFY(std::abs(abgSecond.acceleration) > 0.001F);
-    QVERIFY(!nearlyEqual(abgSecond.predicted, abSecond.predicted));
+    QVERIFY(!nearlyEqual(abgThird.estimated, abThird.estimated));
 
     configuration.model = AdaptiveResponseModel::Auto;
     AdaptiveResponseProcessor automatic;
@@ -688,6 +703,7 @@ void MappingCoreTests::adaptiveResponseResetClearsSessionMotionState()
     processor.process(0.0F, configuration, origin);
     processor.process(0.22F, configuration, origin + std::chrono::milliseconds(4));
     processor.process(0.12F, configuration, origin + std::chrono::milliseconds(8));
+    processor.process(0.02F, configuration, origin + std::chrono::milliseconds(12));
     QVERIFY(processor.reversalCount() > 0);
     processor.reset();
     const AdaptiveResponseTelemetry restarted = processor.process(
@@ -713,7 +729,9 @@ void MappingCoreTests::adaptiveResponseDetectsPositiveNegativeAndCenterCrossingR
         AdaptiveResponseProcessor processor;
         processor.process(start, configuration, origin);
         processor.process(away, configuration, origin + std::chrono::milliseconds(4));
-        return processor.process(returnValue, configuration, origin + std::chrono::milliseconds(8));
+        processor.process(returnValue, configuration, origin + std::chrono::milliseconds(8));
+        return processor.process(returnValue + (returnValue - away), configuration,
+                                 origin + std::chrono::milliseconds(12));
     };
     QVERIFY(reverses(0.45F, 0.85F, 0.62F).reversal);
     QVERIFY(reverses(-0.45F, -0.85F, -0.62F).reversal);
@@ -735,8 +753,9 @@ void MappingCoreTests::adaptiveResponseCancelsStaleLeadAtReversal()
     const auto origin = std::chrono::steady_clock::time_point{};
     processor.process(0.0F, configuration, origin);
     processor.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    processor.process(0.15F, configuration, origin + std::chrono::milliseconds(8));
     const AdaptiveResponseTelemetry reversed = processor.process(
-        0.15F, configuration, origin + std::chrono::milliseconds(8));
+        0.10F, configuration, origin + std::chrono::milliseconds(12));
     QVERIFY(reversed.reversal);
     QVERIFY(reversed.predicted < reversed.physical);
     QCOMPARE(reversed.state, AdaptiveMotionState::Reversing);
@@ -809,6 +828,256 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
     QVERIFY(valid);
     QVERIFY(!resolveAdaptiveResponseConfiguration(migrated, activeProfile(migrated), 0).enabled);
+}
+
+void MappingCoreTests::adaptiveResponseRecognizesSlowMotionAcrossSampleRates()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 6> rates{50, 100, 200, 250, 500, 1000};
+    float lowestPeakLead = std::numeric_limits<float>::max();
+    float highestPeakLead = 0.0F;
+
+    for (const int rate : rates) {
+        AdaptiveResponseProcessor processor;
+        processor.process(0.75F, configuration, origin);
+        float peakLead = 0.0F;
+        for (int sample = 1; sample <= rate * 3; ++sample) {
+            const float seconds = static_cast<float>(sample) / static_cast<float>(rate);
+            const float physical = 0.75F - 0.50F * seconds / 3.0F;
+            const AdaptiveResponseTelemetry telemetry = processor.process(physical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            QVERIFY(!telemetry.reversal);
+        }
+        QVERIFY2(peakLead > 0.0002F, "A three-second slow sweep was classified as stationary.");
+        qInfo().nospace() << "Slow sweep rate=" << rate << "Hz peak=" << peakLead;
+        lowestPeakLead = std::min(lowestPeakLead, peakLead);
+        highestPeakLead = std::max(highestPeakLead, peakLead);
+    }
+    qInfo().nospace() << "Slow sweep peak lead range=" << lowestPeakLead << ".." << highestPeakLead;
+    QVERIFY2(highestPeakLead < lowestPeakLead * 2.50F + 0.0005F,
+             "Slow-sweep lead is not sample-rate equivalent.");
+}
+
+void MappingCoreTests::adaptiveResponsePreservesSlowWobbleAcrossSampleRates()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 2> rates{100, 1000};
+
+    for (const int rate : rates) {
+        AdaptiveResponseProcessor processor;
+        processor.process(0.80F, configuration, origin);
+        float peakLead = 0.0F;
+        for (int sample = 1; sample <= rate * 3; ++sample) {
+            const float seconds = static_cast<float>(sample) / static_cast<float>(rate);
+            const float physical = 0.80F - 0.45F * seconds / 3.0F
+                + 0.0015F * std::sin(seconds * 6.0F * 3.14159265F);
+            const AdaptiveResponseTelemetry telemetry = processor.process(physical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            QVERIFY(!telemetry.reversal);
+        }
+        QVERIFY2(peakLead > 0.0002F, "Slow motion with human-sized wobble lost its lead.");
+    }
+}
+
+void MappingCoreTests::adaptiveResponseHandlesSampleAndHoldSourcesThenSettles()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 4> sourceRates{250, 125, 60, 30};
+
+    for (const int sourceRate : sourceRates) {
+        AdaptiveResponseProcessor processor;
+        constexpr int mapperRate = 250;
+        const int sourceDivider = mapperRate / sourceRate;
+        float heldPhysical = 0.65F;
+        processor.process(heldPhysical, configuration, origin);
+        float peakLead = 0.0F;
+        int heldReportsWithLead = 0;
+        AdaptiveResponseTelemetry telemetry;
+        for (int sample = 1; sample <= mapperRate; ++sample) {
+            const float seconds = static_cast<float>(sample) / mapperRate;
+            if (sample % sourceDivider == 0) heldPhysical = 0.65F - 0.35F * seconds;
+            telemetry = processor.process(heldPhysical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            if (sample % sourceDivider != 0 && seconds > 0.12F && std::abs(telemetry.lead) > 0.0001F) {
+                ++heldReportsWithLead;
+            }
+            QVERIFY(!telemetry.reversal);
+        }
+        qInfo().nospace() << "Hold source=" << sourceRate << "Hz peak=" << peakLead
+                          << " heldReports=" << heldReportsWithLead;
+        QVERIFY2(peakLead > 0.0002F && (sourceDivider == 1 || heldReportsWithLead > 0),
+                 "Expected source holds were treated as a stop.");
+        for (int sample = mapperRate + 1; sample <= mapperRate + 125; ++sample) {
+            const float seconds = static_cast<float>(sample) / mapperRate;
+            telemetry = processor.process(heldPhysical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+        }
+        QVERIFY(std::abs(telemetry.lead) < 0.0001F);
+        QVERIFY(std::abs(telemetry.velocity) < 0.0001F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    AdaptiveResponseProcessor jitter;
+    jitter.process(0.30F, configuration, origin);
+    float jitterPeakLead = 0.0F;
+    for (int sample = 1; sample <= 500; ++sample) {
+        const float physical = 0.30F + (sample % 2 == 0 ? 0.005F : -0.005F);
+        const AdaptiveResponseTelemetry telemetry = jitter.process(physical, configuration,
+            origin + std::chrono::milliseconds(sample * 4));
+        jitterPeakLead = std::max(jitterPeakLead, std::abs(telemetry.lead));
+        QVERIFY(!telemetry.reversal);
+    }
+    QVERIFY2(jitterPeakLead < 0.001F, "Stationary jitter amplified into meaningful lead.");
+
+    AdaptiveResponseProcessor spike;
+    spike.process(0.0F, configuration, origin);
+    spike.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    spike.process(0.16F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry isolatedOpposite = spike.process(
+        0.11F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(!isolatedOpposite.reversal);
+    QVERIFY(isolatedOpposite.safetyLimited);
+    QVERIFY(std::abs(isolatedOpposite.lead) < 0.0001F);
+    const AdaptiveResponseTelemetry resumed = spike.process(
+        0.24F, configuration, origin + std::chrono::milliseconds(16));
+    QVERIFY(!resumed.reversal);
+    QVERIFY(resumed.predicted > resumed.physical);
+    QCOMPARE(spike.reversalCount(), std::uint64_t{0});
+}
+
+void MappingCoreTests::adaptiveResponseHandlesHardGentleAndRepeatedReversals()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    configuration.reversalResponse = 0.0F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    AdaptiveResponseProcessor hard;
+    hard.process(0.0F, configuration, origin);
+    hard.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    hard.process(0.40F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry hardCandidate = hard.process(
+        0.20F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(!hardCandidate.reversal);
+    QVERIFY(hardCandidate.safetyLimited);
+    const AdaptiveResponseTelemetry hardReversal = hard.process(
+        0.0F, configuration, origin + std::chrono::milliseconds(16));
+    QVERIFY(hardReversal.reversal);
+    QVERIFY(hardReversal.predicted < hardReversal.physical);
+    QCOMPARE(hard.reversalCount(), std::uint64_t{1});
+
+    AdaptiveResponseProcessor gentle;
+    gentle.process(0.0F, configuration, origin);
+    gentle.process(0.03F, configuration, origin + std::chrono::milliseconds(4));
+    gentle.process(0.06F, configuration, origin + std::chrono::milliseconds(8));
+    bool gentleReversal = false;
+    for (int sample = 1; sample <= 16; ++sample) {
+        const AdaptiveResponseTelemetry telemetry = gentle.process(0.06F - sample * 0.005F, configuration,
+            origin + std::chrono::milliseconds(8 + sample * 4));
+        gentleReversal = gentleReversal || telemetry.reversal;
+    }
+    QVERIFY2(gentleReversal, "Coherent gentle reversal never reacquired its new direction.");
+
+    AdaptiveResponseProcessor repeated;
+    const std::array<float, 7> positions{0.0F, 0.25F, 0.50F, 0.25F, 0.0F, 0.25F, 0.50F};
+    AdaptiveResponseTelemetry finalTelemetry;
+    for (size_t index = 0; index < positions.size(); ++index) {
+        finalTelemetry = repeated.process(positions[index], configuration,
+            origin + std::chrono::milliseconds(static_cast<int>(index) * 4));
+    }
+    QVERIFY(repeated.reversalCount() >= std::uint64_t{2});
+    QVERIFY(finalTelemetry.predicted > finalTelemetry.physical);
+}
+
+void MappingCoreTests::adaptiveResponseConvergesEstimatorsAfterStopAndResume()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<AdaptiveResponseModel, 2> models{
+        AdaptiveResponseModel::AlphaBeta, AdaptiveResponseModel::AlphaBetaGamma};
+
+    for (const AdaptiveResponseModel model : models) {
+        configuration.model = model;
+        AdaptiveResponseProcessor processor;
+        processor.process(0.0F, configuration, origin);
+        processor.process(0.15F, configuration, origin + std::chrono::milliseconds(4));
+        processor.process(0.30F, configuration, origin + std::chrono::milliseconds(8));
+        AdaptiveResponseTelemetry settled;
+        for (int sample = 3; sample <= 100; ++sample) {
+            settled = processor.process(0.30F, configuration,
+                origin + std::chrono::milliseconds(sample * 4));
+        }
+        QVERIFY(std::abs(settled.lead) < 0.0001F);
+        QVERIFY(std::abs(settled.velocity) < 0.0001F);
+        QVERIFY(std::abs(settled.estimated - 0.30F) < 0.0001F);
+        const AdaptiveResponseTelemetry resumed = processor.process(
+            0.34F, configuration, origin + std::chrono::milliseconds(404));
+        QVERIFY(resumed.predicted >= resumed.physical - 0.0001F);
+        QVERIFY(std::abs(resumed.estimated - resumed.physical) < 0.20F);
+    }
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()

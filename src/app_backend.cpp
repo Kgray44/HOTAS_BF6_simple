@@ -1442,6 +1442,12 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
             {u"virtualOutput"_qs, evaluateStaticAxisTransfer(sample.telemetry.predicted, mapping)},
             {u"lead"_qs, sample.telemetry.lead}, {u"horizonMs"_qs, sample.telemetry.activeHorizonSeconds * 1000.0F},
             {u"confidence"_qs, sample.telemetry.confidence},
+            {u"velocity"_qs, sample.telemetry.velocity},
+            {u"acceleration"_qs, sample.telemetry.acceleration},
+            {u"motionCoherence"_qs, sample.telemetry.motionCoherence},
+            {u"sourceUpdatePeriodMs"_qs, sample.telemetry.sourceUpdatePeriodSeconds * 1000.0F},
+            {u"quietDurationMs"_qs, sample.telemetry.quietDurationSeconds * 1000.0F},
+            {u"reversal"_qs, sample.telemetry.reversal},
             {u"state"_qs, adaptiveMotionStateLabel(sample.telemetry.state)}});
     }
     return result;
@@ -1465,8 +1471,12 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
                                                                     physicalAxis);
     float peakLead = 0.0F;
     float peakError = 0.0F;
-    float peakOvershoot = 0.0F;
+    float targetOvershoot = 0.0F;
+    float stationaryLead = 0.0F;
+    std::vector<float> leadMagnitudes;
+    leadMagnitudes.reserve(static_cast<size_t>(samples.size()));
     double reversalDetectedMs = -1.0;
+    double motionRecognitionDelayMs = -1.0;
     double settledMs = -1.0;
     double staleLeadCancellationMs = -1.0;
     double oppositeDirectionReacquisitionMs = -1.0;
@@ -1477,16 +1487,30 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
     int previousDirection = 0;
     int reversalDirection = 0;
     int staleLeadDirection = 0;
+    int motionDirection = 0;
+    int falseReversalCount = 0;
     double reversalStartMs = -1.0;
-    for (const QVariant &value : samples) {
-        const QVariantMap sample = value.toMap();
+    double motionStartMs = -1.0;
+    for (qsizetype index = 0; index < samples.size(); ++index) {
+        const QVariantMap sample = samples.at(index).toMap();
         const float physical = static_cast<float>(sample.value(u"physical"_qs).toDouble());
         const float predicted = static_cast<float>(sample.value(u"predicted"_qs).toDouble());
         const float lead = static_cast<float>(sample.value(u"lead"_qs).toDouble());
         const double timeMs = sample.value(u"time"_qs).toDouble() * 1000.0;
         peakLead = std::max(peakLead, std::abs(lead));
         peakError = std::max(peakError, std::abs(predicted - physical));
-        peakOvershoot = std::max(peakOvershoot, std::max(0.0F, std::abs(predicted) - 1.0F));
+        leadMagnitudes.push_back(std::abs(lead));
+        const float futurePhysical = index + 6 < samples.size()
+            ? static_cast<float>(samples.at(index + 6).toMap().value(u"physical"_qs).toDouble())
+            : physical;
+        const int targetDirection = futurePhysical > physical + 0.0002F ? 1
+            : futurePhysical < physical - 0.0002F ? -1 : 0;
+        // A dynamic target is the upcoming trajectory position, not the
+        // static [-1, 1] endpoint. Only prediction beyond that target counts
+        // as overshoot; useful lead while traveling toward it does not.
+        const float overshoot = targetDirection > 0 ? predicted - futurePhysical
+            : targetDirection < 0 ? futurePhysical - predicted : std::abs(predicted - physical);
+        targetOvershoot = std::max(targetOvershoot, std::max(0.0F, overshoot));
         if (std::abs(lead) > 0.0001F) sawMotion = true;
         if (reversalDetectedMs < 0.0 && sample.value(u"state"_qs).toString() == u"Reversing"_qs) {
             reversalDetectedMs = timeMs;
@@ -1496,6 +1520,15 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
         }
         const float movement = physical - previousPhysical;
         const int direction = movement > 0.0002F ? 1 : movement < -0.0002F ? -1 : 0;
+        if (direction != 0 && motionStartMs < 0.0) motionStartMs = timeMs;
+        if (motionStartMs >= 0.0 && motionRecognitionDelayMs < 0.0 && std::abs(lead) > 0.0001F) {
+            motionRecognitionDelayMs = timeMs - motionStartMs;
+        }
+        if (direction == 0 && motionDirection != 0) stationaryLead = std::max(stationaryLead, std::abs(lead));
+        if (sample.value(u"state"_qs).toString() == u"Reversing"_qs
+            && (direction == 0 || (motionDirection != 0 && direction == motionDirection))) {
+            ++falseReversalCount;
+        }
         if (havePreviousPhysical && reversalStartMs < 0.0 && direction != 0
             && previousDirection != 0 && direction != previousDirection) {
             reversalStartMs = timeMs;
@@ -1513,13 +1546,24 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
                 oppositeDirectionReacquisitionMs = timeMs - reversalStartMs;
             }
         }
-        if (direction != 0) previousDirection = direction;
+        if (direction != 0) {
+            previousDirection = direction;
+            motionDirection = direction;
+        }
         previousPhysical = physical;
         previousLead = lead;
         havePreviousPhysical = true;
     }
+    const float medianLead = leadMagnitudes.empty() ? 0.0F : [&leadMagnitudes]() {
+        const size_t middle = leadMagnitudes.size() / 2;
+        std::nth_element(leadMagnitudes.begin(), leadMagnitudes.begin() + middle, leadMagnitudes.end());
+        return leadMagnitudes[middle];
+    }();
     return {{u"sampleCount"_qs, samples.size()}, {u"peakLead"_qs, peakLead},
-            {u"peakPredictionError"_qs, peakError}, {u"peakOvershoot"_qs, peakOvershoot},
+            {u"medianLead"_qs, medianLead}, {u"peakPredictionError"_qs, peakError},
+            {u"targetOvershoot"_qs, targetOvershoot}, {u"stationaryLead"_qs, stationaryLead},
+            {u"falseReversalCount"_qs, falseReversalCount},
+            {u"motionRecognitionDelayMs"_qs, motionRecognitionDelayMs},
             {u"reversalDetectionMs"_qs, reversalDetectedMs}, {u"settlingTimeMs"_qs, settledMs},
             {u"staleLeadCancellationMs"_qs, staleLeadCancellationMs},
             {u"oppositeDirectionReacquisitionMs"_qs, oppositeDirectionReacquisitionMs}};

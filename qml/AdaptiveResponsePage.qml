@@ -36,6 +36,9 @@ Item {
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
 
     function effective() { return state.runtimeEffective || state.effective || ({}) }
+    function numericOr(value, fallback) {
+        return value === undefined || value === null || Number.isNaN(Number(value)) ? fallback : Number(value)
+    }
     function scopeInfo() { return state || ({}) }
     function propertyMask(key) {
         const masks = { enabled: 1, model: 2, maximumhorizonms: 4, maximumlead: 8,
@@ -93,7 +96,7 @@ Item {
     function historyMagnitude(fields, minimum) {
         let maximum = minimum
         for (let i = 0; i < historySamples.length; ++i) {
-            for (let j = 0; j < fields.length; ++j) maximum = Math.max(maximum, Math.abs(Number(historySamples[i][fields[j]] || 0)))
+            for (let j = 0; j < fields.length; ++j) maximum = Math.max(maximum, Math.abs(root.numericOr(historySamples[i][fields[j]], 0)))
         }
         return maximum
     }
@@ -121,7 +124,7 @@ Item {
         function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
-    Timer { interval: 150; running: !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory() }
+    Timer { interval: 50; running: !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory() }
 
     component Card: Rectangle {
         default property alias content: contentHost.data
@@ -382,10 +385,10 @@ Item {
                         }
                     }
                     Row { spacing: 28
-                        Metric { caption: "MAX HORIZON"; value: Number(effective().maximumHorizonMs || 0).toFixed(1) + " ms"; tone: root.themeTokens.orange }
-                        Metric { caption: "MAX LEAD"; value: percent(effective().maximumLead || 0) }
+                        Metric { caption: "MAX HORIZON"; value: root.numericOr(effective().maximumHorizonMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.orange }
+                        Metric { caption: "MAX LEAD"; value: percent(root.numericOr(effective().maximumLead, 0)) }
                         Metric { caption: "PREDICTOR"; value: String(effective().model || "auto").toUpperCase() }
-                        Metric { caption: "REVERSAL"; value: Math.round((effective().reversalResponse || 0) * 100) + "%" }
+                        Metric { caption: "REVERSAL"; value: Math.round(root.numericOr(effective().reversalResponse, 0) * 100) + "%" }
                     }
                 }
             }
@@ -477,17 +480,17 @@ Item {
                             Switch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", checked); root.setPreview() } }
                             ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("enabled") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("enabled"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", false, true); root.setPreview() } }
                         }
-                        TuneRow { label: "Maximum horizon"; detail: "0–30 ms adaptive ceiling"; from: 0; to: 30; step: 0.5; propertyKey: "maximumHorizonMs"; value: effective().maximumHorizonMs || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumHorizonMs", value); root.setPreview() } }
-                        TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis units"; from: 0.01; to: 0.50; step: 0.01; propertyKey: "maximumLead"; value: effective().maximumLead || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumLead", value); root.setPreview() } }
-                        TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement"; propertyKey: "velocityResponse"; value: effective().velocityResponse || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "velocityResponse", value); root.setPreview() } }
-                        TuneRow { label: "Acceleration response"; detail: "ABG acceleration contribution"; propertyKey: "accelerationResponse"; value: effective().accelerationResponse || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "accelerationResponse", value); root.setPreview() } }
-                        TuneRow { label: "Motion sensitivity"; detail: "How much deliberate movement activates prediction"; from: 0.001; to: 2; step: 0.005; propertyKey: "motionSensitivity"; value: effective().motionSensitivity || 0.035; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "motionSensitivity", value); root.setPreview() } }
-                        TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement when estimating motion"; from: 0; to: 0.50; step: 0.001; propertyKey: "noiseRejection"; value: effective().noiseRejection || 0.012; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "noiseRejection", value); root.setPreview() } }
-                        TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead"; from: 0.001; to: 10; step: 0.01; propertyKey: "reversalDetection"; value: effective().reversalDetection || 0.075; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalDetection", value); root.setPreview() } }
-                        TuneRow { label: "Reversal response"; detail: "Rapidly cancels stale lead and reacquires direction"; propertyKey: "reversalResponse"; value: effective().reversalResponse || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalResponse", value); root.setPreview() } }
-                        TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking"; propertyKey: "decelerationResponse"; value: effective().decelerationResponse || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "decelerationResponse", value); root.setPreview() } }
-                        TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest"; propertyKey: "settlingResponse"; value: effective().settlingResponse || 0; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "settlingResponse", value); root.setPreview() } }
-                        TuneRow { label: "Endpoint taper"; detail: "Tapers lead into available headroom"; from: 0.01; to: 1; step: 0.01; propertyKey: "endpointTaper"; value: effective().endpointTaper || 0.16; onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "endpointTaper", value); root.setPreview() } }
+                        TuneRow { label: "Maximum horizon"; detail: "0–30 ms adaptive ceiling"; from: 0; to: 30; step: 0.5; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumHorizonMs", value); root.setPreview() } }
+                        TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis units"; from: 0.01; to: 0.50; step: 0.01; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumLead", value); root.setPreview() } }
+                        TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement"; propertyKey: "velocityResponse"; value: root.numericOr(effective().velocityResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "velocityResponse", value); root.setPreview() } }
+                        TuneRow { label: "Acceleration response"; detail: "ABG acceleration contribution"; propertyKey: "accelerationResponse"; value: root.numericOr(effective().accelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "accelerationResponse", value); root.setPreview() } }
+                        TuneRow { label: "Motion sensitivity"; detail: "How much deliberate movement activates prediction"; from: 0.001; to: 2; step: 0.005; propertyKey: "motionSensitivity"; value: root.numericOr(effective().motionSensitivity, 0.035); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "motionSensitivity", value); root.setPreview() } }
+                        TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement when estimating motion"; from: 0; to: 0.50; step: 0.001; propertyKey: "noiseRejection"; value: root.numericOr(effective().noiseRejection, 0.012); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "noiseRejection", value); root.setPreview() } }
+                        TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead"; from: 0.001; to: 10; step: 0.01; propertyKey: "reversalDetection"; value: root.numericOr(effective().reversalDetection, 0.075); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalDetection", value); root.setPreview() } }
+                        TuneRow { label: "Reversal response"; detail: "Safety cancellation is always active; this controls new-direction reacquisition."; propertyKey: "reversalResponse"; value: root.numericOr(effective().reversalResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalResponse", value); root.setPreview() } }
+                        TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking"; propertyKey: "decelerationResponse"; value: root.numericOr(effective().decelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "decelerationResponse", value); root.setPreview() } }
+                        TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest"; propertyKey: "settlingResponse"; value: root.numericOr(effective().settlingResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "settlingResponse", value); root.setPreview() } }
+                        TuneRow { label: "Endpoint taper"; detail: "Tapers lead into available headroom"; from: 0.01; to: 1; step: 0.01; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "endpointTaper", value); root.setPreview() } }
                     }
                 }
             }
@@ -502,26 +505,26 @@ Item {
                         Text { text: telemetry.state || "Stable"; color: root.themeTokens.orange; font.pixelSize: 16; font.bold: true }
                     }
                     Flow { width: parent.width; spacing: 16
-                        Metric { caption: "PHYSICAL"; value: percent(telemetry.physical || 0) }
-                        Metric { caption: "ESTIMATED"; value: percent(telemetry.estimated || 0) }
-                        Metric { caption: "PREDICTED"; value: percent(telemetry.predicted || 0); tone: root.themeTokens.orange }
-                        Metric { caption: "VIRTUAL OUTPUT"; value: percent(telemetry.virtualOutput || 0); tone: root.themeTokens.ready }
-                        Metric { caption: "VELOCITY"; value: Number(telemetry.velocity || 0).toFixed(2) }
-                        Metric { caption: "ACCELERATION"; value: Number(telemetry.acceleration || 0).toFixed(1) }
-                        Metric { caption: "MOTION"; value: Math.round((telemetry.motionIntensity || 0) * 100) + "%" }
-                        Metric { caption: "ACTIVE HORIZON"; value: Number(telemetry.activeHorizonMs || 0).toFixed(2) + " ms" }
-                        Metric { caption: "MAX HORIZON"; value: Number(telemetry.maximumHorizonMs || 0).toFixed(1) + " ms" }
-                        Metric { caption: "LEAD"; value: percent(telemetry.lead || 0) }
-                        Metric { caption: "MAX LEAD"; value: percent(telemetry.maximumLead || 0) }
-                        Metric { caption: "CONFIDENCE"; value: Math.round((telemetry.confidence || 0) * 100) + "%" }
-                        Metric { caption: "REVERSALS"; value: telemetry.reversalCount || 0 }
-                        Metric { caption: "SAFETY CLAMPS"; value: telemetry.safetyClampCount || 0 }
+                        Metric { caption: "PHYSICAL"; value: percent(root.numericOr(telemetry.physical, 0)) }
+                        Metric { caption: "ESTIMATED"; value: percent(root.numericOr(telemetry.estimated, 0)) }
+                        Metric { caption: "PREDICTED"; value: percent(root.numericOr(telemetry.predicted, 0)); tone: root.themeTokens.orange }
+                        Metric { caption: "VIRTUAL OUTPUT"; value: percent(root.numericOr(telemetry.virtualOutput, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "VELOCITY"; value: root.numericOr(telemetry.velocity, 0).toFixed(2) }
+                        Metric { caption: "ACCELERATION"; value: root.numericOr(telemetry.acceleration, 0).toFixed(1) }
+                        Metric { caption: "MOTION"; value: Math.round(root.numericOr(telemetry.motionIntensity, 0) * 100) + "%" }
+                        Metric { caption: "ACTIVE HORIZON"; value: root.numericOr(telemetry.activeHorizonMs, 0).toFixed(2) + " ms" }
+                        Metric { caption: "MAX HORIZON"; value: root.numericOr(telemetry.maximumHorizonMs, 0).toFixed(1) + " ms" }
+                        Metric { caption: "LEAD"; value: percent(root.numericOr(telemetry.lead, 0)) }
+                        Metric { caption: "MAX LEAD"; value: percent(root.numericOr(telemetry.maximumLead, 0)) }
+                        Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(telemetry.confidence, 0) * 100) + "%" }
+                        Metric { caption: "REVERSALS"; value: root.numericOr(telemetry.reversalCount, 0) }
+                        Metric { caption: "SAFETY CLAMPS"; value: root.numericOr(telemetry.safetyClampCount, 0) }
                     }
                     Flow { width: parent.width; spacing: 14
-                        Gauge { caption: "ACTIVE HORIZON"; value: telemetry.activeHorizonMs || 0; maximum: Math.max(0.1, telemetry.maximumHorizonMs || 0); tone: root.themeTokens.orange }
-                        Gauge { caption: "PREDICTION LEAD"; value: Math.abs(telemetry.lead || 0); maximum: Math.max(0.001, telemetry.maximumLead || 0); tone: root.themeTokens.ready }
-                        Gauge { caption: "CONFIDENCE"; value: telemetry.confidence || 0; maximum: 1; tone: root.themeTokens.textStrong }
-                        Gauge { caption: "MOTION INTENSITY"; value: telemetry.motionIntensity || 0; maximum: 1; tone: root.themeTokens.orange }
+                        Gauge { caption: "ACTIVE HORIZON"; value: root.numericOr(telemetry.activeHorizonMs, 0); maximum: Math.max(0.1, root.numericOr(telemetry.maximumHorizonMs, 0)); tone: root.themeTokens.orange }
+                        Gauge { caption: "PREDICTION LEAD"; value: Math.abs(root.numericOr(telemetry.lead, 0)); maximum: Math.max(0.001, root.numericOr(telemetry.maximumLead, 0)); tone: root.themeTokens.ready }
+                        Gauge { caption: "CONFIDENCE"; value: root.numericOr(telemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
+                        Gauge { caption: "MOTION INTENSITY"; value: root.numericOr(telemetry.motionIntensity, 0); maximum: 1; tone: root.themeTokens.orange }
                     }
                 }
             }
@@ -578,12 +581,12 @@ Item {
                     Column { visible: root.historyPaused && root.historySamples.length > 0; width: parent.width; spacing: 5
                         Slider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
                         Flow { width: parent.width; spacing: 14
-                            Metric { caption: "INSPECT TIME"; value: Number(root.inspectedHistorySample().timeMs || 0).toFixed(0) + " ms" }
-                            Metric { caption: "PHYSICAL / ESTIMATE"; value: root.percent(root.inspectedHistorySample().physical || 0) + " / " + root.percent(root.inspectedHistorySample().estimated || 0) }
-                            Metric { caption: "PREDICTED / OUTPUT"; value: root.percent(root.inspectedHistorySample().predicted || 0) + " / " + root.percent(root.inspectedHistorySample().virtualOutput || 0) }
-                            Metric { caption: "VELOCITY / ACCEL"; value: Number(root.inspectedHistorySample().velocity || 0).toFixed(2) + " / " + Number(root.inspectedHistorySample().acceleration || 0).toFixed(1) }
-                            Metric { caption: "HORIZON / LEAD"; value: Number(root.inspectedHistorySample().activeHorizonMs || 0).toFixed(2) + " ms / " + root.percent(root.inspectedHistorySample().lead || 0) }
-                            Metric { caption: "CONFIDENCE / STATE"; value: Math.round((root.inspectedHistorySample().confidence || 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
+                            Metric { caption: "INSPECT TIME"; value: root.numericOr(root.inspectedHistorySample().timeMs, 0).toFixed(0) + " ms" }
+                            Metric { caption: "PHYSICAL / ESTIMATE"; value: root.percent(root.numericOr(root.inspectedHistorySample().physical, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().estimated, 0)) }
+                            Metric { caption: "PREDICTED / OUTPUT"; value: root.percent(root.numericOr(root.inspectedHistorySample().predicted, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().virtualOutput, 0)) }
+                            Metric { caption: "VELOCITY / ACCEL"; value: root.numericOr(root.inspectedHistorySample().velocity, 0).toFixed(2) + " / " + root.numericOr(root.inspectedHistorySample().acceleration, 0).toFixed(1) }
+                            Metric { caption: "HORIZON / LEAD"; value: root.numericOr(root.inspectedHistorySample().activeHorizonMs, 0).toFixed(2) + " ms / " + root.percent(root.numericOr(root.inspectedHistorySample().lead, 0)) }
+                            Metric { caption: "CONFIDENCE / STATE"; value: Math.round(root.numericOr(root.inspectedHistorySample().confidence, 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
                         }
                     }
                 }
@@ -599,14 +602,19 @@ Item {
                         ActionButton { text: root.testLabExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.testLabExpanded = !root.testLabExpanded }
                     }
                     Column { visible: root.testLabExpanded; width: parent.width; spacing: 4
-                        Text { text: root.scenario.toUpperCase() + " · " + (testLabMetrics.sampleCount || 0) + " estimator samples"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                        Text { text: root.scenario.toUpperCase() + " · " + root.numericOr(testLabMetrics.sampleCount, 0) + " estimator samples"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
                         Flow { width: parent.width; spacing: 16
-                            Metric { caption: "PEAK LEAD"; value: percent(testLabMetrics.peakLead || 0); tone: root.themeTokens.orange }
-                            Metric { caption: "PEAK PREDICTION ERROR"; value: percent(testLabMetrics.peakPredictionError || 0) }
-                            Metric { caption: "REVERSAL DETECTED"; value: Number(testLabMetrics.reversalDetectionMs || 0) < 0 ? "—" : Number(testLabMetrics.reversalDetectionMs).toFixed(1) + " ms" }
-                            Metric { caption: "STALE LEAD CLEARED"; value: Number(testLabMetrics.staleLeadCancellationMs || 0) < 0 ? "—" : Number(testLabMetrics.staleLeadCancellationMs).toFixed(1) + " ms"; tone: root.themeTokens.ready }
-                            Metric { caption: "OPPOSITE LEAD READY"; value: Number(testLabMetrics.oppositeDirectionReacquisitionMs || 0) < 0 ? "—" : Number(testLabMetrics.oppositeDirectionReacquisitionMs).toFixed(1) + " ms"; tone: root.themeTokens.ready }
-                            Metric { caption: "SETTLING TIME"; value: Number(testLabMetrics.settlingTimeMs || 0) < 0 ? "—" : Number(testLabMetrics.settlingTimeMs).toFixed(1) + " ms" }
+                            Metric { caption: "PEAK LEAD"; value: percent(root.numericOr(testLabMetrics.peakLead, 0)); tone: root.themeTokens.orange }
+                            Metric { caption: "MEDIAN LEAD"; value: percent(root.numericOr(testLabMetrics.medianLead, 0)) }
+                            Metric { caption: "PEAK PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.peakPredictionError, 0)) }
+                            Metric { caption: "TARGET OVERSHOOT"; value: percent(root.numericOr(testLabMetrics.targetOvershoot, 0)) }
+                            Metric { caption: "MOTION RECOGNITION"; value: root.numericOr(testLabMetrics.motionRecognitionDelayMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.motionRecognitionDelayMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "FALSE REVERSALS"; value: root.numericOr(testLabMetrics.falseReversalCount, 0) }
+                            Metric { caption: "STATIONARY LEAD"; value: percent(root.numericOr(testLabMetrics.stationaryLead, 0)) }
+                            Metric { caption: "REVERSAL DETECTED"; value: root.numericOr(testLabMetrics.reversalDetectionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.reversalDetectionMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "STALE LEAD CLEARED"; value: root.numericOr(testLabMetrics.staleLeadCancellationMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.staleLeadCancellationMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
+                            Metric { caption: "OPPOSITE LEAD READY"; value: root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
+                            Metric { caption: "SETTLING TIME"; value: root.numericOr(testLabMetrics.settlingTimeMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.settlingTimeMs, 0).toFixed(1) + " ms" }
                         }
                         Text { text: "The Test Lab uses the same fixed-size runtime estimator as mapping, but creates an isolated synthetic processor. Physical input always remains the final predictive baseline."; color: root.themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
                     }

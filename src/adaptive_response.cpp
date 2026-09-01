@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace hotas {
 namespace {
@@ -10,6 +11,15 @@ constexpr float kMinimumPredictionDeltaSeconds = 0.0005F;
 constexpr float kMaximumPredictionDeltaSeconds = 0.050F;
 constexpr float kMaximumEstimatedVelocity = 64.0F;
 constexpr float kMaximumEstimatedAcceleration = 4096.0F;
+constexpr float kMotionEvidenceWindowSeconds = 0.060F;
+constexpr float kMinimumMeaningfulDelta = 0.00015F;
+constexpr float kMinimumExpectedHoldSeconds = 0.004F;
+constexpr float kMaximumSourceUpdatePeriodSeconds = 0.050F;
+
+int directionOf(float value, float threshold = 0.0F)
+{
+    return value > threshold ? 1 : value < -threshold ? -1 : 0;
+}
 
 bool hasProperty(const AdaptiveResponseAxisOverride &override, AdaptiveResponseProperty property)
 {
@@ -272,10 +282,22 @@ void AdaptiveResponseProcessor::reset()
 {
     m_initialized = false;
     m_lastPhysical = 0.0F;
+    m_lastMeaningfulPhysical = 0.0F;
     m_estimatedPosition = 0.0F;
     m_velocity = 0.0F;
     m_acceleration = 0.0F;
+    m_directionalTrend = 0.0F;
+    m_absoluteTrend = 0.0F;
+    m_trendAgeSeconds = 0.0F;
+    m_sourceUpdatePeriodSeconds = 0.008F;
+    m_quietDurationSeconds = 0.0F;
+    m_holdConfidence = 1.0F;
+    m_softReversalMotion = 0.0F;
+    m_oppositeEvidenceCount = 0;
+    m_motionDirection = 0;
     m_lastTimestamp = {};
+    m_lastMeaningfulTimestamp = {};
+    m_lastSourceTimestamp = {};
     m_reversalCount = 0;
     m_safetyClampCount = 0;
 }
@@ -298,55 +320,161 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     if (!m_initialized) {
         m_initialized = true;
         m_lastPhysical = physical;
+        m_lastMeaningfulPhysical = physical;
         m_estimatedPosition = physical;
         m_lastTimestamp = timestamp;
+        m_lastMeaningfulTimestamp = timestamp;
+        m_lastSourceTimestamp = timestamp;
         result.estimated = physical;
         result.predicted = physical;
+        result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
         return result;
     }
     float dt = static_cast<float>(std::chrono::duration<double>(timestamp - m_lastTimestamp).count());
     dt = std::clamp(dt, kMinimumPredictionDeltaSeconds, kMaximumPredictionDeltaSeconds);
     const float measuredDelta = physical - m_lastPhysical;
+    const float absoluteDelta = std::abs(measuredDelta);
     const float instantaneousVelocity = measuredDelta / dt;
-    const bool stationaryMeasurement = std::abs(measuredDelta) <= configuration.noiseRejection;
-    const float priorVelocity = m_velocity;
-    const bool directionalChange = instantaneousVelocity * priorVelocity < 0.0F;
-    const bool reversal = directionalChange
-        && std::abs(instantaneousVelocity) >= configuration.reversalDetection
-        && std::abs(priorVelocity) >= configuration.reversalDetection * 0.50F;
 
-    // Keep small sensor noise out of the motion model, never out of the
-    // physical baseline. The direct positional path below remains untouched.
-    const float measurementVelocity = stationaryMeasurement
-        ? 0.0F : instantaneousVelocity;
+    // Fixed-size, time-normalized motion evidence. A short directional trend
+    // lets coherent slow movement survive high mapper rates, while alternating
+    // jitter cancels itself without a per-report history or allocation.
+    const float evidenceDecay = std::clamp(1.0F - dt / kMotionEvidenceWindowSeconds, 0.0F, 1.0F);
+    m_directionalTrend = m_directionalTrend * evidenceDecay + measuredDelta;
+    m_absoluteTrend = m_absoluteTrend * evidenceDecay + absoluteDelta;
+    m_trendAgeSeconds = std::min(kMotionEvidenceWindowSeconds, m_trendAgeSeconds + dt);
+    const float coherence = std::clamp(std::abs(m_directionalTrend)
+            / std::max(0.000001F, m_absoluteTrend), 0.0F, 1.0F);
+    const float trendVelocity = m_directionalTrend / std::max(dt, m_trendAgeSeconds);
+    const float meaningfulDelta = std::max(kMinimumMeaningfulDelta,
+        std::max(configuration.noiseRejection * 0.50F, configuration.motionSensitivity * 0.015F));
+    const bool directMeaningful = absoluteDelta > std::max(kMinimumMeaningfulDelta,
+                                                            configuration.noiseRejection);
+    const bool accumulatedMeaningful = std::abs(physical - m_lastMeaningfulPhysical)
+            >= meaningfulDelta && coherence >= 0.58F;
+    const bool meaningfulMeasurement = directMeaningful || accumulatedMeaningful;
+    const float meaningfulDeltaSeconds = meaningfulMeasurement ? std::clamp(static_cast<float>(
+        std::chrono::duration<double>(timestamp - m_lastMeaningfulTimestamp).count()),
+        kMinimumPredictionDeltaSeconds, kMaximumPredictionDeltaSeconds) : dt;
+    const bool sourceUpdated = absoluteDelta >= kMinimumMeaningfulDelta * 0.10F;
+    if (sourceUpdated) {
+        const float sourceInterval = std::clamp(static_cast<float>(
+            std::chrono::duration<double>(timestamp - m_lastSourceTimestamp).count()),
+            kMinimumPredictionDeltaSeconds, kMaximumSourceUpdatePeriodSeconds);
+        m_sourceUpdatePeriodSeconds += (sourceInterval - m_sourceUpdatePeriodSeconds) * 0.45F;
+        m_sourceUpdatePeriodSeconds = std::clamp(m_sourceUpdatePeriodSeconds,
+            kMinimumPredictionDeltaSeconds, kMaximumSourceUpdatePeriodSeconds);
+        m_lastSourceTimestamp = timestamp;
+        m_quietDurationSeconds = 0.0F;
+        m_holdConfidence = 1.0F;
+    } else {
+        m_quietDurationSeconds += dt;
+    }
+    if (meaningfulMeasurement) {
+        m_lastMeaningfulPhysical = physical;
+        m_lastMeaningfulTimestamp = timestamp;
+    }
+
+    // Sample-and-hold sources are expected to repeat a physical value. Coast
+    // through the learned cadence, decay only after a grace period, then
+    // settle exactly to the physical baseline after confirmed quiet.
+    const float expectedHoldSeconds = std::max(kMinimumExpectedHoldSeconds,
+        m_sourceUpdatePeriodSeconds * 1.25F);
+    const float graceSeconds = std::max(0.012F, m_sourceUpdatePeriodSeconds * 0.75F);
+    const float settleSeconds = std::max(0.020F, m_sourceUpdatePeriodSeconds * 0.90F);
+    float holdConfidence = 1.0F;
+    if (!sourceUpdated && m_quietDurationSeconds > expectedHoldSeconds) {
+        const float uncertain = std::clamp((m_quietDurationSeconds - expectedHoldSeconds)
+            / graceSeconds, 0.0F, 1.0F);
+        holdConfidence = 1.0F - uncertain * 0.55F;
+        if (m_quietDurationSeconds > expectedHoldSeconds + graceSeconds) {
+            holdConfidence *= std::clamp(1.0F - (m_quietDurationSeconds - expectedHoldSeconds
+                - graceSeconds) / settleSeconds, 0.0F, 1.0F);
+        }
+    }
+    const float holdRatio = sourceUpdated ? 1.0F
+        : holdConfidence / std::max(0.0001F, m_holdConfidence);
+    if (!sourceUpdated) {
+        m_velocity *= holdRatio;
+        m_acceleration *= holdRatio;
+    }
+    m_holdConfidence = holdConfidence;
+    const bool confirmedQuiet = !sourceUpdated && m_quietDurationSeconds
+        > expectedHoldSeconds + graceSeconds + settleSeconds;
+
+    const float priorVelocity = m_velocity;
+    const float velocityThreshold = std::max(0.002F, configuration.motionSensitivity * 0.10F);
+    const int rawDirection = directionOf(measuredDelta, kMinimumMeaningfulDelta * 0.25F);
+    if (m_motionDirection == 0) m_motionDirection = directionOf(priorVelocity, velocityThreshold);
+    const bool oppositeRawDirection = rawDirection != 0 && m_motionDirection != 0
+        && rawDirection != m_motionDirection;
+    if (oppositeRawDirection && absoluteDelta >= kMinimumMeaningfulDelta) {
+        m_softReversalMotion += absoluteDelta;
+        m_oppositeEvidenceCount = std::min<std::uint8_t>(
+            std::numeric_limits<std::uint8_t>::max(), m_oppositeEvidenceCount + 1);
+    } else if (rawDirection != 0 && rawDirection == m_motionDirection) {
+        m_softReversalMotion *= 0.15F;
+        m_oppositeEvidenceCount = 0;
+    } else if (rawDirection == 0) {
+        m_softReversalMotion *= evidenceDecay;
+        m_oppositeEvidenceCount = 0;
+    }
+    const float minimumReversalSpeed = std::max(configuration.reversalDetection,
+                                                 configuration.motionSensitivity * 0.50F);
+    const float hardReversalDisplacement = std::max(configuration.noiseRejection * 2.0F,
+        minimumReversalSpeed * dt * 0.50F);
+    const bool hardReversal = oppositeRawDirection && m_oppositeEvidenceCount >= 2
+        && m_softReversalMotion >= std::max(hardReversalDisplacement,
+                                             configuration.noiseRejection * 4.0F)
+        && std::abs(priorVelocity) >= minimumReversalSpeed * 0.35F;
+    const int trendDirection = directionOf(trendVelocity, minimumReversalSpeed * 0.30F);
+    const float softReversalThreshold = std::max(configuration.noiseRejection * 2.5F,
+        minimumReversalSpeed * std::max(dt, m_sourceUpdatePeriodSeconds) * 1.25F);
+    const bool softReversal = oppositeRawDirection && trendDirection != 0
+        && trendDirection != m_motionDirection && coherence >= 0.62F
+        && m_softReversalMotion >= softReversalThreshold;
+    const bool reversal = hardReversal || softReversal;
+    // One accepted opposite report is enough to cancel stale lead safely, but
+    // never enough to reverse the model. That keeps an isolated sensor spike
+    // from commanding the wrong direction while the second coherent report
+    // can reacquire a genuine hard reversal immediately.
+    const bool safetyCancellation = oppositeRawDirection && !reversal;
+    const bool trustedMeasurement = meaningfulMeasurement && (coherence >= 0.55F
+        || absoluteDelta >= std::max(kMinimumMeaningfulDelta * 2.0F,
+                                     configuration.noiseRejection * 2.0F));
+
     if (reversal) {
-        // A reversal is a session-local state boundary for prediction. Keep
-        // the physical baseline direct and reacquire the new motion estimate
-        // without carrying stale velocity or acceleration across it.
+        // Stale-direction cancellation is never optional. Reversal Response
+        // only controls how strongly the accepted new trend is reacquired.
+        const float reacquiredVelocity = hardReversal ? instantaneousVelocity : trendVelocity;
+        const float reacquisition = 0.35F + configuration.reversalResponse * 0.65F;
         m_estimatedPosition = physical;
-        m_velocity = measurementVelocity * std::max(0.60F, configuration.reversalResponse);
+        m_velocity = reacquiredVelocity * reacquisition;
         m_acceleration = 0.0F;
+        m_motionDirection = directionOf(m_velocity, velocityThreshold);
+        m_softReversalMotion = 0.0F;
         ++m_reversalCount;
-    } else if (configuration.model == AdaptiveResponseModel::Velocity) {
+    } else if (trustedMeasurement && configuration.model == AdaptiveResponseModel::Velocity) {
         // Velocity mode deliberately remains a lightweight derivative
         // predictor. Velocity Response controls its actual smoothing gain.
         const float gain = std::clamp(0.06F + configuration.velocityResponse * 0.90F,
                                       0.06F, 0.96F);
-        m_velocity += (measurementVelocity - m_velocity) * gain;
+        m_velocity += (trendVelocity - m_velocity) * gain;
         m_estimatedPosition = physical;
         m_acceleration = 0.0F;
-    } else {
+    } else if (trustedMeasurement) {
         // Proper Alpha-Beta / Alpha-Beta-Gamma estimators. Predict the state,
         // form an innovation against this physical measurement, then correct
         // x/v(/a). Auto keeps the ABG architecture and only adapts gains.
         const bool usesAcceleration = configuration.model == AdaptiveResponseModel::AlphaBetaGamma
             || configuration.model == AdaptiveResponseModel::Auto;
-        const float predictedPosition = m_estimatedPosition + m_velocity * dt
-            + (usesAcceleration ? 0.5F * m_acceleration * dt * dt : 0.0F);
-        const float predictedVelocity = m_velocity + (usesAcceleration ? m_acceleration * dt : 0.0F);
+        const float predictedPosition = m_estimatedPosition + m_velocity * meaningfulDeltaSeconds
+            + (usesAcceleration ? 0.5F * m_acceleration * meaningfulDeltaSeconds * meaningfulDeltaSeconds : 0.0F);
+        const float predictedVelocity = m_velocity
+            + (usesAcceleration ? m_acceleration * meaningfulDeltaSeconds : 0.0F);
         const float innovation = physical - predictedPosition;
         const float motion = std::clamp(std::max(std::abs(predictedVelocity),
-                                                  std::abs(measurementVelocity))
+                                                  std::abs(trendVelocity))
                                              / std::max(0.02F, configuration.motionSensitivity * 18.0F),
                                          0.0F, 1.0F);
         const float adaptation = configuration.model == AdaptiveResponseModel::Auto
@@ -356,33 +484,46 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         const float beta = std::clamp((0.006F + configuration.velocityResponse * 0.095F)
                                           * adaptation, 0.003F, 0.12F);
         m_estimatedPosition = predictedPosition + alpha * innovation;
-        m_velocity = predictedVelocity + (beta / dt) * innovation;
+        m_velocity = predictedVelocity + (beta / meaningfulDeltaSeconds) * innovation;
+        m_velocity += (trendVelocity - m_velocity)
+            * std::clamp(0.20F + configuration.velocityResponse * 0.30F, 0.20F, 0.50F);
         if (usesAcceleration) {
             const float gammaBase = 0.00025F + configuration.accelerationResponse * 0.0080F;
             const float gamma = std::clamp(gammaBase * adaptation, 0.0001F, 0.010F);
-            m_acceleration += (2.0F * gamma / (dt * dt)) * innovation;
+            m_acceleration += (2.0F * gamma / (meaningfulDeltaSeconds * meaningfulDeltaSeconds))
+                * innovation;
         } else {
             m_acceleration = 0.0F;
         }
+    } else {
+        // An unchanged report is not a velocity measurement. Keep the
+        // physical baseline direct while gently converging estimator telemetry
+        // so a true stop cannot leave a residual reactivation spike.
+        const float correction = 0.08F + (1.0F - holdConfidence) * 0.55F;
+        m_estimatedPosition += (physical - m_estimatedPosition) * correction;
     }
     m_velocity = std::clamp(m_velocity, -kMaximumEstimatedVelocity, kMaximumEstimatedVelocity);
     m_acceleration = std::clamp(m_acceleration, -kMaximumEstimatedAcceleration,
                                 kMaximumEstimatedAcceleration);
-    // A repeated physical sample is an explicit stop. The estimator may keep
-    // its telemetry position, but no stale derivative is allowed to produce
-    // an offset from the direct physical baseline on that report.
-    if (stationaryMeasurement) {
+    if (confirmedQuiet) {
         m_velocity = 0.0F;
         m_acceleration = 0.0F;
+        m_estimatedPosition = physical;
+        m_motionDirection = 0;
     }
     const float speed = std::abs(m_velocity);
     const bool decelerating = !reversal && (m_velocity * priorVelocity > 0.0F)
         && speed < std::abs(priorVelocity) * 0.88F;
-    const float microCutoff = std::max(configuration.noiseRejection, configuration.motionSensitivity * 0.50F);
+    const bool braking = !reversal && priorVelocity * m_acceleration < 0.0F
+        && std::abs(m_acceleration) > std::max(std::abs(priorVelocity) * 4.0F,
+            minimumReversalSpeed / std::max(dt, 0.001F) * 0.25F);
+    const float microCutoff = std::max(configuration.noiseRejection * 0.25F,
+                                       configuration.motionSensitivity * 0.50F);
     const float intensity = std::clamp((speed - microCutoff) / (configuration.motionSensitivity * 18.0F),
                                        0.0F, 1.0F);
-    const bool settling = !reversal && (decelerating || speed <= configuration.motionSensitivity);
-    float confidence = intensity;
+    const bool settling = !reversal && (decelerating || confirmedQuiet
+        || (holdConfidence < 0.45F && !meaningfulMeasurement));
+    float confidence = intensity * (0.35F + coherence * 0.65F) * holdConfidence;
     if (decelerating) confidence *= 1.0F - configuration.decelerationResponse * 0.72F;
     if (settling) {
         const float settle = std::clamp(configuration.settlingResponse, 0.0F, 1.0F);
@@ -390,16 +531,18 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_velocity *= 1.0F - settle * 0.45F;
         m_acceleration *= 1.0F - settle * 0.65F;
     }
-    if (reversal) confidence = std::max(confidence, 0.42F * configuration.reversalResponse);
-    if (speed <= configuration.noiseRejection) {
+    if (reversal) confidence = std::max(confidence, 0.28F + 0.42F * configuration.reversalResponse);
+    if (confirmedQuiet) {
         m_velocity = 0.0F;
         m_acceleration = 0.0F;
         confidence = 0.0F;
     }
     float horizon = configuration.maximumHorizonSeconds * intensity * confidence;
     if (decelerating) horizon *= 1.0F - configuration.decelerationResponse * 0.65F;
+    if (braking) horizon *= 1.0F - configuration.decelerationResponse * 0.45F;
     if (settling) horizon *= 1.0F - configuration.settlingResponse * 0.88F;
-    if (reversal) horizon *= std::max(0.55F, configuration.reversalResponse);
+    if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
+    if (safetyCancellation) horizon = 0.0F;
     float lead = m_velocity * horizon;
     if (configuration.model == AdaptiveResponseModel::AlphaBetaGamma
         || configuration.model == AdaptiveResponseModel::Auto) {
@@ -414,7 +557,8 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     lead *= taper;
     float predicted = physical + lead;
     const float bounded = std::clamp(predicted, configuration.domainMinimum, configuration.domainMaximum);
-    result.safetyLimited = std::abs(unclampedLead - lead) > 0.00001F || bounded != predicted;
+    result.safetyLimited = safetyCancellation || std::abs(unclampedLead - lead) > 0.00001F
+        || bounded != predicted;
     if (result.safetyLimited) ++m_safetyClampCount;
     result.estimated = m_estimatedPosition;
     result.predicted = bounded;
@@ -424,9 +568,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.lead = bounded - physical;
     result.confidence = confidence;
     result.motionIntensity = intensity;
+    result.motionCoherence = coherence;
+    result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
+    result.quietDurationSeconds = m_quietDurationSeconds;
     result.reversal = reversal;
     result.state = reversal ? AdaptiveMotionState::Reversing
-        : speed <= configuration.noiseRejection ? AdaptiveMotionState::Stable
+        : confirmedQuiet || speed <= velocityThreshold ? AdaptiveMotionState::Stable
         : intensity < 0.16F ? AdaptiveMotionState::Micro
         : settling && intensity < 0.28F ? AdaptiveMotionState::Settling
         : decelerating ? AdaptiveMotionState::Decelerating

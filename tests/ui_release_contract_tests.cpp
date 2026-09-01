@@ -32,6 +32,8 @@ private slots:
     void installerUpgradeAcceptanceTracksSchema20();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
+    void allThemeSelectorsUseSkinnedDarkPopups();
+    void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -315,6 +317,53 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(portability.contains(QStringLiteral("kPortableProfileSchemaVersion")));
     QVERIFY(portability.contains(QStringLiteral("kPortablePackSchemaVersion")));
     QVERIFY(portability.contains(QStringLiteral("USER SELECTION REQUIRED")));
+}
+
+void UiReleaseContractTests::allThemeSelectorsUseSkinnedDarkPopups()
+{
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString library = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
+    const QString automation = sourceFile(QStringLiteral("qml/AutomationPage.qml"));
+    const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
+    const QString legacyCurve = sourceFile(QStringLiteral("qml/LegacyCurveEditor.qml"));
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+
+    for (const QString &page : {standard, legacy, settings, library, automation, curve, legacyCurve, adaptive}) {
+        QVERIFY2(page.contains(QStringLiteral("popup: Popup")),
+                 "Every selector must own a skinned Popup rather than use a native dropdown.");
+        QVERIFY(page.contains(QStringLiteral("background: Rectangle")));
+    }
+    QVERIFY(standard.contains(QStringLiteral("component FlightComboBox")));
+    QVERIFY(standard.contains(QStringLiteral("color: theme.tooltip")));
+    QVERIFY(legacy.contains(QStringLiteral("component FlightComboBox")));
+    QVERIFY(legacy.contains(QStringLiteral("color: \"#151e23\"")));
+    QVERIFY(settings.contains(QStringLiteral("id: appearance")));
+    QVERIFY(settings.contains(QStringLiteral("color: root.panelColor")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ResponseCombo")));
+    QVERIFY(adaptive.contains(QStringLiteral("color: root.themeTokens.tooltip")));
+    QVERIFY(curve.contains(QStringLiteral("component AviationMenuItem")));
+    QVERIFY(legacyCurve.contains(QStringLiteral("component AviationMenuItem")));
+}
+
+void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMetrics()
+{
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    QVERIFY(adaptive.contains(QStringLiteral("function numericOr(value, fallback)")));
+    QVERIFY(adaptive.contains(QStringLiteral("Timer { interval: 50")));
+    QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().motionSensitivity, 0.035)")));
+    QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().noiseRejection, 0.012)")));
+    QVERIFY(adaptive.contains(QStringLiteral("Safety cancellation is always active")));
+    for (const QString &metric : {QStringLiteral("MEDIAN LEAD"), QStringLiteral("TARGET OVERSHOOT"),
+                                  QStringLiteral("MOTION RECOGNITION"), QStringLiteral("FALSE REVERSALS"),
+                                  QStringLiteral("STATIONARY LEAD")}) {
+        QVERIFY(adaptive.contains(metric));
+    }
+    QVERIFY(backend.contains(QStringLiteral("const float futurePhysical")));
+    QVERIFY(backend.contains(QStringLiteral("targetOvershoot")));
+    QVERIFY(!backend.contains(QStringLiteral("std::abs(predicted) - 1.0F")));
 }
 
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
