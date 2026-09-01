@@ -1,4 +1,5 @@
 #include "axis_transform.h"
+#include "axis_mapping_transition.h"
 #include "button_mapping.h"
 #include "config_store.h"
 #include "controller_manager.h"
@@ -119,6 +120,17 @@ private slots:
     void hysteresisHandlesDeadzoneAndFullScaleBoundaries();
     void outputLimitsSupportAsymmetryAndInversion();
     void staticPreviewSharesTheTransferEvaluator();
+    void curveTransitionLinearToPrecisionIsBumpless();
+    void curveTransitionPrecisionToLinearIsBumpless();
+    void curveTransitionFollowsPhysicalMovementThroughNewMapping();
+    void curveTransitionRapidToggleUsesActualOutputAnchor();
+    void curveTransitionTinyDifferenceBypassesState();
+    void curveTransitionOppositeSignRemainsClamped();
+    void curveTransitionZeroDurationIsImmediate();
+    void curveTransitionDisabledIsImmediate();
+    void curveTransitionUserSlamCancelsCorrection();
+    void curveTransitionsRemainIndependentAcrossAxes();
+    void curveTransitionSettingsPersistAndMigrate();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -405,6 +417,142 @@ void MappingCoreTests::staticPreviewSharesTheTransferEvaluator()
     // The compatibility wrapper remains the same static evaluator used for
     // the v1.3 output trace; hysteresis is deliberately live-only.
     QVERIFY(nearlyEqual(transformAxis(0.60F, mapping), evaluateStaticAxisTransfer(0.60F, mapping)));
+}
+
+void MappingCoreTests::curveTransitionLinearToPrecisionIsBumpless()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, {});
+    QVERIFY(transitions.active(1));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 0), 0.50F));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 50'000), 0.375F));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 100'000), 0.25F));
+    QVERIFY(!transitions.active(1));
+}
+
+void MappingCoreTests::curveTransitionPrecisionToLinearIsBumpless()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.25F, 0.50F, 0.50F, 0, 0, {});
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.50F, 0.50F, 0, 0), 0.25F));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.50F, 0.50F, 0, 50'000), 0.375F));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.50F, 0.50F, 0, 100'000), 0.50F));
+}
+
+void MappingCoreTests::curveTransitionFollowsPhysicalMovementThroughNewMapping()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, {});
+    // At 25 ms the remaining correction is retained, but the 0.64 new-map
+    // target is used immediately. This is not interpolation toward 0.25.
+    const float moved = transitions.apply(1, 0.64F, 0.62F, 0, 25'000);
+    QVERIFY(moved > 0.64F);
+    QVERIFY(moved < 1.0F);
+}
+
+void MappingCoreTests::curveTransitionRapidToggleUsesActualOutputAnchor()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, {});
+    const float actualMidTransition = transitions.apply(1, 0.25F, 0.50F, 0, 50'000);
+    QVERIFY(nearlyEqual(actualMidTransition, 0.375F));
+    transitions.begin(1, actualMidTransition, 0.50F, 0.50F, 0, 50'000, {});
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.50F, 0.50F, 0, 50'000), actualMidTransition));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.50F, 0.50F, 0, 150'000), 0.50F));
+}
+
+void MappingCoreTests::curveTransitionTinyDifferenceBypassesState()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.000F, 0.002F, 0.0F, 0, 0, {});
+    QVERIFY(!transitions.active(1));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.002F, 0.0F, 0, 0), 0.002F));
+}
+
+void MappingCoreTests::curveTransitionOppositeSignRemainsClamped()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.40F, -0.40F, 0.40F, 0, 0, {});
+    QVERIFY(nearlyEqual(transitions.apply(1, -0.40F, 0.40F, 0, 0), 0.40F));
+    QVERIFY(nearlyEqual(transitions.apply(1, -0.40F, 0.40F, 0, 50'000), 0.0F));
+    QVERIFY(nearlyEqual(transitions.apply(1, -0.40F, 0.40F, 0, 100'000), -0.40F));
+}
+
+void MappingCoreTests::curveTransitionZeroDurationIsImmediate()
+{
+    AxisMappingTransitionEngine transitions;
+    CurveTransitionSmoothingSettings settings;
+    settings.durationMs = 0;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, settings);
+    QVERIFY(!transitions.active(1));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 0), 0.25F));
+}
+
+void MappingCoreTests::curveTransitionDisabledIsImmediate()
+{
+    AxisMappingTransitionEngine transitions;
+    CurveTransitionSmoothingSettings settings;
+    settings.enabled = false;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, settings);
+    QVERIFY(!transitions.active(1));
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 0), 0.25F));
+}
+
+void MappingCoreTests::curveTransitionUserSlamCancelsCorrection()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, {});
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.90F, 1.0F, 0, 25'000), 0.90F));
+    QVERIFY(!transitions.active(1));
+}
+
+void MappingCoreTests::curveTransitionsRemainIndependentAcrossAxes()
+{
+    AxisMappingTransitionEngine transitions;
+    transitions.begin(1, 0.50F, 0.25F, 0.50F, 0, 0, {});
+    transitions.begin(2, -0.40F, -0.80F, -0.40F, 1, 0, {});
+    QVERIFY(nearlyEqual(transitions.apply(1, 0.25F, 0.50F, 0, 50'000), 0.375F));
+    QVERIFY(nearlyEqual(transitions.apply(2, -0.80F, -0.40F, 1, 50'000), -0.60F));
+    QVERIFY(transitions.active(1));
+    QVERIFY(transitions.active(2));
+}
+
+void MappingCoreTests::curveTransitionSettingsPersistAndMigrate()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.curveTransitionSmoothing = {false, 275};
+    ControllerProfile &precision = *findProfile(configuration, precisionProfileId());
+    precision.curveTransitionSmoothingOverride = true;
+    precision.curveTransitionSmoothing = {true, 150};
+
+    bool valid = false;
+    const QJsonObject serialized = ConfigStore::toJson(configuration);
+    const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
+    QVERIFY(valid);
+    QVERIFY(!restored.curveTransitionSmoothing.enabled);
+    QCOMPARE(restored.curveTransitionSmoothing.durationMs, 275);
+    const ControllerProfile *restoredPrecision = findProfile(restored, precisionProfileId());
+    QVERIFY(restoredPrecision && restoredPrecision->curveTransitionSmoothingOverride);
+    QVERIFY(restoredPrecision->curveTransitionSmoothing.enabled);
+    QCOMPARE(restoredPrecision->curveTransitionSmoothing.durationMs, 150);
+
+    QJsonObject legacy = serialized;
+    legacy.insert(QStringLiteral("version"), 19);
+    legacy.remove(QStringLiteral("curveTransitionSmoothing"));
+    QJsonArray profiles = legacy.value(QStringLiteral("profiles")).toArray();
+    for (QJsonValueRef value : profiles) {
+        QJsonObject profile = value.toObject();
+        profile.remove(QStringLiteral("curveTransitionSmoothingOverride"));
+        profile.remove(QStringLiteral("curveTransitionSmoothing"));
+        value = profile;
+    }
+    legacy.insert(QStringLiteral("profiles"), profiles);
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.curveTransitionSmoothing.enabled);
+    QCOMPARE(migrated.curveTransitionSmoothing.durationMs, 100);
+    const ControllerProfile *migratedPrecision = findProfile(migrated, precisionProfileId());
+    QVERIFY(migratedPrecision && !migratedPrecision->curveTransitionSmoothingOverride);
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
@@ -2106,7 +2254,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 19);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -2349,7 +2497,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 19);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

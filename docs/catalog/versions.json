@@ -506,5 +506,18 @@
       "The virtual endpoint reads the actual published vJoy-button state, so a shared destination can correctly show a released local physical source while another source holds the virtual output pressed. Disabled routes retain physical state and display a muted dashed route to Disabled.",
       "The visual workflow uses the existing bounded UI snapshot and themed modal shells; it adds no timers, polling, learning checks, conflict work, allocations, locks, strings, or UI callbacks to the DirectInput-to-vJoy report path."
     ]
+  },
+  {
+    "version": "2.2.0",
+    "title": "Bumpless Curve / Mapping Transition Smoothing",
+    "summary": "Prevents mapper-created virtual-axis jumps when curves, sensitivity, profiles, precision modes, or related mapping configuration changes while keeping physical stick movement immediate and preserving the allocation-free DirectInput-to-vJoy report path.",
+    "highlights": [
+      "An event-driven per-virtual-axis correction anchors each material mapping change to the last confirmed virtual output, then decays only that correction over a configurable 0–1000 ms duration (100 ms by default).",
+      "The new mapping always evaluates the next physical report directly; aggressive physical movement cancels the correction rather than making the controller feel laggy, and rapid successive toggles anchor from the actual current output.",
+      "Global Settings controls provide enablement and transition time, while Profile Library supports an explicit inherit-or-override choice with its own enabled state and duration. Legacy, Standard, and Top Gun reuse the existing themed controls.",
+      "Schema 20 persists global and optional profile settings, defaults missing fields to the established enabled/100 ms behavior, and preserves legacy profiles without requiring manual migration.",
+      "Focused core tests cover both transition directions, direct physical response, rapid toggles, insignificant change suppression, reversal, zero/disabled modes, user intent cancellation, multi-axis independence, and persistence migration.",
+      "The synthetic report benchmark keeps zero hot-path allocations while measuring the transition engine's steady-state check; no UI, logging, locking, storage, or per-report allocation was added to MappingWorker."
+    ]
   }
 ]

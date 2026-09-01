@@ -29,7 +29,8 @@ private slots:
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
-    void installerUpgradeAcceptanceTracksSchema19();
+    void installerUpgradeAcceptanceTracksSchema20();
+    void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
 };
 
@@ -401,16 +402,35 @@ void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSig
     QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema19()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema20()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 19")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v19")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 20")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v20")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v19")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v19")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v20")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v20")));
+}
+
+void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()
+{
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString profiles = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
+    const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
+
+    QVERIFY(settings.contains(QStringLiteral("ADVANCED CONTROLS")));
+    QVERIFY(settings.contains(QStringLiteral("CURVE TRANSITION SMOOTHING")));
+    QVERIFY(settings.contains(QStringLiteral("backend.setCurveTransitionSmoothingEnabled")));
+    QVERIFY(settings.contains(QStringLiteral("backend.setCurveTransitionDurationMs")));
+    QVERIFY(settings.contains(QStringLiteral("SettingRow")));
+    QVERIFY(profiles.contains(QStringLiteral("Override for This Profile")));
+    QVERIFY(profiles.contains(QStringLiteral("backendObject.setProfileCurveTransitionSmoothingOverride")));
+    QVERIFY(profiles.contains(QStringLiteral("backendObject.setProfileCurveTransitionSmoothingEnabled")));
+    QVERIFY(profiles.contains(QStringLiteral("backendObject.setProfileCurveTransitionDurationMs")));
+    QVERIFY(profiles.contains(QStringLiteral("Card {")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(bool curveTransitionSmoothingEnabled")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)
