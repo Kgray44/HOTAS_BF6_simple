@@ -12,7 +12,12 @@ Item {
     property string renamePresetId: ""
     property string scenario: "Rapid Reversal"
     property int contextEpoch: 0
+    property int runtimeEpoch: 0
     property var liveState: backendObject.adaptiveResponseState
+    property var runtimeState: {
+        runtimeEpoch
+        return backendObject.adaptiveResponseState
+    }
     property var state: {
         contextEpoch
         return backendObject.adaptiveResponseContextState(editScope, selectedTargetId(), backendObject.selectedAxisIndex)
@@ -25,6 +30,7 @@ Item {
     property int historyWindowSeconds: 5
     property bool historyPaused: false
     property var historySamples: []
+    property int historyInspectIndex: -1
     property string comparisonScope: "preset"
     property string comparisonTargetId: "off"
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
@@ -84,10 +90,37 @@ Item {
     function refreshHistory() {
         if (!historyPaused) historySamples = backendObject.adaptiveResponseHistory(historyWindowSeconds)
     }
+    function historyMagnitude(fields, minimum) {
+        let maximum = minimum
+        for (let i = 0; i < historySamples.length; ++i) {
+            for (let j = 0; j < fields.length; ++j) maximum = Math.max(maximum, Math.abs(Number(historySamples[i][fields[j]] || 0)))
+        }
+        return maximum
+    }
+    function inspectedHistorySample() {
+        if (!historySamples || historySamples.length === 0) return ({})
+        const index = Math.max(0, Math.min(historySamples.length - 1, historyInspectIndex < 0 ? historySamples.length - 1 : historyInspectIndex))
+        return historySamples[index] || ({})
+    }
+    function runtimeAutomationText() {
+        const automation = runtimeState.automation || ({})
+        if (!automation.active) return "None"
+        const affected = automation.affectedProperties || []
+        return affected.length > 0 ? "Automation · " + affected.join(", ") : "Automation overlay active"
+    }
     function percent(value) { return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%" }
     onStateChanged: setPreview()
     onHistoryWindowSecondsChanged: refreshHistory()
-    Connections { target: backendObject; function onStateChanged() { root.contextEpoch += 1 } }
+    onHistorySamplesChanged: {
+        if (!historyPaused) historyInspectIndex = historySamples.length - 1
+        else historyInspectIndex = Math.max(0, Math.min(historyInspectIndex, historySamples.length - 1))
+    }
+    onHistoryPausedChanged: if (historyPaused) historyInspectIndex = historySamples.length - 1
+    Connections {
+        target: backendObject
+        function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
+        function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
+    }
     Timer { interval: 150; running: !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory() }
 
     component Card: Rectangle {
@@ -195,6 +228,48 @@ Item {
             }
         }
     }
+    component HistoryGraph: Canvas {
+        id: historyGraph
+        property var series: []
+        property real lowerBound: -1
+        property real upperBound: 1
+        onSeriesChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            ctx.fillStyle = root.themeTokens.panelInset
+            ctx.fillRect(0, 0, width, height)
+            ctx.strokeStyle = root.themeTokens.divider
+            ctx.lineWidth = 1
+            const center = lowerBound < 0 && upperBound > 0
+                ? height * (1 - (0 - lowerBound) / Math.max(0.0001, upperBound - lowerBound)) : height - 1
+            ctx.beginPath(); ctx.moveTo(0, center); ctx.lineTo(width, center); ctx.stroke()
+            if (!root.historySamples || root.historySamples.length === 0) return
+            for (let line = 0; line < series.length; ++line) {
+                const descriptor = series[line]
+                ctx.strokeStyle = descriptor.color
+                ctx.lineWidth = 2
+                ctx.beginPath()
+                for (let index = 0; index < root.historySamples.length; ++index) {
+                    const point = root.historySamples[index]
+                    const value = Math.max(lowerBound, Math.min(upperBound, Number(point[descriptor.field] || 0)))
+                    const x = index * width / Math.max(1, root.historySamples.length - 1)
+                    const y = height * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound))
+                    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                }
+                ctx.stroke()
+            }
+            if (root.historyPaused && root.historyInspectIndex >= 0 && root.historySamples.length > 0) {
+                const inspectX = root.historyInspectIndex * width / Math.max(1, root.historySamples.length - 1)
+                ctx.strokeStyle = root.themeTokens.orange
+                ctx.lineWidth = 1
+                ctx.beginPath(); ctx.moveTo(inspectX, 0); ctx.lineTo(inspectX, height); ctx.stroke()
+            }
+        }
+        Connections { target: root; function onHistorySamplesChanged() { historyGraph.requestPaint() } function onHistoryInspectIndexChanged() { historyGraph.requestPaint() } }
+    }
     component TuneRow: Item {
         property string label: ""
         property string detail: ""
@@ -250,6 +325,27 @@ Item {
             }
 
             Card {
+                Column { width: parent.width; spacing: 7
+                    RowLayout { width: parent.width
+                        ColumnLayout { Layout.fillWidth: true
+                            Text { text: "Effective runtime"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
+                            Text { text: "Read-only worker configuration for the active profile and axis. Editing another target above never changes this view."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Text { text: runtimeState.automation && runtimeState.automation.active ? "AUTOMATION ACTIVE" : "PERSISTENT"; color: runtimeState.automation && runtimeState.automation.active ? root.themeTokens.orange : root.themeTokens.ready; font.pixelSize: 10; font.bold: true }
+                    }
+                    Text { text: "Built-in default  →  Global: " + ((runtimeState.global && runtimeState.global.source) || "Application default") + "  →  Category: " + ((runtimeState.categoryLayer && runtimeState.categoryLayer.source) || "Inherited") + "  →  Profile: " + ((runtimeState.profileLayer && runtimeState.profileLayer.source) || "Inherited") + "  →  Automation: " + root.runtimeAutomationText() + "  →  Effective runtime"; color: root.themeTokens.text; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
+                    Row { spacing: 28
+                        Metric { caption: "PROFILE"; value: runtimeState.profile || "—" }
+                        Metric { caption: "CATEGORY"; value: runtimeState.category || "General" }
+                        Metric { caption: "AXIS"; value: runtimeState.axisLabel || "—" }
+                        Metric { caption: "MODEL"; value: String((runtimeState.runtimeEffective && runtimeState.runtimeEffective.model) || "auto").toUpperCase(); tone: root.themeTokens.orange }
+                        Metric { caption: "MAX HORIZON"; value: Number((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumHorizonMs) || 0).toFixed(1) + " ms" }
+                        Metric { caption: "MAX LEAD"; value: root.percent((runtimeState.runtimeEffective && runtimeState.runtimeEffective.maximumLead) || 0) }
+                    }
+                }
+            }
+
+            Card {
                 RowLayout { width: parent.width; spacing: 14
                     ColumnLayout { Layout.preferredWidth: 170
                         Caption { text: "EDIT LEVEL" }
@@ -265,7 +361,7 @@ Item {
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: root.themeTokens.divider }
                     ColumnLayout { Layout.fillWidth: true
-                        Caption { text: "CURRENT EFFECTIVE SOURCE" }
+                        Caption { text: "EDITING CONTEXT" }
                         Text { text: root.editScope === "preset" ? "Response Preset → " + root.selectedTargetName() + " → " + (state.axisLabel || "Axis") : "Editing " + root.editScope.toUpperCase() + " · " + root.selectedTargetName() + " · " + (scopeInfo().source || "Inherited") + " · " + (state.axisLabel || "Axis"); color: root.themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
@@ -295,50 +391,6 @@ Item {
             }
 
             Card {
-                Column { width: parent.width; spacing: 9
-                    RowLayout { width: parent.width
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Live history"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Bounded UI-side history sampled from atomic state at presentation cadence. This inspector never runs in the mapping report path."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        }
-                        Repeater { model: [2, 5, 10, 30]
-                            delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
-                        }
-                        ActionButton { text: root.historyPaused ? "RESUME" : "PAUSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: { root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory() } }
-                    }
-                    RowLayout { width: parent.width
-                        Caption { text: (root.historyPaused ? "PAUSED" : "LIVE") + " · " + (state.axisLabel || "Axis").toUpperCase() }
-                        Item { Layout.fillWidth: true }
-                        Caption { text: "−" + root.historyWindowSeconds + "s   →   NOW" }
-                    }
-                    Canvas { id: historyGraph; width: parent.width; height: 170
-                        onPaint: {
-                            const ctx = getContext("2d"); ctx.reset(); ctx.fillStyle = root.themeTokens.panelInset; ctx.fillRect(0, 0, width, height)
-                            ctx.strokeStyle = root.themeTokens.divider; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2); ctx.stroke()
-                            function trace(field, color) {
-                                if (!root.historySamples || root.historySamples.length === 0) return
-                                ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath()
-                                for (let i = 0; i < root.historySamples.length; ++i) {
-                                    const point = root.historySamples[i]; const value = Math.max(-1, Math.min(1, Number(point[field])))
-                                    const x = i * width / Math.max(1, root.historySamples.length - 1); const y = height * (1 - (value + 1) * 0.5)
-                                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-                                }
-                                ctx.stroke()
-                            }
-                            trace("physical", root.themeTokens.textMuted); trace("predicted", root.themeTokens.orange); trace("virtualOutput", root.themeTokens.ready)
-                        }
-                        Connections { target: root; function onHistorySamplesChanged() { historyGraph.requestPaint() } }
-                    }
-                    Row { spacing: 16
-                        Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                        Text { text: "— Virtual output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                        Text { visible: root.historyPaused; text: "Inspection is frozen"; color: root.themeTokens.warning; font.pixelSize: 10; font.bold: true }
-                    }
-                }
-            }
-
-            Card {
                 Column { width: parent.width; spacing: 10
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
@@ -357,13 +409,13 @@ Item {
                                 for (let i = 0; i < root.previewSamples.length; ++i) { const point = root.previewSamples[i]; const v = Math.max(-1, Math.min(1, Number(point[field]))); const x = i * width / Math.max(1, root.previewSamples.length - 1); const y = height * (1 - (v + 1) * 0.5); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
                                 ctx.stroke();
                             }
-                            trace("physical", root.themeTokens.textMuted); trace("estimated", "#5db4dd"); trace("predicted", root.themeTokens.orange); trace("virtualOutput", root.themeTokens.ready);
+                            trace("physical", root.themeTokens.textMuted); trace("estimated", root.themeTokens.cyan); trace("predicted", root.themeTokens.orange); trace("virtualOutput", root.themeTokens.ready);
                         }
                         Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } }
                     }
                     Row { spacing: 16
                         Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { text: "— Estimated"; color: "#5db4dd"; font.pixelSize: 10 }
+                        Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
                         Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
                         Text { text: "— Virtual output"; color: root.themeTokens.ready; font.pixelSize: 10 }
                     }
@@ -470,6 +522,69 @@ Item {
                         Gauge { caption: "PREDICTION LEAD"; value: Math.abs(telemetry.lead || 0); maximum: Math.max(0.001, telemetry.maximumLead || 0); tone: root.themeTokens.ready }
                         Gauge { caption: "CONFIDENCE"; value: telemetry.confidence || 0; maximum: 1; tone: root.themeTokens.textStrong }
                         Gauge { caption: "MOTION INTENSITY"; value: telemetry.motionIntensity || 0; maximum: 1; tone: root.themeTokens.orange }
+                    }
+                }
+            }
+
+            Card {
+                Column { width: parent.width; spacing: 9
+                    RowLayout { width: parent.width
+                        ColumnLayout { Layout.fillWidth: true
+                            Text { text: "Live analysis"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
+                            Text { text: "A fixed UI-side ring samples the atomic latest state at presentation cadence. Position, motion, and Adaptive Response each retain their own readable scale."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Repeater { model: [2, 5, 10, 30]
+                            delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
+                        }
+                        ActionButton { text: root.historyPaused ? "RESUME" : "PAUSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: { root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory() } }
+                    }
+                    RowLayout { width: parent.width
+                        Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || state.axisLabel || "Axis").toUpperCase() }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: "−" + root.historyWindowSeconds + "s   →   NOW · shared time axis" }
+                    }
+                    Text { text: "AXIS POSITION  ·  normalized axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 156; lowerBound: -1; upperBound: 1
+                        series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"estimated", color:root.themeTokens.cyan}, {field:"predicted", color:root.themeTokens.orange}, {field:"virtualOutput", color:root.themeTokens.ready}] }
+                    Row { spacing: 16
+                        Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                        Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                        Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                        Text { text: "— Virtual output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                    }
+                    Text { text: "MOTION  ·  independent velocity and acceleration scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                    RowLayout { width: parent.width; spacing: 10
+                        ColumnLayout { Layout.fillWidth: true
+                            Caption { text: "VELOCITY / s" }
+                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["velocity"], 0.1); upperBound: root.historyMagnitude(["velocity"], 0.1); series: [{field:"velocity", color:root.themeTokens.cyan}] }
+                        }
+                        ColumnLayout { Layout.fillWidth: true
+                            Caption { text: "ACCELERATION / s²" }
+                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["acceleration"], 0.1); upperBound: root.historyMagnitude(["acceleration"], 0.1); series: [{field:"acceleration", color:root.themeTokens.orange}] }
+                        }
+                    }
+                    Text { text: "ADAPTIVE RESPONSE  ·  horizon/confidence and lead retain independent scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                    RowLayout { width: parent.width; spacing: 10
+                        ColumnLayout { Layout.fillWidth: true
+                            Caption { text: "HORIZON / CONFIDENCE · % OF ACTIVE LIMIT" }
+                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: 0; upperBound: 1
+                                series: [{field:"horizonRatio", color:root.themeTokens.orange}, {field:"confidence", color:root.themeTokens.ready}] }
+                        }
+                        ColumnLayout { Layout.fillWidth: true
+                            Caption { text: "PREDICTION LEAD · AXIS UNITS" }
+                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["lead"], 0.01); upperBound: root.historyMagnitude(["lead"], 0.01); series: [{field:"lead", color:root.themeTokens.cyan}] }
+                        }
+                    }
+                    Column { visible: root.historyPaused && root.historySamples.length > 0; width: parent.width; spacing: 5
+                        Slider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
+                        Flow { width: parent.width; spacing: 14
+                            Metric { caption: "INSPECT TIME"; value: Number(root.inspectedHistorySample().timeMs || 0).toFixed(0) + " ms" }
+                            Metric { caption: "PHYSICAL / ESTIMATE"; value: root.percent(root.inspectedHistorySample().physical || 0) + " / " + root.percent(root.inspectedHistorySample().estimated || 0) }
+                            Metric { caption: "PREDICTED / OUTPUT"; value: root.percent(root.inspectedHistorySample().predicted || 0) + " / " + root.percent(root.inspectedHistorySample().virtualOutput || 0) }
+                            Metric { caption: "VELOCITY / ACCEL"; value: Number(root.inspectedHistorySample().velocity || 0).toFixed(2) + " / " + Number(root.inspectedHistorySample().acceleration || 0).toFixed(1) }
+                            Metric { caption: "HORIZON / LEAD"; value: Number(root.inspectedHistorySample().activeHorizonMs || 0).toFixed(2) + " ms / " + root.percent(root.inspectedHistorySample().lead || 0) }
+                            Metric { caption: "CONFIDENCE / STATE"; value: Math.round((root.inspectedHistorySample().confidence || 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
+                        }
                     }
                 }
             }

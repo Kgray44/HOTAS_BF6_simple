@@ -932,6 +932,36 @@ QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const 
     return override.presetId.isEmpty() ? fallback : override.presetId;
 }
 
+QStringList adaptivePropertyLabels(std::uint32_t properties)
+{
+    struct PropertyLabel {
+        AdaptiveResponseProperty property;
+        QStringView label;
+    };
+    static constexpr std::array<PropertyLabel, 13> labels{{
+        {AdaptiveResponseEnabled, u"Enabled"},
+        {AdaptiveResponseModelProperty, u"Predictor"},
+        {AdaptiveResponseMaximumHorizon, u"Maximum horizon"},
+        {AdaptiveResponseMaximumLead, u"Maximum lead"},
+        {AdaptiveResponseVelocityResponse, u"Velocity response"},
+        {AdaptiveResponseAccelerationResponse, u"Acceleration response"},
+        {AdaptiveResponseMotionSensitivity, u"Motion sensitivity"},
+        {AdaptiveResponseNoiseRejection, u"Noise rejection"},
+        {AdaptiveResponseReversalDetection, u"Reversal detection"},
+        {AdaptiveResponseReversalResponse, u"Reversal response"},
+        {AdaptiveResponseDecelerationResponse, u"Deceleration response"},
+        {AdaptiveResponseSettlingResponse, u"Settling response"},
+        {AdaptiveResponseEndpointTaper, u"Endpoint taper"},
+    }};
+    QStringList result;
+    for (const PropertyLabel &entry : labels) {
+        if ((properties & static_cast<std::uint32_t>(entry.property)) != 0U) {
+            result.append(entry.label.toString());
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext(
@@ -1008,7 +1038,9 @@ QVariantMap AppBackend::adaptiveResponseState() const
             {u"automation"_qs, QVariantMap{
                 {u"active"_qs, runtime.adaptiveAutomationOverlayActive[static_cast<size_t>(axis)].load()},
                 {u"properties"_qs, static_cast<qulonglong>(runtime.adaptiveAutomationOverlayProperties[
-                    static_cast<size_t>(axis)].load())}}},
+                    static_cast<size_t>(axis)].load())},
+                {u"affectedProperties"_qs, adaptivePropertyLabels(
+                    runtime.adaptiveAutomationOverlayProperties[static_cast<size_t>(axis)].load())}}},
             {u"global"_qs, QVariantMap{{u"presetId"_qs, global.presetId},
                 {u"source"_qs, adaptiveSourceLabel(global, u"Application default"_qs)},
                 {u"properties"_qs, static_cast<int>(global.properties)}}},
@@ -1088,8 +1120,17 @@ QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
                                   {u"estimated"_qs, sample.estimated},
                                   {u"predicted"_qs, sample.predicted},
                                   {u"virtualOutput"_qs, sample.virtualOutput},
+                                  {u"velocity"_qs, sample.velocity},
+                                  {u"acceleration"_qs, sample.acceleration},
+                                  {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
+                                  {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
+                                  {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
+                                      ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
                                   {u"lead"_qs, sample.lead},
-                                  {u"confidence"_qs, sample.confidence}});
+                                  {u"confidence"_qs, sample.confidence},
+                                  {u"motionIntensity"_qs, sample.motionIntensity},
+                                  {u"state"_qs, adaptiveMotionStateLabel(
+                                      static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return result;
 }
@@ -5956,8 +5997,14 @@ void AppBackend::sampleAdaptiveResponseHistory()
     sample.estimated = runtime.adaptiveEstimated[index].load();
     sample.predicted = runtime.adaptivePredicted[index].load();
     sample.virtualOutput = runtime.virtualValues[index].load();
+    sample.velocity = runtime.adaptiveVelocity[index].load();
+    sample.acceleration = runtime.adaptiveAcceleration[index].load();
+    sample.activeHorizonSeconds = runtime.adaptiveHorizonSeconds[index].load();
+    sample.maximumHorizonSeconds = runtime.adaptiveRuntimeMaximumHorizonSeconds[index].load();
     sample.lead = runtime.adaptiveLead[index].load();
     sample.confidence = runtime.adaptiveConfidence[index].load();
+    sample.motionIntensity = runtime.adaptiveMotionIntensity[index].load();
+    sample.motionState = runtime.adaptiveMotionState[index].load();
     m_adaptiveResponseHistoryNext = (m_adaptiveResponseHistoryNext + 1)
         % static_cast<int>(m_adaptiveResponseHistory.size());
     m_adaptiveResponseHistoryCount = std::min(m_adaptiveResponseHistoryCount + 1,

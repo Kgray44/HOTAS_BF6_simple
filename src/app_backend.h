@@ -578,8 +578,14 @@ private:
         float estimated = 0.0F;
         float predicted = 0.0F;
         float virtualOutput = 0.0F;
+        float velocity = 0.0F;
+        float acceleration = 0.0F;
+        float activeHorizonSeconds = 0.0F;
+        float maximumHorizonSeconds = 0.0F;
         float lead = 0.0F;
         float confidence = 0.0F;
+        float motionIntensity = 0.0F;
+        int motionState = 0;
     };
 
     void persistAndApply();
