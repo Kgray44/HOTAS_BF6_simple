@@ -39,6 +39,8 @@ The current result schema is `adaptiveVerificationSchemaVersion: 2` with `adapti
 
 Each completed campaign writes specialized, importable CSV evidence for sample-rate invariance, slow motion, source sample-hold, reversals, stops, noise, motion states, acceleration, multi-axis isolation, automation, lifecycle, bumpless transitions, performance, failures, and seeds. `worst_cases.csv` ranks the top ten scenarios independently for stale-lead area, peak lead, injected-noise amplification, dropout duration, false-stop duration, settling, overshoot, and output step. The matching traces are deterministically replayed and retained, as are up to ten deterministic triage traces per distinct failure category; all other successful and failing randomized runs remain summary-only to bound memory and artifact size.
 
+Reversal ground truth is harness-owned: it requires two coherent, meaningful physical source updates and never consults the tested model or preset's reversal setting. `reversal_events.csv` preserves physical ground-truth time, exact detection/reacquisition latency, and the Immediate/Excellent/Acceptable/Poor/Failure quality bands. Canonical runs also emit `Adaptive_Response_V2.3.T_Canonical_Findings_Analysis.md`, with the finding classification, model/preset/family/rate breakdowns, retained traces, root causes, and the next action for each category.
+
 ## CI
 
 `adaptive_response_verification_tests` self-validates the harness. `adaptive_response_verification_smoke` runs the smoke campaign as a CTest target, so existing CI remains compact while the manual tiers stay available for escalation.
