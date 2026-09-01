@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.6**
+**Current release: v2.1.7**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.1.7 — Destination-First Button Learning & Live Signal Flow
+
+Simplifies the Buttons workspace around virtual game outputs: one page-level Learn Button selects a vJoy destination before listening, while every card clearly shows its live physical-to-virtual route.
+
+- Per-card Learn Input controls are removed from Legacy, Standard, and Top Gun; matching page-level Learn Button and Quick Map actions now distinguish one-output learning from multi-output configuration.
+- Learn Button first selects an available vJoy output, shows all current physical sources, then explicitly starts the existing safe listener. The selected destination remains fixed when a physical button is detected, including high virtual button numbers.
+- Learn Button, manual route editing, and Quick Map continue to use the existing Replace, Ignore, and Cancel route decisions. Shared-output fan-in, atomic swaps, partial Quick Map progress, and re-arming behavior are unchanged.
+- Button cards retain custom names, immutable physical IDs, the top-right physical Pressed/Released state, physical card activation, Game Output selection, and Disabled badge while replacing raw UP telemetry with a readable Physical Input to Virtual Output signal-flow strip.
+- The virtual endpoint reads the actual published vJoy-button state, so a shared destination can correctly show a released local physical source while another source holds the virtual output pressed. Disabled routes retain physical state and display a muted dashed route to Disabled.
+- The visual workflow uses the existing bounded UI snapshot and themed modal shells; it adds no timers, polling, learning checks, conflict work, allocations, locks, strings, or UI callbacks to the DirectInput-to-vJoy report path.
 
 ## v2.1.6 — Input Learning & Quick Map Correction
 

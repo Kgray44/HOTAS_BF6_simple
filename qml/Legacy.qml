@@ -789,15 +789,9 @@ Page {
                         color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
                 }
             }
-            Text { text: "PHYSICAL   " + (buttonCard.info.pressed ? "DOWN" : "UP")
-                color: buttonCard.info.pressed ? "#c4e4e9" : "#849398"; font.pixelSize: 10
-                font.family: "Consolas"; font.bold: buttonCard.info.pressed }
-            FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
                 Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
-                CommandButton { visible: buttonCard.info.target > 0; label: "LEARN INPUT"; subdued: true
-                    onTriggered: backend.startButtonLearning(buttonCard.info.target) }
                 FlightComboBox {
                     id: buttonDestination
                     Layout.preferredWidth: 126
@@ -821,11 +815,82 @@ Page {
                         verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
                 }
             }
-            Text { text: buttonCard.info.target > 0
-                    ? "VIRTUAL    " + (buttonCard.info.virtualPressed ? "DOWN" : "UP")
-                    : "VIRTUAL    UNROUTED"
-                color: buttonCard.info.virtualPressed ? "#b9dcc2" : "#819297"
-                font.pixelSize: 9; font.family: "Consolas"; font.bold: buttonCard.info.virtualPressed }
+            FineLine { Layout.fillWidth: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 48
+                spacing: 8
+                ColumnLayout {
+                    Layout.preferredWidth: 84
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 2
+                    Text { text: "PHYSICAL INPUT"; color: "#849398"; font.pixelSize: 8; font.bold: true }
+                    Row {
+                        spacing: 4
+                        StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
+                        Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
+                            color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"
+                            font.pixelSize: 9; font.bold: true; font.family: "Consolas" }
+                    }
+                }
+                Item {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 42
+                    Layout.preferredHeight: 18
+                    Rectangle {
+                        visible: buttonCard.info.target > 0
+                        anchors.left: parent.left
+                        anchors.right: flowArrow.left
+                        anchors.rightMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: buttonCard.info.pressed || buttonCard.info.virtualPressed ? 2 : 1
+                        color: buttonCard.info.pressed || buttonCard.info.virtualPressed ? "#8fc8c0" : "#687d84"
+                    }
+                    Row {
+                        id: disabledFlowDashes
+                        visible: buttonCard.info.target === 0
+                        anchors.left: parent.left
+                        anchors.right: flowArrow.left
+                        anchors.rightMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 3
+                        Repeater {
+                            model: 7
+                            delegate: Rectangle {
+                                width: Math.max(3, (disabledFlowDashes.width - 18) / 7)
+                                height: 1
+                                color: "#687d84"
+                            }
+                        }
+                    }
+                    Text {
+                        id: flowArrow
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "▶"
+                        color: buttonCard.info.target > 0 && (buttonCard.info.pressed || buttonCard.info.virtualPressed)
+                            ? "#8fc8c0" : "#687d84"
+                        font.pixelSize: 12
+                    }
+                }
+                ColumnLayout {
+                    Layout.preferredWidth: 84
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 2
+                    Text { text: "VIRTUAL OUTPUT"; color: "#849398"; font.pixelSize: 8; font.bold: true }
+                    Row {
+                        spacing: 4
+                        Text { visible: buttonCard.info.target === 0; text: "○"; color: "#687d84"; font.pixelSize: 12 }
+                        StatusDot { visible: buttonCard.info.target > 0; tone: buttonCard.info.virtualPressed ? "#8fc8c0" : "#68747a" }
+                        Text {
+                            text: buttonCard.info.target > 0
+                                ? (buttonCard.info.virtualPressed ? "PRESSED" : "RELEASED") : "DISABLED"
+                            color: buttonCard.info.target > 0 && buttonCard.info.virtualPressed ? "#b9dcc2" : "#919ca0"
+                            font.pixelSize: 9; font.bold: true; font.family: "Consolas"
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1440,6 +1505,9 @@ Page {
                     PageTitle { heading: "Buttons"
  detail: "Physical DirectInput state is visible even while vJoy is offline · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
+                    CommandButton { label: "LEARN BUTTON"
+ commandEnabled: backend.physicalConnected && backend.vjoyButtonCount > 0
+ onTriggered: learnButtonDialog.open() }
                     CommandButton { label: "QUICK MAP"
  commandEnabled: backend.buttonCount > 0
  onTriggered: quickMapButtonDialog.open() }
@@ -2046,7 +2114,7 @@ Page {
         function onInputLearningChanged() {
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
             if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
-            if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened) inputLearningDialog.open()
+            if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()
             if (!backend.inputLearning.active) inputLearningDialog.close()
         }
     }
@@ -2059,7 +2127,7 @@ Page {
         title: "LEARN INPUT"
         standardButtons: Dialog.NoButton
         header: Item { implicitHeight: 0 }
-        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened) backend.cancelInputLearning()
+        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
         contentItem: Column { width: 368; spacing: 12
             Text { width: parent.width; text: "LEARN INPUT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 11; font.bold: true }
@@ -2071,6 +2139,132 @@ Page {
                 CommandButton { visible: backend.inputLearning.phase === "conflict" && backend.inputLearning.kind === "button"; label: "IGNORE"; subdued: true; onTriggered: backend.resolveInputLearningConflict("ignore") }
                 Item { width: parent.width - 180; height: 1 }
                 CommandButton { label: backend.inputLearning.phase === "assigned" ? "DONE" : "CANCEL"; subdued: backend.inputLearning.phase !== "assigned"; onTriggered: { backend.cancelInputLearning(); inputLearningDialog.close() } }
+            }
+        }
+        background: Panel { color: "#182a30"; border.color: "#52717c" }
+    }
+    Dialog {
+        id: learnButtonDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(460, root.width - 36)
+        title: "LEARN BUTTON"
+        standardButtons: Dialog.NoButton
+        header: Item { implicitHeight: 0 }
+        property int selectedTarget: 1
+        function sourceLabels() {
+            const sources = []
+            for (let index = 0; index < root.allButtons.length; ++index) {
+                const button = root.allButtons[index]
+                if (!button || Number(button.target) !== selectedTarget) continue
+                const number = ("0" + button.index).slice(-2)
+                sources.push(button.customName
+                    ? button.customName.toUpperCase() + "  ·  BUTTON " + number
+                    : "BUTTON " + number)
+            }
+            return sources
+        }
+        onOpened: {
+            selectedTarget = Math.max(1, Math.min(selectedTarget, backend.vjoyButtonCount))
+        }
+        onClosed: {
+            if (backend.inputLearning.active && backend.inputLearning.kind === "button") {
+                backend.cancelInputLearning()
+            }
+        }
+        contentItem: Column {
+            width: learnButtonDialog.width - 52
+            spacing: 12
+            Text { width: parent.width; text: "LEARN BUTTON"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { text: "GAME OUTPUT"; color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            FlightComboBox {
+                id: learnButtonDestination
+                width: parent.width
+                model: root.buttonOutputChoices.slice(1)
+                currentIndex: Math.max(0, learnButtonDialog.selectedTarget - 1)
+                enabled: !backend.inputLearning.active
+                onActivated: learnButtonDialog.selectedTarget = currentIndex + 1
+            }
+            FineLine { width: parent.width }
+            Text {
+                text: learnButtonDialog.sourceLabels().length === 1
+                    ? "CURRENT PHYSICAL INPUT" : "CURRENT PHYSICAL INPUTS"
+                color: "#8ca6ae"
+                font.pixelSize: 10
+                font.bold: true
+            }
+            Column {
+                width: parent.width
+                spacing: 3
+                Repeater {
+                    model: learnButtonDialog.sourceLabels()
+                    delegate: Text { text: modelData; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
+                }
+                Text {
+                    visible: learnButtonDialog.sourceLabels().length === 0
+                    text: "NO CURRENT PHYSICAL INPUT"
+                    color: "#718a93"
+                    font.pixelSize: 11
+                }
+            }
+            FineLine { width: parent.width }
+            Text {
+                visible: backend.inputLearning.active && backend.inputLearning.phase === "waiting"
+                width: parent.width
+                text: "Press the physical HOTAS button you want to use for vJoy Button "
+                    + learnButtonDialog.selectedTarget + "."
+                wrapMode: Text.WordWrap
+                color: "#d5e0e3"
+                font.pixelSize: 12
+            }
+            Text {
+                visible: backend.inputLearning.active && backend.inputLearning.phase !== "waiting"
+                width: parent.width
+                text: backend.inputLearning.message
+                wrapMode: Text.WordWrap
+                color: "#d5e0e3"
+                font.pixelSize: 12
+            }
+            Column {
+                visible: backend.inputLearning.sourceLabel.length > 0
+                width: parent.width
+                spacing: 3
+                Text { text: backend.inputLearning.phase === "assigned" ? "ASSIGNED" : "PROPOSED ROUTE"; color: "#b9dcc2"; font.pixelSize: 10; font.bold: true }
+                Text { text: backend.inputLearning.sourceLabel + "  ↓"; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
+                Text { text: "vJoy Button " + learnButtonDialog.selectedTarget; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
+            }
+            Row {
+                width: parent.width
+                spacing: 8
+                CommandButton {
+                    visible: !backend.inputLearning.active
+                    label: "START LISTENING"
+                    commandEnabled: backend.physicalConnected && learnButtonDialog.selectedTarget > 0
+                    onTriggered: backend.startButtonLearning(learnButtonDialog.selectedTarget)
+                }
+                CommandButton {
+                    visible: backend.inputLearning.phase === "ambiguous"
+                    label: "RETRY"
+                    subdued: true
+                    onTriggered: backend.retryInputLearning()
+                }
+                CommandButton {
+                    visible: backend.inputLearning.phase === "conflict"
+                    label: "REPLACE"
+                    onTriggered: backend.resolveInputLearningConflict("replace")
+                }
+                CommandButton {
+                    visible: backend.inputLearning.phase === "conflict"
+                    label: "IGNORE"
+                    subdued: true
+                    onTriggered: backend.resolveInputLearningConflict("ignore")
+                }
+                CommandButton {
+                    label: backend.inputLearning.phase === "assigned" ? "DONE" : "CANCEL"
+                    subdued: backend.inputLearning.phase !== "assigned"
+                    onTriggered: { backend.cancelInputLearning(); learnButtonDialog.close() }
+                }
             }
         }
         background: Panel { color: "#182a30"; border.color: "#52717c" }
