@@ -166,10 +166,14 @@ Item {
     function profileChoiceIndex(id) { const index = profileIndex(id); return index < 0 ? 0 : index + 1 }
     function profileChoiceId(index) { const choices = backendObject.profileTriggerChoices; return index > 0 && index <= choices.length ? choices[index - 1].id : "" }
     function profileChoicesWithPlaceholder() { return [{ label: "Choose a profile", id: "" }].concat(backendObject.profileTriggerChoices) }
-    function adaptivePresetChoices() { return [{ label: "Choose an Adaptive Response preset", id: "" }].concat(backendObject.adaptiveResponsePresets || []) }
+    function adaptivePresetChoices() {
+        const presets = backendObject.adaptiveResponsePresets || []
+        return [{ name: "Choose an Adaptive Response preset", id: "" }].concat(
+            presets.map(function(preset) { return { name: preset.name, id: preset.id, description: preset.description } }))
+    }
     function adaptivePresetIndex(id) { const choices = adaptivePresetChoices(); for (let index = 0; index < choices.length; ++index) if (choices[index].id === id) return index; return 0 }
     function adaptivePresetId(index) { const choices = adaptivePresetChoices(); return index > 0 && index < choices.length ? choices[index].id : "" }
-    function adaptivePresetName(id) { const choices = adaptivePresetChoices(); const index = adaptivePresetIndex(id); return index > 0 ? choices[index].label : "a preset" }
+    function adaptivePresetName(id) { const choices = adaptivePresetChoices(); const index = adaptivePresetIndex(id); return index > 0 ? choices[index].name : "a preset" }
     function profileName(id) { const index = profileIndex(id); const choices = backendObject.profileTriggerChoices; return index >= 0 && choices[index] ? choices[index].label : "a profile" }
     function axisName(index) { return index >= 0 && index < axisChoices.length ? axisChoices[index] : "axis" }
     function directionName(direction) { return direction >= 1 && direction <= directions.length ? directions[direction - 1] : "a direction" }
@@ -628,7 +632,7 @@ Item {
                                         Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
                                         EditorCombo { Layout.preferredWidth: 150; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
                                         Text { text: "Preset"; color: root.mutedColor; font.pixelSize: 10 }
-                                        EditorCombo { Layout.preferredWidth: 240; model: root.adaptivePresetChoices(); textRole: "label"; currentIndex: root.adaptivePresetIndex(modelData.adaptiveResponsePresetId); onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "adaptiveResponsePresetId", root.adaptivePresetId(choiceIndex)) } }
+                                        EditorCombo { Layout.preferredWidth: 240; model: root.adaptivePresetChoices(); textRole: "name"; currentIndex: root.adaptivePresetIndex(modelData.adaptiveResponsePresetId); onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "adaptiveResponsePresetId", root.adaptivePresetId(choiceIndex)) } }
                                     }
                                     RowLayout { visible: root.isTap(modelData); Layout.fillWidth: true
                                         Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }

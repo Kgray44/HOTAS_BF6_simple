@@ -133,6 +133,10 @@ private slots:
     void curveTransitionsRemainIndependentAcrossAxes();
     void curveTransitionSettingsPersistAndMigrate();
     void adaptiveResponsePredictsThenConvergesToPhysicalInput();
+    void adaptiveResponseUsesDistinctAlphaBetaAndAlphaBetaGammaEstimators();
+    void adaptiveResponseVelocityAndSettlingControlsChangePrediction();
+    void adaptiveResponseResetClearsSessionMotionState();
+    void adaptiveResponseDetectsPositiveNegativeAndCenterCrossingReversals();
     void adaptiveResponseCancelsStaleLeadAtReversal();
     void adaptiveResponseTapersAndClampsAtEndpoint();
     void adaptiveResponsePersistsAndResolvesLayeredSettings();
@@ -582,6 +586,138 @@ void MappingCoreTests::adaptiveResponsePredictsThenConvergesToPhysicalInput()
         0.12F, configuration, origin + std::chrono::milliseconds(8));
     QVERIFY(nearlyEqual(stopped.predicted, stopped.physical));
     QVERIFY(nearlyEqual(stopped.velocity, 0.0F));
+}
+
+void MappingCoreTests::adaptiveResponseUsesDistinctAlphaBetaAndAlphaBetaGammaEstimators()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.maximumLead = 0.35F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.76F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    configuration.model = AdaptiveResponseModel::AlphaBeta;
+    AdaptiveResponseProcessor alphaBeta;
+    alphaBeta.process(0.0F, configuration, origin);
+    const AdaptiveResponseTelemetry abFirst = alphaBeta.process(
+        0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry abSecond = alphaBeta.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(!nearlyEqual(abFirst.estimated, abFirst.physical));
+    QVERIFY(!nearlyEqual(abSecond.estimated, abSecond.physical));
+    QVERIFY(nearlyEqual(abSecond.acceleration, 0.0F));
+
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    AdaptiveResponseProcessor alphaBetaGamma;
+    alphaBetaGamma.process(0.0F, configuration, origin);
+    alphaBetaGamma.process(0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry abgSecond = alphaBetaGamma.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(!nearlyEqual(abgSecond.estimated, abgSecond.physical));
+    QVERIFY(std::abs(abgSecond.acceleration) > 0.001F);
+    QVERIFY(!nearlyEqual(abgSecond.predicted, abSecond.predicted));
+
+    configuration.model = AdaptiveResponseModel::Auto;
+    AdaptiveResponseProcessor automatic;
+    automatic.process(0.0F, configuration, origin);
+    automatic.process(0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry autoSecond = automatic.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(std::abs(autoSecond.acceleration) > 0.001F);
+    QVERIFY(!nearlyEqual(autoSecond.estimated, autoSecond.physical));
+}
+
+void MappingCoreTests::adaptiveResponseVelocityAndSettlingControlsChangePrediction()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.024F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.008F;
+    configuration.noiseRejection = 0.0001F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    configuration.velocityResponse = 0.10F;
+    AdaptiveResponseProcessor slowVelocity;
+    slowVelocity.process(0.0F, configuration, origin);
+    slowVelocity.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry slow = slowVelocity.process(
+        0.16F, configuration, origin + std::chrono::milliseconds(8));
+
+    configuration.velocityResponse = 1.0F;
+    AdaptiveResponseProcessor fastVelocity;
+    fastVelocity.process(0.0F, configuration, origin);
+    fastVelocity.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry fast = fastVelocity.process(
+        0.16F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(fast.predicted > slow.predicted + 0.001F);
+
+    configuration.velocityResponse = 0.80F;
+    configuration.settlingResponse = 0.0F;
+    AdaptiveResponseProcessor looseSettling;
+    looseSettling.process(0.0F, configuration, origin);
+    looseSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry loose = looseSettling.process(
+        0.22F, configuration, origin + std::chrono::milliseconds(8));
+
+    configuration.settlingResponse = 1.0F;
+    AdaptiveResponseProcessor tightSettling;
+    tightSettling.process(0.0F, configuration, origin);
+    tightSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry tight = tightSettling.process(
+        0.22F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(tight.activeHorizonSeconds < loose.activeHorizonSeconds);
+    QVERIFY(std::abs(tight.lead) < std::abs(loose.lead));
+}
+
+void MappingCoreTests::adaptiveResponseResetClearsSessionMotionState()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.0001F;
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.0F, configuration, origin);
+    processor.process(0.22F, configuration, origin + std::chrono::milliseconds(4));
+    processor.process(0.12F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(processor.reversalCount() > 0);
+    processor.reset();
+    const AdaptiveResponseTelemetry restarted = processor.process(
+        0.37F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(nearlyEqual(restarted.estimated, 0.37F));
+    QVERIFY(nearlyEqual(restarted.predicted, 0.37F));
+    QVERIFY(nearlyEqual(restarted.velocity, 0.0F));
+    QCOMPARE(processor.reversalCount(), std::uint64_t{0});
+}
+
+void MappingCoreTests::adaptiveResponseDetectsPositiveNegativeAndCenterCrossingReversals()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.0001F;
+    configuration.reversalDetection = 0.020F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const auto reverses = [&configuration, origin](float start, float away, float returnValue) {
+        AdaptiveResponseProcessor processor;
+        processor.process(start, configuration, origin);
+        processor.process(away, configuration, origin + std::chrono::milliseconds(4));
+        return processor.process(returnValue, configuration, origin + std::chrono::milliseconds(8));
+    };
+    QVERIFY(reverses(0.45F, 0.85F, 0.62F).reversal);
+    QVERIFY(reverses(-0.45F, -0.85F, -0.62F).reversal);
+    QVERIFY(reverses(-0.20F, 0.30F, -0.12F).reversal);
 }
 
 void MappingCoreTests::adaptiveResponseCancelsStaleLeadAtReversal()
@@ -2089,6 +2225,67 @@ void MappingCoreTests::portablePackSelectionsConflictsAndDependenciesAreSafe()
     const ProfileCategory *replaced = findProfileCategory(replaceTarget, replaceCategory);
     QVERIFY(replaced);
     QCOMPARE(replaced->profileIds.size(), size_t{2});
+
+    // Pack exports include only the custom Response Presets actually reached
+    // from selected content.  Import conflicts intentionally provide three
+    // deterministic choices: retain the local preset, replace it, or copy and
+    // remap every imported reference.
+    AdaptiveResponsePreset responsePreset;
+    responsePreset.id = QStringLiteral("pack-response");
+    responsePreset.name = QStringLiteral("Pack Response");
+    responsePreset.description = QStringLiteral("Pack-only dependency");
+    responsePreset.axes[static_cast<size_t>(PhysicalAxis::X)].properties = kAdaptiveResponseAllProperties;
+    responsePreset.axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs = 24.0F;
+    source.adaptiveResponsePresets.push_back(responsePreset);
+    ground = findProfile(source, groundId);
+    QVERIFY(ground);
+    ground->adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].presetId = responsePreset.id;
+
+    const QString responsePack = temporary.filePath(QStringLiteral("response-dependency.hbf6pack"));
+    QVERIFY2(ProfilePortability::exportPack(source, {categoryId}, {}, QStringLiteral("Response dependency"), {},
+                                             false, false, true, true, true, responsePack, &error), qPrintable(error));
+    PortableConfigurationBundle responseBundle;
+    QVERIFY2(ProfilePortability::inspect(responsePack, &responseBundle, &error), qPrintable(error));
+    QCOMPARE(responseBundle.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(responseBundle.adaptiveResponsePresets.front().id, responsePreset.id);
+
+    AdaptiveResponsePreset localPreset = responsePreset;
+    localPreset.name = QStringLiteral("Local Response");
+    localPreset.axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs = 5.0F;
+    const auto horizonFor = [](const MapperConfiguration &configuration, const QString &presetId) {
+        const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(configuration, presetId);
+        return preset ? preset->axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs : -1.0F;
+    };
+
+    MapperConfiguration keepLocalTarget = defaultConfiguration();
+    keepLocalTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions keepLocal;
+    keepLocal.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::KeepLocal;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&keepLocalTarget, responseBundle, keepLocal, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(keepLocalTarget, responsePreset.id), 5.0F);
+
+    MapperConfiguration replacePresetTarget = defaultConfiguration();
+    replacePresetTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions replacePreset;
+    replacePreset.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::Replace;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&replacePresetTarget, responseBundle, replacePreset, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(replacePresetTarget, responsePreset.id), 24.0F);
+
+    MapperConfiguration copyPresetTarget = defaultConfiguration();
+    copyPresetTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions copyPreset;
+    copyPreset.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::ImportAsCopy;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&copyPresetTarget, responseBundle, copyPreset, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(copyPresetTarget, responsePreset.id), 5.0F);
+    const auto copiedGround = std::find_if(copyPresetTarget.profiles.cbegin(), copyPresetTarget.profiles.cend(),
+        [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Ground"); });
+    QVERIFY(copiedGround != copyPresetTarget.profiles.cend());
+    const QString remappedPresetId = copiedGround->adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].presetId;
+    QVERIFY(remappedPresetId != responsePreset.id);
+    QCOMPARE(horizonFor(copyPresetTarget, remappedPresetId), 24.0F);
 }
 
 void MappingCoreTests::portableDeviceMatchingAndCalibrationRequireExplicitIntent()

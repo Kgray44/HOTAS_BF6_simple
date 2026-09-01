@@ -200,6 +200,7 @@ public:
     QVariantMap adaptiveResponseState() const;
     QVariantList adaptiveResponsePresets() const;
     QVariantMap adaptiveResponseTelemetry() const;
+    Q_INVOKABLE QVariantList adaptiveResponseHistory(int seconds) const;
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -368,15 +369,40 @@ public:
     Q_INVOKABLE bool applyCurvePreview();
     Q_INVOKABLE bool setAdaptiveResponsePreset(const QString &scope, int physicalAxis,
                                                const QString &presetId);
+    Q_INVOKABLE bool setAdaptiveResponsePresetAtContext(const QString &scope,
+                                                        const QString &targetId, int physicalAxis,
+                                                        const QString &presetId);
     Q_INVOKABLE bool setAdaptiveResponseProperty(const QString &scope, int physicalAxis,
                                                  const QString &property, const QVariant &value,
                                                  bool inherit = false);
+    Q_INVOKABLE bool setAdaptiveResponsePropertyAtContext(const QString &scope,
+                                                          const QString &targetId, int physicalAxis,
+                                                          const QString &property, const QVariant &value,
+                                                          bool inherit = false);
     Q_INVOKABLE bool resetAdaptiveResponseAxis(const QString &scope, int physicalAxis);
+    Q_INVOKABLE bool resetAdaptiveResponseAxisAtContext(const QString &scope,
+                                                        const QString &targetId, int physicalAxis);
     Q_INVOKABLE bool saveAdaptiveResponsePreset(const QString &name, const QString &description);
     Q_INVOKABLE bool duplicateAdaptiveResponsePreset(const QString &presetId, const QString &name);
     Q_INVOKABLE bool renameAdaptiveResponsePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE QVariantList adaptiveResponsePresetDependencies(const QString &presetId) const;
     Q_INVOKABLE bool deleteAdaptiveResponsePreset(const QString &presetId);
     Q_INVOKABLE QVariantList adaptiveResponsePreview(const QString &scenario) const;
+    Q_INVOKABLE QVariantMap adaptiveResponseTestLab(const QString &scenario) const;
+    // Context inspection is deliberately control-plane work. It lets an
+    // inactive Category, Profile, or custom Response Preset display its own
+    // resolved values without changing the mapper's live selected profile.
+    Q_INVOKABLE QVariantMap adaptiveResponseContextState(const QString &scope,
+                                                         const QString &targetId,
+                                                         int physicalAxis) const;
+    Q_INVOKABLE QVariantList adaptiveResponsePreviewAtContext(const QString &scenario,
+                                                               const QString &scope,
+                                                               const QString &targetId,
+                                                               int physicalAxis) const;
+    Q_INVOKABLE QVariantMap adaptiveResponseTestLabAtContext(const QString &scenario,
+                                                              const QString &scope,
+                                                              const QString &targetId,
+                                                              int physicalAxis) const;
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
                                               const QString &resolution);
@@ -425,7 +451,8 @@ public:
     Q_INVOKABLE bool applyPortableImport(const QString &destinationCategoryId = {},
                                          bool replaceMatchingProfiles = false,
                                          const QString &categoryConflictMode = u"merge"_qs,
-                                         bool applyImportedCalibration = false);
+                                         bool applyImportedCalibration = false,
+                                         const QString &adaptivePresetConflictMode = u"copy"_qs);
     Q_INVOKABLE bool selectPortableImportDevice(int descriptorIndex,
                                                 const QString &savedControllerId);
     Q_INVOKABLE void beginCalibration();
@@ -541,7 +568,26 @@ private:
         }()};
     };
 
+    // UI-thread-only bounded history. The mapper publishes atomics; this
+    // ring is sampled from the existing presentation timer and is never read
+    // or written from the DirectInput-to-vJoy report path.
+    struct AdaptiveResponseHistorySample {
+        qint64 elapsedMs = 0;
+        int axis = 0;
+        float physical = 0.0F;
+        float estimated = 0.0F;
+        float predicted = 0.0F;
+        float virtualOutput = 0.0F;
+        float lead = 0.0F;
+        float confidence = 0.0F;
+    };
+
     void persistAndApply();
+    void sampleAdaptiveResponseHistory();
+    RuntimeAdaptiveResponseConfig adaptiveResponseConfigurationAtContext(
+        const QString &scope, const QString &targetId, int physicalAxis,
+        AdaptiveResponseAxisOverride *contextOverride = nullptr,
+        QString *source = nullptr) const;
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
@@ -573,8 +619,9 @@ private:
     bool fallBackToAvailableAxis();
     AxisMapping *selectedAxisMapping();
     const AxisMapping *selectedAxisMapping() const;
-    AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope);
-    const AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope) const;
+    AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
+    const AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope,
+                                                       const QString &targetId = {}) const;
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     bool axisIsOneSided(int physicalAxis) const;
@@ -659,6 +706,10 @@ private:
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
     QElapsedTimer m_overviewMetricsClock;
+    QElapsedTimer m_adaptiveResponseHistoryClock;
+    std::array<AdaptiveResponseHistorySample, 900> m_adaptiveResponseHistory{};
+    int m_adaptiveResponseHistoryNext = 0;
+    int m_adaptiveResponseHistoryCount = 0;
     QElapsedTimer m_calibrationFinalizationClock;
     QTimer m_uiEventLoopHeartbeatTimer;
     QElapsedTimer m_uiEventLoopHeartbeatClock;

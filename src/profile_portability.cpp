@@ -75,6 +75,61 @@ bool adaptiveLayerReferencesAvailable(const AdaptiveResponseLayer &layer,
     return true;
 }
 
+void collectAdaptiveResponsePresetDependencies(const AdaptiveResponseLayer &layer,
+                                               QSet<QString> *presetIds)
+{
+    if (!presetIds) return;
+    for (const AdaptiveResponseAxisOverride &axis : layer.axes) {
+        if (!axis.presetId.trimmed().isEmpty()) presetIds->insert(axis.presetId);
+    }
+}
+
+bool sameAdaptiveResponseSettings(const AdaptiveResponseSettings &left,
+                                  const AdaptiveResponseSettings &right)
+{
+    return left.enabled == right.enabled && left.model == right.model
+        && left.maximumHorizonMs == right.maximumHorizonMs && left.maximumLead == right.maximumLead
+        && left.velocityResponse == right.velocityResponse
+        && left.accelerationResponse == right.accelerationResponse
+        && left.motionSensitivity == right.motionSensitivity && left.noiseRejection == right.noiseRejection
+        && left.reversalDetection == right.reversalDetection && left.reversalResponse == right.reversalResponse
+        && left.decelerationResponse == right.decelerationResponse
+        && left.settlingResponse == right.settlingResponse && left.endpointTaper == right.endpointTaper;
+}
+
+bool sameAdaptiveResponsePresetContent(const AdaptiveResponsePreset &left,
+                                       const AdaptiveResponsePreset &right)
+{
+    if (left.name != right.name || left.description != right.description) return false;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const AdaptiveResponseAxisOverride &a = left.axes[static_cast<size_t>(axis)];
+        const AdaptiveResponseAxisOverride &b = right.axes[static_cast<size_t>(axis)];
+        if (a.properties != b.properties || a.presetId != b.presetId
+            || !sameAdaptiveResponseSettings(a.settings, b.settings)) return false;
+    }
+    return true;
+}
+
+QString uniqueImportedAdaptiveResponsePresetId(const MapperConfiguration &configuration,
+                                               const QString &sourceId)
+{
+    const QString base = sourceId.left(72).trimmed() + u"-imported"_qs;
+    for (int suffix = 1; suffix < 1000; ++suffix) {
+        const QString candidate = suffix == 1 ? base : base + u"-"_qs + QString::number(suffix);
+        if (!findAdaptiveResponsePreset(configuration, candidate)) return candidate;
+    }
+    return {};
+}
+
+void remapAdaptiveResponseLayer(AdaptiveResponseLayer *layer, const QHash<QString, QString> &ids)
+{
+    if (!layer) return;
+    for (AdaptiveResponseAxisOverride &axis : layer->axes) {
+        const auto found = ids.constFind(axis.presetId);
+        if (found != ids.cend()) axis.presetId = *found;
+    }
+}
+
 bool adaptivePresetReferenceAvailable(const QString &id, const QSet<QString> &portablePresetIds)
 {
     if (id.isEmpty()) return false;
@@ -296,9 +351,42 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
             automations.append(ConfigStore::portableAutomationToJson(automation));
         }
     }
+    // Carry only the custom Adaptive Response presets that this export can
+    // actually reference. Built-ins travel by stable ID and are reconstructed
+    // locally, while unrelated user presets stay private to the source setup.
+    QSet<QString> requiredAdaptivePresetIds;
+    if (kind == PortableConfigurationKind::Pack) {
+        collectAdaptiveResponsePresetDependencies(configuration.adaptiveResponseGlobal,
+                                                   &requiredAdaptivePresetIds);
+    }
+    for (const ProfileCategory &category : configuration.profileCategories) {
+        if (selectedCategoryIds.contains(category.id)) {
+            collectAdaptiveResponsePresetDependencies(category.adaptiveResponse,
+                                                       &requiredAdaptivePresetIds);
+        }
+    }
+    for (const ControllerProfile &profile : configuration.profiles) {
+        if (resolvedProfileIds.contains(profile.id)) {
+            collectAdaptiveResponsePresetDependencies(profile.adaptiveResponse,
+                                                       &requiredAdaptivePresetIds);
+        }
+    }
+    if (includeAutomations) {
+        for (const AutomationDefinition &automation : configuration.automations) {
+            if (!automationReferencesAnyProfile(automation, resolvedProfileIds)) continue;
+            for (const AutomationActionDefinition &action : automation.actions) {
+                if (action.type == AutomationActionType::AdaptiveResponsePreset
+                    && !action.adaptiveResponsePresetId.trimmed().isEmpty()) {
+                    requiredAdaptivePresetIds.insert(action.adaptiveResponsePresetId);
+                }
+            }
+        }
+    }
     QJsonArray adaptiveResponsePresets;
     for (const AdaptiveResponsePreset &preset : configuration.adaptiveResponsePresets) {
-        adaptiveResponsePresets.append(ConfigStore::portableAdaptiveResponsePresetToJson(preset));
+        if (requiredAdaptivePresetIds.contains(preset.id)) {
+            adaptiveResponsePresets.append(ConfigStore::portableAdaptiveResponsePresetToJson(preset));
+        }
     }
 
     ProfileTriggerBindings profileTriggers;
@@ -685,19 +773,91 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     return true;
 }
 
-bool ProfilePortability::apply(MapperConfiguration *configuration, const PortableConfigurationBundle &bundle,
+bool ProfilePortability::apply(MapperConfiguration *configuration, const PortableConfigurationBundle &sourceBundle,
                                const PortableImportOptions &options, QStringList *warnings, QString *error)
 {
     if (!configuration) { setError(error, u"No live configuration was supplied"_qs); return false; }
+    // Resolve Adaptive Response preset content conflicts before any profile,
+    // category, global, or Automation reference is applied. This keeps the
+    // import atomic and never silently binds an imported rule to different
+    // local preset content that happens to share an ID.
+    PortableConfigurationBundle bundle = sourceBundle;
     MapperConfiguration candidate = *configuration;
     PortableCategoryConflictMode categoryMode = options.categoryConflictMode;
     if (!options.mergeCategories && categoryMode == PortableCategoryConflictMode::Merge) {
         categoryMode = PortableCategoryConflictMode::ImportAsNew;
     }
+    QHash<QString, QString> presetIdRemap;
+    QSet<QString> alreadyResolvedPresetIds;
+    for (AdaptiveResponsePreset &source : bundle.adaptiveResponsePresets) {
+        const AdaptiveResponsePreset *existing = findAdaptiveResponsePreset(candidate, source.id);
+        if (!existing) continue;
+        if (sameAdaptiveResponsePresetContent(*existing, source)) {
+            alreadyResolvedPresetIds.insert(source.id);
+            if (warnings) warnings->append(QString(u"Adaptive Response preset %1 matches local content and was reused"_qs)
+                .arg(source.name));
+            continue;
+        }
+        if (options.adaptiveResponsePresetConflictMode
+            == PortableAdaptiveResponsePresetConflictMode::KeepLocal) {
+            alreadyResolvedPresetIds.insert(source.id);
+            if (warnings) warnings->append(QString(u"Adaptive Response preset %1 kept local by explicit choice"_qs)
+                .arg(source.name));
+            continue;
+        }
+        if (options.adaptiveResponsePresetConflictMode
+            == PortableAdaptiveResponsePresetConflictMode::Replace) {
+            auto local = std::find_if(candidate.adaptiveResponsePresets.begin(),
+                candidate.adaptiveResponsePresets.end(), [&source](const AdaptiveResponsePreset &preset) {
+                    return preset.id == source.id;
+                });
+            if (local == candidate.adaptiveResponsePresets.end()) {
+                setError(error, u"Built-in Adaptive Response presets cannot be replaced by an import"_qs);
+                return false;
+            }
+            *local = source;
+            alreadyResolvedPresetIds.insert(source.id);
+            if (warnings) warnings->append(QString(u"Adaptive Response preset %1 was replaced by explicit choice"_qs)
+                .arg(source.name));
+            continue;
+        }
+        const QString importedId = uniqueImportedAdaptiveResponsePresetId(candidate, source.id);
+        if (importedId.isEmpty()) {
+            setError(error, u"A unique imported Adaptive Response preset ID could not be created"_qs);
+            return false;
+        }
+        presetIdRemap.insert(source.id, importedId);
+        source.id = importedId;
+        if (warnings) warnings->append(QString(u"Adaptive Response preset %1 had different local content and was imported as a copy"_qs)
+            .arg(source.name));
+    }
+    if (!presetIdRemap.isEmpty()) {
+        remapAdaptiveResponseLayer(&bundle.adaptiveResponseGlobal, presetIdRemap);
+        for (AdaptiveResponsePreset &preset : bundle.adaptiveResponsePresets) {
+            AdaptiveResponseLayer layer;
+            layer.axes = preset.axes;
+            remapAdaptiveResponseLayer(&layer, presetIdRemap);
+            preset.axes = layer.axes;
+        }
+        for (ProfileCategory &category : bundle.categories) {
+            remapAdaptiveResponseLayer(&category.adaptiveResponse, presetIdRemap);
+        }
+        for (ControllerProfile &profile : bundle.profiles) {
+            remapAdaptiveResponseLayer(&profile.adaptiveResponse, presetIdRemap);
+        }
+        for (AutomationDefinition &automation : bundle.automations) {
+            for (AutomationActionDefinition &action : automation.actions) {
+                if (action.type != AutomationActionType::AdaptiveResponsePreset) continue;
+                const auto found = presetIdRemap.constFind(action.adaptiveResponsePresetId);
+                if (found != presetIdRemap.cend()) action.adaptiveResponsePresetId = *found;
+            }
+        }
+    }
     // Presets are dependencies, not a hidden extra hierarchy. Keep an exact
     // local ID if present; otherwise import it before profiles/categories are
     // copied so every persistent reference remains resolvable.
     for (const AdaptiveResponsePreset &source : bundle.adaptiveResponsePresets) {
+        if (alreadyResolvedPresetIds.contains(source.id)) continue;
         if (findAdaptiveResponsePreset(candidate, source.id)) {
             if (warnings) warnings->append(QString(u"Adaptive Response preset %1 was kept local by ID"_qs)
                 .arg(source.name));

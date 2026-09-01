@@ -8,6 +8,8 @@ namespace {
 
 constexpr float kMinimumPredictionDeltaSeconds = 0.0005F;
 constexpr float kMaximumPredictionDeltaSeconds = 0.050F;
+constexpr float kMaximumEstimatedVelocity = 64.0F;
+constexpr float kMaximumEstimatedAcceleration = 4096.0F;
 
 bool hasProperty(const AdaptiveResponseAxisOverride &override, AdaptiveResponseProperty property)
 {
@@ -270,10 +272,12 @@ void AdaptiveResponseProcessor::reset()
 {
     m_initialized = false;
     m_lastPhysical = 0.0F;
+    m_estimatedPosition = 0.0F;
     m_velocity = 0.0F;
     m_acceleration = 0.0F;
-    m_lastVelocity = 0.0F;
     m_lastTimestamp = {};
+    m_reversalCount = 0;
+    m_safetyClampCount = 0;
 }
 
 AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
@@ -285,47 +289,91 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                                                       configuration.domainMaximum)
                                         : 0.0F;
     result.physical = physical;
-    result.estimated = physical; // Never estimate from predicted output.
     if (!configuration.enabled) {
         reset();
+        result.estimated = physical;
         result.predicted = physical;
         return result;
     }
     if (!m_initialized) {
         m_initialized = true;
         m_lastPhysical = physical;
+        m_estimatedPosition = physical;
         m_lastTimestamp = timestamp;
+        result.estimated = physical;
         result.predicted = physical;
         return result;
     }
     float dt = static_cast<float>(std::chrono::duration<double>(timestamp - m_lastTimestamp).count());
     dt = std::clamp(dt, kMinimumPredictionDeltaSeconds, kMaximumPredictionDeltaSeconds);
-    const float instantaneousVelocity = (physical - m_lastPhysical) / dt;
+    const float measuredDelta = physical - m_lastPhysical;
+    const float instantaneousVelocity = measuredDelta / dt;
+    const bool stationaryMeasurement = std::abs(measuredDelta) <= configuration.noiseRejection;
     const float priorVelocity = m_velocity;
     const bool directionalChange = instantaneousVelocity * priorVelocity < 0.0F;
     const bool reversal = directionalChange
         && std::abs(instantaneousVelocity) >= configuration.reversalDetection
         && std::abs(priorVelocity) >= configuration.reversalDetection * 0.50F;
 
-    const float velocityGain = configuration.model == AdaptiveResponseModel::Velocity ? 1.0F
-        : std::clamp(0.24F + configuration.velocityResponse * 0.68F, 0.18F, 0.92F);
+    // Keep small sensor noise out of the motion model, never out of the
+    // physical baseline. The direct positional path below remains untouched.
+    const float measurementVelocity = stationaryMeasurement
+        ? 0.0F : instantaneousVelocity;
     if (reversal) {
-        // Cancel stale directional lead immediately, then reacquire from the
-        // physical derivative in the new direction without a cooldown.
-        m_velocity = instantaneousVelocity * std::max(0.60F, configuration.reversalResponse);
+        // A reversal is a session-local state boundary for prediction. Keep
+        // the physical baseline direct and reacquire the new motion estimate
+        // without carrying stale velocity or acceleration across it.
+        m_estimatedPosition = physical;
+        m_velocity = measurementVelocity * std::max(0.60F, configuration.reversalResponse);
         m_acceleration = 0.0F;
         ++m_reversalCount;
+    } else if (configuration.model == AdaptiveResponseModel::Velocity) {
+        // Velocity mode deliberately remains a lightweight derivative
+        // predictor. Velocity Response controls its actual smoothing gain.
+        const float gain = std::clamp(0.06F + configuration.velocityResponse * 0.90F,
+                                      0.06F, 0.96F);
+        m_velocity += (measurementVelocity - m_velocity) * gain;
+        m_estimatedPosition = physical;
+        m_acceleration = 0.0F;
     } else {
-        m_velocity += (instantaneousVelocity - m_velocity) * velocityGain;
-        const float instantaneousAcceleration = (m_velocity - priorVelocity) / dt;
-        if (configuration.model == AdaptiveResponseModel::AlphaBetaGamma
-            || configuration.model == AdaptiveResponseModel::Auto) {
-            const float accelerationGain = std::clamp(0.16F + configuration.accelerationResponse * 0.70F,
-                                                       0.12F, 0.90F);
-            m_acceleration += (instantaneousAcceleration - m_acceleration) * accelerationGain;
+        // Proper Alpha-Beta / Alpha-Beta-Gamma estimators. Predict the state,
+        // form an innovation against this physical measurement, then correct
+        // x/v(/a). Auto keeps the ABG architecture and only adapts gains.
+        const bool usesAcceleration = configuration.model == AdaptiveResponseModel::AlphaBetaGamma
+            || configuration.model == AdaptiveResponseModel::Auto;
+        const float predictedPosition = m_estimatedPosition + m_velocity * dt
+            + (usesAcceleration ? 0.5F * m_acceleration * dt * dt : 0.0F);
+        const float predictedVelocity = m_velocity + (usesAcceleration ? m_acceleration * dt : 0.0F);
+        const float innovation = physical - predictedPosition;
+        const float motion = std::clamp(std::max(std::abs(predictedVelocity),
+                                                  std::abs(measurementVelocity))
+                                             / std::max(0.02F, configuration.motionSensitivity * 18.0F),
+                                         0.0F, 1.0F);
+        const float adaptation = configuration.model == AdaptiveResponseModel::Auto
+            ? 0.35F + motion * 0.65F : 1.0F;
+        const float alpha = std::clamp((0.12F + configuration.velocityResponse * 0.68F)
+                                           * adaptation, 0.08F, 0.92F);
+        const float beta = std::clamp((0.006F + configuration.velocityResponse * 0.095F)
+                                          * adaptation, 0.003F, 0.12F);
+        m_estimatedPosition = predictedPosition + alpha * innovation;
+        m_velocity = predictedVelocity + (beta / dt) * innovation;
+        if (usesAcceleration) {
+            const float gammaBase = 0.00025F + configuration.accelerationResponse * 0.0080F;
+            const float gamma = std::clamp(gammaBase * adaptation, 0.0001F, 0.010F);
+            m_acceleration += (2.0F * gamma / (dt * dt)) * innovation;
         } else {
             m_acceleration = 0.0F;
         }
+    }
+    m_velocity = std::clamp(m_velocity, -kMaximumEstimatedVelocity, kMaximumEstimatedVelocity);
+    m_acceleration = std::clamp(m_acceleration, -kMaximumEstimatedAcceleration,
+                                kMaximumEstimatedAcceleration);
+    // A repeated physical sample is an explicit stop. The estimator may keep
+    // its telemetry position, but no stale derivative is allowed to produce
+    // an offset from the direct physical baseline on that report.
+    if (stationaryMeasurement) {
+        m_velocity = 0.0F;
+        m_acceleration = 0.0F;
     }
     const float speed = std::abs(m_velocity);
     const bool decelerating = !reversal && (m_velocity * priorVelocity > 0.0F)
@@ -333,8 +381,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float microCutoff = std::max(configuration.noiseRejection, configuration.motionSensitivity * 0.50F);
     const float intensity = std::clamp((speed - microCutoff) / (configuration.motionSensitivity * 18.0F),
                                        0.0F, 1.0F);
+    const bool settling = !reversal && (decelerating || speed <= configuration.motionSensitivity);
     float confidence = intensity;
     if (decelerating) confidence *= 1.0F - configuration.decelerationResponse * 0.72F;
+    if (settling) {
+        const float settle = std::clamp(configuration.settlingResponse, 0.0F, 1.0F);
+        confidence *= 1.0F - settle * 0.80F;
+        m_velocity *= 1.0F - settle * 0.45F;
+        m_acceleration *= 1.0F - settle * 0.65F;
+    }
     if (reversal) confidence = std::max(confidence, 0.42F * configuration.reversalResponse);
     if (speed <= configuration.noiseRejection) {
         m_velocity = 0.0F;
@@ -343,6 +398,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     }
     float horizon = configuration.maximumHorizonSeconds * intensity * confidence;
     if (decelerating) horizon *= 1.0F - configuration.decelerationResponse * 0.65F;
+    if (settling) horizon *= 1.0F - configuration.settlingResponse * 0.88F;
     if (reversal) horizon *= std::max(0.55F, configuration.reversalResponse);
     float lead = m_velocity * horizon;
     if (configuration.model == AdaptiveResponseModel::AlphaBetaGamma
@@ -360,6 +416,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float bounded = std::clamp(predicted, configuration.domainMinimum, configuration.domainMaximum);
     result.safetyLimited = std::abs(unclampedLead - lead) > 0.00001F || bounded != predicted;
     if (result.safetyLimited) ++m_safetyClampCount;
+    result.estimated = m_estimatedPosition;
     result.predicted = bounded;
     result.velocity = m_velocity;
     result.acceleration = m_acceleration;
@@ -371,12 +428,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.state = reversal ? AdaptiveMotionState::Reversing
         : speed <= configuration.noiseRejection ? AdaptiveMotionState::Stable
         : intensity < 0.16F ? AdaptiveMotionState::Micro
-        : decelerating && intensity < 0.28F ? AdaptiveMotionState::Settling
+        : settling && intensity < 0.28F ? AdaptiveMotionState::Settling
         : decelerating ? AdaptiveMotionState::Decelerating
         : std::abs(m_acceleration) > speed * 2.5F ? AdaptiveMotionState::Accelerating
         : intensity > 0.74F ? AdaptiveMotionState::Fast : AdaptiveMotionState::Moving;
     m_lastPhysical = physical;
-    m_lastVelocity = m_velocity;
     m_lastTimestamp = timestamp;
     return result;
 }

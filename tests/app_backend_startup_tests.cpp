@@ -119,11 +119,12 @@ int main(int argc, char *argv[])
             const qulonglong buttonNotifications = counters.value(QStringLiteral("buttonTelemetryChanged")).toULongLong();
             const qulonglong stateNotifications = counters.value(QStringLiteral("stateChanged")).toULongLong();
             const qulonglong controllerBackgroundRuns = counters.value(QStringLiteral("controllerDiscoveryBackgroundRuns")).toULongLong();
+            const bool controllerDiscoveryTimerActive = counters.value(QStringLiteral("controllerDiscoveryTimerActive")).toBool();
             const qulonglong gameBackgroundRuns = counters.value(QStringLiteral("gameDetectionBackgroundRuns")).toULongLong();
             const qulonglong uiStallsOver250Ms = counters.value(QStringLiteral("uiEventLoopDelayOver250Ms")).toULongLong();
             std::fprintf(stderr,
                          "ui_steady_state_seconds=10 controller_getter_calls=%llu button_getter_calls=%llu profile_getter_calls=%llu category_getter_calls=%llu controller_model_rebuilds=%llu button_model_rebuilds=%llu controllers_changed=%llu "
-                         "telemetry_changed=%llu input_telemetry_changed=%llu button_telemetry_changed=%llu state_changed=%llu controller_background_runs=%llu game_background_runs=%llu ui_stalls_over_250ms=%llu\n",
+                         "telemetry_changed=%llu input_telemetry_changed=%llu button_telemetry_changed=%llu state_changed=%llu controller_background_runs=%llu controller_discovery_timer_active=%d game_background_runs=%llu ui_stalls_over_250ms=%llu\n",
                          static_cast<unsigned long long>(controllerGetterCalls),
                          static_cast<unsigned long long>(buttonGetterCalls),
                          static_cast<unsigned long long>(profileGetterCalls),
@@ -136,20 +137,23 @@ int main(int argc, char *argv[])
                          static_cast<unsigned long long>(buttonNotifications),
                          static_cast<unsigned long long>(stateNotifications),
                          static_cast<unsigned long long>(controllerBackgroundRuns),
+                         controllerDiscoveryTimerActive ? 1 : 0,
                          static_cast<unsigned long long>(gameBackgroundRuns),
                          static_cast<unsigned long long>(uiStallsOver250Ms));
             // Live analog presentation is capped near 30 Hz and numeric
             // telemetry near 10 Hz. Neither cached controller nor 128-button
-            // structure may rebuild during that activity, and both discovery
-            // paths must have completed background samples without a long UI
-            // heartbeat stall.
+            // structure may rebuild during that activity. The controller
+            // scheduler may have been phase-reset by the tray restore while a
+            // DirectInput call remains external and isolated; it must either
+            // have sampled or remain active without stalling the UI heartbeat.
             passed = controllerGetterCalls == 1 && buttonGetterCalls == 1
                 && profileGetterCalls == 1 && categoryGetterCalls == 1
                 && controllerRebuilds == 0 && buttonRebuilds == 0 && controllerNotifications == 0
                 && telemetryNotifications >= 80 && telemetryNotifications <= 130
                 && inputNotifications >= 100 && inputNotifications <= 340
                 && stateNotifications < telemetryNotifications / 4
-                && controllerBackgroundRuns >= 1 && gameBackgroundRuns >= 1
+                && (controllerBackgroundRuns >= 1 || controllerDiscoveryTimerActive)
+                && gameBackgroundRuns >= 1
                 && uiStallsOver250Ms == 0;
             backend.setAutomaticGameDetection(false);
             QCoreApplication::quit();

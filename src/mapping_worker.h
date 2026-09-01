@@ -44,6 +44,24 @@ struct AtomicRuntimeState {
     std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveSafetyLimited{};
     std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveReversalCount{};
     std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveSafetyClampCount{};
+    // The worker's already-flattened config is published alongside live
+    // telemetry. This lets presentation show the true Automation-adjusted
+    // runtime instead of re-resolving only persistent configuration.
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveRuntimeEnabled{};
+    std::array<std::atomic_int, kPhysicalAxisCount> adaptiveRuntimeModel{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMaximumHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMaximumLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeVelocityResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeAccelerationResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMotionSensitivity{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeNoiseRejection{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeReversalDetection{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeReversalResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeDecelerationResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeSettlingResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeEndpointTaper{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveAutomationOverlayActive{};
+    std::array<std::atomic_uint32_t, kPhysicalAxisCount> adaptiveAutomationOverlayProperties{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};

@@ -33,8 +33,10 @@ struct AdaptiveResponseTelemetry {
     bool safetyLimited = false;
 };
 
-// Runtime-only, allocation-free per-axis estimator state. Position is always
-// the measured normalized physical axis; only derivatives are estimated.
+// Runtime-only, allocation-free per-axis estimator state.  The Alpha-Beta
+// variants own their own state estimate, but their position is telemetry and
+// motion-estimation data only: the mapper always applies predictive lead to
+// the current measured physical position.
 class AdaptiveResponseProcessor final {
 public:
     void reset();
@@ -47,9 +49,9 @@ public:
 private:
     bool m_initialized = false;
     float m_lastPhysical = 0.0F;
+    float m_estimatedPosition = 0.0F;
     float m_velocity = 0.0F;
     float m_acceleration = 0.0F;
-    float m_lastVelocity = 0.0F;
     std::chrono::steady_clock::time_point m_lastTimestamp{};
     std::uint64_t m_reversalCount = 0;
     std::uint64_t m_safetyClampCount = 0;

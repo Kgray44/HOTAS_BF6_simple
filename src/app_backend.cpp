@@ -356,6 +356,7 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
 {
+    m_adaptiveResponseHistoryClock.start();
     QSettings settings;
     m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
     if (m_readiness.hasPendingRecovery()) {
@@ -901,6 +902,29 @@ QVariantMap adaptiveSettingsMap(const RuntimeAdaptiveResponseConfig &runtime)
             {u"endpointTaper"_qs, runtime.endpointTaper}};
 }
 
+QVariantMap adaptiveRuntimeSettingsMap(const AtomicRuntimeState &runtime, int axis,
+                                       const RuntimeAdaptiveResponseConfig &fallback)
+{
+    const size_t index = static_cast<size_t>(axis);
+    const bool published = runtime.physicalConnected.load()
+        && runtime.adaptiveRuntimeMaximumHorizonSeconds[index].load() > 0.0F;
+    if (!published) return adaptiveSettingsMap(fallback);
+    return {{u"enabled"_qs, runtime.adaptiveRuntimeEnabled[index].load()},
+            {u"model"_qs, adaptiveResponseModelKey(static_cast<AdaptiveResponseModel>(
+                runtime.adaptiveRuntimeModel[index].load()))},
+            {u"maximumHorizonMs"_qs, runtime.adaptiveRuntimeMaximumHorizonSeconds[index].load() * 1000.0F},
+            {u"maximumLead"_qs, runtime.adaptiveRuntimeMaximumLead[index].load()},
+            {u"velocityResponse"_qs, runtime.adaptiveRuntimeVelocityResponse[index].load()},
+            {u"accelerationResponse"_qs, runtime.adaptiveRuntimeAccelerationResponse[index].load()},
+            {u"motionSensitivity"_qs, runtime.adaptiveRuntimeMotionSensitivity[index].load()},
+            {u"noiseRejection"_qs, runtime.adaptiveRuntimeNoiseRejection[index].load()},
+            {u"reversalDetection"_qs, runtime.adaptiveRuntimeReversalDetection[index].load()},
+            {u"reversalResponse"_qs, runtime.adaptiveRuntimeReversalResponse[index].load()},
+            {u"decelerationResponse"_qs, runtime.adaptiveRuntimeDecelerationResponse[index].load()},
+            {u"settlingResponse"_qs, runtime.adaptiveRuntimeSettlingResponse[index].load()},
+            {u"endpointTaper"_qs, runtime.adaptiveRuntimeEndpointTaper[index].load()}};
+}
+
 QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const QString &fallback)
 {
     if (override.properties != 0) return override.presetId.isEmpty() ? u"Custom"_qs
@@ -910,6 +934,59 @@ QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const 
 
 } // namespace
 
+RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext(
+    const QString &scope, const QString &targetId, int physicalAxis,
+    AdaptiveResponseAxisOverride *contextOverride, QString *source) const
+{
+    const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
+    const QString normalized = scope.trimmed().toCaseFolded();
+    MapperConfiguration contextConfiguration = m_configuration;
+    ControllerProfile contextProfile = currentProfile();
+    AdaptiveResponseAxisOverride selected;
+    QString label;
+
+    if (normalized == u"global"_qs) {
+        // Resolve only the global layer. A copied profile preserves the axis
+        // domain while removing any downstream Category/Profile overrides.
+        contextConfiguration.profileCategories.clear();
+        contextProfile.categoryId.clear();
+        contextProfile.adaptiveResponse = {};
+        selected = contextConfiguration.adaptiveResponseGlobal.axes[static_cast<size_t>(axis)];
+        label = adaptiveSourceLabel(selected, u"Application default"_qs);
+    } else if (normalized == u"category"_qs) {
+        const ProfileCategory *category = findProfileCategory(contextConfiguration, targetId.trimmed());
+        if (!category) return {};
+        contextProfile.categoryId = category->id;
+        contextProfile.adaptiveResponse = {};
+        selected = category->adaptiveResponse.axes[static_cast<size_t>(axis)];
+        label = adaptiveSourceLabel(selected, u"Inherited"_qs);
+    } else if (normalized == u"preset"_qs) {
+        const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(contextConfiguration,
+                                                                            targetId.trimmed());
+        if (!preset) return {};
+        // A preset is an independently editable all-property template; it is
+        // intentionally previewed without any currently selected profile
+        // override layered on top of it.
+        contextConfiguration.profileCategories.clear();
+        contextConfiguration.adaptiveResponseGlobal = {};
+        contextConfiguration.adaptiveResponseGlobal.axes[static_cast<size_t>(axis)] =
+            preset->axes[static_cast<size_t>(axis)];
+        contextProfile.categoryId.clear();
+        contextProfile.adaptiveResponse = {};
+        selected = preset->axes[static_cast<size_t>(axis)];
+        label = u"Response Preset"_qs;
+    } else {
+        const ControllerProfile *profile = findProfile(contextConfiguration, targetId.trimmed());
+        if (!profile) return {};
+        contextProfile = *profile;
+        selected = contextProfile.adaptiveResponse.axes[static_cast<size_t>(axis)];
+        label = adaptiveSourceLabel(selected, u"Inherited"_qs);
+    }
+    if (contextOverride) *contextOverride = selected;
+    if (source) *source = label;
+    return resolveAdaptiveResponseConfiguration(contextConfiguration, contextProfile, axis);
+}
+
 QVariantMap AppBackend::adaptiveResponseState() const
 {
     const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
@@ -917,13 +994,21 @@ QVariantMap AppBackend::adaptiveResponseState() const
     const ProfileCategory *category = findProfileCategory(m_configuration, profile.categoryId);
     const RuntimeAdaptiveResponseConfig effective =
         resolveAdaptiveResponseConfiguration(m_configuration, profile, axis);
+    const AtomicRuntimeState &runtime = m_worker.runtime();
     const AdaptiveResponseAxisOverride &global = m_configuration.adaptiveResponseGlobal.axes[axis];
     const AdaptiveResponseAxisOverride categoryEntry = category ? category->adaptiveResponse.axes[axis]
                                                                 : AdaptiveResponseAxisOverride{};
     const AdaptiveResponseAxisOverride &profileEntry = profile.adaptiveResponse.axes[axis];
     return {{u"axis"_qs, axis}, {u"axisLabel"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
-            {u"profile"_qs, profile.name}, {u"category"_qs, category ? category->name : u"General"_qs},
+            {u"profileId"_qs, profile.id}, {u"profile"_qs, profile.name},
+            {u"categoryId"_qs, category ? category->id : QString{}},
+            {u"category"_qs, category ? category->name : u"General"_qs},
             {u"effective"_qs, adaptiveSettingsMap(effective)},
+            {u"runtimeEffective"_qs, adaptiveRuntimeSettingsMap(runtime, axis, effective)},
+            {u"automation"_qs, QVariantMap{
+                {u"active"_qs, runtime.adaptiveAutomationOverlayActive[static_cast<size_t>(axis)].load()},
+                {u"properties"_qs, static_cast<qulonglong>(runtime.adaptiveAutomationOverlayProperties[
+                    static_cast<size_t>(axis)].load())}}},
             {u"global"_qs, QVariantMap{{u"presetId"_qs, global.presetId},
                 {u"source"_qs, adaptiveSourceLabel(global, u"Application default"_qs)},
                 {u"properties"_qs, static_cast<int>(global.properties)}}},
@@ -953,46 +1038,119 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
 {
     const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
     const AtomicRuntimeState &runtime = m_worker.runtime();
-    const RuntimeAdaptiveResponseConfig effective =
+    const RuntimeAdaptiveResponseConfig persistent =
         resolveAdaptiveResponseConfiguration(m_configuration, currentProfile(), axis);
     const auto load = [&runtime, axis](const auto &values) { return values[static_cast<size_t>(axis)].load(); };
+    const bool runtimePublished = runtime.physicalConnected.load()
+        && load(runtime.adaptiveRuntimeMaximumHorizonSeconds) > 0.0F;
+    const float maximumHorizonSeconds = runtimePublished ? load(runtime.adaptiveRuntimeMaximumHorizonSeconds)
+                                                        : persistent.maximumHorizonSeconds;
+    const float maximumLead = runtimePublished ? load(runtime.adaptiveRuntimeMaximumLead)
+                                                : persistent.maximumLead;
+    const AdaptiveResponseModel model = runtimePublished
+        ? static_cast<AdaptiveResponseModel>(load(runtime.adaptiveRuntimeModel)) : persistent.model;
     return {{u"physical"_qs, load(runtime.normalized)}, {u"estimated"_qs, load(runtime.adaptiveEstimated)},
             {u"predicted"_qs, load(runtime.adaptivePredicted)}, {u"virtualOutput"_qs, load(runtime.virtualValues)},
             {u"velocity"_qs, load(runtime.adaptiveVelocity)}, {u"acceleration"_qs, load(runtime.adaptiveAcceleration)},
             {u"activeHorizonMs"_qs, load(runtime.adaptiveHorizonSeconds) * 1000.0F},
-            {u"maximumHorizonMs"_qs, effective.maximumHorizonSeconds * 1000.0F},
-            {u"lead"_qs, load(runtime.adaptiveLead)}, {u"maximumLead"_qs, effective.maximumLead},
+            {u"maximumHorizonMs"_qs, maximumHorizonSeconds * 1000.0F},
+            {u"lead"_qs, load(runtime.adaptiveLead)}, {u"maximumLead"_qs, maximumLead},
             {u"confidence"_qs, load(runtime.adaptiveConfidence)},
             {u"motionIntensity"_qs, load(runtime.adaptiveMotionIntensity)},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(load(runtime.adaptiveMotionState)))},
-            {u"model"_qs, adaptiveResponseModelKey(effective.model)},
+            {u"model"_qs, adaptiveResponseModelKey(model)},
+            {u"enabled"_qs, runtimePublished ? load(runtime.adaptiveRuntimeEnabled) : persistent.enabled},
+            {u"automationOverlayActive"_qs, load(runtime.adaptiveAutomationOverlayActive)},
+            {u"automationOverlayProperties"_qs, QVariant::fromValue(load(runtime.adaptiveAutomationOverlayProperties))},
             {u"reversing"_qs, load(runtime.adaptiveReversing)}, {u"safetyLimited"_qs, load(runtime.adaptiveSafetyLimited)},
             {u"reversalCount"_qs, QVariant::fromValue(load(runtime.adaptiveReversalCount))},
             {u"safetyClampCount"_qs, QVariant::fromValue(load(runtime.adaptiveSafetyClampCount))}};
 }
 
-AdaptiveResponseLayer *AppBackend::adaptiveResponseLayer(const QString &scope)
+QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
+{
+    const int windowSeconds = std::clamp(seconds, 2, 30);
+    const qint64 newestMs = m_adaptiveResponseHistoryCount > 0
+        ? m_adaptiveResponseHistory[(m_adaptiveResponseHistoryNext + static_cast<int>(m_adaptiveResponseHistory.size()) - 1)
+                                      % static_cast<int>(m_adaptiveResponseHistory.size())].elapsedMs
+        : 0;
+    const qint64 minimumMs = newestMs - static_cast<qint64>(windowSeconds) * 1000;
+    const int selectedAxis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
+    QVariantList result;
+    result.reserve(m_adaptiveResponseHistoryCount);
+    const int capacity = static_cast<int>(m_adaptiveResponseHistory.size());
+    const int first = (m_adaptiveResponseHistoryNext - m_adaptiveResponseHistoryCount + capacity) % capacity;
+    for (int offset = 0; offset < m_adaptiveResponseHistoryCount; ++offset) {
+        const AdaptiveResponseHistorySample &sample = m_adaptiveResponseHistory[(first + offset) % capacity];
+        if (sample.axis != selectedAxis || sample.elapsedMs < minimumMs) continue;
+        result.append(QVariantMap{{u"timeMs"_qs, sample.elapsedMs - newestMs},
+                                  {u"physical"_qs, sample.physical},
+                                  {u"estimated"_qs, sample.estimated},
+                                  {u"predicted"_qs, sample.predicted},
+                                  {u"virtualOutput"_qs, sample.virtualOutput},
+                                  {u"lead"_qs, sample.lead},
+                                  {u"confidence"_qs, sample.confidence}});
+    }
+    return result;
+}
+
+QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
+                                                     int physicalAxis) const
+{
+    AdaptiveResponseAxisOverride contextOverride;
+    QString source;
+    const RuntimeAdaptiveResponseConfig effective = adaptiveResponseConfigurationAtContext(
+        scope, targetId, physicalAxis, &contextOverride, &source);
+    if (!validAxis(physicalAxis)) return {};
+    const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
+    return {{u"axis"_qs, axis},
+            {u"axisLabel"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
+            {u"effective"_qs, adaptiveSettingsMap(effective)},
+            // Context editing must never claim that a selected inactive target
+            // is the live mapper configuration. This is the resolved state for
+            // the target that is being edited, not a worker publication.
+            {u"runtimeEffective"_qs, adaptiveSettingsMap(effective)},
+            {u"source"_qs, source},
+            {u"presetId"_qs, contextOverride.presetId},
+            {u"properties"_qs, static_cast<qulonglong>(contextOverride.properties)}};
+}
+
+AdaptiveResponseLayer *AppBackend::adaptiveResponseLayer(const QString &scope, const QString &targetId)
 {
     const QString normalized = scope.trimmed().toCaseFolded();
     if (normalized == u"global"_qs) return &m_configuration.adaptiveResponseGlobal;
     if (normalized == u"category"_qs) {
-        if (ProfileCategory *category = findProfileCategory(m_configuration, currentProfile().categoryId)) {
+        const QString categoryId = targetId.trimmed().isEmpty() ? currentProfile().categoryId
+                                                                : targetId.trimmed();
+        if (ProfileCategory *category = findProfileCategory(m_configuration, categoryId)) {
             return &category->adaptiveResponse;
         }
     }
-    if (normalized == u"profile"_qs) return &currentProfile().adaptiveResponse;
+    if (normalized == u"profile"_qs) {
+        const QString profileId = targetId.trimmed().isEmpty() ? currentProfile().id : targetId.trimmed();
+        if (ControllerProfile *profile = findProfile(m_configuration, profileId)) {
+            return &profile->adaptiveResponse;
+        }
+    }
     return nullptr;
 }
 
-const AdaptiveResponseLayer *AppBackend::adaptiveResponseLayer(const QString &scope) const
+const AdaptiveResponseLayer *AppBackend::adaptiveResponseLayer(const QString &scope,
+                                                               const QString &targetId) const
 {
-    return const_cast<AppBackend *>(this)->adaptiveResponseLayer(scope);
+    return const_cast<AppBackend *>(this)->adaptiveResponseLayer(scope, targetId);
 }
 
 bool AppBackend::setAdaptiveResponsePreset(const QString &scope, int physicalAxis,
                                            const QString &presetId)
 {
-    AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope);
+    return setAdaptiveResponsePresetAtContext(scope, {}, physicalAxis, presetId);
+}
+
+bool AppBackend::setAdaptiveResponsePresetAtContext(const QString &scope, const QString &targetId,
+                                                    int physicalAxis, const QString &presetId)
+{
+    AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope, targetId);
     if (!layer || !validAxis(physicalAxis) || !findAdaptiveResponsePreset(m_configuration, presetId)) return false;
     AdaptiveResponseAxisOverride &override = layer->axes[static_cast<size_t>(physicalAxis)];
     override = {};
@@ -1004,10 +1162,29 @@ bool AppBackend::setAdaptiveResponsePreset(const QString &scope, int physicalAxi
 bool AppBackend::setAdaptiveResponseProperty(const QString &scope, int physicalAxis,
                                              const QString &property, const QVariant &value, bool inherit)
 {
-    AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope);
+    return setAdaptiveResponsePropertyAtContext(scope, {}, physicalAxis, property, value, inherit);
+}
+
+bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, const QString &targetId,
+                                                      int physicalAxis, const QString &property,
+                                                      const QVariant &value, bool inherit)
+{
     const std::uint32_t bit = adaptivePropertyForKey(property);
-    if (!layer || !validAxis(physicalAxis) || bit == 0) return false;
-    AdaptiveResponseAxisOverride &override = layer->axes[static_cast<size_t>(physicalAxis)];
+    if (!validAxis(physicalAxis) || bit == 0) return false;
+    AdaptiveResponseAxisOverride *entry = nullptr;
+    if (scope.trimmed().compare(u"preset"_qs, Qt::CaseInsensitive) == 0) {
+        const auto preset = std::find_if(m_configuration.adaptiveResponsePresets.begin(),
+            m_configuration.adaptiveResponsePresets.end(), [&targetId](const AdaptiveResponsePreset &item) {
+                return item.id == targetId;
+            });
+        if (preset == m_configuration.adaptiveResponsePresets.end()) return false;
+        entry = &preset->axes[static_cast<size_t>(physicalAxis)];
+    } else {
+        AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope, targetId);
+        if (!layer) return false;
+        entry = &layer->axes[static_cast<size_t>(physicalAxis)];
+    }
+    AdaptiveResponseAxisOverride &override = *entry;
     if (inherit) {
         override.properties &= ~bit;
         persistAndApply();
@@ -1036,9 +1213,25 @@ bool AppBackend::setAdaptiveResponseProperty(const QString &scope, int physicalA
 
 bool AppBackend::resetAdaptiveResponseAxis(const QString &scope, int physicalAxis)
 {
-    AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope);
-    if (!layer || !validAxis(physicalAxis)) return false;
-    layer->axes[static_cast<size_t>(physicalAxis)] = {};
+    return resetAdaptiveResponseAxisAtContext(scope, {}, physicalAxis);
+}
+
+bool AppBackend::resetAdaptiveResponseAxisAtContext(const QString &scope, const QString &targetId,
+                                                    int physicalAxis)
+{
+    if (!validAxis(physicalAxis)) return false;
+    if (scope.trimmed().compare(u"preset"_qs, Qt::CaseInsensitive) == 0) {
+        const auto preset = std::find_if(m_configuration.adaptiveResponsePresets.begin(),
+            m_configuration.adaptiveResponsePresets.end(), [&targetId](const AdaptiveResponsePreset &item) {
+                return item.id == targetId;
+            });
+        if (preset == m_configuration.adaptiveResponsePresets.end()) return false;
+        preset->axes[static_cast<size_t>(physicalAxis)] = {};
+    } else {
+        AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope, targetId);
+        if (!layer) return false;
+        layer->axes[static_cast<size_t>(physicalAxis)] = {};
+    }
     persistAndApply();
     return true;
 }
@@ -1072,6 +1265,9 @@ bool AppBackend::duplicateAdaptiveResponsePreset(const QString &presetId, const 
     const AdaptiveResponsePreset *source = findAdaptiveResponsePreset(m_configuration, presetId);
     const QString trimmed = name.trimmed();
     if (!source || trimmed.isEmpty() || trimmed.size() > 64 || m_configuration.adaptiveResponsePresets.size() >= 64) return false;
+    for (const AdaptiveResponsePreset &builtIn : builtInAdaptiveResponsePresets()) {
+        if (builtIn.name.compare(trimmed, Qt::CaseInsensitive) == 0) return false;
+    }
     if (std::any_of(m_configuration.adaptiveResponsePresets.cbegin(), m_configuration.adaptiveResponsePresets.cend(),
                     [&trimmed](const auto &preset) { return preset.name.compare(trimmed, Qt::CaseInsensitive) == 0; })) return false;
     AdaptiveResponsePreset copy = *source;
@@ -1087,6 +1283,9 @@ bool AppBackend::renameAdaptiveResponsePreset(const QString &presetId, const QSt
 {
     const QString trimmed = name.trimmed();
     if (trimmed.isEmpty() || trimmed.size() > 64) return false;
+    for (const AdaptiveResponsePreset &builtIn : builtInAdaptiveResponsePresets()) {
+        if (builtIn.name.compare(trimmed, Qt::CaseInsensitive) == 0) return false;
+    }
     for (AdaptiveResponsePreset &preset : m_configuration.adaptiveResponsePresets) {
         if (preset.id != presetId) continue;
         if (std::any_of(m_configuration.adaptiveResponsePresets.cbegin(), m_configuration.adaptiveResponsePresets.cend(),
@@ -1098,22 +1297,49 @@ bool AppBackend::renameAdaptiveResponsePreset(const QString &presetId, const QSt
     return false;
 }
 
+QVariantList AppBackend::adaptiveResponsePresetDependencies(const QString &presetId) const
+{
+    QVariantList result;
+    const QString sought = presetId.trimmed();
+    if (sought.isEmpty()) return result;
+    const auto appendLayer = [&result, &sought](const AdaptiveResponseLayer &layer,
+                                                 const QString &owner) {
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            if (layer.axes[static_cast<size_t>(axis)].presetId == sought) {
+                result.append(QString(u"%1 / %2"_qs).arg(owner,
+                    physicalAxisLabel(static_cast<PhysicalAxis>(axis))));
+            }
+        }
+    };
+    appendLayer(m_configuration.adaptiveResponseGlobal, u"Global Defaults"_qs);
+    for (const ProfileCategory &category : m_configuration.profileCategories) {
+        appendLayer(category.adaptiveResponse, u"Category: "_qs + category.name);
+    }
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        appendLayer(profile.adaptiveResponse, u"Profile: "_qs + profile.name);
+    }
+    for (const AutomationDefinition &automation : m_configuration.automations) {
+        for (const AutomationActionDefinition &action : automation.actions) {
+            if (action.type == AutomationActionType::AdaptiveResponsePreset
+                && action.adaptiveResponsePresetId == sought) {
+                result.append(u"Automation: "_qs + automation.name);
+                break;
+            }
+        }
+    }
+    return result;
+}
+
 bool AppBackend::deleteAdaptiveResponsePreset(const QString &presetId)
 {
     const auto found = std::find_if(m_configuration.adaptiveResponsePresets.begin(),
                                     m_configuration.adaptiveResponsePresets.end(),
                                     [&presetId](const auto &preset) { return preset.id == presetId; });
     if (found == m_configuration.adaptiveResponsePresets.end()) return false;
-    // Remove references rather than keeping a broken dependency. The next
-    // lower persistent layer becomes effective deterministically.
-    const auto clearReferences = [&presetId](AdaptiveResponseLayer &layer) {
-        for (AdaptiveResponseAxisOverride &axis : layer.axes) {
-            if (axis.presetId == presetId) axis.presetId.clear();
-        }
-    };
-    clearReferences(m_configuration.adaptiveResponseGlobal);
-    for (ProfileCategory &category : m_configuration.profileCategories) clearReferences(category.adaptiveResponse);
-    for (ControllerProfile &profile : m_configuration.profiles) clearReferences(profile.adaptiveResponse);
+    // Deletion is intentionally blocked rather than silently clearing a
+    // profile/category/Automation reference. The UI can list every owner via
+    // adaptiveResponsePresetDependencies() and ask the user to remap it.
+    if (!adaptiveResponsePresetDependencies(presetId).isEmpty()) return false;
     m_configuration.adaptiveResponsePresets.erase(found);
     persistAndApply();
     return true;
@@ -1121,12 +1347,21 @@ bool AppBackend::deleteAdaptiveResponsePreset(const QString &presetId)
 
 QVariantList AppBackend::adaptiveResponsePreview(const QString &scenario) const
 {
-    const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
+    return adaptiveResponsePreviewAtContext(scenario, u"profile"_qs, currentProfile().id,
+                                            m_configuration.selectedAxisIndex);
+}
+
+QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenario,
+                                                          const QString &scope,
+                                                          const QString &targetId,
+                                                          int physicalAxis) const
+{
+    const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
     const RuntimeAxisMapping &mapping = m_worker.runtimeProfileCache()->profiles[
         static_cast<size_t>(std::clamp(m_worker.runtime().effectiveProfileIndex.load(), 0,
             static_cast<int>(m_worker.runtimeProfileCache()->profiles.size()) - 1))].axes[static_cast<size_t>(axis)];
     const RuntimeAdaptiveResponseConfig runtime =
-        resolveAdaptiveResponseConfiguration(m_configuration, currentProfile(), axis);
+        adaptiveResponseConfigurationAtContext(scope, targetId, axis);
     constexpr int samples = 160;
     std::vector<float> physical;
     physical.reserve(samples);
@@ -1138,6 +1373,15 @@ QVariantList AppBackend::adaptiveResponsePreview(const QString &scenario) const
         float value = minimum + span * t;
         if (mode == u"rapid reversal"_qs) value = t < 0.46F ? minimum + span * (t / 0.46F)
             : runtime.domainMaximum - span * ((t - 0.46F) / 0.54F);
+        else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
+            ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
+            : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));
+        else if (mode == u"negative-side reversal"_qs) value = t < 0.46F
+            ? minimum + span * (0.50F - 0.44F * (t / 0.46F))
+            : minimum + span * (0.06F + 0.36F * ((t - 0.46F) / 0.54F));
+        else if (mode == u"center-crossing reversal"_qs) value = t < 0.42F
+            ? minimum + span * (0.18F + 0.64F * (t / 0.42F))
+            : minimum + span * (0.82F - 0.64F * ((t - 0.42F) / 0.58F));
         else if (mode == u"micro adjustments"_qs) value = minimum + span * 0.5F
             + span * ((index % 16 < 8 ? 1.0F : -1.0F) * 0.018F);
         else if (mode == u"sudden stop"_qs) value = t < 0.48F ? minimum + span * (t / 0.48F)
@@ -1160,6 +1404,84 @@ QVariantList AppBackend::adaptiveResponsePreview(const QString &scenario) const
             {u"state"_qs, adaptiveMotionStateLabel(sample.telemetry.state)}});
     }
     return result;
+}
+
+QVariantMap AppBackend::adaptiveResponseTestLab(const QString &scenario) const
+{
+    return adaptiveResponseTestLabAtContext(scenario, u"profile"_qs, currentProfile().id,
+                                            m_configuration.selectedAxisIndex);
+}
+
+QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario,
+                                                         const QString &scope,
+                                                         const QString &targetId,
+                                                         int physicalAxis) const
+{
+    // This control-plane simulation intentionally builds no mapper state. It
+    // reuses the preview's production estimator samples, then derives compact
+    // scenario metrics for inspection before a user maps a live controller.
+    const QVariantList samples = adaptiveResponsePreviewAtContext(scenario, scope, targetId,
+                                                                    physicalAxis);
+    float peakLead = 0.0F;
+    float peakError = 0.0F;
+    float peakOvershoot = 0.0F;
+    double reversalDetectedMs = -1.0;
+    double settledMs = -1.0;
+    double staleLeadCancellationMs = -1.0;
+    double oppositeDirectionReacquisitionMs = -1.0;
+    bool sawMotion = false;
+    bool havePreviousPhysical = false;
+    float previousPhysical = 0.0F;
+    float previousLead = 0.0F;
+    int previousDirection = 0;
+    int reversalDirection = 0;
+    int staleLeadDirection = 0;
+    double reversalStartMs = -1.0;
+    for (const QVariant &value : samples) {
+        const QVariantMap sample = value.toMap();
+        const float physical = static_cast<float>(sample.value(u"physical"_qs).toDouble());
+        const float predicted = static_cast<float>(sample.value(u"predicted"_qs).toDouble());
+        const float lead = static_cast<float>(sample.value(u"lead"_qs).toDouble());
+        const double timeMs = sample.value(u"time"_qs).toDouble() * 1000.0;
+        peakLead = std::max(peakLead, std::abs(lead));
+        peakError = std::max(peakError, std::abs(predicted - physical));
+        peakOvershoot = std::max(peakOvershoot, std::max(0.0F, std::abs(predicted) - 1.0F));
+        if (std::abs(lead) > 0.0001F) sawMotion = true;
+        if (reversalDetectedMs < 0.0 && sample.value(u"state"_qs).toString() == u"Reversing"_qs) {
+            reversalDetectedMs = timeMs;
+        }
+        if (sawMotion && settledMs < 0.0 && sample.value(u"state"_qs).toString() == u"Stable"_qs) {
+            settledMs = timeMs;
+        }
+        const float movement = physical - previousPhysical;
+        const int direction = movement > 0.0002F ? 1 : movement < -0.0002F ? -1 : 0;
+        if (havePreviousPhysical && reversalStartMs < 0.0 && direction != 0
+            && previousDirection != 0 && direction != previousDirection) {
+            reversalStartMs = timeMs;
+            reversalDirection = direction;
+            staleLeadDirection = previousLead > 0.0001F ? 1 : previousLead < -0.0001F ? -1 : 0;
+        }
+        if (reversalStartMs >= 0.0) {
+            const int leadDirection = lead > 0.0001F ? 1 : lead < -0.0001F ? -1 : 0;
+            if (staleLeadCancellationMs < 0.0
+                && (staleLeadDirection == 0 || leadDirection != staleLeadDirection)) {
+                staleLeadCancellationMs = timeMs - reversalStartMs;
+            }
+            if (oppositeDirectionReacquisitionMs < 0.0 && reversalDirection != 0
+                && leadDirection == reversalDirection) {
+                oppositeDirectionReacquisitionMs = timeMs - reversalStartMs;
+            }
+        }
+        if (direction != 0) previousDirection = direction;
+        previousPhysical = physical;
+        previousLead = lead;
+        havePreviousPhysical = true;
+    }
+    return {{u"sampleCount"_qs, samples.size()}, {u"peakLead"_qs, peakLead},
+            {u"peakPredictionError"_qs, peakError}, {u"peakOvershoot"_qs, peakOvershoot},
+            {u"reversalDetectionMs"_qs, reversalDetectedMs}, {u"settlingTimeMs"_qs, settledMs},
+            {u"staleLeadCancellationMs"_qs, staleLeadCancellationMs},
+            {u"oppositeDirectionReacquisitionMs"_qs, oppositeDirectionReacquisitionMs}};
 }
 
 QVariantList AppBackend::buttons() const
@@ -3630,7 +3952,8 @@ bool AppBackend::loadPortableImportPreview(const QString &fileName)
 
 bool AppBackend::applyPortableImport(const QString &destinationCategoryId, bool replaceMatchingProfiles,
                                      const QString &categoryConflictMode,
-                                     bool applyImportedCalibration)
+                                     bool applyImportedCalibration,
+                                     const QString &adaptivePresetConflictMode)
 {
     if (!m_pendingPortableImport) return false;
     PortableImportOptions options;
@@ -3643,6 +3966,21 @@ bool AppBackend::applyPortableImport(const QString &destinationCategoryId, bool 
         options.categoryConflictMode = PortableCategoryConflictMode::Replace;
     } else if (mode != u"merge"_qs) {
         m_portableImportStatus = u"Choose Merge, Import as New, or Replace for existing Categories"_qs;
+        emit stateChanged();
+        return false;
+    }
+    const QString presetMode = adaptivePresetConflictMode.trimmed().toCaseFolded();
+    if (presetMode == u"keep"_qs || presetMode == u"keep-local"_qs) {
+        options.adaptiveResponsePresetConflictMode =
+            PortableAdaptiveResponsePresetConflictMode::KeepLocal;
+    } else if (presetMode == u"replace"_qs) {
+        options.adaptiveResponsePresetConflictMode =
+            PortableAdaptiveResponsePresetConflictMode::Replace;
+    } else if (presetMode == u"copy"_qs || presetMode == u"import-as-copy"_qs) {
+        options.adaptiveResponsePresetConflictMode =
+            PortableAdaptiveResponsePresetConflictMode::ImportAsCopy;
+    } else {
+        m_portableImportStatus = u"Choose Keep Local, Import as Copy, or Replace for conflicting Response Presets"_qs;
         emit stateChanged();
         return false;
     }
@@ -5573,6 +5911,7 @@ void AppBackend::refreshUiSnapshot()
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
+    sampleAdaptiveResponseHistory();
     processInputLearning();
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
@@ -5602,6 +5941,27 @@ void AppBackend::refreshUiSnapshot()
     // Analog and POV presentation is useful at 30 Hz; this broad property no
     // longer wakes QML at the former 62.5 Hz snapshot rate.
     emit inputTelemetryChanged();
+}
+
+void AppBackend::sampleAdaptiveResponseHistory()
+{
+    const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
+    const size_t index = static_cast<size_t>(axis);
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    AdaptiveResponseHistorySample &sample = m_adaptiveResponseHistory[
+        static_cast<size_t>(m_adaptiveResponseHistoryNext)];
+    sample.elapsedMs = m_adaptiveResponseHistoryClock.elapsed();
+    sample.axis = axis;
+    sample.physical = runtime.normalized[index].load();
+    sample.estimated = runtime.adaptiveEstimated[index].load();
+    sample.predicted = runtime.adaptivePredicted[index].load();
+    sample.virtualOutput = runtime.virtualValues[index].load();
+    sample.lead = runtime.adaptiveLead[index].load();
+    sample.confidence = runtime.adaptiveConfidence[index].load();
+    m_adaptiveResponseHistoryNext = (m_adaptiveResponseHistoryNext + 1)
+        % static_cast<int>(m_adaptiveResponseHistory.size());
+    m_adaptiveResponseHistoryCount = std::min(m_adaptiveResponseHistoryCount + 1,
+        static_cast<int>(m_adaptiveResponseHistory.size()));
 }
 
 void AppBackend::refreshNumericTelemetry()
@@ -5664,6 +6024,7 @@ QVariantMap AppBackend::uiPerformanceCounters() const
             {u"buttonTelemetryChanged"_qs, QVariant::fromValue(m_buttonTelemetryChangedNotifications)},
             {u"controllersChanged"_qs, QVariant::fromValue(m_controllersChangedNotifications)},
             {u"controllerDiscoveryBackgroundRuns"_qs, QVariant::fromValue(m_controllerDiscoveryBackgroundRuns)},
+            {u"controllerDiscoveryTimerActive"_qs, m_controllerDiscoveryTimer.isActive()},
             {u"gameDetectionBackgroundRuns"_qs, QVariant::fromValue(m_gameDetectionBackgroundRuns)},
             {u"uiEventLoopMaxDelayMs"_qs, m_uiEventLoopMaxDelayMs},
             {u"uiEventLoopDelayOver16Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver16Ms)},
