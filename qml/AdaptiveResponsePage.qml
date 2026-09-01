@@ -323,9 +323,11 @@ Item {
             id: choice
             objectName: combo.objectName.length > 0 ? combo.objectName + "Choice_" + index : "responseComboChoice_" + index
             width: combo.width; implicitHeight: 32; highlighted: combo.highlightedIndex === index
-            onClicked: {
-                // ItemDelegate owns the popup's real pointer activation.
-                // Commit the choice and close this popup in the same turn.
+            onPressed: {
+                // Commit on press, before Popup/ListView release handling can
+                // consume a physical mouse click while the selected context
+                // rerenders.  The delegate remains themed, but selection is
+                // no longer dependent on the later clicked signal.
                 combo.choiceActivated(index, combo.valueAt(index))
                 combo.popup.close()
             }
