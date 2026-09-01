@@ -207,6 +207,12 @@ Item {
         comparisonSamples = backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
         comparisonTestLabMetrics = backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     }
+    function applySimplePreset(presetId) {
+        const applied = backendObject.setAdaptiveResponsePresetAtContext(
+            editScope, selectedTargetId(), root.state.axis, presetId)
+        if (applied) root.setPreview()
+        return applied
+    }
     function refreshHistory(reset) {
         if (historyPaused) return
         const update = backendObject.adaptiveResponseHistorySince(reset ? 0 : historyLastSequence, historyWindowSeconds)
@@ -291,6 +297,10 @@ Item {
     component ResponseCombo: ComboBox {
         id: combo
         property int popupMaximumHeight: 264
+        // A state-changing selection can rebuild this page while Qt's
+        // ComboBox is closing its popup. Report the chosen row directly so
+        // axis/context updates never depend on that deferred close sequence.
+        signal choiceActivated(int index, var value)
         implicitHeight: 34
         leftPadding: 10
         rightPadding: 29
@@ -309,31 +319,27 @@ Item {
             x: combo.width - width - 10; y: (combo.height - height) / 2
             text: "⌄"; color: combo.enabled ? root.themeTokens.textMuted : root.themeTokens.textFaint; font.pixelSize: 15
         }
-        delegate: ItemDelegate {
+        delegate: Rectangle {
             id: choice
             objectName: combo.objectName.length > 0 ? combo.objectName + "Choice_" + index : "responseComboChoice_" + index
-            width: combo.width; implicitHeight: 32; highlighted: combo.highlightedIndex === index
-            // Some Qt styles do not wire a custom ItemDelegate back into the
-            // ComboBox selection path. Commit the ordinary selection here so
-            // a real popup-row click always emits the public activated signal
-            // through the same themed popup path.
-            onClicked: {
-                combo.popup.close()
-                // Do not assign currentIndex here: each selector keeps a
-                // binding to its actual context/backend value. Closing first
-                // also prevents a state-changing activation from destroying
-                // the popup while its delegate is still handling the click.
-                combo.activated(index)
-            }
-            contentItem: Text {
-                leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
+            width: combo.width; implicitHeight: 32
+            property bool highlighted: combo.highlightedIndex === index
+            property bool hovered: choiceMouse.containsMouse
+            radius: root.themeTokens.controlRadius
+            color: choice.highlighted ? root.themeTokens.selection : (choice.hovered ? root.themeTokens.controlHover : "transparent")
+            border.color: choice.highlighted ? root.themeTokens.orange : "transparent"
+            Text {
+                anchors.fill: parent; leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
                 color: choice.highlighted ? root.themeTokens.textStrong : root.themeTokens.text
                 verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; font.pixelSize: 10
             }
-            background: Rectangle {
-                radius: root.themeTokens.controlRadius
-                color: choice.highlighted ? root.themeTokens.selection : (choice.hovered ? root.themeTokens.controlHover : "transparent")
-                border.color: choice.highlighted ? root.themeTokens.orange : "transparent"
+            MouseArea {
+                id: choiceMouse
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    combo.choiceActivated(index, combo.valueAt(index))
+                    Qt.callLater(function() { if (combo.popup.visible) combo.popup.close() })
+                }
             }
         }
         popup: Popup {
@@ -606,7 +612,7 @@ Item {
                 implicitHeight: 28
                 padding: 8
                 onClicked: {
-                    backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, tuneRow.propertyKey, 0, true)
+                    backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, tuneRow.propertyKey, 0, true)
                     root.setPreview()
                 }
             }
@@ -684,20 +690,20 @@ Item {
                 RowLayout { width: parent.width; spacing: 14
                     ColumnLayout { Layout.preferredWidth: 170
                         Caption { text: "EDIT LEVEL" }
-                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2; onActivated: { root.editScope = currentValue; root.targetId = ""; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2; onChoiceActivated: function(index, value) { root.editScope = String(value); root.targetId = ""; root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 220
                         Caption { text: "TARGET" }
-                        ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onActivated: { root.targetId = currentValue; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onChoiceActivated: function(index, value) { root.targetId = String(value); root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 240
                         Caption { text: "AXIS" }
-                        ResponseCombo { id: axisSelector; objectName: "adaptiveAxisSelector"; Layout.fillWidth: true; model: backendObject.axes; textRole: "label"; valueRole: "index"; currentIndex: root.axisModelIndex(backendObject.selectedAxisIndex); onActivated: function(index) { root.selectAxisModelIndex(index) } }
+                        ResponseCombo { id: axisSelector; objectName: "adaptiveAxisSelector"; Layout.fillWidth: true; model: backendObject.axes; textRole: "label"; valueRole: "index"; currentIndex: root.axisModelIndex(backendObject.selectedAxisIndex); onChoiceActivated: function(index) { root.selectAxisModelIndex(index) } }
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: root.themeTokens.divider }
                     ColumnLayout { Layout.fillWidth: true
                         Caption { text: "EDITING CONTEXT" }
-                        Text { text: root.editScope === "preset" ? "Response Preset → " + root.selectedTargetName() + " → " + (state.axisLabel || "Axis") : "Editing " + root.editScope.toUpperCase() + " · " + root.selectedTargetName() + " · " + (scopeInfo().source || "Inherited") + " · " + (state.axisLabel || "Axis"); color: root.themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Text { text: root.editScope === "preset" ? "Response Preset → " + root.selectedTargetName() + " → " + (root.state.axisLabel || "Axis") : "Editing " + root.editScope.toUpperCase() + " · " + root.selectedTargetName() + " · " + (scopeInfo().source || "Inherited") + " · " + (root.state.axisLabel || "Axis"); color: root.themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     }
                 }
             }
@@ -723,7 +729,7 @@ Item {
                         ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorLastSequence = 0; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] } }
                         Item { Layout.fillWidth: true }
                         Caption { text: "SYNTHETIC SOURCE RATE" }
-                        ResponseCombo { objectName: "adaptiveSourceRateSelector"; Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onActivated: root.simulatorSourceRate = Number(currentValue) }
+                        ResponseCombo { objectName: "adaptiveSourceRateSelector"; Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onChoiceActivated: function(index, value) { root.simulatorSourceRate = Number(value) } }
                     }
                     GridLayout { width: parent.width; columns: 2; columnSpacing: 14; rowSpacing: 0
                         ColumnLayout { Layout.row: 0; Layout.column: 1; Layout.preferredWidth: 112; Layout.alignment: Qt.AlignTop | Qt.AlignHCenter; spacing: 4
@@ -791,13 +797,13 @@ Item {
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "Simple controls"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Choose a response level for " + state.axisLabel + ". The configured horizon is a maximum; response remains adaptive at every level."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Choose a response level for " + root.state.axisLabel + ". The configured horizon is a maximum; response remains adaptive at every level."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Text { text: scopeInfo().source || "Inherited"; color: root.themeTokens.orange; font.pixelSize: 11; font.bold: true }
                     }
                     Flow { width: parent.width; spacing: 8
                         Repeater { model: backendObject.adaptiveResponsePresets
-                            delegate: ActionButton { required property var modelData; text: modelData.name.toUpperCase(); accent: (scopeInfo().presetId === modelData.id); ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: backendObject.setAdaptiveResponsePresetAtContext(root.editScope, root.selectedTargetId(), state.axis, modelData.id) }
+                            delegate: ActionButton { required property var modelData; objectName: "adaptivePresetButton_" + modelData.id; text: modelData.name.toUpperCase(); accent: (scopeInfo().presetId === modelData.id); ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: root.applySimplePreset(modelData.id) }
                         }
                     }
                     Row { spacing: 28
@@ -816,7 +822,7 @@ Item {
                             Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
                             Text { text: "Repeatable synthetic input uses the same lightweight estimator as runtime. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
-                        ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 206; model: ["Slow Sweep", "Fast Sweep", "Instant Reversal Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onActivated: { root.scenario = currentText; root.setPreview() } }
+                        ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 206; model: ["Slow Sweep", "Fast Sweep", "Instant Reversal Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onChoiceActivated: function(index, value) { root.scenario = String(value); root.setPreview() } }
                     }
                     RowLayout { width: parent.width; spacing: 8
                         Caption { text: "VIEW" }
@@ -921,7 +927,7 @@ Item {
                             Text { text: "A is the context currently being edited. Compare its prediction trace against a saved Response Preset or another profile state before applying any change."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Caption { text: "B" }
-                        ResponseCombo { objectName: "adaptiveComparisonSelector"; Layout.preferredWidth: 260; model: root.comparisonChoices(); textRole: "label"; currentIndex: root.comparisonIndex(); onActivated: function(index) { const choice = root.comparisonChoices()[index]; root.comparisonScope = choice.scope; root.comparisonTargetId = choice.id; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveComparisonSelector"; Layout.preferredWidth: 260; model: root.comparisonChoices(); textRole: "label"; currentIndex: root.comparisonIndex(); onChoiceActivated: function(index) { const choice = root.comparisonChoices()[index]; root.comparisonScope = choice.scope; root.comparisonTargetId = choice.id; root.setPreview() } }
                     }
                     Canvas { id: comparisonGraph; width: parent.width; height: 145
                         onPaint: {
@@ -963,7 +969,7 @@ Item {
                             Text { text: "Property overrides stay at the selected level; clear an override to inherit it again."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
                         ActionButton { text: root.advancedExpanded ? "HIDE" : "SHOW"; accent: false; onClicked: root.advancedExpanded = !root.advancedExpanded }
-                        ActionButton { text: "RESET LAYER"; accent: false; onClicked: backendObject.resetAdaptiveResponseAxisAtContext(root.editScope, root.selectedTargetId(), state.axis) }
+                        ActionButton { text: "RESET LAYER"; accent: false; onClicked: backendObject.resetAdaptiveResponseAxisAtContext(root.editScope, root.selectedTargetId(), root.state.axis) }
                     }
                     Column { visible: root.advancedExpanded; width: parent.width; spacing: 10
                         TuneGroup { title: "MODE AND OWNERSHIP"; detail: "Enablement and estimator model are independent overrides. Each row states whether this editing context owns the value or inherits it."
@@ -972,34 +978,34 @@ Item {
                                     Text { text: "Predictor enabled"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("enabled") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
                                 }
-                                ThemedSwitch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", checked); root.setPreview() } }
-                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("enabled") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("enabled"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "enabled", false, true); root.setPreview() } }
+                                ThemedSwitch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "enabled", checked); root.setPreview() } }
+                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("enabled") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("enabled"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "enabled", false, true); root.setPreview() } }
                             }
                             RowLayout { width: parent.width
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                                     Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("model") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
                                 }
-                                ResponseCombo { objectName: "adaptivePredictorSelector"; Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onActivated: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", currentText); root.setPreview() } }
-                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("model") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("model"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", "auto", true); root.setPreview() } }
+                                ResponseCombo { objectName: "adaptivePredictorSelector"; Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onChoiceActivated: function(index) { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "model", ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"][index]); root.setPreview() } }
+                                ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("model") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("model"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "model", "auto", true); root.setPreview() } }
                             }
                         }
                         TuneGroup { title: "PREDICTION ENVELOPE"; detail: "Safety limits in time and normalized-axis headroom."
-                            TuneRow { label: "Maximum horizon"; detail: "Adaptive ceiling; active prediction can remain below it."; from: 0; to: 30; step: 0.5; unit: "ms"; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumHorizonMs", value); root.setPreview() } }
-                            TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis travel."; from: 0.01; to: 0.50; step: 0.01; unit: "%"; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "maximumLead", value); root.setPreview() } }
-                            TuneRow { label: "Endpoint taper"; detail: "Tapers lead into the remaining output headroom."; from: 0.01; to: 1; step: 0.01; unit: "%"; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "endpointTaper", value); root.setPreview() } }
+                            TuneRow { label: "Maximum horizon"; detail: "Adaptive ceiling; active prediction can remain below it."; from: 0; to: 30; step: 0.5; unit: "ms"; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "maximumHorizonMs", value); root.setPreview() } }
+                            TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis travel."; from: 0.01; to: 0.50; step: 0.01; unit: "%"; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "maximumLead", value); root.setPreview() } }
+                            TuneRow { label: "Endpoint taper"; detail: "Tapers lead into the remaining output headroom."; from: 0.01; to: 1; step: 0.01; unit: "%"; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "endpointTaper", value); root.setPreview() } }
                         }
                         TuneGroup { title: "MOTION ESTIMATION"; detail: "Evidence thresholds and model gains; these rows are control-plane settings, not a live report loop."
-                            TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement."; propertyKey: "velocityResponse"; value: root.numericOr(effective().velocityResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "velocityResponse", value); root.setPreview() } }
-                            TuneRow { label: "Acceleration response"; detail: "Alpha-beta-gamma acceleration contribution."; propertyKey: "accelerationResponse"; value: root.numericOr(effective().accelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "accelerationResponse", value); root.setPreview() } }
-                            TuneRow { label: "Motion sensitivity"; detail: "Minimum deliberate motion that activates prediction."; from: 0.001; to: 2; step: 0.005; unit: "axis/s"; propertyKey: "motionSensitivity"; value: root.numericOr(effective().motionSensitivity, 0.035); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "motionSensitivity", value); root.setPreview() } }
-                            TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement while estimating motion."; from: 0; to: 0.50; step: 0.001; unit: "axis"; propertyKey: "noiseRejection"; value: root.numericOr(effective().noiseRejection, 0.012); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "noiseRejection", value); root.setPreview() } }
+                            TuneRow { label: "Velocity response"; detail: "Derivative responsiveness during deliberate movement."; propertyKey: "velocityResponse"; value: root.numericOr(effective().velocityResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "velocityResponse", value); root.setPreview() } }
+                            TuneRow { label: "Acceleration response"; detail: "Alpha-beta-gamma acceleration contribution."; propertyKey: "accelerationResponse"; value: root.numericOr(effective().accelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "accelerationResponse", value); root.setPreview() } }
+                            TuneRow { label: "Motion sensitivity"; detail: "Minimum deliberate motion that activates prediction."; from: 0.001; to: 2; step: 0.005; unit: "axis/s"; propertyKey: "motionSensitivity"; value: root.numericOr(effective().motionSensitivity, 0.035); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "motionSensitivity", value); root.setPreview() } }
+                            TuneRow { label: "Noise rejection"; detail: "Ignore tiny sensor movement while estimating motion."; from: 0; to: 0.50; step: 0.001; unit: "axis"; propertyKey: "noiseRejection"; value: root.numericOr(effective().noiseRejection, 0.012); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "noiseRejection", value); root.setPreview() } }
                         }
                         TuneGroup { title: "REVERSAL AND SETTLING"; detail: "Safety cancellation is always active; these parameters govern the evidence and recovery behaviour after that cancellation."
-                            TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead."; from: 0.001; to: 10; step: 0.01; unit: "axis/s"; propertyKey: "reversalDetection"; value: root.numericOr(effective().reversalDetection, 0.075); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalDetection", value); root.setPreview() } }
-                            TuneRow { label: "Reversal response"; detail: "Controls new-direction lead reacquisition after safety cancellation."; propertyKey: "reversalResponse"; value: root.numericOr(effective().reversalResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "reversalResponse", value); root.setPreview() } }
-                            TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking."; propertyKey: "decelerationResponse"; value: root.numericOr(effective().decelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "decelerationResponse", value); root.setPreview() } }
-                            TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest."; propertyKey: "settlingResponse"; value: root.numericOr(effective().settlingResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "settlingResponse", value); root.setPreview() } }
+                            TuneRow { label: "Reversal detection"; detail: "Motion threshold that clears stale directional lead."; from: 0.001; to: 10; step: 0.01; unit: "axis/s"; propertyKey: "reversalDetection"; value: root.numericOr(effective().reversalDetection, 0.075); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "reversalDetection", value); root.setPreview() } }
+                            TuneRow { label: "Reversal response"; detail: "Controls new-direction lead reacquisition after safety cancellation."; propertyKey: "reversalResponse"; value: root.numericOr(effective().reversalResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "reversalResponse", value); root.setPreview() } }
+                            TuneRow { label: "Deceleration response"; detail: "Reduces lead while braking."; propertyKey: "decelerationResponse"; value: root.numericOr(effective().decelerationResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "decelerationResponse", value); root.setPreview() } }
+                            TuneRow { label: "Settling response"; detail: "Collapses horizon and damps state as motion comes to rest."; propertyKey: "settlingResponse"; value: root.numericOr(effective().settlingResponse, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "settlingResponse", value); root.setPreview() } }
                         }
                     }
                 }
@@ -1055,7 +1061,7 @@ Item {
                         }
                         ActionButton { text: root.historyPaused ? "RESUME" : "PAUSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: { root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory() } }
                     RowLayout { width: parent.width
-                        Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || state.axisLabel || "Axis").toUpperCase() }
+                        Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || root.state.axisLabel || "Axis").toUpperCase() }
                         Item { Layout.fillWidth: true }
                         Caption { text: "CHRONOLOGICAL · NEWEST AT RIGHT" }
                     }

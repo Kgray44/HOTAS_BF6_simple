@@ -220,6 +220,16 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
     if (!clickResponseComboRow(window, surface, sourceRate, 0)) {
         return failPresentationLifecycleTest(QStringLiteral("Synthetic Source Rate could not restore 250 Hz for manual drag testing"));
     }
+    QQmlExpression applyLight(qmlContext(adaptive), adaptive, QStringLiteral("applySimplePreset('light')"));
+    const QVariant applyResult = applyLight.evaluate();
+    if (applyLight.hasError() || !applyResult.toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Light preset action did not resolve the selected axis"));
+    }
+    settlePresentation();
+    if (!adaptive->property("state").toMap().value(QStringLiteral("effective")).toMap()
+            .value(QStringLiteral("enabled")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Light preset did not apply to the selected axis"));
+    }
     auto *manualInput = adaptive->findChild<QQuickItem *>(QStringLiteral("adaptiveSimulatorManualInput"));
     if (!manualInput || manualInput->mapToScene(QPointF(manualInput->width() * 0.5,
             manualInput->height() * 0.5)).x() <= window->width() * 0.5) {
