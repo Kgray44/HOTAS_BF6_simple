@@ -32,6 +32,8 @@ set(HOTAS_MAPPER_SOURCES
     src/mapping_types.h
     src/axis_transform.h
     src/axis_transform.cpp
+    src/axis_mapping_transition.h
+    src/axis_mapping_transition.cpp
     src/response_curve.h
     src/response_curve.cpp
     src/button_mapping.h
@@ -182,6 +184,8 @@ if (BUILD_TESTING)
         src/mapping_types.h
         src/axis_transform.h
         src/axis_transform.cpp
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h
@@ -226,6 +230,8 @@ if (BUILD_TESTING)
         src/mapping_types.h
         src/axis_transform.h
         src/axis_transform.cpp
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h
@@ -406,6 +412,8 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/mapping_types.h
         src/axis_transform.h
         src/axis_transform.cpp
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h

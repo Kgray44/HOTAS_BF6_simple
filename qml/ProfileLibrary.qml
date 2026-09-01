@@ -516,6 +516,25 @@ Flickable {
                         ActionButton { label: "OPEN CURVES"; subdued: true; onTriggered: root.navigateToPage(6) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
+                        Text { text: "ADVANCED CONTROLS"; color: root.text; font.pixelSize: 11; font.bold: true }
+                        Text { text: "CURVE TRANSITION SMOOTHING"; color: root.text; font.pixelSize: 10; font.bold: true }
+                        Text { text: "Bumpless transfer prevents mapper-created virtual-axis jumps. It does not filter physical stick movement."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        SelectionToggle { label: "Override for This Profile"; checked: !!root.detail.curveTransitionSmoothingOverride
+                            onToggled: backendObject.setProfileCurveTransitionSmoothingOverride(root.selectedProfileId, checked) }
+                        Text { visible: !root.detail.curveTransitionSmoothingOverride; text: "Use Global Setting  ·  " + (root.detail.globalCurveTransitionSmoothingEnabled ? "Enabled" : "Disabled") + "  ·  " + root.detail.globalCurveTransitionDurationMs + " ms"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        RowLayout { visible: !!root.detail.curveTransitionSmoothingOverride; Layout.fillWidth: true; spacing: 8
+                            SelectionToggle { label: "Enabled"; checked: !!root.detail.curveTransitionSmoothingEnabled
+                                onToggled: backendObject.setProfileCurveTransitionSmoothingEnabled(root.selectedProfileId, checked) }
+                            Item { Layout.fillWidth: true }
+                            Text { text: "TIME"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                            Rectangle { implicitWidth: 54; implicitHeight: 26; radius: theme.topGun ? 1 : 4; color: root.inset; border.color: root.border; opacity: root.detail.curveTransitionSmoothingEnabled ? 1.0 : 0.5
+                                TextInput { anchors.fill: parent; anchors.margins: 6; text: Number(root.detail.curveTransitionDurationMs).toFixed(0); enabled: root.detail.curveTransitionSmoothingEnabled; color: root.text; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
+                                    onEditingFinished: { backendObject.setProfileCurveTransitionDurationMs(root.selectedProfileId, Number(text)); text = Number(root.detail.curveTransitionDurationMs).toFixed(0) } }
+                            }
+                            Text { text: "ms"; color: root.muted; font.pixelSize: 9; font.bold: true }
+                        }
+                    }
+                    Card { Layout.fillWidth: true; cardAccent: root.border
                         Text { text: "AUTOMATION"; color: root.text; font.pixelSize: 11; font.bold: true }
                         Repeater { model: root.detail.automations || []; delegate: RowLayout { required property var modelData; Layout.fillWidth: true
                             Text { text: modelData.name; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true }

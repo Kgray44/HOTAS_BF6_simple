@@ -41,6 +41,9 @@ constexpr int kAutomationMaximumTapDurationMs = 500;
 // the input thread can retain every reported hat without allocating.
 constexpr int kMaximumPhysicalPovs = 4;
 constexpr int kPovDirectionCount = 8;
+constexpr int kCurveTransitionMinimumDurationMs = 0;
+constexpr int kCurveTransitionMaximumDurationMs = 1000;
+constexpr int kDefaultCurveTransitionDurationMs = 100;
 
 enum class PhysicalAxis : int {
     X = 0,
@@ -183,6 +186,22 @@ struct AxisMapping {
     bool hasCenteredCurveBackup = false;
     bool hasOneSidedCurveBackup = false;
 };
+
+// This is deliberately a mapping-transition setting, not a physical-input
+// filter. It is consumed only when the active mapping changes; ordinary
+// DirectInput reports retain their direct response path.
+struct CurveTransitionSmoothingSettings {
+    bool enabled = true;
+    int durationMs = kDefaultCurveTransitionDurationMs;
+};
+
+inline CurveTransitionSmoothingSettings sanitizedCurveTransitionSmoothing(
+    CurveTransitionSmoothingSettings settings)
+{
+    settings.durationMs = std::clamp(settings.durationMs, kCurveTransitionMinimumDurationMs,
+                                     kCurveTransitionMaximumDurationMs);
+    return settings;
+}
 
 // Calibration belongs to the physical controller. Runtime mappings combine
 // it with an active profile only after the profile has been selected.
@@ -441,6 +460,10 @@ struct ControllerProfile {
     // report loop receives only the already-resolved device ID at a
     // configuration boundary; it never looks this string up.
     QString outputLayoutId;
+    // Profiles inherit the global bumpless-transfer behavior unless this
+    // explicit advanced override is selected.
+    bool curveTransitionSmoothingOverride = false;
+    CurveTransitionSmoothingSettings curveTransitionSmoothing;
     AxisMappings axes{};
     ButtonBindings buttons;
     // Missing entries mean safely disabled hats. A saved controller can have
@@ -554,6 +577,9 @@ struct MapperConfiguration {
     // in the same normalized domain as the mapper (-1.0 .. +1.0), never in a
     // profile, so a profile change cannot alter parked virtual axes.
     float disabledAxisValue = 0.0F;
+    // Global default for event-driven mapping transitions. This never enables
+    // continuous physical-axis filtering.
+    CurveTransitionSmoothingSettings curveTransitionSmoothing;
     // UI-only selection. It never determines which axes the worker maps.
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};
@@ -638,6 +664,7 @@ struct RuntimeMappingConfiguration {
     std::array<RuntimeAxisMapping, kPhysicalAxisCount> axes{};
     ButtonBindings buttons;
     PovBindings povs;
+    CurveTransitionSmoothingSettings curveTransitionSmoothing;
 };
 
 // A complete, immutable profile cache. All curve compilation happens while

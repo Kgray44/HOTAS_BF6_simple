@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.1.7**
+**Current release: v2.2.0**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -33,6 +33,7 @@ A dedicated DirectInput-to-vJoy worker owns report processing so controller outp
 
 - Independent mapping worker with a bounded target report rate and UI snapshots published separately.
 - Precompiled mapping state swapped between reports rather than rebuilt inside the hot path.
+- Event-driven bumpless mapping transitions anchor to the actual virtual output, then decay only the offset while the new mapping continues to follow physical input directly.
 - Change-driven vJoy writes for stationary inputs and stable idle behavior.
 - Safe reset/quiesce behavior on Mapping Off, controller disconnect, or output invalidation.
 - Fresh physical snapshot seeding after reconnect to avoid synthetic button edges.
@@ -117,6 +118,7 @@ Each profile/axis can use compiled response curves with both preset-based and po
 - Point add/remove, locks, snapping, keyboard nudges, and local undo/redo.
 - Large live dual-curve viewer with physical/final markers, reference/output traces, gain view, comparison/audition overlays, zoom/pan, cursor inspection, and signal-path visibility.
 - Immutable 4097-sample response LUTs compiled when configuration changes so editable point count does not affect runtime lookup resolution.
+- Global Curve Transition Smoothing with an optional per-profile override prevents mapper-created output steps when curves, sensitivity, profiles, precision modes, or related mappings change; it never filters physical input.
 
 ## Automation Engine
 
@@ -182,6 +184,7 @@ The app provides three persistent visual systems without allowing presentation s
 - Instant theme switching with theme state stored separately from mapper configuration.
 - Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
+- Curve Transition Smoothing controls use the shared themed Settings and Profile Library surfaces in Legacy, Standard, and Top Gun.
 - Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces.
 
 ## vJoy Integration
@@ -243,6 +246,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 
 - QSettings-backed persistent profiles and global settings.
 - Schema migrations preserve established behavior for older configurations, including schema-18 data-only migration to reusable virtual-output layouts.
+- Schema 20 adds deterministic Curve Transition Smoothing defaults and an optional profile override while preserving prior mapping behavior.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.
 - Runtime-only toggles, latches, timers, and held-control state are never persisted.
