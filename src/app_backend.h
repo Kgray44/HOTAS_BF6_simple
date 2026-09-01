@@ -203,6 +203,10 @@ public:
     QVariantList adaptiveResponsePresets() const;
     QVariantMap adaptiveResponseTelemetry() const;
     Q_INVOKABLE QVariantList adaptiveResponseHistory(int seconds) const;
+    // Incremental control-plane retrieval keeps QML from rebuilding the whole
+    // telemetry ring for every graph frame. MappingWorker never sees this.
+    Q_INVOKABLE QVariantMap adaptiveResponseHistorySince(qint64 lastSequence,
+                                                          int seconds) const;
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -414,6 +418,7 @@ public:
                                                              int physicalAxis,
                                                              int sourceRateHz);
     Q_INVOKABLE QVariantList adaptiveResponseSimulatorHistory() const;
+    Q_INVOKABLE QVariantMap adaptiveResponseSimulatorHistorySince(qint64 lastSequence) const;
     Q_INVOKABLE void adaptiveResponseSimulatorClear();
     Q_INVOKABLE void adaptiveResponseSimulatorStartRecording();
     Q_INVOKABLE void adaptiveResponseSimulatorStopRecording();
@@ -588,6 +593,7 @@ private:
     // ring is sampled from the existing presentation timer and is never read
     // or written from the DirectInput-to-vJoy report path.
     struct AdaptiveResponseHistorySample {
+        qint64 sequence = 0;
         qint64 elapsedMs = 0;
         int axis = 0;
         float physical = 0.0F;
@@ -605,6 +611,7 @@ private:
     };
 
     struct AdaptiveResponseSimulatorSample {
+        qint64 sequence = 0;
         qint64 elapsedMs = 0;
         float physical = 0.0F;
         float estimated = 0.0F;
@@ -614,6 +621,7 @@ private:
         float acceleration = 0.0F;
         float activeHorizonSeconds = 0.0F;
         float maximumHorizonSeconds = 0.0F;
+        float maximumLead = 0.0F;
         float lead = 0.0F;
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
@@ -623,6 +631,9 @@ private:
     void persistAndApply();
     void sampleAdaptiveResponseHistory();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
+    void advanceAdaptiveResponseSimulator(float manualInput, const QString &scope,
+                                          const QString &targetId, int physicalAxis,
+                                          int sourceRateHz, qint64 nowMs);
     RuntimeAdaptiveResponseConfig adaptiveResponseConfigurationAtContext(
         const QString &scope, const QString &targetId, int physicalAxis,
         AdaptiveResponseAxisOverride *contextOverride = nullptr,
@@ -734,6 +745,7 @@ private:
     bool m_gameDetectionInProgress = false;
     QTimer m_snapshotTimer;
     QTimer m_numericTelemetryTimer;
+    QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
     QStringList m_lastDetectedExecutables;
@@ -746,9 +758,10 @@ private:
     QElapsedTimer m_latencyPercentileClock;
     QElapsedTimer m_overviewMetricsClock;
     QElapsedTimer m_adaptiveResponseHistoryClock;
-    std::array<AdaptiveResponseHistorySample, 900> m_adaptiveResponseHistory{};
+    std::array<AdaptiveResponseHistorySample, 3000> m_adaptiveResponseHistory{};
     int m_adaptiveResponseHistoryNext = 0;
     int m_adaptiveResponseHistoryCount = 0;
+    qint64 m_adaptiveResponseHistorySequence = 0;
     QElapsedTimer m_adaptiveResponseSimulatorClock;
     AdaptiveResponseProcessor m_adaptiveResponseSimulator;
     // These deliberately live on the heap: AppBackend is constructed on the
@@ -760,7 +773,14 @@ private:
     int m_adaptiveResponseSimulatorHistoryCount = 0;
     int m_adaptiveResponseSimulatorRecordingCount = 0;
     int m_adaptiveResponseSimulatorRecordingNext = 0;
-    qint64 m_adaptiveResponseSimulatorLastSourceMs = -1;
+    double m_adaptiveResponseSimulatorLastSourceMs = -1.0;
+    qint64 m_adaptiveResponseSimulatorLastTickMs = -1;
+    qint64 m_adaptiveResponseSimulatorLastManualInputMs = -1;
+    qint64 m_adaptiveResponseSimulatorSequence = 0;
+    int m_adaptiveResponseSimulatorSourceRate = 250;
+    float m_adaptiveResponseSimulatorLastManualInput = 0.0F;
+    float m_adaptiveResponseSimulatorHeldInput = 0.0F;
+    bool m_adaptiveResponseSimulatorHasManualInput = false;
     bool m_adaptiveResponseSimulatorRecordingActive = false;
     QElapsedTimer m_calibrationFinalizationClock;
     QTimer m_uiEventLoopHeartbeatTimer;

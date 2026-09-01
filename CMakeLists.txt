@@ -383,6 +383,7 @@ if (BUILD_TESTING)
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
+        Qt6::Test
         Qt6::Widgets
         dinput8
         dxguid

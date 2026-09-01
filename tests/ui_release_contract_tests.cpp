@@ -353,16 +353,18 @@ void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMe
     const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     QVERIFY(adaptive.contains(QStringLiteral("function numericOr(value, fallback)")));
-    QVERIFY(adaptive.contains(QStringLiteral("Timer { interval: 50")));
+    QVERIFY(adaptive.contains(QStringLiteral("adaptiveResponseHistorySince")));
+    QVERIFY(adaptive.contains(QStringLiteral("Timer { interval: 33")));
     QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().motionSensitivity, 0.035)")));
     QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().noiseRejection, 0.012)")));
     QVERIFY(adaptive.contains(QStringLiteral("Safety cancellation is always active")));
-    for (const QString &metric : {QStringLiteral("MEDIAN LEAD"), QStringLiteral("TARGET OVERSHOOT"),
-                                  QStringLiteral("MOTION RECOGNITION"), QStringLiteral("FALSE REVERSALS"),
-                                  QStringLiteral("STATIONARY LEAD")}) {
+    for (const QString &metric : {QStringLiteral("MEDIAN LEAD"), QStringLiteral("MEAN ABS PREDICTION ERROR"),
+                                   QStringLiteral("REVERSAL DETECTION LATENCY"), QStringLiteral("FALSE REVERSALS"),
+                                   QStringLiteral("STATIONARY LEAD")}) {
         QVERIFY(adaptive.contains(metric));
     }
-    QVERIFY(backend.contains(QStringLiteral("const float futurePhysical")));
+    QVERIFY(backend.contains(QStringLiteral("const auto physicalAt")));
+    QVERIFY(backend.contains(QStringLiteral("meanAbsolutePredictionError")));
     QVERIFY(backend.contains(QStringLiteral("targetOvershoot")));
     QVERIFY(!backend.contains(QStringLiteral("std::abs(predicted) - 1.0F")));
 }
@@ -397,9 +399,10 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
         QVERIFY(adaptive.contains(metric));
     }
     QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorStepAtContext")));
+    QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorHistorySince")));
     QVERIFY(header.contains(QStringLiteral("AdaptiveResponseSimulatorSample")));
     QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulator.process")));
-    QVERIFY(backend.contains(QStringLiteral("A display timer may be slower than an emulated controller")));
+    QVERIFY(backend.contains(QStringLiteral("reconstructs the\n    // physical gesture between QML pointer events")));
     QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulatorRecording")));
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(
         QStringLiteral("adaptiveResponseSimulator")));

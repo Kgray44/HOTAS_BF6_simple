@@ -27,9 +27,12 @@ Item {
     property var testLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, editScope, selectedTargetId(), backendObject.selectedAxisIndex)
     property bool advancedExpanded: false
     property bool testLabExpanded: false
+    property bool simulatorExpanded: false
+    property bool liveAnalysisExpanded: false
     property int historyWindowSeconds: 5
     property bool historyPaused: false
     property var historySamples: []
+    property int historyLastSequence: 0
     property int historyInspectIndex: -1
     property string comparisonScope: "preset"
     property string comparisonTargetId: "off"
@@ -50,6 +53,9 @@ Item {
     property var simulatorSamples: []
     property var simulatorRecordingSamples: []
     property var simulatorDisplaySamples: []
+    property int simulatorLastSequence: 0
+    property bool simulatorNearViewport: false
+    property bool liveAnalysisNearViewport: false
 
     function effective() { return state.runtimeEffective || state.effective || ({}) }
     function numericOr(value, fallback) {
@@ -134,9 +140,26 @@ Item {
         for (let index = 0; index < 6; ++index) labels.push(Math.round(duration * index / 5) + " ms")
         return labels
     }
-    function refreshSimulator() {
-        simulatorSamples = backendObject.adaptiveResponseSimulatorHistory()
-        if (!simulatorReplaying) simulatorDisplaySamples = simulatorSamples
+    function sectionNearViewport(section) {
+        if (!section || !adaptiveScroll.contentItem) return false
+        const top = section.mapToItem(adaptiveScroll.contentItem, 0, 0).y
+        return top + section.height >= adaptiveScroll.contentY - 240
+            && top <= adaptiveScroll.contentY + adaptiveScroll.height + 240
+    }
+    function refreshViewportActivity() {
+        simulatorNearViewport = sectionNearViewport(simulatorCard)
+        liveAnalysisNearViewport = sectionNearViewport(liveAnalysisCard)
+    }
+    function refreshSimulator(reset) {
+        const update = backendObject.adaptiveResponseSimulatorHistorySince(reset ? 0 : simulatorLastSequence)
+        const incoming = update.samples || []
+        if (reset || update.reset) simulatorSamples = incoming
+        else if (incoming.length > 0) {
+            for (let index = 0; index < incoming.length; ++index) simulatorSamples.push(incoming[index])
+            const retained = Math.max(180, Math.min(900, simulatorSamples.length))
+            if (simulatorSamples.length > retained) simulatorSamples.splice(0, simulatorSamples.length - retained)
+        }
+        simulatorLastSequence = Number(update.newestSequence || simulatorLastSequence)
     }
     function sampleSimulator() {
         backendObject.adaptiveResponseSimulatorStepAtContext(simulatorInput, editScope, selectedTargetId(), backendObject.selectedAxisIndex, simulatorSourceRate)
@@ -184,8 +207,17 @@ Item {
         comparisonSamples = backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
         comparisonTestLabMetrics = backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     }
-    function refreshHistory() {
-        if (!historyPaused) historySamples = backendObject.adaptiveResponseHistory(historyWindowSeconds)
+    function refreshHistory(reset) {
+        if (historyPaused) return
+        const update = backendObject.adaptiveResponseHistorySince(reset ? 0 : historyLastSequence, historyWindowSeconds)
+        const incoming = update.samples || []
+        if (reset || update.reset) historySamples = incoming
+        else if (incoming.length > 0) {
+            for (let index = 0; index < incoming.length; ++index) historySamples.push(incoming[index])
+            const maximum = Math.max(180, historyWindowSeconds * 100)
+            if (historySamples.length > maximum) historySamples.splice(0, historySamples.length - maximum)
+        }
+        historyLastSequence = Number(update.newestSequence || historyLastSequence)
     }
     function historyMagnitude(fields, minimum) {
         let maximum = minimum
@@ -206,21 +238,23 @@ Item {
         return affected.length > 0 ? "Automation · " + affected.join(", ") : "Automation overlay active"
     }
     function percent(value) { return (Number(value) * 100 >= 0 ? "+" : "") + (Number(value) * 100).toFixed(1) + "%" }
-    onStateChanged: setPreview()
-    onHistoryWindowSecondsChanged: refreshHistory()
+    onStateChanged: { setPreview(); historyLastSequence = 0; historySamples = []; refreshHistory(true) }
+    onHistoryWindowSecondsChanged: { historyLastSequence = 0; historySamples = []; refreshHistory(true) }
     onHistorySamplesChanged: {
         if (!historyPaused) historyInspectIndex = historySamples.length - 1
         else historyInspectIndex = Math.max(0, Math.min(historyInspectIndex, historySamples.length - 1))
     }
     onHistoryPausedChanged: if (historyPaused) historyInspectIndex = historySamples.length - 1
+    Component.onCompleted: refreshViewportActivity()
     Connections {
         target: backendObject
         function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
-    Timer { interval: 50; running: !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory() }
-    Timer { interval: 16; running: !root.simulatorPaused && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: root.sampleSimulator() }
-    Timer { interval: 16; running: root.simulatorReplaying && !root.simulatorPaused; repeat: true; onTriggered: root.updateReplayPresentation() }
+    Timer { interval: 33; running: root.liveAnalysisExpanded && root.liveAnalysisNearViewport && !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory(false) }
+    Timer { interval: 16; running: root.simulatorExpanded && root.simulatorNearViewport && !root.simulatorPaused && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: root.sampleSimulator() }
+    Timer { interval: 16; running: root.simulatorExpanded && root.simulatorNearViewport && root.simulatorReplaying && !root.simulatorPaused; repeat: true; onTriggered: root.updateReplayPresentation() }
+    Timer { interval: 33; running: root.simulatorExpanded && root.simulatorNearViewport && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: { root.refreshSimulator(false); root.simulatorDisplaySamples = root.simulatorSamples.slice(0) } }
 
     component Card: Rectangle {
         default property alias content: contentHost.data
@@ -277,7 +311,20 @@ Item {
         }
         delegate: ItemDelegate {
             id: choice
+            objectName: combo.objectName.length > 0 ? combo.objectName + "Choice_" + index : "responseComboChoice_" + index
             width: combo.width; implicitHeight: 32; highlighted: combo.highlightedIndex === index
+            // Some Qt styles do not wire a custom ItemDelegate back into the
+            // ComboBox selection path. Commit the ordinary selection here so
+            // a real popup-row click always emits the public activated signal
+            // through the same themed popup path.
+            onClicked: {
+                combo.popup.close()
+                // Do not assign currentIndex here: each selector keeps a
+                // binding to its actual context/backend value. Closing first
+                // also prevents a state-changing activation from destroying
+                // the popup while its delegate is still handling the click.
+                combo.activated(index)
+            }
             contentItem: Text {
                 leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
                 color: choice.highlighted ? root.themeTokens.textStrong : root.themeTokens.text
@@ -290,6 +337,7 @@ Item {
             }
         }
         popup: Popup {
+            objectName: combo.objectName.length > 0 ? combo.objectName + "Popup" : "responseComboPopup"
             y: combo.height + 4; width: combo.width
             implicitHeight: Math.min(combo.popupMaximumHeight, choices.contentHeight + topPadding + bottomPadding)
             topPadding: 6; bottomPadding: 6; leftPadding: 6; rightPadding: 6
@@ -408,9 +456,19 @@ Item {
                 ctx.strokeStyle = descriptor.color
                 ctx.lineWidth = 2
                 ctx.beginPath()
-                for (let index = 0; index < samples.length; ++index) {
-                    const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(samples[index][descriptor.field], 0)))
-                    const x = index * width / Math.max(1, samples.length - 1)
+                // Piecewise-linear display resampling only. It fills wide
+                // canvases without filtering, changing stored samples, or
+                // hiding a real reversal discontinuity.
+                const renderCount = Math.max(samples.length, Math.floor(width))
+                for (let index = 0; index < renderCount; ++index) {
+                    const sourcePosition = index * (samples.length - 1) / Math.max(1, renderCount - 1)
+                    const leftIndex = Math.floor(sourcePosition)
+                    const rightIndex = Math.min(samples.length - 1, leftIndex + 1)
+                    const fraction = sourcePosition - leftIndex
+                    const left = root.numericOr(samples[leftIndex][descriptor.field], 0)
+                    const right = root.numericOr(samples[rightIndex][descriptor.field], 0)
+                    const value = Math.max(lowerBound, Math.min(upperBound, left + (right - left) * fraction))
+                    const x = index * width / Math.max(1, renderCount - 1)
                     const y = height * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound))
                     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
                 }
@@ -575,10 +633,14 @@ Item {
     }
 
     Flickable {
+        id: adaptiveScroll
+        objectName: "adaptiveResponseScroll"
         anchors.fill: parent
         contentWidth: width
         contentHeight: content.implicitHeight + 18
         clip: true
+        onContentYChanged: root.refreshViewportActivity()
+        onHeightChanged: root.refreshViewportActivity()
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         Column {
             id: content
@@ -622,11 +684,11 @@ Item {
                 RowLayout { width: parent.width; spacing: 14
                     ColumnLayout { Layout.preferredWidth: 170
                         Caption { text: "EDIT LEVEL" }
-                        ResponseCombo { Layout.fillWidth: true; model: [{name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2; onActivated: { root.editScope = currentValue; root.targetId = ""; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2; onActivated: { root.editScope = currentValue; root.targetId = ""; root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 220
                         Caption { text: "TARGET" }
-                        ResponseCombo { Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onActivated: { root.targetId = currentValue; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onActivated: { root.targetId = currentValue; root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 240
                         Caption { text: "AXIS" }
@@ -641,6 +703,7 @@ Item {
             }
 
             Card {
+                id: simulatorCard
                 Column { width: parent.width; spacing: 10
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
@@ -648,23 +711,25 @@ Item {
                             Text { text: "An isolated production AdaptiveResponseProcessor. It uses the selected context but never writes mapper state, DirectInput state, or vJoy output."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Caption { text: root.simulatorReplaying ? "REPLAY" : root.simulatorRecording ? "RECORDING" : root.simulatorPaused ? "PAUSED" : "LIVE" }
+                        ActionButton { text: root.simulatorExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.simulatorExpanded = !root.simulatorExpanded }
                     }
+                    Column { visible: root.simulatorExpanded; width: parent.width; spacing: 10
                     RowLayout { width: parent.width; spacing: 7
                         ActionButton { text: "LIVE"; implicitHeight: 28; padding: 8; accent: !root.simulatorPaused && !root.simulatorReplaying && !root.simulatorRecording; onClicked: { root.simulatorReplaying = false; root.simulatorRecording = false; backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorPaused = false; root.refreshSimulator() } }
                         ActionButton { text: "RECORD"; implicitHeight: 28; padding: 8; accent: root.simulatorRecording; onClicked: { root.simulatorReplaying = false; backendObject.adaptiveResponseSimulatorStartRecording(); root.simulatorRecording = true; root.simulatorPaused = false; root.refreshSimulator() } }
                         ActionButton { text: "STOP"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorPaused = true; root.refreshSimulator() } }
                         ActionButton { text: "REPLAY"; implicitHeight: 28; padding: 8; accent: root.simulatorReplaying; enabled: backendObject.adaptiveResponseSimulatorRecording().length > 0; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.startReplay() } }
                         ActionButton { text: root.simulatorPaused ? "RESUME" : "PAUSE"; implicitHeight: 28; padding: 8; accent: false; onClicked: root.simulatorPaused = !root.simulatorPaused }
-                        ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] } }
+                        ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorLastSequence = 0; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] } }
                         Item { Layout.fillWidth: true }
                         Caption { text: "SYNTHETIC SOURCE RATE" }
-                        ResponseCombo { Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onActivated: root.simulatorSourceRate = Number(currentValue) }
+                        ResponseCombo { objectName: "adaptiveSourceRateSelector"; Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onActivated: root.simulatorSourceRate = Number(currentValue) }
                     }
                     GridLayout { width: parent.width; columns: 2; columnSpacing: 14; rowSpacing: 0
                         ColumnLayout { Layout.row: 0; Layout.column: 1; Layout.preferredWidth: 112; Layout.alignment: Qt.AlignTop | Qt.AlignHCenter; spacing: 4
                             Caption { text: "MANUAL INPUT"; Layout.alignment: Qt.AlignHCenter }
                             Text { text: "+100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
-                            VerticalSimulatorSlider { Layout.alignment: Qt.AlignHCenter; value: root.simulatorInput; onMoved: root.simulatorInput = value }
+                            VerticalSimulatorSlider { objectName: "adaptiveSimulatorManualInput"; Layout.alignment: Qt.AlignHCenter; value: root.simulatorInput; onMoved: { root.simulatorInput = value; if (!root.simulatorPaused && !root.simulatorReplaying) root.sampleSimulator() } }
                             Text { text: "0"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
                             Text { text: "−100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
                             Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont; Layout.alignment: Qt.AlignHCenter }
@@ -682,16 +747,14 @@ Item {
                                 Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
                                 Text { text: "— Final output"; color: root.themeTokens.ready; font.pixelSize: 10 }
                             }
-                            RowLayout { Layout.fillWidth: true; spacing: 10
-                                ColumnLayout { Layout.fillWidth: true
-                                    Caption { text: "MOTION · VELOCITY / ACCELERATION" }
-                                    SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["velocity", "acceleration"], 0.1); upperBound: root.simulatorMagnitude(["velocity", "acceleration"], 0.1); series: [{field:"velocity",color:root.themeTokens.cyan},{field:"acceleration",color:root.themeTokens.orange}] }
-                                }
-                                ColumnLayout { Layout.fillWidth: true
-                                    Caption { text: "ADAPTIVE · HORIZON / CONFIDENCE / LEAD" }
-                                    SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -1; upperBound: 1; series: [{field:"horizonRatio",color:root.themeTokens.orange},{field:"confidence",color:root.themeTokens.ready},{field:"lead",color:root.themeTokens.cyan}] }
-                                }
-                            }
+                            Text { text: "VELOCITY  ·  axis units / second  ·  newest at right"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["velocity"], 0.1); upperBound: root.simulatorMagnitude(["velocity"], 0.1); series: [{field:"velocity",color:root.themeTokens.cyan}] }
+                            Text { text: "ACCELERATION  ·  axis units / second²  ·  newest at right"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["acceleration"], 0.1); upperBound: root.simulatorMagnitude(["acceleration"], 0.1); series: [{field:"acceleration",color:root.themeTokens.orange}] }
+                            Text { text: "ADAPTIVE ACTIVITY  ·  horizon / confidence  ·  percent of configured range"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: 0; upperBound: 1; series: [{field:"horizonRatio",color:root.themeTokens.orange},{field:"confidence",color:root.themeTokens.ready}] }
+                            Text { text: "PREDICTION LEAD  ·  ±" + root.percent(root.numericOr(root.simulatorCurrentSample().maximumLead, 0)).replace("+", "") + " configured limit  ·  axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -Math.max(0.005, root.numericOr(root.simulatorCurrentSample().maximumLead, 0.01)); upperBound: Math.max(0.005, root.numericOr(root.simulatorCurrentSample().maximumLead, 0.01)); series: [{field:"lead",color:root.themeTokens.cyan}] }
                             TimeAxis { seconds: 5 }
                         }
                     }
@@ -716,7 +779,10 @@ Item {
                         Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(root.simulatorCurrentSample().confidence, 0) * 100) + "%" }
                         Metric { caption: "STATE"; value: root.simulatorCurrentSample().state || "Stable" }
                     }
-                    Text { text: "RECORD stores original source timestamps, physical values, and every resulting estimator/final-output sample in a bounded control-plane buffer. REPLAY draws those stored samples only; it does not recompute or time-stretch predictor output."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { text: "Move the slider like a virtual HOTAS. The simulator reconstructs your continuous gesture, samples it at the selected controller rate, then runs the real predictor. New samples appear at the right; older motion scrolls left."; color: root.themeTokens.textMuted; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { text: "Physical = manual slider · Estimated = internal motion estimate · Predicted = expected near-future stick position · Final Output = prediction after the active axis curve and transforms. Synthetic Source Rate emulates how often a physical controller reports a new axis sample."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { text: root.simulatorSamples.length === 0 || root.simulatorPaused ? "PAUSED — press LIVE or RECORD and move Manual Input." : "RECORD stores original timestamps and output samples. REPLAY redraws those stored samples only; it never recomputes predictor output."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    }
                 }
             }
 
@@ -750,7 +816,7 @@ Item {
                             Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
                             Text { text: "Repeatable synthetic input uses the same lightweight estimator as runtime. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
-                        ResponseCombo { id: scenarioSelector; Layout.preferredWidth: 206; model: ["Slow Sweep", "Fast Sweep", "Instant Reversal Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onActivated: { root.scenario = currentText; root.setPreview() } }
+                        ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 206; model: ["Slow Sweep", "Fast Sweep", "Instant Reversal Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onActivated: { root.scenario = currentText; root.setPreview() } }
                     }
                     RowLayout { width: parent.width; spacing: 8
                         Caption { text: "VIEW" }
@@ -855,7 +921,7 @@ Item {
                             Text { text: "A is the context currently being edited. Compare its prediction trace against a saved Response Preset or another profile state before applying any change."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Caption { text: "B" }
-                        ResponseCombo { Layout.preferredWidth: 260; model: root.comparisonChoices(); textRole: "label"; currentIndex: root.comparisonIndex(); onActivated: function(index) { const choice = root.comparisonChoices()[index]; root.comparisonScope = choice.scope; root.comparisonTargetId = choice.id; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveComparisonSelector"; Layout.preferredWidth: 260; model: root.comparisonChoices(); textRole: "label"; currentIndex: root.comparisonIndex(); onActivated: function(index) { const choice = root.comparisonChoices()[index]; root.comparisonScope = choice.scope; root.comparisonTargetId = choice.id; root.setPreview() } }
                     }
                     Canvas { id: comparisonGraph; width: parent.width; height: 145
                         onPaint: {
@@ -914,7 +980,7 @@ Item {
                                     Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("model") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
                                 }
-                                ResponseCombo { Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onActivated: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", currentText); root.setPreview() } }
+                                ResponseCombo { objectName: "adaptivePredictorSelector"; Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onActivated: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", currentText); root.setPreview() } }
                                 ActionButton { text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere("model") ? "INHERITED" : "INHERIT"; accent: false; enabled: root.editScope === "global" || !root.inheritedHere("model"); implicitHeight: 28; padding: 8; onClicked: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), state.axis, "model", "auto", true); root.setPreview() } }
                             }
                         }
@@ -944,7 +1010,7 @@ Item {
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "Live telemetry"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Sampled from an atomic latest-state snapshot at UI cadence. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
+                            Text { text: "Captured from the atomic latest-state snapshot at 83 Hz; graphs render independently at about 30 Hz. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
                         Text { text: telemetry.enabled ? (telemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: telemetry.enabled ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: 16; font.bold: true }
                     }
@@ -974,17 +1040,20 @@ Item {
             }
 
             Card {
+                id: liveAnalysisCard
                 Column { width: parent.width; spacing: 9
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "Live analysis"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "A fixed UI-side ring samples the atomic latest state at presentation cadence. Position, motion, and Adaptive Response each retain their own readable scale."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "A fixed UI-side ring captures the atomic latest state at 83 Hz while this section renders near 30 Hz. Position, motion, and Adaptive Response each retain their own readable scale."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
+                        ActionButton { text: root.liveAnalysisExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.liveAnalysisExpanded = !root.liveAnalysisExpanded }
+                    }
+                    Column { visible: root.liveAnalysisExpanded; width: parent.width; spacing: 9
                         Repeater { model: [2, 5, 10, 30]
                             delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
                         }
                         ActionButton { text: root.historyPaused ? "RESUME" : "PAUSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: { root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory() } }
-                    }
                     RowLayout { width: parent.width
                         Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || state.axisLabel || "Axis").toUpperCase() }
                         Item { Layout.fillWidth: true }
@@ -1034,6 +1103,7 @@ Item {
                             Metric { caption: "CONFIDENCE / STATE"; value: Math.round(root.numericOr(root.inspectedHistorySample().confidence, 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
                         }
                     }
+                    }
                 }
             }
 
@@ -1051,24 +1121,30 @@ Item {
                         Flow { width: parent.width; spacing: 16
                             Metric { caption: "PEAK LEAD"; value: percent(root.numericOr(testLabMetrics.peakLead, 0)); tone: root.themeTokens.orange }
                             Metric { caption: "MEDIAN LEAD"; value: percent(root.numericOr(testLabMetrics.medianLead, 0)) }
-                            Metric { caption: "PEAK PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.peakPredictionError, 0)) }
-                            Metric { caption: "TARGET OVERSHOOT"; value: percent(root.numericOr(testLabMetrics.targetOvershoot, 0)) }
+                            Metric { caption: "MEAN ABS PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.meanAbsolutePredictionError, 0)) }
+                            Metric { caption: "RMS PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.rmsPredictionError, 0)) }
+                            Metric { caption: "P95 PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.p95PredictionError, 0)) }
+                            Metric { caption: "MAX PREDICTION ERROR"; value: percent(root.numericOr(testLabMetrics.maximumPredictionError, 0)) }
+                            Metric { visible: !!testLabMetrics.hasStaticTarget; caption: "TARGET OVERSHOOT"; value: percent(root.numericOr(testLabMetrics.targetOvershoot, 0)) }
                             Metric { caption: "MOTION RECOGNITION"; value: root.numericOr(testLabMetrics.motionRecognitionDelayMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.motionRecognitionDelayMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "TRUE REVERSAL DETECTIONS"; value: root.numericOr(testLabMetrics.trueReversalCount, 0) }
                             Metric { caption: "FALSE REVERSALS"; value: root.numericOr(testLabMetrics.falseReversalCount, 0) }
                             Metric { caption: "STATIONARY LEAD"; value: percent(root.numericOr(testLabMetrics.stationaryLead, 0)) }
-                            Metric { caption: "REVERSAL DETECTED"; value: root.numericOr(testLabMetrics.reversalDetectionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.reversalDetectionMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "PHYSICAL REVERSAL"; value: root.numericOr(testLabMetrics.physicalReversalMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.physicalReversalMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "PREDICTOR DETECTED"; value: root.numericOr(testLabMetrics.predictorDetectedMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.predictorDetectedMs, 0).toFixed(1) + " ms" }
+                            Metric { caption: "REVERSAL DETECTION LATENCY"; value: root.numericOr(testLabMetrics.reversalDetectionLatencyMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.reversalDetectionLatencyMs, 0).toFixed(1) + " ms" }
                             Metric { caption: "PRE-REVERSAL LEAD"; value: percent(root.numericOr(testLabMetrics.preReversalLead, 0)) }
                             Metric { caption: "POST-CANCEL LEAD"; value: percent(root.numericOr(testLabMetrics.postReversalLead, 0)); tone: root.themeTokens.ready }
                             Metric { caption: "LEAD COLLAPSE"; value: percent(root.numericOr(testLabMetrics.leadCollapseMagnitude, 0)); tone: root.themeTokens.ready }
                             Metric { caption: "STALE LEAD CLEARED"; value: root.numericOr(testLabMetrics.staleLeadCancellationMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.staleLeadCancellationMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
-                            Metric { caption: "OPPOSITE LEAD READY"; value: root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
+                            Metric { caption: "OPPOSITE LEAD REACQUISITION"; value: root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.oppositeDirectionReacquisitionMs, 0).toFixed(1) + " ms"; tone: root.themeTokens.ready }
                             Metric { caption: "SETTLING TIME"; value: root.numericOr(testLabMetrics.settlingTimeMs, -1) < 0 ? "—" : root.numericOr(testLabMetrics.settlingTimeMs, 0).toFixed(1) + " ms" }
                             Metric { caption: "MAX PHYSICAL STEP"; value: percent(root.numericOr(testLabMetrics.maximumPhysicalDelta, 0)) }
                             Metric { caption: "MAX PREDICTED STEP"; value: percent(root.numericOr(testLabMetrics.maximumPredictedDelta, 0)) }
                             Metric { caption: "PREDICTOR-ONLY STEP"; value: percent(root.numericOr(testLabMetrics.maximumArtificialPredictorStep, 0)) }
                             Metric { caption: "VIRTUAL OUTPUT STEP"; value: percent(root.numericOr(testLabMetrics.maximumVirtualOutputStep, 0)) }
                         }
-                        Text { text: "The Test Lab uses the same fixed-size runtime estimator as mapping, but creates an isolated synthetic processor. Physical input always remains the final predictive baseline."; color: root.themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
+                        Text { text: "Prediction error compares each prediction with ground-truth physical position at that sample’s active horizon. Reversal latency and opposite-lead reacquisition are measured from ground-truth physical reversal. Settling requires lead < 0.2%, horizon < 0.25 ms, predicted ≈ physical, and Stable state for " + root.numericOr(testLabMetrics.settlingPersistenceMs, 48).toFixed(0) + " ms."; color: root.themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
                     }
                 }
             }

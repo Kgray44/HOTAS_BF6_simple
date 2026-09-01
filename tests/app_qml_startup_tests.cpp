@@ -19,6 +19,7 @@
 #include <QSettings>
 #include <QStringList>
 #include <QStandardPaths>
+#include <QTest>
 #include <QTimer>
 #include <QThread>
 #include <QVariantList>
@@ -28,6 +29,9 @@
 #include <windows.h>
 #include <psapi.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <cstdio>
 
 using namespace Qt::StringLiterals;
@@ -57,9 +61,11 @@ bool failPresentationLifecycleTest(const QString &message)
 void settlePresentation()
 {
     for (int iteration = 0; iteration < 3; ++iteration) {
-        QCoreApplication::sendPostedEvents();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        // A visible QML scene can continually post polish/paint work. Process
+        // a bounded slice needed to instantiate or unload a page rather than
+        // draining that replenished queue indefinitely in a test.
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 5);
     }
 }
 
@@ -103,8 +109,58 @@ bool selectPage(QObject *surface, int page)
     return true;
 }
 
-bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *surface)
+QQuickItem *findVisualItemByObjectName(QQuickItem *item, const QString &objectName)
 {
+    if (!item) return nullptr;
+    if (item->objectName() == objectName) return item;
+    for (QQuickItem *child : item->childItems()) {
+        if (QQuickItem *found = findVisualItemByObjectName(child, objectName)) return found;
+    }
+    return nullptr;
+}
+
+bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *combo, int row)
+{
+    auto *comboItem = qobject_cast<QQuickItem *>(combo);
+    auto *scroll = surface->findChild<QQuickItem *>(QStringLiteral("adaptiveResponseScroll"));
+    if (!comboItem || !scroll) return failPresentationLifecycleTest(QStringLiteral("ResponseCombo did not expose a clickable item and scroll viewport"));
+    // A real pointer sequence is deliberately used here. A retry covers the
+    // transient frame where the popup is promoted into QQuickOverlay between
+    // the initial button release and the first offscreen paint.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const QPointF relative = comboItem->mapToScene(QPointF{}) - scroll->mapToScene(QPointF{});
+        const qreal contentY = scroll->property("contentY").toReal();
+        scroll->setProperty("contentY", std::max<qreal>(0.0, contentY + relative.y() - 96.0));
+        settlePresentation();
+        const QPointF comboPoint = comboItem->mapToScene(QPointF(comboItem->width() * 0.5,
+                                                                  comboItem->height() * 0.5));
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint.toPoint());
+        QTest::qWait(8);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint.toPoint());
+        settlePresentation();
+        QObject *popup = combo->findChild<QObject *>(combo->objectName() + QStringLiteral("Popup"));
+        if (!popup || !popup->property("visible").toBool()) continue;
+        auto *popupContent = qvariant_cast<QQuickItem *>(popup->property("contentItem"));
+        auto *delegate = findVisualItemByObjectName(popupContent, combo->objectName()
+            + QStringLiteral("Choice_%1").arg(row));
+        if (!delegate) continue;
+        const QPointF rowPoint = delegate->mapToScene(QPointF(delegate->width() * 0.5,
+                                                               delegate->height() * 0.5));
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
+        QTest::qWait(8);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
+        settlePresentation();
+        if (!popup->property("visible").toBool() && combo->property("currentIndex").toInt() == row) return true;
+        QTest::keyClick(window, Qt::Key_Escape);
+        settlePresentation();
+    }
+    return false;
+}
+
+bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *surface,
+                                         QQuickWindow *window)
+{
+    if (!window) return failPresentationLifecycleTest(QStringLiteral("Adaptive Response pointer test did not receive a QQuickWindow"));
     if (!selectPage(surface, 9)) return false;
     QObject *adaptive = pageItem(surface, 9);
     if (!adaptive) return failPresentationLifecycleTest(QStringLiteral("Adaptive Response page was not available"));
@@ -127,11 +183,9 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
         if (modelIndex < 0) {
             return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector lacks physical axis %1").arg(physicalAxis));
         }
-        if (!axisSelector->setProperty("currentIndex", modelIndex)
-            || !QMetaObject::invokeMethod(axisSelector, "activated", Q_ARG(int, modelIndex))) {
-            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector could not activate model index %1").arg(modelIndex));
+        if (!clickResponseComboRow(window, surface, axisSelector, modelIndex)) {
+            return failPresentationLifecycleTest(QStringLiteral("Adaptive Response selector could not click model index %1").arg(modelIndex));
         }
-        settlePresentation();
         const QVariantMap state = adaptive->property("state").toMap();
         const QVariantList preview = adaptive->property("previewSamples").toList();
         if (backend.selectedAxisIndex() != physicalAxis
@@ -141,6 +195,39 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
             return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Roll/Pitch/Yaw selection did not refresh backend, context, and preview together"));
         }
     }
+    const auto selector = [adaptive](const QString &name) {
+        return adaptive->findChild<QObject *>(name);
+    };
+    QObject *editScope = selector(QStringLiteral("adaptiveEditScopeSelector"));
+    QObject *target = selector(QStringLiteral("adaptiveTargetSelector"));
+    QObject *sourceRate = selector(QStringLiteral("adaptiveSourceRateSelector"));
+    if (!editScope || !target || !sourceRate
+        || !clickResponseComboRow(window, surface, editScope, 0)
+        || adaptive->property("editScope").toString() != QStringLiteral("global")
+        || !clickResponseComboRow(window, surface, target, 0)
+        || !clickResponseComboRow(window, surface, editScope, 2)
+        || adaptive->property("editScope").toString() != QStringLiteral("profile")) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Edit Level or Target popup rows did not complete a real selection"));
+    }
+    if (!adaptive->setProperty("simulatorExpanded", true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response simulator could not expand for pointer testing"));
+    }
+    settlePresentation();
+    if (!clickResponseComboRow(window, surface, sourceRate, 2)
+        || adaptive->property("simulatorSourceRate").toInt() != 60) {
+        return failPresentationLifecycleTest(QStringLiteral("Synthetic Source Rate popup row did not update its selected rate"));
+    }
+    if (!clickResponseComboRow(window, surface, sourceRate, 0)) {
+        return failPresentationLifecycleTest(QStringLiteral("Synthetic Source Rate could not restore 250 Hz for manual drag testing"));
+    }
+    auto *manualInput = adaptive->findChild<QQuickItem *>(QStringLiteral("adaptiveSimulatorManualInput"));
+    if (!manualInput || manualInput->mapToScene(QPointF(manualInput->width() * 0.5,
+            manualInput->height() * 0.5)).x() <= window->width() * 0.5) {
+        return failPresentationLifecycleTest(QStringLiteral("Interactive simulator manual input was not placed to the right of its graphs"));
+    }
+    adaptive->setProperty("simulatorPaused", true);
+    adaptive->setProperty("simulatorExpanded", false);
+    settlePresentation();
     backend.setSelectedAxis(originalAxis);
     settlePresentation();
     return true;
@@ -177,6 +264,99 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
     }
     if (recording != backend.adaptiveResponseSimulatorRecording()) {
         return failPresentationLifecycleTest(QStringLiteral("Adaptive Response replay data recomputed instead of returning the stored recording"));
+    }
+    int priorPhysicalUpdateCount = std::numeric_limits<int>::max();
+    for (const int sourceRate : {250, 125, 60, 30}) {
+        backend.adaptiveResponseSimulatorClear();
+        int physicalUpdateCount = 0;
+        int physicalDirection = 0;
+        int accelerationSign = 0;
+        int accelerationSignFlips = 0;
+        for (int index = 0; index <= 30; ++index) {
+            QThread::msleep(16);
+            backend.adaptiveResponseSimulatorStepAtContext(-0.80 + index * (1.60 / 30.0),
+                QStringLiteral("profile"), backend.activeProfileId(), 0, sourceRate);
+        }
+        const QVariantList smoothHistory = backend.adaptiveResponseSimulatorHistory();
+        if (smoothHistory.size() < 20) {
+            return failPresentationLifecycleTest(QStringLiteral("Simulator produced too few samples at %1 Hz").arg(sourceRate));
+        }
+        for (qsizetype index = 1; index < smoothHistory.size(); ++index) {
+            const QVariantMap current = smoothHistory.at(index).toMap();
+            const QVariantMap previous = smoothHistory.at(index - 1).toMap();
+            const float physicalDelta = static_cast<float>(current.value(QStringLiteral("physical")).toDouble()
+                - previous.value(QStringLiteral("physical")).toDouble());
+            const int direction = physicalDelta > 0.0001F ? 1 : physicalDelta < -0.0001F ? -1 : 0;
+            if (direction != 0) {
+                if (physicalDirection == 0) physicalDirection = direction;
+                if (direction != physicalDirection) {
+                    return failPresentationLifecycleTest(QStringLiteral("Smooth simulator trajectory reversed artificially at %1 Hz").arg(sourceRate));
+                }
+                ++physicalUpdateCount;
+            }
+            const float acceleration = static_cast<float>(current.value(QStringLiteral("acceleration")).toDouble());
+            const int sign = acceleration > 3.0F ? 1 : acceleration < -3.0F ? -1 : 0;
+            if (sign != 0 && accelerationSign != 0 && sign != accelerationSign) ++accelerationSignFlips;
+            if (sign != 0) accelerationSign = sign;
+        }
+        if (physicalUpdateCount == 0 || accelerationSignFlips > 3) {
+            return failPresentationLifecycleTest(QStringLiteral("Simulator interpolation left a QML-cadence pulse train at %1 Hz").arg(sourceRate));
+        }
+        if (physicalUpdateCount > priorPhysicalUpdateCount) {
+            return failPresentationLifecycleTest(QStringLiteral("Lower source-rate emulation produced more reports than a higher rate"));
+        }
+        priorPhysicalUpdateCount = physicalUpdateCount;
+        qInfo().noquote() << QStringLiteral("simulator_fidelity source_hz=%1 samples=%2 physical_updates=%3 acceleration_sign_flips=%4")
+            .arg(sourceRate).arg(smoothHistory.size()).arg(physicalUpdateCount).arg(accelerationSignFlips);
+    }
+    const QVariantList humanPreview = backend.adaptiveResponsePreviewAtContext(
+        QStringLiteral("Human-Like Rapid Reversal"), QStringLiteral("profile"), backend.activeProfileId(), 0);
+    if (humanPreview.size() < 60) {
+        return failPresentationLifecycleTest(QStringLiteral("Human-Like Rapid Reversal preview did not contain a complete trajectory"));
+    }
+    const double finalPhysical = humanPreview.constLast().toMap().value(QStringLiteral("physical")).toDouble();
+    for (qsizetype index = humanPreview.size() - 50; index < humanPreview.size(); ++index) {
+        if (std::abs(humanPreview.at(index).toMap().value(QStringLiteral("physical")).toDouble()
+                - finalPhysical) > 0.00001) {
+            return failPresentationLifecycleTest(QStringLiteral("Human-Like Rapid Reversal lacks its stationary settling tail"));
+        }
+    }
+    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive")}) {
+        if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), backend.activeProfileId(), 0, preset)) {
+            return failPresentationLifecycleTest(QStringLiteral("Built-in Adaptive Response preset %1 was unavailable").arg(preset));
+        }
+        const QVariantMap human = backend.adaptiveResponseTestLabAtContext(
+            QStringLiteral("Human-Like Rapid Reversal"), QStringLiteral("profile"), backend.activeProfileId(), 0);
+        const QVariantMap torture = backend.adaptiveResponseTestLabAtContext(
+            QStringLiteral("Instant Reversal Torture"), QStringLiteral("profile"), backend.activeProfileId(), 0);
+        for (const QString &metric : {QStringLiteral("meanAbsolutePredictionError"),
+             QStringLiteral("rmsPredictionError"), QStringLiteral("p95PredictionError"),
+             QStringLiteral("maximumPredictionError"), QStringLiteral("physicalReversalMs"),
+             QStringLiteral("reversalDetectionLatencyMs"), QStringLiteral("oppositeDirectionReacquisitionMs"),
+             QStringLiteral("maximumArtificialPredictorStep")}) {
+            if (!human.contains(metric)) {
+                return failPresentationLifecycleTest(QStringLiteral("Corrected Test Lab metric %1 was missing").arg(metric));
+            }
+        }
+        const double predictorOnlyStep = human.value(QStringLiteral("maximumArtificialPredictorStep")).toDouble();
+        qInfo().noquote() << QStringLiteral("test_lab preset=%1 scenario=human_like mae=%2 rms=%3 p95=%4 max=%5 physical_reversal_ms=%6 detection_latency_ms=%7 opposite_lead_ms=%8 false_reversals=%9 predictor_only_step=%10 virtual_output_step=%11 settling_ms=%12")
+            .arg(preset).arg(human.value(QStringLiteral("meanAbsolutePredictionError")).toDouble(), 0, 'f', 5)
+            .arg(human.value(QStringLiteral("rmsPredictionError")).toDouble(), 0, 'f', 5)
+            .arg(human.value(QStringLiteral("p95PredictionError")).toDouble(), 0, 'f', 5)
+            .arg(human.value(QStringLiteral("maximumPredictionError")).toDouble(), 0, 'f', 5)
+            .arg(human.value(QStringLiteral("physicalReversalMs")).toDouble(), 0, 'f', 1)
+            .arg(human.value(QStringLiteral("reversalDetectionLatencyMs")).toDouble(), 0, 'f', 1)
+            .arg(human.value(QStringLiteral("oppositeDirectionReacquisitionMs")).toDouble(), 0, 'f', 1)
+            .arg(human.value(QStringLiteral("falseReversalCount")).toInt())
+            .arg(predictorOnlyStep, 0, 'f', 5)
+            .arg(human.value(QStringLiteral("maximumVirtualOutputStep")).toDouble(), 0, 'f', 5)
+            .arg(human.value(QStringLiteral("settlingTimeMs")).toDouble(), 0, 'f', 1);
+        qInfo().noquote() << QStringLiteral("test_lab preset=%1 scenario=instant_torture predictor_only_step=%2 virtual_output_step=%3")
+            .arg(preset).arg(torture.value(QStringLiteral("maximumArtificialPredictorStep")).toDouble(), 0, 'f', 5)
+            .arg(torture.value(QStringLiteral("maximumVirtualOutputStep")).toDouble(), 0, 'f', 5);
+        if (predictorOnlyStep > 0.030) {
+            qWarning().noquote() << QStringLiteral("V2.3.T CORE FINDING: Human-Like Rapid Reversal still has a predictor-only step above 3% for %1; inspect the logged local state before modifying predictor math.").arg(preset);
+        }
     }
     return true;
 }
@@ -265,7 +445,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
         || !profiles->property("applyImportedCalibration").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
     }
-    if (!verifyAdaptiveResponseAxisSelection(backend, surface)) return false;
+    if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
     return selectPage(surface, 8);
 }
 
