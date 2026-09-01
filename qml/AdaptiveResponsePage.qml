@@ -319,34 +319,25 @@ Item {
             x: combo.width - width - 10; y: (combo.height - height) / 2
             text: "⌄"; color: combo.enabled ? root.themeTokens.textMuted : root.themeTokens.textFaint; font.pixelSize: 15
         }
-        delegate: Rectangle {
+        delegate: ItemDelegate {
             id: choice
             objectName: combo.objectName.length > 0 ? combo.objectName + "Choice_" + index : "responseComboChoice_" + index
-            width: combo.width; implicitHeight: 32
-            property bool highlighted: combo.highlightedIndex === index
-            property bool hovered: choiceMouse.containsMouse
-            radius: root.themeTokens.controlRadius
-            color: choice.highlighted ? root.themeTokens.selection : (choice.hovered ? root.themeTokens.controlHover : "transparent")
-            border.color: choice.highlighted ? root.themeTokens.orange : "transparent"
-            Text {
-                anchors.fill: parent; leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
+            width: combo.width; implicitHeight: 32; highlighted: combo.highlightedIndex === index
+            onClicked: {
+                // ItemDelegate owns the popup's real pointer activation.
+                // Commit the choice and close this popup in the same turn.
+                combo.choiceActivated(index, combo.valueAt(index))
+                combo.popup.close()
+            }
+            contentItem: Text {
+                leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
                 color: choice.highlighted ? root.themeTokens.textStrong : root.themeTokens.text
                 verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; font.pixelSize: 10
             }
-            MouseArea {
-                id: choiceMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    // A selection can rebuild this page.  Queue the callback
-                    // before closing: closing synchronously can destroy this
-                    // delegate, while applying first can recreate the popup.
-                    const selectedIndex = index
-                    const selectedValue = combo.valueAt(index)
-                    Qt.callLater(function() {
-                        combo.choiceActivated(selectedIndex, selectedValue)
-                    })
-                    combo.popup.close()
-                }
+            background: Rectangle {
+                radius: root.themeTokens.controlRadius
+                color: choice.highlighted ? root.themeTokens.selection : (choice.hovered ? root.themeTokens.controlHover : "transparent")
+                border.color: choice.highlighted ? root.themeTokens.orange : "transparent"
             }
         }
         popup: Popup {
