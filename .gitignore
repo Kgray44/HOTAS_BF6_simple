@@ -10,3 +10,4 @@
 release/
 build/
 build-*/
+/artifacts/adaptive_response_validation/
