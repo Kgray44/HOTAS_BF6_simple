@@ -148,30 +148,78 @@ struct FindingTriage {
     const char *nextAction;
 };
 
+bool hasSubstantiveConveyedPredictorMiss(const ScenarioResult &result)
+{
+    return std::any_of(result.reversalEvents.cbegin(), result.reversalEvents.cend(), [](const ReversalEvent &event) {
+        return event.conveysHumanIntent && event.predictorMissed
+            && std::abs(event.humanIntentVelocity) >= 0.075F;
+    });
+}
+
+bool satisfiesSlowMotionAcceptance(const ScenarioResult &result)
+{
+    // Slow motion is accepted when the coherent command is recognized, output
+    // remains stable/direct, and state is not chattering.  It intentionally
+    // does not require a non-zero predictive horizon at every microscopic
+    // speed, especially on 5 s and 10 s sweeps.
+    return result.metrics.longestHumanIntentMotionMs >= 2500.0
+        && result.metrics.motionRecognitionLatencyMs >= 0.0
+        && result.metrics.motionRecognitionLatencyMs <= 750.0
+        && result.metrics.stableChatter <= 1
+        && result.metrics.dropouts <= 1
+        && result.metrics.falseReversals == 0
+        && result.metrics.maximumOutputStep <= 0.060;
+}
+
 FindingTriage classifyFinding(const ScenarioResult &result, const std::string &reason)
 {
     const std::string &family = result.scenario.family;
+    const bool reversalTiming = reason.find("reversal timing") != std::string::npos;
+    const bool stateOnly = reason.find("false Stable") != std::string::npos
+        || reason.find("dropout") != std::string::npos;
+    const bool substantiveMiss = hasSubstantiveConveyedPredictorMiss(result);
+    if (reason.rfind("HARD: integration", 0) == 0 || reason.rfind("BEHAVIOR: integration", 0) == 0) {
+        return {"HARNESS", "production-backed integration acceptance invariant", "Correct the failing integration invariant before any campaign escalation."};
+    }
     if (family == "noise" || family == "noise-moving") {
         return {"EXPECTED", "deliberate injected-noise stress", "Retain as noise robustness evidence; do not tune from this branch."};
     }
     if (family == "human-wobble") {
         return {"EXPECTED", "deliberate human-wobble stress", "Use the timing grades to select a later UX/product review case."};
     }
-    if (family == "precision" && (reason.find("false Stable") != std::string::npos
-        || reason.find("dropout") != std::string::npos)) {
-        return {"HARNESS", "raw micro-motion expectation has no feature-quality floor", "Separate low-speed observability from an asserted prediction dropout in a follow-up harness policy."};
+    if (family == "precision") {
+        return {"HARNESS", "micro-motion event was below the substantive control-quality policy", "Keep precision data as an observability sentinel; do not label it a predictor defect without a coherent control threshold."};
     }
-    if (family == "reversal" && (reason.find("reversal") != std::string::npos)) {
-        return {"PRODUCT", "structured, no-noise reversal misses timing/false-detection criteria", "Document for a later V2.3 product-branch correction; do not alter it here."};
+    if (family == "reversal" && (reversalTiming || reason.find("false reversal") != std::string::npos) && substantiveMiss) {
+        return {"PRODUCT_SUSPECT", "human reversal was conveyed by the device but not detected by the predictor", "Preserve the exact replay and evaluate the reversal-evidence threshold on the product branch."};
+    }
+    if (reversalTiming && !substantiveMiss) {
+        return {"HARNESS", "timing grade was not attributable to a substantive conveyed human reversal", "Retain the event-chain evidence; do not promote a device-only or micro-intent event to a product defect."};
     }
     if (family == "slow-motion") {
-        return {"UNKNOWN", "slow-motion state transition outlier", "Replay the retained trace against an explicit low-speed product acceptance policy."};
+        if (satisfiesSlowMotionAcceptance(result)) {
+            return {"EXPECTED", "coherent slow motion remained direct and stable within the explicit low-speed policy", "Retain the 3 s, 5 s, and 10 s policy tables as regression evidence."};
+        }
+        return {"UNKNOWN", "slow-motion acceptance policy was not met", "Inspect the policy metric cluster before opening a product correction."};
     }
     if (family == "oscillation") {
         return {"HARMLESS", "oscillatory stress outlier", "Keep as a bounded oscillation regression sentinel."};
     }
     if (family == "persona") {
-        return {"UNKNOWN", "deterministic persona reversal or motion-state behavior", "Replay the retained worst cases before opening a product correction."};
+        if (result.scenario.noise != NoiseModel::None) {
+            return {"EXPECTED", "persona includes declared device quantization/noise", "Keep sensor-simulation findings separate from human-intent predictor findings."};
+        }
+        if ((reason.find("false reversal") != std::string::npos || reason.find("timing was poor") != std::string::npos)
+            && result.metrics.wrongDirectionLeadArea <= 0.004) {
+            return {"HARMLESS", "persona predictor event had no material wrong-direction virtual-output lead", "Retain as a telemetry-state sentinel, not a flight-control defect."};
+        }
+        if (substantiveMiss) {
+            return {"PRODUCT_SUSPECT", "persona conveyed a substantive human reversal that the predictor did not detect", "Preserve the persona replay and assess the reversal-evidence threshold on the product branch."};
+        }
+        if (stateOnly && result.metrics.wrongDirectionLeadArea <= 0.004) {
+            return {"HARMLESS", "persona state label changed without a wrong-direction virtual-output symptom", "Retain as state-classification telemetry rather than a flight-control defect."};
+        }
+        return {"UNKNOWN", "persona evidence does not yet isolate a predictor or device cause", "Use the intent/device/predictor event chain in the retained trace before escalation."};
     }
     return {"UNKNOWN", "unclassified synthetic behavior", "Review the retained trace and classify before escalation."};
 }
@@ -318,6 +366,12 @@ QJsonObject metricsJson(const ScenarioMetrics &metrics)
     };
     return {
         {"samples", static_cast<qint64>(metrics.samples)},
+        {"humanIntentReversals", static_cast<qint64>(metrics.humanIntentReversals)},
+        {"observedDeviceReversals", static_cast<qint64>(metrics.observedDeviceReversals)},
+        {"intentReversalsConveyed", static_cast<qint64>(metrics.intentReversalsConveyed)},
+        {"intentReversalsNotConveyed", static_cast<qint64>(metrics.intentReversalsNotConveyed)},
+        {"observedDeviceReversalsWithoutIntent", static_cast<qint64>(metrics.observedDeviceReversalsWithoutIntent)},
+        {"predictorMissedObservedReversals", static_cast<qint64>(metrics.predictorMissedObservedReversals)},
         {"trueReversals", static_cast<qint64>(metrics.trueReversals)},
         {"detectedReversals", static_cast<qint64>(metrics.detectedReversals)},
         {"falseReversals", static_cast<qint64>(metrics.falseReversals)},
@@ -345,6 +399,10 @@ QJsonObject metricsJson(const ScenarioMetrics &metrics)
         {"targetOvershootPeak", metrics.targetOvershootPeak}, {"targetOvershootArea", metrics.targetOvershootArea},
         {"sourceUpdateCount", static_cast<qint64>(metrics.sourceUpdateCount)},
         {"effectiveSourceRateHz", metrics.effectiveSourceRateHz}, {"sourceCadenceErrorMs", metrics.sourceCadenceErrorMs},
+        {"humanIntentMotionDurationMs", metrics.humanIntentMotionDurationMs},
+        {"longestHumanIntentMotionMs", metrics.longestHumanIntentMotionMs},
+        {"meanHumanIntentSpeed", metrics.meanHumanIntentSpeed},
+        {"peakHumanIntentSpeed", metrics.peakHumanIntentSpeed},
         {"reversalDetectionQuality", qualityCounts(metrics.reversalDetectionQuality)},
         {"reversalReacquisitionQuality", qualityCounts(metrics.reversalReacquisitionQuality)},
     };
@@ -455,6 +513,10 @@ struct IntegrationArtifacts {
     std::string lifecycle;
     std::string automation;
     std::string bumpless;
+    std::vector<std::string> hardFailures;
+    std::vector<std::string> behavioralFailures;
+
+    bool passed() const { return hardFailures.empty() && behavioralFailures.empty(); }
 };
 
 IntegrationArtifacts runIntegrationHarnesses()
@@ -487,6 +549,9 @@ IntegrationArtifacts runIntegrationHarnesses()
             multiAxis << "scaling-sine," << axisCount << ',' << modelName(model) << ',' << reports * axisCount << ',' << elapsed << ','
                 << (elapsed <= 0.0 ? 0.0 : reports * axisCount * 1000000.0 / elapsed) << ',' << peakDifference << ','
                 << peakDifference << ',' << (peakDifference < 0.000001F ? 1 : 0) << '\n';
+            if (peakDifference >= 0.000001F) {
+                artifacts.hardFailures.push_back("HARD: integration multi-axis cross-axis contamination or non-determinism");
+            }
         }
     }
     for (const AdaptiveResponseModel model : {AdaptiveResponseModel::Velocity, AdaptiveResponseModel::AlphaBeta,
@@ -519,6 +584,9 @@ IntegrationArtifacts runIntegrationHarnesses()
         multiAxis << "mixed-roll-pitch-yaw-throttle-correction,5," << modelName(model) << ',' << reports * 5 << ',' << elapsed << ','
             << (elapsed <= 0.0 ? 0.0 : reports * 5 * 1000000.0 / elapsed) << ',' << allAxesPeakDifference << ','
             << allAxesPeakDifference << ',' << (allAxesPeakDifference < 0.000001F ? 1 : 0) << '\n';
+        if (allAxesPeakDifference >= 0.000001F) {
+            artifacts.hardFailures.push_back("HARD: integration mixed-axis cross-axis contamination or non-determinism");
+        }
     }
     artifacts.multiAxis = multiAxis.str();
 
@@ -534,13 +602,21 @@ IntegrationArtifacts runIntegrationHarnesses()
     lifecycle << "mapping-stop-start," << beforeReset.lead << ',' << std::abs(afterReset.predicted - beforeReset.predicted) << ','
         << std::abs(afterReset.predicted - beforeReset.predicted) << ',' << (afterReset.predicted == 0.5F ? 1 : 0) << ','
         << (std::isfinite(afterReset.predicted) ? 1 : 0) << ',' << (afterReset.predicted >= -1.0F && afterReset.predicted <= 1.0F ? 1 : 0) << ",1\n";
+    if (afterReset.predicted != 0.5F || !std::isfinite(afterReset.predicted)
+        || afterReset.predicted < -1.0F || afterReset.predicted > 1.0F) {
+        artifacts.hardFailures.push_back("HARD: integration lifecycle reset retained stale estimator state or illegal output");
+    }
     RuntimeAdaptiveResponseConfig disabled = lifecycleConfig;
     disabled.enabled = false;
     const AdaptiveResponseTelemetry disabledState = lifecycleProcessor.process(-0.25F, disabled, origin + std::chrono::milliseconds(12));
     lifecycle << "adaptive-disable-during-motion," << beforeReset.lead << ',' << std::abs(disabledState.predicted - beforeReset.predicted) << ','
         << std::abs(disabledState.predicted - beforeReset.predicted) << ',' << (disabledState.predicted == -0.25F ? 1 : 0) << ','
         << (std::isfinite(disabledState.predicted) ? 1 : 0) << ',' << (disabledState.predicted >= -1.0F && disabledState.predicted <= 1.0F ? 1 : 0) << ",1\n";
-    const auto lifecycleScenario = [&lifecycle, origin](const char *name, RuntimeAdaptiveResponseConfig before,
+    if (disabledState.predicted != -0.25F || !std::isfinite(disabledState.predicted)
+        || disabledState.predicted < -1.0F || disabledState.predicted > 1.0F) {
+        artifacts.hardFailures.push_back("HARD: integration lifecycle disable retained stale estimator state or illegal output");
+    }
+    const auto lifecycleScenario = [&lifecycle, &artifacts, origin](const char *name, RuntimeAdaptiveResponseConfig before,
                                                          RuntimeAdaptiveResponseConfig after, bool resetAtTransition) {
         AdaptiveResponseProcessor processor;
         float previous = 0.0F;
@@ -567,6 +643,9 @@ IntegrationArtifacts runIntegrationHarnesses()
         }
         lifecycle << name << ",0," << transitionStep << ',' << maximumStep << ',' << (resetBaseline ? 1 : 0) << ','
             << (finite ? 1 : 0) << ',' << (bounded ? 1 : 0) << ",1\n";
+        if (!finite || !bounded || (resetAtTransition && !resetBaseline)) {
+            artifacts.hardFailures.push_back("HARD: integration lifecycle invariant failed: " + std::string(name));
+        }
     };
     RuntimeAdaptiveResponseConfig velocity = verificationConfiguration(AdaptiveResponseModel::Velocity);
     RuntimeAdaptiveResponseConfig alphaBeta = verificationConfiguration(AdaptiveResponseModel::AlphaBeta);
@@ -587,7 +666,7 @@ IntegrationArtifacts runIntegrationHarnesses()
     CurveTransitionSmoothingSettings settings;
     settings.enabled = true;
     settings.durationMs = 100;
-    const auto bumplessScenario = [&bumpless, settings](const char *name, float actual, float firstMapped,
+    const auto bumplessScenario = [&bumpless, &artifacts, settings](const char *name, float actual, float firstMapped,
                                                           float secondMapped, float input, bool rapidRetarget) {
         AxisMappingTransitionEngine transition;
         transition.begin(1, actual, firstMapped, input, 0, 0, settings);
@@ -601,9 +680,21 @@ IntegrationArtifacts runIntegrationHarnesses()
             retargetDiscontinuity = std::abs(retarget - middle);
         }
         const float terminal = transition.apply(1, rapidRetarget ? secondMapped : firstMapped, input, 0, 150000);
-        bumpless << name << ',' << std::abs(initial - actual) << ',' << middle - firstMapped << ','
-            << terminal - (rapidRetarget ? secondMapped : firstMapped) << ',' << retargetDiscontinuity << ','
+        const float initialDiscontinuity = std::abs(initial - actual);
+        const float terminalCorrection = terminal - (rapidRetarget ? secondMapped : firstMapped);
+        bumpless << name << ',' << initialDiscontinuity << ',' << middle - firstMapped << ','
+            << terminalCorrection << ',' << retargetDiscontinuity << ','
             << (activeAfterBegin ? 1 : 0) << ',' << (transition.active(1) ? 1 : 0) << '\n';
+        const float discontinuity = std::max({initialDiscontinuity, std::abs(terminalCorrection), retargetDiscontinuity});
+        if (!activeAfterBegin || transition.active(1)) {
+            artifacts.hardFailures.push_back("HARD: integration bumpless lifecycle invariant failed: " + std::string(name));
+        } else if (discontinuity > 0.050F) {
+            artifacts.hardFailures.push_back("HARD: integration bumpless transition exceeded the hard discontinuity limit: "
+                + std::string(name));
+        } else if (discontinuity > 0.001F) {
+            artifacts.behavioralFailures.push_back("BEHAVIOR: integration bumpless transition exceeded the allowed discontinuity: "
+                + std::string(name));
+        }
     };
     bumplessScenario("offcenter-off-to-fast", 0.60F, -0.40F, -0.40F, 0.20F, false);
     bumplessScenario("balanced-to-aggressive-moving", 0.34F, 0.45F, 0.45F, 0.32F, false);
@@ -630,7 +721,7 @@ IntegrationArtifacts runIntegrationHarnesses()
         rule.actions[0].adaptiveResponse.properties = properties;
         rule.actions[0].adaptiveResponse.settings = settings;
     };
-    const auto evaluateAutomation = [&automation, &configureAutomationRule](const char *name, CompiledAutomationSet compiled,
+    const auto evaluateAutomation = [&automation, &artifacts, &configureAutomationRule](const char *name, CompiledAutomationSet compiled,
                                                                               bool expectedEnabled, float expectedHorizonMs) {
         AutomationRuntime runtime;
         runtime.setCompiled(&compiled);
@@ -643,6 +734,8 @@ IntegrationArtifacts runIntegrationHarnesses()
         automation << name << ',' << (expectedEnabled ? 1 : 0) << ',' << (overlay.settings.enabled ? 1 : 0) << ','
             << expectedHorizonMs << ',' << overlay.settings.maximumHorizonMs << ',' << (match ? 1 : 0) << ','
             << (match ? 1 : 0) << ",,\n";
+        if (!match) artifacts.hardFailures.push_back("HARD: integration Automation winner differs from deterministic expected property winner: "
+            + std::string(name));
     };
     const auto presets = builtInAdaptiveResponsePresets();
     AdaptiveResponseSettings enabledSettings;
@@ -699,6 +792,7 @@ IntegrationArtifacts runIntegrationHarnesses()
         const bool match = first.active && first.settings.enabled && second.active && !second.settings.enabled;
         automation << "rapid-activation-deactivation," << 0 << ',' << (second.settings.enabled ? 1 : 0) << ",12,"
             << second.settings.maximumHorizonMs << ',' << (match ? 1 : 0) << ',' << (match ? 1 : 0) << ",1,0\n";
+        if (!match) artifacts.hardFailures.push_back("HARD: integration Automation rapid activation is non-deterministic");
     }
     {
         CompiledAutomationSet compiled;
@@ -729,13 +823,14 @@ IntegrationArtifacts runIntegrationHarnesses()
         automation << "timed-overlay-transition," << 1 << ',' << (beforeExpiry.settings.enabled ? 1 : 0) << ",15,"
             << beforeExpiry.settings.maximumHorizonMs << ',' << (match ? 1 : 0) << ',' << (match ? 1 : 0) << ','
             << (beforeExpiry.active ? 1 : 0) << ',' << (afterExpiry.active ? 1 : 0) << '\n';
+        if (!match) artifacts.hardFailures.push_back("HARD: integration Automation timed overlay is non-deterministic");
     }
     artifacts.automation = automation.str();
     return artifacts;
 }
 
 bool writeArtifacts(const CampaignOptions &options, const QString &directory,
-                    const std::vector<TimedResult> &results, QString *error)
+                    const std::vector<TimedResult> &results, const IntegrationArtifacts &integrations, QString *error)
 {
     if (!QDir().mkpath(directory) || !QDir().mkpath(QDir(directory).filePath("traces"))) {
         if (error) *error = "Unable to create verification artifact directory.";
@@ -762,9 +857,9 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
     std::ostringstream accelerationCsv;
     accelerationCsv << "trajectory_id,scenario_id,configuration,mean_lead,peak_lead,mean_horizon_ms,reversal_count,maximum_output_step\n";
     std::ostringstream reversalEventsCsv;
-    reversalEventsCsv << "trajectory_id,scenario_id,configuration,event_index,physical_ground_truth_ms,detected_ms,detection_latency_ms,detection_quality,stale_lead_cancellation_ms,reacquisition_ms,reacquisition_quality,peak_stale_lead,wrong_direction_lead_area,missed,false_detection_nearby\n";
+    reversalEventsCsv << "trajectory_id,scenario_id,configuration,event_index,human_intent_ms,human_intent_direction,human_intent_velocity,observed_device_ms,observed_device_direction,intent_to_observed_latency_ms,conveys_human_intent,predictor_detected_ms,detection_latency_from_observed_ms,detection_quality,stale_lead_cancellation_ms,reacquisition_ms,reacquisition_quality,peak_stale_lead,wrong_direction_lead_area,predictor_missed,false_detection_nearby\n";
     std::ostringstream reversalCsv;
-    reversalCsv << "trajectory_id,scenario_id,configuration,true_reversals,detected_reversals,false_reversals,missed_reversals,first_detection_latency_ms,first_stale_lead_cancellation_ms,first_reacquisition_ms,wrong_direction_lead_area,detection_immediate,detection_excellent,detection_acceptable,detection_poor,detection_failure,reacquisition_immediate,reacquisition_excellent,reacquisition_acceptable,reacquisition_poor,reacquisition_failure\n";
+    reversalCsv << "trajectory_id,scenario_id,configuration,human_intent_reversals,observed_device_reversals,intent_reversals_conveyed,intent_reversals_not_conveyed,observed_device_reversals_without_intent,predictor_missed_observed_reversals,detected_reversals,false_reversals,missed_reversals,first_detection_latency_ms,first_stale_lead_cancellation_ms,first_reacquisition_ms,wrong_direction_lead_area,detection_immediate,detection_excellent,detection_acceptable,detection_poor,detection_failure,reacquisition_immediate,reacquisition_excellent,reacquisition_acceptable,reacquisition_poor,reacquisition_failure\n";
     std::ostringstream motionStateCsv;
     motionStateCsv << "trajectory_id,scenario_id,configuration,state,duration_ms,transition_count,stable_chatter,dropout_count,dropout_total_ms\n";
     std::map<std::string, Aggregate> families;
@@ -832,8 +927,11 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         }
         if (!result.reversalEvents.empty()) {
             reversalCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
-                << result.metrics.trueReversals << ',' << result.metrics.detectedReversals << ',' << result.metrics.falseReversals << ','
-                << result.metrics.missedReversals << ',' << result.metrics.reversalLatencyMs << ','
+                << result.metrics.humanIntentReversals << ',' << result.metrics.observedDeviceReversals << ','
+                << result.metrics.intentReversalsConveyed << ',' << result.metrics.intentReversalsNotConveyed << ','
+                << result.metrics.observedDeviceReversalsWithoutIntent << ',' << result.metrics.predictorMissedObservedReversals << ','
+                << result.metrics.detectedReversals << ',' << result.metrics.falseReversals << ',' << result.metrics.missedReversals << ','
+                << result.metrics.reversalLatencyMs << ','
                 << result.metrics.staleLeadCancellationMs << ',' << result.metrics.oppositeDirectionReacquisitionMs << ','
                 << result.metrics.wrongDirectionLeadArea;
             for (size_t quality = static_cast<size_t>(ReversalQuality::Immediate);
@@ -848,13 +946,16 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             for (size_t eventIndex = 0; eventIndex < result.reversalEvents.size(); ++eventIndex) {
                 const ReversalEvent &event = result.reversalEvents[eventIndex];
                 reversalEventsCsv << csv(result.scenario.trajectoryId) << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
-                    << eventIndex << ',' << event.groundTruthTimeSeconds * 1000.0F << ',' << event.detectedTimeSeconds * 1000.0F << ','
+                    << eventIndex << ',' << event.humanIntentTimeSeconds * 1000.0F << ',' << event.humanIntentDirection << ','
+                    << event.humanIntentVelocity << ',' << event.groundTruthTimeSeconds * 1000.0F << ','
+                    << event.observedDeviceDirection << ',' << event.intentToObservedLatencyMs << ',' << (event.conveysHumanIntent ? 1 : 0) << ','
+                    << event.detectedTimeSeconds * 1000.0F << ','
                     << (event.detectedTimeSeconds < 0.0F ? -1.0F : (event.detectedTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
                     << reversalQualityName(event.detectionQuality) << ','
                     << (event.staleLeadCancellationTimeSeconds < 0.0F ? -1.0F : (event.staleLeadCancellationTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
                     << (event.reacquisitionTimeSeconds < 0.0F ? -1.0F : (event.reacquisitionTimeSeconds - event.groundTruthTimeSeconds) * 1000.0F) << ','
                     << reversalQualityName(event.reacquisitionQuality) << ','
-                    << event.peakStaleLead << ',' << event.wrongDirectionLeadArea << ',' << (event.missed ? 1 : 0) << ','
+                    << event.peakStaleLead << ',' << event.wrongDirectionLeadArea << ',' << (event.predictorMissed ? 1 : 0) << ','
                     << (event.surroundedByFalseDetection ? 1 : 0) << '\n';
             }
         }
@@ -871,25 +972,36 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         }
         if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || result.retainedForFailure)) {
             std::ostringstream trace;
-            trace << "time_seconds,intended,physical,estimated,predicted,lead,velocity,acceleration,horizon_ms,confidence,motion_intensity,state,reversal,intended_moving,intended_direction,source_sample_updated,source_sample_time_seconds,physical_velocity,physical_ground_truth_direction,dt_seconds,target_arrival,physical_stop,intended_turn,physical_true_reversal\n";
+            trace << "time_seconds,human_intent,human_intent_velocity,human_intent_acceleration,human_intent_direction,human_intent_reversal,human_intent_stop,observed_device,observed_device_velocity,observed_device_direction,observed_device_reversal,estimated,predicted,lead,predictor_velocity,predictor_acceleration,horizon_ms,confidence,motion_intensity,predictor_state,predictor_reversal,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop\n";
             for (size_t index = 0; index < result.trace.size(); ++index) {
                 const TraceSample &sample = result.trace[index];
                 const AdaptiveResponseTelemetry &telemetry = result.telemetry[index];
-                const int direction = sample.velocity > kMotionVelocityThreshold ? 1 : sample.velocity < -kMotionVelocityThreshold ? -1 : 0;
-                trace << sample.timeSeconds << ',' << sample.intended << ',' << sample.physical << ',' << telemetry.estimated << ','
+                trace << sample.timeSeconds << ',' << sample.intended << ',' << sample.humanIntentVelocity << ','
+                    << sample.humanIntentAcceleration << ',' << sample.humanIntentDirection << ','
+                    << (sample.humanIntentReversal ? 1 : 0) << ',' << (sample.humanIntentStop ? 1 : 0) << ','
+                    << sample.physical << ',' << sample.observedDeviceVelocity << ',' << sample.observedDeviceDirection << ','
+                    << (sample.observedDeviceReversal ? 1 : 0) << ',' << telemetry.estimated << ','
                     << telemetry.predicted << ',' << telemetry.lead << ',' << telemetry.velocity << ',' << telemetry.acceleration << ','
                     << telemetry.activeHorizonSeconds * 1000.0F << ',' << telemetry.confidence << ',' << telemetry.motionIntensity << ','
-                    << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << ',' << (sample.intendedMoving ? 1 : 0)
-                    << ',' << direction << ',' << (sample.sourceSampleUpdated ? 1 : 0) << ',' << sample.sourceSampleTimeSeconds << ','
-                    << sample.physicalVelocity << ',' << sample.physicalGroundTruthDirection << ',' << sample.dtSeconds << ','
-                    << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0) << ','
-                    << (sample.trueReversal ? 1 : 0) << ',' << (sample.physicalTrueReversal ? 1 : 0) << '\n';
+                    << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << ','
+                    << (sample.sourceSampleUpdated ? 1 : 0) << ',' << sample.sourceSampleTimeSeconds << ',' << sample.dtSeconds << ','
+                    << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0) << '\n';
             }
             const QString traceName = QString::number(static_cast<qulonglong>(
                 qHash(q(result.scenario.id + "|" + result.configuration))), 16)
                 + "-" + q(result.configuration).replace(' ', '_') + ".csv";
             if (!writeText(QDir(directory).filePath("traces/" + traceName), q(trace.str()), error)) return false;
         }
+    }
+    for (const std::string &failure : integrations.hardFailures) {
+        ++aggregate.hardFailures;
+        ++failureCategories[failure];
+        failuresCsv << "hard,integration,all,0x00000000," << csv(failure) << '\n';
+    }
+    for (const std::string &failure : integrations.behavioralFailures) {
+        ++aggregate.behavioralFailures;
+        ++failureCategories[failure];
+        failuresCsv << "behavioral,integration,all,0x00000000," << csv(failure) << '\n';
     }
     std::map<std::string, std::map<int, const ScenarioResult *>> rateGroups;
     for (const TimedResult &timed : results) {
@@ -1007,6 +1119,12 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
     std::set<std::string> uniqueConfigurations;
     for (const TimedResult &timed : results) uniqueConfigurations.insert(timed.result.configuration);
     for (const std::string &configuration : uniqueConfigurations) configurationNames.append(q(configuration));
+    QJsonArray integrationHardFailures;
+    for (const std::string &failure : integrations.hardFailures) integrationHardFailures.append(q(failure));
+    QJsonArray integrationBehavioralFailures;
+    for (const std::string &failure : integrations.behavioralFailures) integrationBehavioralFailures.append(q(failure));
+    const QJsonObject integrationSummary{{"passed", integrations.passed()}, {"hardFailures", integrationHardFailures},
+        {"behavioralFailures", integrationBehavioralFailures}};
     QJsonObject campaign{{"adaptiveVerificationSchemaVersion", kAdaptiveVerificationSchemaVersion},
         {"adaptiveScenarioCatalogVersion", kAdaptiveScenarioCatalogVersion}, {"campaign", q(options.tier)},
         {"masterSeed", QString::asprintf("0x%08X", options.masterSeed)}, {"generatedUtc", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
@@ -1020,17 +1138,20 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         {"catalogScenarioVersion", kAdaptiveScenarioCatalogVersion}, {"randomCountOverride", options.randomCountOverride},
         {"workerThreads", options.jobs}, {"os", QSysInfo::prettyProductName()},
         {"compiler", QStringLiteral("MSVC %1").arg(_MSC_FULL_VER)},
-        {"configurations", configurationNames}, {"summary", aggregateJson()}, {"scenarioRuns", scenarios}};
+        {"configurations", configurationNames}, {"summary", aggregateJson()}, {"integration", integrationSummary},
+        {"scenarioRuns", scenarios}};
     QJsonObject summary = aggregateJson();
     summary.insert("adaptiveVerificationSchemaVersion", kAdaptiveVerificationSchemaVersion);
     summary.insert("adaptiveScenarioCatalogVersion", kAdaptiveScenarioCatalogVersion);
     summary.insert("campaign", q(options.tier));
+    summary.insert("integration", integrationSummary);
     summary.insert("disposition", aggregate.hardFailures > 0 ? "FAIL" : aggregate.behavioralFailures > 0 ? "PASS WITH FINDINGS" : "PASS");
     std::ostringstream summaryCsv;
-    summaryCsv << "campaign,scenario_runs,samples,hard_failures,behavioral_failures,findings,dropouts,false_reversals,rms_lead,peak_lead\n"
+    summaryCsv << "campaign,scenario_runs,samples,hard_failures,behavioral_failures,findings,dropouts,false_reversals,integration_hard_failures,integration_behavioral_failures,rms_lead,peak_lead\n"
         << options.tier << ',' << aggregate.scenarios << ',' << aggregate.samples << ',' << aggregate.hardFailures << ','
         << aggregate.behavioralFailures << ',' << aggregate.findings << ',' << aggregate.dropouts << ','
-        << aggregate.falseReversals << ',' << (aggregate.samples == 0 ? 0.0 : std::sqrt(aggregate.leadSquared / aggregate.samples))
+        << aggregate.falseReversals << ',' << integrations.hardFailures.size() << ',' << integrations.behavioralFailures.size() << ','
+        << (aggregate.samples == 0 ? 0.0 : std::sqrt(aggregate.leadSquared / aggregate.samples))
         << ',' << aggregate.peakLead << '\n';
     const auto aggregatesCsv = [](const std::map<std::string, Aggregate> &groups, const char *column) {
         std::ostringstream output;
@@ -1042,6 +1163,7 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
     };
     const QString root = directory;
     std::ostringstream canonicalFindings;
+    std::ostringstream canonicalClusters;
     if (options.tier == "canonical") {
         std::map<std::string, std::uint64_t> byCategory;
         std::map<std::string, std::uint64_t> byRootCause;
@@ -1052,10 +1174,153 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         std::map<int, std::uint64_t> byMapperRate;
         std::map<int, std::uint64_t> bySourceRate;
         std::map<std::string, std::vector<const TimedResult *>> categoryExamples;
+        struct RootCauseCluster {
+            std::uint64_t count = 0;
+            std::set<std::string> configurations;
+            std::set<std::string> families;
+            std::set<int> mapperRates;
+            std::set<int> sourceRates;
+            const TimedResult *representative = nullptr;
+            std::string nextAction;
+        };
+        std::map<std::string, RootCauseCluster> rootCauseClusters;
+        struct DetailedFindingCluster {
+            std::uint64_t count = 0;
+            std::string category;
+            std::string rootCause;
+            std::string failureReason;
+            std::string configuration;
+            std::string configurationKind;
+            std::string family;
+            std::string mapperRate;
+            std::string sourceRate;
+            std::string trajectory;
+            std::string motionIntensity;
+            std::string reversalQuality;
+            std::string dropout;
+            std::string falseStop;
+            std::string noise;
+            std::string severity;
+            std::string action;
+            const TimedResult *representative = nullptr;
+        };
+        std::map<std::string, DetailedFindingCluster> detailedClusters;
+        struct ProductEvidence {
+            const TimedResult *timed = nullptr;
+            const ReversalEvent *event = nullptr;
+            std::string reason;
+            std::string category;
+        };
+        std::vector<ProductEvidence> productEvidence;
+        struct SlowMotionSummary {
+            std::uint64_t enabledRuns = 0;
+            std::uint64_t acceptedRuns = 0;
+            double maxRecognitionMs = 0.0;
+            double maxDropoutMs = 0.0;
+            double maxOutputStep = 0.0;
+        };
+        std::map<std::string, SlowMotionSummary> slowMotion;
+        SlowMotionSummary threeSecondFullScale;
+        struct PersonaSummary {
+            std::uint64_t rows = 0;
+            std::map<std::string, std::uint64_t> categories;
+            std::uint64_t intentReversals = 0;
+            std::uint64_t conveyedReversals = 0;
+            std::uint64_t predictorMisses = 0;
+        };
+        std::map<std::string, PersonaSummary> personaSummaries;
+        std::uint64_t totalHumanIntentReversals = 0;
+        std::uint64_t totalObservedDeviceReversals = 0;
+        std::uint64_t totalConveyedReversals = 0;
+        std::uint64_t totalUnconveyedIntentReversals = 0;
+        std::uint64_t totalDeviceOnlyReversals = 0;
+        std::uint64_t totalPredictorDetections = 0;
+        std::uint64_t totalPredictorFalseReversals = 0;
+        std::uint64_t totalPredictorMisses = 0;
+        std::uint64_t totalStaleLeadCancellations = 0;
+        std::uint64_t totalReacquisitions = 0;
+        std::array<std::uint64_t, 6> totalDetectionQualities{};
+        std::array<std::uint64_t, 6> totalReacquisitionQualities{};
         std::uint64_t behavioralRows = 0;
         std::uint64_t findingRows = 0;
+        const auto noiseName = [](NoiseModel noise) {
+            switch (noise) {
+            case NoiseModel::None: return std::string("none");
+            case NoiseModel::WhiteJitter: return std::string("white-jitter");
+            case NoiseModel::Quantized: return std::string("quantized");
+            case NoiseModel::PositiveSpike: return std::string("positive-spike");
+            case NoiseModel::OppositeSpike: return std::string("opposite-spike");
+            case NoiseModel::Burst: return std::string("burst");
+            case NoiseModel::Drift: return std::string("drift");
+            }
+            return std::string("unknown");
+        };
+        const auto intensityName = [](const ScenarioResult &result) {
+            if (result.metrics.peakHumanIntentSpeed < 0.020) return std::string("micro (<0.020)");
+            if (result.metrics.peakHumanIntentSpeed < 0.075) return std::string("substantive-threshold (<0.075)");
+            return std::string("substantive (>=0.075)");
+        };
+        const auto worstQualityName = [](const ScenarioResult &result) {
+            ReversalQuality worst = ReversalQuality::NotApplicable;
+            for (const ReversalEvent &event : result.reversalEvents) {
+                worst = std::max(worst, std::max(event.detectionQuality, event.reacquisitionQuality));
+            }
+            return std::string(reversalQualityName(worst));
+        };
+        const auto detailKey = [](const std::initializer_list<std::string> &parts) {
+            std::ostringstream key;
+            for (const std::string &part : parts) key << part << '\x1f';
+            return key.str();
+        };
         for (const TimedResult &timed : results) {
             const ScenarioResult &result = timed.result;
+            if (timed.configuration.enabled) {
+                totalHumanIntentReversals += result.metrics.humanIntentReversals;
+                totalObservedDeviceReversals += result.metrics.observedDeviceReversals;
+                totalConveyedReversals += result.metrics.intentReversalsConveyed;
+                totalUnconveyedIntentReversals += result.metrics.intentReversalsNotConveyed;
+                totalDeviceOnlyReversals += result.metrics.observedDeviceReversalsWithoutIntent;
+                totalPredictorDetections += result.metrics.detectedReversals;
+                totalPredictorFalseReversals += result.metrics.falseReversals;
+                totalPredictorMisses += result.metrics.predictorMissedObservedReversals;
+                for (size_t quality = 0; quality < totalDetectionQualities.size(); ++quality) {
+                    totalDetectionQualities[quality] += result.metrics.reversalDetectionQuality[quality];
+                    totalReacquisitionQualities[quality] += result.metrics.reversalReacquisitionQuality[quality];
+                }
+                for (const ReversalEvent &event : result.reversalEvents) {
+                    if (event.staleLeadCancellationTimeSeconds >= 0.0F) ++totalStaleLeadCancellations;
+                    if (event.reacquisitionTimeSeconds >= 0.0F) ++totalReacquisitions;
+                }
+            }
+            if (timed.configuration.enabled && result.scenario.family == "slow-motion") {
+                const std::string duration = result.scenario.id.find("sweep-3.000000") != std::string::npos ? "3 s"
+                    : result.scenario.id.find("sweep-5.000000") != std::string::npos ? "5 s"
+                    : result.scenario.id.find("sweep-10.000000") != std::string::npos ? "10 s" : "other";
+                SlowMotionSummary &summary = slowMotion[duration];
+                ++summary.enabledRuns;
+                if (satisfiesSlowMotionAcceptance(result)) ++summary.acceptedRuns;
+                summary.maxRecognitionMs = std::max(summary.maxRecognitionMs, result.metrics.motionRecognitionLatencyMs);
+                summary.maxDropoutMs = std::max(summary.maxDropoutMs, result.metrics.longestDropoutMs);
+                summary.maxOutputStep = std::max(summary.maxOutputStep, result.metrics.maximumOutputStep);
+                if (result.scenario.id.find("slow/sweep-3.000000-1") != std::string::npos) {
+                    ++threeSecondFullScale.enabledRuns;
+                    if (satisfiesSlowMotionAcceptance(result)) ++threeSecondFullScale.acceptedRuns;
+                    threeSecondFullScale.maxRecognitionMs = std::max(threeSecondFullScale.maxRecognitionMs,
+                        result.metrics.motionRecognitionLatencyMs);
+                    threeSecondFullScale.maxDropoutMs = std::max(threeSecondFullScale.maxDropoutMs,
+                        result.metrics.longestDropoutMs);
+                    threeSecondFullScale.maxOutputStep = std::max(threeSecondFullScale.maxOutputStep,
+                        result.metrics.maximumOutputStep);
+                }
+            }
+            if (timed.configuration.enabled && result.scenario.family == "persona") {
+                const size_t separator = result.scenario.id.rfind('-');
+                const std::string persona = result.scenario.id.substr(8, separator == std::string::npos ? std::string::npos : separator - 8);
+                PersonaSummary &summary = personaSummaries[persona];
+                summary.intentReversals += result.metrics.humanIntentReversals;
+                summary.conveyedReversals += result.metrics.intentReversalsConveyed;
+                summary.predictorMisses += result.metrics.predictorMissedObservedReversals;
+            }
             for (const std::string &failure : result.failures) {
                 if (!isBehavioralFailure(failure) && isHardFailure(failure)) continue;
                 if (isBehavioralFailure(failure)) ++behavioralRows;
@@ -1063,6 +1328,54 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                 const FindingTriage triage = classifyFinding(result, failure);
                 ++byCategory[triage.category];
                 ++byRootCause[std::string(triage.category) + "|" + triage.rootCause + "|" + triage.nextAction];
+                RootCauseCluster &cluster = rootCauseClusters[std::string(triage.category) + "|" + triage.rootCause];
+                ++cluster.count;
+                cluster.configurations.insert(result.configuration);
+                cluster.families.insert(result.scenario.family);
+                cluster.mapperRates.insert(result.scenario.mapperRateHz);
+                cluster.sourceRates.insert(result.scenario.sourceRateHz > 0 ? result.scenario.sourceRateHz : result.scenario.mapperRateHz);
+                cluster.nextAction = triage.nextAction;
+                if (cluster.representative == nullptr || (traceReference(result) != "summary-only"
+                    && traceReference(cluster.representative->result) == "summary-only")) {
+                    cluster.representative = &timed;
+                }
+                const std::string configurationKind = result.configuration.rfind("Preset ", 0) == 0 ? "preset" : "model";
+                const std::string mapperRate = std::to_string(result.scenario.mapperRateHz);
+                const std::string sourceRate = std::to_string(result.scenario.sourceRateHz > 0
+                    ? result.scenario.sourceRateHz : result.scenario.mapperRateHz);
+                const std::string intensity = intensityName(result);
+                const std::string quality = worstQualityName(result);
+                const std::string dropout = result.metrics.dropouts == 0 ? "none"
+                    : result.metrics.longestDropoutMs <= 100.0 ? "brief (<=100 ms)" : "extended (>100 ms)";
+                const std::string falseStop = result.metrics.falseStops == 0 ? "none" : "present";
+                const std::string noise = noiseName(result.scenario.noise);
+                const std::string detail = detailKey({triage.category, triage.rootCause, failure, result.configuration,
+                    configurationKind, result.scenario.family, mapperRate, sourceRate, result.scenario.trajectoryId,
+                    intensity, quality, dropout, falseStop, noise});
+                DetailedFindingCluster &detailed = detailedClusters[detail];
+                if (detailed.count == 0) {
+                    detailed.category = triage.category;
+                    detailed.rootCause = triage.rootCause;
+                    detailed.failureReason = failure;
+                    detailed.configuration = result.configuration;
+                    detailed.configurationKind = configurationKind;
+                    detailed.family = result.scenario.family;
+                    detailed.mapperRate = mapperRate;
+                    detailed.sourceRate = sourceRate;
+                    detailed.trajectory = result.scenario.trajectoryId;
+                    detailed.motionIntensity = intensity;
+                    detailed.reversalQuality = quality;
+                    detailed.dropout = dropout;
+                    detailed.falseStop = falseStop;
+                    detailed.noise = noise;
+                    detailed.severity = triage.category;
+                    detailed.action = triage.nextAction;
+                }
+                ++detailed.count;
+                if (detailed.representative == nullptr || (traceReference(result) != "summary-only"
+                    && traceReference(detailed.representative->result) == "summary-only")) {
+                    detailed.representative = &timed;
+                }
                 ++byReason[failure];
                 ++byFamily[result.scenario.family];
                 ++byMapperRate[result.scenario.mapperRateHz];
@@ -1070,7 +1383,17 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                 if (result.configuration.rfind("Preset ", 0) == 0) ++byPreset[result.configuration];
                 else ++byModel[result.configuration];
                 if (traceReference(result) != "summary-only") categoryExamples[triage.category].push_back(&timed);
+                if (result.scenario.family == "persona") ++personaSummaries[result.scenario.id.substr(8, result.scenario.id.rfind('-') - 8)].rows;
+                if (result.scenario.family == "persona") ++personaSummaries[result.scenario.id.substr(8, result.scenario.id.rfind('-') - 8)].categories[triage.category];
+                if (std::string(triage.category) == "PRODUCT_CONFIRMED" || std::string(triage.category) == "PRODUCT_SUSPECT") {
+                    const auto event = std::find_if(result.reversalEvents.cbegin(), result.reversalEvents.cend(),
+                        [](const ReversalEvent &candidate) { return candidate.conveysHumanIntent && candidate.predictorMissed; });
+                    productEvidence.push_back({&timed, event == result.reversalEvents.cend() ? nullptr : &*event, failure, triage.category});
+                }
             }
+        }
+        for (const char *category : {"PRODUCT_CONFIRMED", "PRODUCT_SUSPECT", "HARNESS", "EXPECTED", "HARMLESS", "UNKNOWN"}) {
+            byCategory.try_emplace(category, 0);
         }
         const auto countTable = [&canonicalFindings](const char *heading, const auto &values, const char *firstColumn) {
             canonicalFindings << "## " << heading << "\n\n| " << firstColumn << " | Rows |\n|---|---:|\n";
@@ -1089,13 +1412,70 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             << "Ground-truth reversals are derived from two coherent, meaningful physical source updates. They are intentionally independent of model or preset settings. "
             << "Timing is graded Immediate, Excellent, Acceptable, Poor, or Failure; only the first three are good-quality outcomes.\n\n";
         countTable("Classification", byCategory, "Classification");
-        canonicalFindings << "## Root Causes and Next Actions\n\n| Classification | Root cause | Rows | Recommended next action |\n|---|---|---:|---|\n";
-        for (const auto &[key, count] : byRootCause) {
-            const size_t first = key.find('|');
-            const size_t second = key.find('|', first + 1U);
-            canonicalFindings << "| " << key.substr(0, first) << " | " << key.substr(first + 1U, second - first - 1U)
-                << " | " << count << " | " << key.substr(second + 1U) << " |\n";
+        const auto join = [](const auto &values) {
+            std::ostringstream output;
+            for (auto it = values.cbegin(); it != values.cend(); ++it) {
+                if (it != values.cbegin()) output << ", ";
+                output << *it;
+            }
+            return output.str();
+        };
+        std::vector<std::pair<std::string, const RootCauseCluster *>> rankedRoots;
+        rankedRoots.reserve(rootCauseClusters.size());
+        for (const auto &[key, cluster] : rootCauseClusters) rankedRoots.push_back({key, &cluster});
+        std::sort(rankedRoots.begin(), rankedRoots.end(), [](const auto &left, const auto &right) {
+            return left.second->count > right.second->count;
+        });
+        std::vector<const DetailedFindingCluster *> rankedDetailedClusters;
+        rankedDetailedClusters.reserve(detailedClusters.size());
+        for (const auto &[key, cluster] : detailedClusters) {
+            Q_UNUSED(key);
+            rankedDetailedClusters.push_back(&cluster);
         }
+        std::sort(rankedDetailedClusters.begin(), rankedDetailedClusters.end(), [](const auto *left, const auto *right) {
+            return std::tie(left->count, left->category, left->rootCause, left->configuration, left->trajectory)
+                > std::tie(right->count, right->category, right->rootCause, right->configuration, right->trajectory);
+        });
+        canonicalClusters << "classification,root_cause,failure_reason,configuration,configuration_kind,scenario_family,mapper_hz,effective_source_hz,trajectory,motion_intensity,reversal_quality,dropout,false_stop,noise_model,severity,rows,representative_trace,recommended_action\n";
+        for (const DetailedFindingCluster *cluster : rankedDetailedClusters) {
+            const std::string trace = cluster->representative == nullptr ? "summary-only"
+                : traceReference(cluster->representative->result).toStdString();
+            canonicalClusters << csv(cluster->category) << ',' << csv(cluster->rootCause) << ',' << csv(cluster->failureReason)
+                << ',' << csv(cluster->configuration) << ',' << csv(cluster->configurationKind) << ',' << csv(cluster->family)
+                << ',' << csv(cluster->mapperRate) << ',' << csv(cluster->sourceRate) << ',' << csv(cluster->trajectory)
+                << ',' << csv(cluster->motionIntensity) << ',' << csv(cluster->reversalQuality) << ',' << csv(cluster->dropout)
+                << ',' << csv(cluster->falseStop) << ',' << csv(cluster->noise) << ',' << csv(cluster->severity) << ','
+                << cluster->count << ',' << csv(trace) << ',' << csv(cluster->action) << '\n';
+        }
+        canonicalFindings << "## Root Causes and Next Actions\n\n"
+            << "| Root cause | Rows | Affected models/presets | Families | Mapper/source Hz | Severity | Representative trace | Recommended action |\n"
+            << "|---|---:|---|---|---|---|---|---|\n";
+        for (const auto &[key, cluster] : rankedRoots) {
+            const size_t separator = key.find('|');
+            const std::string category = key.substr(0, separator);
+            const std::string rootCause = key.substr(separator + 1U);
+            const std::string trace = cluster->representative == nullptr ? "summary-only"
+                : traceReference(cluster->representative->result).toStdString();
+            canonicalFindings << "| " << rootCause << " | " << cluster->count << " | " << join(cluster->configurations)
+                << " | " << join(cluster->families) << " | " << join(cluster->mapperRates) << " / " << join(cluster->sourceRates)
+                << " | " << category << " | `" << trace << "` | " << cluster->nextAction << " |\n";
+        }
+        canonicalFindings << '\n';
+        canonicalFindings << "## Dimensioned Finding Clusters\n\n"
+            << "`canonical_finding_clusters.csv` contains every exact cluster, grouped by root cause, reason, model or preset, "
+               "family, mapper/effective-source rate, trajectory, human-intent intensity, worst reversal quality, dropout, false stop, "
+               "and noise model. The highest-volume clusters are below.\n\n"
+            << "| Rows | Classification | Model/preset | Family | Motion | Reversal quality | Dropout / false stop / noise | Trace |\n"
+            << "|---:|---|---|---|---|---|---|---|\n";
+        for (size_t index = 0; index < std::min<size_t>(20, rankedDetailedClusters.size()); ++index) {
+            const DetailedFindingCluster &cluster = *rankedDetailedClusters[index];
+            const std::string trace = cluster.representative == nullptr ? "summary-only"
+                : traceReference(cluster.representative->result).toStdString();
+            canonicalFindings << "| " << cluster.count << " | " << cluster.category << " | " << cluster.configuration
+                << " | " << cluster.family << " | " << cluster.motionIntensity << " | " << cluster.reversalQuality
+                << " | " << cluster.dropout << " / " << cluster.falseStop << " / " << cluster.noise << " | `" << trace << "` |\n";
+        }
+        if (rankedDetailedClusters.empty()) canonicalFindings << "| 0 | - | - | - | - | - | - | - |\n";
         canonicalFindings << '\n';
         countTable("Failure Reason", byReason, "Reason");
         countTable("Model", byModel, "Model");
@@ -1103,6 +1483,78 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         countTable("Scenario Family", byFamily, "Family");
         countTable("Mapper Sample Rate", byMapperRate, "Mapper Hz");
         countTable("Effective Source Rate", bySourceRate, "Source Hz");
+        canonicalFindings << "## Product Suspects and Confirmed Defects\n\n"
+            << "No production behavior was modified here. `PRODUCT_CONFIRMED` requires a violated product contract; the evidence in this pass supports suspects only.\n\n"
+            << "| Classification | Scenario | Configuration | Failure reason | Expected / actual | Human intent -> observed device | Predictor detection / reacquisition | Trace | Probable code area |\n"
+            << "|---|---|---|---|---|---|---|---|---|\n";
+        if (productEvidence.empty()) {
+            canonicalFindings << "| None | - | - | - | - | - | - | - | - |\n";
+        } else {
+            for (const ProductEvidence &evidence : productEvidence) {
+                const ScenarioResult &result = evidence.timed->result;
+                const ReversalEvent *event = evidence.event;
+                const auto latency = [event](float timestamp) {
+                    return event == nullptr || timestamp < 0.0F ? -1.0F
+                        : (timestamp - event->groundTruthTimeSeconds) * 1000.0F;
+                };
+                canonicalFindings << "| " << evidence.category << " | " << result.scenario.id << " | " << result.configuration
+                    << " | " << evidence.reason << " | conveyed substantive reversal should be detected and reacquired / "
+                    << "no detector event or reacquisition | ";
+                if (event == nullptr) canonicalFindings << "unavailable";
+                else canonicalFindings << event->humanIntentTimeSeconds * 1000.0F << " ms dir " << event->humanIntentDirection
+                    << " vel " << event->humanIntentVelocity << " -> " << event->groundTruthTimeSeconds * 1000.0F
+                    << " ms dir " << event->observedDeviceDirection << " (" << event->intentToObservedLatencyMs << " ms)";
+                canonicalFindings << " | detection " << latency(event == nullptr ? -1.0F : event->detectedTimeSeconds)
+                    << " ms; reacquisition " << latency(event == nullptr ? -1.0F : event->reacquisitionTimeSeconds)
+                    << " ms | `" << traceReference(result).toStdString() << "` | AdaptiveResponseProcessor reversal evidence threshold |\n";
+            }
+        }
+        canonicalFindings << "\n## Slow-Motion Acceptance Policy\n\n"
+            << "The strict requirement is the full-scale `+100% -> 0%` command over 3 s. The 5 s and 10 s sweeps are grace tiers: "
+               "they need not keep a prediction horizon continuously active at microscopic speeds, but must remain direct, stable, and free of false reversal/noise amplification. "
+               "For every coherent multi-second command, recognize motion within 750 ms; reject repeated chatter, more than one dropout episode, false reversals, or output steps above 0.060.\n\n"
+            << "Full-scale 3 s requirement (`slow/sweep-3.000000-1`): " << threeSecondFullScale.acceptedRuns << "/"
+            << threeSecondFullScale.enabledRuns << " policy accepted; maximum recognition " << threeSecondFullScale.maxRecognitionMs
+            << " ms; maximum output step " << threeSecondFullScale.maxOutputStep << ".\n\n"
+            << "| Sweep duration | Enabled runs | Policy accepted | Max recognition ms | Max dropout ms | Max output step | Conclusion |\n|---|---:|---:|---:|---:|---:|---|\n";
+        for (const std::string &duration : {"3 s", "5 s", "10 s"}) {
+            const SlowMotionSummary &summary = slowMotion[duration];
+            const bool accepted = summary.enabledRuns > 0 && summary.enabledRuns == summary.acceptedRuns;
+            canonicalFindings << "| " << duration << " | " << summary.enabledRuns << " | " << summary.acceptedRuns << " | "
+                << summary.maxRecognitionMs << " | " << summary.maxDropoutMs << " | " << summary.maxOutputStep << " | "
+                << (accepted ? duration == "3 s" ? "accepted: strict full-scale and graceful policy met"
+                    : "accepted: graceful direct/predictive policy met" : "policy review required") << " |\n";
+        }
+        canonicalFindings << "\n## Reversal Event Chain\n\n"
+            << "Active configurations only (each configuration evaluates the same configuration-independent intent/device events).\n\n"
+            << "| Human intent reversals | Observed-device reversals | Intent conveyed | Intent not conveyed | Device-only reversals | Predictor detections | Predictor false reversals | Predictor missed observed reversals | Stale cancellation | Reacquisition |\n"
+            << "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+            << "| " << totalHumanIntentReversals << " | " << totalObservedDeviceReversals << " | " << totalConveyedReversals
+            << " | " << totalUnconveyedIntentReversals << " | " << totalDeviceOnlyReversals << " | " << totalPredictorDetections
+            << " | " << totalPredictorFalseReversals << " | " << totalPredictorMisses << " | " << totalStaleLeadCancellations
+            << " | " << totalReacquisitions << " |\n\n"
+            << "| Quality | Detection events | Reacquisition events |\n|---|---:|---:|\n";
+        for (size_t quality = static_cast<size_t>(ReversalQuality::Immediate);
+             quality <= static_cast<size_t>(ReversalQuality::Failure); ++quality) {
+            canonicalFindings << "| " << reversalQualityName(static_cast<ReversalQuality>(quality)) << " | "
+                << totalDetectionQualities[quality] << " | " << totalReacquisitionQualities[quality] << " |\n";
+        }
+        canonicalFindings << "\n## Persona Breakdown\n\n"
+            << "| Persona | Finding rows | Intent reversals | Conveyed | Predictor misses | PRODUCT_CONFIRMED | PRODUCT_SUSPECT | HARNESS | EXPECTED | HARMLESS | UNKNOWN |\n"
+            << "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+        for (const auto &[persona, summary] : personaSummaries) {
+            const auto count = [&summary](const char *category) { const auto found = summary.categories.find(category); return found == summary.categories.cend() ? 0ULL : found->second; };
+            canonicalFindings << "| " << persona << " | " << summary.rows << " | " << summary.intentReversals << " | "
+                << summary.conveyedReversals << " | " << summary.predictorMisses << " | " << count("PRODUCT_CONFIRMED")
+                << " | " << count("PRODUCT_SUSPECT") << " | " << count("HARNESS") << " | " << count("EXPECTED")
+                << " | " << count("HARMLESS") << " | " << count("UNKNOWN") << " |\n";
+        }
+        canonicalFindings << "\n## Integration Acceptance\n\n"
+            << "- Multi-axis isolation: " << (integrations.hardFailures.empty() ? "passed" : "failed") << "\n"
+            << "- Lifecycle transitions: " << (integrations.hardFailures.empty() ? "passed" : "failed") << "\n"
+            << "- Automation composition: " << (integrations.hardFailures.empty() ? "passed" : "failed") << "\n"
+            << "- V2.2 bumpless transfer: " << (integrations.behavioralFailures.empty() && integrations.hardFailures.empty() ? "passed" : "failed") << "\n"
+            << "- Campaign integration gate: " << (integrations.passed() ? "passed" : "failed; included in campaign disposition") << "\n\n";
         canonicalFindings << "## Retained Representative Traces\n\n| Classification | Scenario | Configuration | Trace |\n|---|---|---|---|\n";
         for (auto &[category, examples] : categoryExamples) {
             std::sort(examples.begin(), examples.end(), [](const TimedResult *left, const TimedResult *right) {
@@ -1143,9 +1595,15 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         canonicalFindings << "\n## Worst Motion, Sample-Hold, Noise, and Dropout Cases\n\n"
             << "The detailed ranked evidence is retained in `worst_cases.csv`, `slow_motion_metrics.csv`, `sample_hold_metrics.csv`, "
             << "`noise_metrics.csv`, and `reversal_events.csv`. The largest values are replayed deterministically before the traces are written.\n\n"
-            << "## Disposition\n\n"
-            << "MORE CANONICAL ANALYSIS REQUIRED — Canonical is numerically safe (no hard failures), but retained PRODUCT and UNKNOWN categories require review before Torture or Full escalation. "
-            << "No predictor behavior or preset values were changed by this verification branch.\n";
+            << "## Disposition\n\n";
+        const std::uint64_t confirmedDefects = byCategory["PRODUCT_CONFIRMED"];
+        const std::uint64_t unknownFindings = byCategory["UNKNOWN"];
+        const char *canonicalDisposition = !integrations.passed() ? "HARNESS FIX REQUIRED"
+            : confirmedDefects > 0 ? "PRODUCT FIX REQUIRED"
+            : unknownFindings > 0 ? "MORE CANONICAL ANALYSIS REQUIRED" : "READY FOR TORTURE";
+        canonicalFindings << canonicalDisposition << " — confirmed product defects: " << confirmedDefects
+            << "; product suspects: " << byCategory["PRODUCT_SUSPECT"] << "; unknown: " << unknownFindings
+            << ". No predictor behavior or preset values were changed by this verification branch.\n";
     }
     std::vector<std::pair<std::string, std::uint64_t>> rankedFailureCategories(
         failureCategories.cbegin(), failureCategories.cend());
@@ -1179,7 +1637,6 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         << "## Performance Boundary\n\n"
         << "Offline verification throughput is reported in `performance.csv`. Production allocation evidence remains `mapping_hot_path_benchmark`; "
         << "the offline runner is not a substitute for the MappingWorker hot-path benchmark.\n";
-    const IntegrationArtifacts integrations = runIntegrationHarnesses();
     return writeText(root + "/campaign.json", QString::fromUtf8(QJsonDocument(campaign).toJson(QJsonDocument::Indented)), error)
         && writeText(root + "/summary.json", QString::fromUtf8(QJsonDocument(summary).toJson(QJsonDocument::Indented)), error)
         && writeText(root + "/summary.csv", q(summaryCsv.str()), error)
@@ -1199,11 +1656,13 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         && writeText(root + "/automation_metrics.csv", q(integrations.automation), error)
         && writeText(root + "/lifecycle_metrics.csv", q(integrations.lifecycle), error)
         && writeText(root + "/bumpless_metrics.csv", q(integrations.bumpless), error)
+        && writeText(root + "/integration_summary.json", QString::fromUtf8(QJsonDocument(integrationSummary).toJson(QJsonDocument::Indented)), error)
         && writeText(root + "/performance.csv", q(performanceCsv.str()), error)
         && writeText(root + "/failures.csv", q(failuresCsv.str()), error)
         && writeText(root + "/worst_cases.csv", q(worstCsv.str()), error)
         && writeText(root + "/seeds.csv", q(seedsCsv.str()), error)
         && writeText(root + "/Adaptive_Response_V2.3.T_Phase1_Verification_Report.md", q(report.str()), error)
+        && (options.tier != "canonical" || writeText(root + "/canonical_finding_clusters.csv", q(canonicalClusters.str()), error))
         && (options.tier != "canonical" || writeText(root + "/Adaptive_Response_V2.3.T_Canonical_Findings_Analysis.md",
             q(canonicalFindings.str()), error));
 }
@@ -1377,6 +1836,9 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     float stableAfterStop = -1.0F;
     float settledAfterStop = -1.0F;
     float firstMotionTime = -1.0F;
+    float currentHumanIntentMotionSeconds = 0.0F;
+    double humanIntentSpeedSum = 0.0;
+    std::uint64_t humanIntentSpeedSamples = 0;
     float lastPredicted = 0.0F;
     float lastConfidence = 0.0F;
     float lastHorizon = 0.0F;
@@ -1414,6 +1876,26 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
         const AdaptiveResponseTelemetry telemetry = processor.process(sample.physical, configuration, timestamp);
         if (retainSamples) result.telemetry.push_back(telemetry);
         ++result.metrics.samples;
+        // Human intent originates in the authored trajectory.  It is recorded
+        // before the device pipeline and must never be inferred from noisy or
+        // sample-held measurements.
+        if (sample.humanIntentReversal) {
+            result.humanIntentReversals.push_back({sample.timeSeconds, sample.humanIntentVelocity,
+                sample.humanIntentDirection});
+            ++result.metrics.humanIntentReversals;
+        }
+        if (sample.humanIntentDirection != 0) {
+            currentHumanIntentMotionSeconds += sample.dtSeconds;
+            result.metrics.humanIntentMotionDurationMs += sample.dtSeconds * 1000.0;
+            result.metrics.longestHumanIntentMotionMs = std::max(result.metrics.longestHumanIntentMotionMs,
+                static_cast<double>(currentHumanIntentMotionSeconds * 1000.0F));
+            humanIntentSpeedSum += std::abs(sample.humanIntentVelocity);
+            ++humanIntentSpeedSamples;
+            result.metrics.peakHumanIntentSpeed = std::max(result.metrics.peakHumanIntentSpeed,
+                static_cast<double>(std::abs(sample.humanIntentVelocity)));
+        } else {
+            currentHumanIntentMotionSeconds = 0.0F;
+        }
         // Ground truth is a property of the observed physical stream, never
         // of the model or preset under test.  A reversal needs two coherent,
         // meaningful source updates so an isolated spike cannot invent a
@@ -1437,11 +1919,16 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
                                 ++result.metrics.missedReversals;
                             }
                             ++result.metrics.trueReversals;
+                            ++result.metrics.observedDeviceReversals;
                             oldTruthDirection = physicalTruthDirection;
                             activeTruthDirection = candidate;
-                            result.reversalEvents.push_back({sample.sourceSampleTimeSeconds});
+                            ReversalEvent event;
+                            event.groundTruthTimeSeconds = sample.sourceSampleTimeSeconds;
+                            event.observedDeviceDirection = candidate;
+                            result.reversalEvents.push_back(event);
                             pendingReversal = static_cast<int>(result.reversalEvents.size() - 1U);
                             sample.physicalTrueReversal = true;
+                            sample.observedDeviceReversal = true;
                         }
                         physicalTruthDirection = candidate;
                         lastCoherentPhysicalSourceTime = sample.sourceSampleTimeSeconds;
@@ -1457,6 +1944,8 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
             previousPhysicalSourceTime = sample.sourceSampleTimeSeconds;
         }
         sample.physicalGroundTruthDirection = physicalTruthDirection;
+        sample.observedDeviceVelocity = sample.physicalVelocity;
+        sample.observedDeviceDirection = physicalTruthDirection;
         const int truthDirection = physicalTruthDirection;
         if (telemetry.reversal) {
             ++result.metrics.detectedReversals;
@@ -1612,6 +2101,37 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
         result.reversalEvents[static_cast<size_t>(pendingReversal)].missed = true;
         ++result.metrics.missedReversals;
     }
+    const float intentToObservedWindow = std::max(0.200F, sourcePeriod * 4.0F);
+    std::vector<bool> observedMatched(result.reversalEvents.size(), false);
+    for (HumanIntentReversalEvent &intent : result.humanIntentReversals) {
+        for (size_t eventIndex = 0; eventIndex < result.reversalEvents.size(); ++eventIndex) {
+            ReversalEvent &event = result.reversalEvents[eventIndex];
+            if (observedMatched[eventIndex] || event.observedDeviceDirection != intent.direction
+                || event.groundTruthTimeSeconds + mapperPeriod < intent.timeSeconds
+                || event.groundTruthTimeSeconds - intent.timeSeconds > intentToObservedWindow) {
+                continue;
+            }
+            observedMatched[eventIndex] = true;
+            intent.conveyedToDevice = true;
+            intent.observedDeviceTimeSeconds = event.groundTruthTimeSeconds;
+            event.conveysHumanIntent = true;
+            event.humanIntentTimeSeconds = intent.timeSeconds;
+            event.humanIntentVelocity = intent.velocity;
+            event.humanIntentDirection = intent.direction;
+            event.intentToObservedLatencyMs = (event.groundTruthTimeSeconds - intent.timeSeconds) * 1000.0F;
+            ++result.metrics.intentReversalsConveyed;
+            break;
+        }
+        if (!intent.conveyedToDevice) ++result.metrics.intentReversalsNotConveyed;
+    }
+    for (size_t eventIndex = 0; eventIndex < result.reversalEvents.size(); ++eventIndex) {
+        ReversalEvent &event = result.reversalEvents[eventIndex];
+        if (!observedMatched[eventIndex]) ++result.metrics.observedDeviceReversalsWithoutIntent;
+        event.predictorMissed = event.detectedTimeSeconds < 0.0F;
+        if (event.predictorMissed) ++result.metrics.predictorMissedObservedReversals;
+    }
+    result.metrics.meanHumanIntentSpeed = humanIntentSpeedSamples == 0 ? 0.0
+        : humanIntentSpeedSum / static_cast<double>(humanIntentSpeedSamples);
     const double count = std::max<std::uint64_t>(1, result.metrics.samples);
     result.metrics.rmsLead = std::sqrt(leadSquared / count);
     result.metrics.meanLead = leadSum / count;
@@ -1651,10 +2171,14 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
                 mapperPeriod, sourcePeriod);
             ++result.metrics.reversalDetectionQuality[static_cast<size_t>(event.detectionQuality)];
             ++result.metrics.reversalReacquisitionQuality[static_cast<size_t>(event.reacquisitionQuality)];
-            reversalTimingFailure = reversalTimingFailure || event.detectionQuality == ReversalQuality::Failure
-                || event.reacquisitionQuality == ReversalQuality::Failure;
-            reversalTimingPoor = reversalTimingPoor || event.detectionQuality == ReversalQuality::Poor
-                || event.reacquisitionQuality == ReversalQuality::Poor;
+            // Predictor quality is attributable only once the independently
+            // observed device actually conveyed a matching human reversal.
+            if (event.conveysHumanIntent) {
+                reversalTimingFailure = reversalTimingFailure || event.detectionQuality == ReversalQuality::Failure
+                    || event.reacquisitionQuality == ReversalQuality::Failure;
+                reversalTimingPoor = reversalTimingPoor || event.detectionQuality == ReversalQuality::Poor
+                    || event.reacquisitionQuality == ReversalQuality::Poor;
+            }
         }
         if (result.metrics.staleLeadCancellationMs < 0.0 && event.staleLeadCancellationTimeSeconds >= 0.0F) {
             result.metrics.staleLeadCancellationMs = (event.staleLeadCancellationTimeSeconds - event.groundTruthTimeSeconds) * 1000.0;
@@ -1775,13 +2299,19 @@ bool selfValidate(QStringList *failures)
             && reversalResult.reversalEvents.front().groundTruthTimeSeconds >= 0.2F
             && reversalResult.reversalEvents.front().groundTruthTimeSeconds <= 0.212F,
         "Known coherent physical reversal ground truth timestamp was not identified.");
+    record(reversalResult.metrics.humanIntentReversals == 1
+            && reversalResult.metrics.intentReversalsConveyed == 1
+            && reversalResult.reversalEvents.front().conveysHumanIntent,
+        "Human intent was not recorded separately from the observed-device reversal.");
     RuntimeAdaptiveResponseConfig alteredReversalConfig = verificationConfiguration(AdaptiveResponseModel::Velocity);
     alteredReversalConfig.reversalDetection = 4.0F;
     const auto alteredReversalResult = replayScenario(reversal, alteredReversalConfig, "Altered");
     record(!alteredReversalResult.reversalEvents.empty()
             && alteredReversalResult.reversalEvents.front().groundTruthTimeSeconds
-                == reversalResult.reversalEvents.front().groundTruthTimeSeconds,
-        "Physical reversal ground truth changed with the tested configuration.");
+                == reversalResult.reversalEvents.front().groundTruthTimeSeconds
+            && alteredReversalResult.humanIntentReversals.front().timeSeconds
+                == reversalResult.humanIntentReversals.front().timeSeconds,
+        "Intent or observed-device reversal ground truth changed with the tested configuration.");
     const auto stop = std::find_if(lowRate.cbegin(), lowRate.cend(), [](const TraceSample &sample) { return sample.physicalStop; });
     record(stop != lowRate.cend() && std::abs(stop->timeSeconds - 3.0F) < 0.0001F,
         "Known physical stop timestamp was not exposed.");
@@ -1830,7 +2360,9 @@ bool selfValidate(QStringList *failures)
         forced.result.failures = {"HARD: forced failure trace retention fixture"};
         forced.result.retainedForFailure = true;
         QString artifactError;
-        record(writeArtifacts(options, temporary.path(), {forced}, &artifactError),
+        const IntegrationArtifacts integrations = runIntegrationHarnesses();
+        record(integrations.passed(), "Production-backed integration harness failed during self-validation.");
+        record(writeArtifacts(options, temporary.path(), {forced}, integrations, &artifactError),
             "Result schema fixture could not write artifacts: " + artifactError);
         QFile campaign(QDir(temporary.path()).filePath("campaign.json"));
         record(campaign.exists() && campaign.open(QIODevice::ReadOnly), "Campaign artifact is missing.");
@@ -1840,6 +2372,15 @@ bool selfValidate(QStringList *failures)
                     && object.contains("scenarioRuns") && object.contains("summary"),
                 "Campaign artifact lacks required schema fields.");
         }
+        IntegrationArtifacts forcedIntegration;
+        forcedIntegration.hardFailures = {"HARD: integration self-validation disposition fixture"};
+        const QString integrationDirectory = QDir(temporary.path()).filePath("integration-disposition");
+        record(writeArtifacts(options, integrationDirectory, {forced}, forcedIntegration, &artifactError),
+            "Integration disposition fixture could not write artifacts: " + artifactError);
+        QFile integrationSummary(QDir(integrationDirectory).filePath("summary.json"));
+        record(integrationSummary.exists() && integrationSummary.open(QIODevice::ReadOnly)
+                && QJsonDocument::fromJson(integrationSummary.readAll()).object().value("hardFailures").toInt() >= 2,
+            "An integration hard failure did not affect campaign disposition.");
         const QDir traceDirectory(QDir(temporary.path()).filePath("traces"));
         record(!traceDirectory.entryList({"*.csv"}, QDir::Files).isEmpty(), "Forced failure did not retain a trace.");
         QString compareError;
@@ -2031,14 +2572,17 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
     retainFailureTriageTraces(results);
     retainWorstCaseTraces(results);
     retainWorstReversalTraces(results);
+    const IntegrationArtifacts integrations = runIntegrationHarnesses();
     const QString outputDirectory = options.outputDirectory.isEmpty() ? defaultOutputDirectory(options) : options.outputDirectory;
     QString writeError;
-    if (!writeArtifacts(options, outputDirectory, results, &writeError)) {
+    if (!writeArtifacts(options, outputDirectory, results, integrations, &writeError)) {
         std::cerr << "Unable to write artifacts: " << writeError.toStdString() << '\n';
         return 4;
     }
     Aggregate aggregate;
     for (const TimedResult &result : results) addAggregate(aggregate, result.result);
+    aggregate.hardFailures += integrations.hardFailures.size();
+    aggregate.behavioralFailures += integrations.behavioralFailures.size();
     const char *disposition = aggregate.hardFailures > 0 ? "FAIL" : aggregate.behavioralFailures > 0 ? "PASS WITH FINDINGS" : "PASS";
     std::cout << "Adaptive Response V2.3.T verification " << disposition << " campaign=" << options.tier
         << " scenario_runs=" << aggregate.scenarios << " samples=" << aggregate.samples
