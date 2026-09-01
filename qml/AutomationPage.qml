@@ -46,7 +46,7 @@ Item {
     readonly property var axisComparisonTypes: [1, 2, 3, 4, 15, 16]
     readonly property var povStates: ["points", "is not pointing"]
     readonly property var profileStates: ["is selected", "is active"]
-    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another", "Tap virtual button", "Turn mapping on", "Turn mapping off", "Toggle mapping"]
+    readonly property var effectTypes: ["Choose an effect", "Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis to value", "Mix one axis into another", "Make axis follow another", "Tap virtual button", "Turn mapping on", "Turn mapping off", "Toggle mapping", "Temporarily enable Adaptive Response", "Temporarily disable Adaptive Response", "Apply Adaptive Response preset"]
     readonly property var behaviorChoices: ["While the trigger is active", "Toggle on each trigger", "Run briefly"]
     readonly property var sourceStages: ["Controller input", "Current mapped output"]
     readonly property var directions: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
@@ -74,7 +74,7 @@ Item {
     Component.onDestruction: capturePresentationState()
     function setDraft(value) { draft = clone(value); draftDirty = true }
     function defaultRequirement(type) { return ({ type: type === undefined ? -1 : type, axis: 0, minimum: 0, maximum: 0, hysteresis: 0, button: 1, povHat: 1, povDirection: 1, profileId: "", pressCount: 2, multiPressWindowMs: 350, longPressDurationMs: 600 }) }
-    function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1, tapDurationMs: 80 }) }
+    function defaultEffect() { return ({ type: -1, virtualButton: 1, profileId: "", adaptiveResponsePresetId: "", targetAxis: 0, sourceAxis: 0, sourceStage: 1, value: 0, offset: 0, minimum: -1, maximum: 1, tapDurationMs: 80 }) }
     function includesType(types, type) { return types.indexOf(Number(type)) >= 0 }
     function buttonStateIndex(type) { const index = buttonStateTypes.indexOf(Number(type)); return index < 0 ? 0 : index }
     function axisComparisonIndex(type) { const index = axisComparisonTypes.indexOf(Number(type)); return index < 0 ? 0 : index }
@@ -166,6 +166,10 @@ Item {
     function profileChoiceIndex(id) { const index = profileIndex(id); return index < 0 ? 0 : index + 1 }
     function profileChoiceId(index) { const choices = backendObject.profileTriggerChoices; return index > 0 && index <= choices.length ? choices[index - 1].id : "" }
     function profileChoicesWithPlaceholder() { return [{ label: "Choose a profile", id: "" }].concat(backendObject.profileTriggerChoices) }
+    function adaptivePresetChoices() { return [{ label: "Choose an Adaptive Response preset", id: "" }].concat(backendObject.adaptiveResponsePresets || []) }
+    function adaptivePresetIndex(id) { const choices = adaptivePresetChoices(); for (let index = 0; index < choices.length; ++index) if (choices[index].id === id) return index; return 0 }
+    function adaptivePresetId(index) { const choices = adaptivePresetChoices(); return index > 0 && index < choices.length ? choices[index].id : "" }
+    function adaptivePresetName(id) { const choices = adaptivePresetChoices(); const index = adaptivePresetIndex(id); return index > 0 ? choices[index].label : "a preset" }
     function profileName(id) { const index = profileIndex(id); const choices = backendObject.profileTriggerChoices; return index >= 0 && choices[index] ? choices[index].label : "a profile" }
     function axisName(index) { return index >= 0 && index < axisChoices.length ? axisChoices[index] : "axis" }
     function directionName(direction) { return direction >= 1 && direction <= directions.length ? directions[direction - 1] : "a direction" }
@@ -178,6 +182,7 @@ Item {
     function effectReady(effect) {
         if (!effect || Number(effect.type) < 0) return false
         if (Number(effect.type) === 2 || Number(effect.type) === 3) return profileIndex(effect.profileId) >= 0
+        if (Number(effect.type) === 16) return adaptivePresetIndex(effect.adaptiveResponsePresetId) > 0
         return true
     }
     function requirementSummary(requirement) {
@@ -221,6 +226,9 @@ Item {
         case 11: return "Turn mapping on"
         case 12: return "Turn mapping off"
         case 13: return "Toggle mapping on or off"
+        case 14: return "Temporarily enable Adaptive Response on " + axisName(effect.targetAxis)
+        case 15: return "Temporarily disable Adaptive Response on " + axisName(effect.targetAxis)
+        case 16: return "Temporarily apply Adaptive Response preset " + adaptivePresetName(effect.adaptiveResponsePresetId) + " to " + axisName(effect.targetAxis)
         }
         return "Choose what this automation should do."
     }
@@ -611,6 +619,16 @@ Item {
                                         EditorCombo { Layout.preferredWidth: 158; model: root.sourceStages; currentIndex: modelData.sourceStage; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "sourceStage", choiceIndex) } }
                                         EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.value); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "value", Number(text.replace("%", "")) / 100) } }
                                         EditorTextField { Layout.preferredWidth: 86; text: root.percent(modelData.offset); inputMethodHints: Qt.ImhFormattedNumbersOnly; onEditingFinished: function() { root.updateAction(actionCard.actionIndex, "offset", Number(text.replace("%", "")) / 100) } }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 14 || Number(modelData.type) === 15; Layout.fillWidth: true
+                                        Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 190; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
+                                    }
+                                    RowLayout { visible: Number(modelData.type) === 16; Layout.fillWidth: true
+                                        Text { text: "Target axis"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 150; model: root.axisChoices; currentIndex: modelData.targetAxis; onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "targetAxis", choiceIndex) } }
+                                        Text { text: "Preset"; color: root.mutedColor; font.pixelSize: 10 }
+                                        EditorCombo { Layout.preferredWidth: 240; model: root.adaptivePresetChoices(); textRole: "label"; currentIndex: root.adaptivePresetIndex(modelData.adaptiveResponsePresetId); onActivated: function(choiceIndex) { root.updateAction(actionCard.actionIndex, "adaptiveResponsePresetId", root.adaptivePresetId(choiceIndex)) } }
                                     }
                                     RowLayout { visible: root.isTap(modelData); Layout.fillWidth: true
                                         Text { text: "Virtual button"; color: root.mutedColor; font.pixelSize: 10 }

@@ -53,6 +53,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap adaptiveResponseState READ adaptiveResponseState NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList adaptiveResponsePresets READ adaptiveResponsePresets NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap adaptiveResponseTelemetry READ adaptiveResponseTelemetry NOTIFY inputTelemetryChanged)
     // Button configuration is cached separately from its small live pressed
     // state. Axis updates must never force QML to rebuild up to 128 cards.
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)
@@ -194,6 +197,9 @@ public:
     QVariantList curveComparisonChoices() const;
     QVariantList curvePreviewChoices() const;
     QVariantList curveCopyChoices() const;
+    QVariantMap adaptiveResponseState() const;
+    QVariantList adaptiveResponsePresets() const;
+    QVariantMap adaptiveResponseTelemetry() const;
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -360,6 +366,17 @@ public:
     Q_INVOKABLE void previewCurvePreset(const QString &presetId);
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
+    Q_INVOKABLE bool setAdaptiveResponsePreset(const QString &scope, int physicalAxis,
+                                               const QString &presetId);
+    Q_INVOKABLE bool setAdaptiveResponseProperty(const QString &scope, int physicalAxis,
+                                                 const QString &property, const QVariant &value,
+                                                 bool inherit = false);
+    Q_INVOKABLE bool resetAdaptiveResponseAxis(const QString &scope, int physicalAxis);
+    Q_INVOKABLE bool saveAdaptiveResponsePreset(const QString &name, const QString &description);
+    Q_INVOKABLE bool duplicateAdaptiveResponsePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE bool renameAdaptiveResponsePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE bool deleteAdaptiveResponsePreset(const QString &presetId);
+    Q_INVOKABLE QVariantList adaptiveResponsePreview(const QString &scenario) const;
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
                                               const QString &resolution);
@@ -556,6 +573,8 @@ private:
     bool fallBackToAvailableAxis();
     AxisMapping *selectedAxisMapping();
     const AxisMapping *selectedAxisMapping() const;
+    AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope);
+    const AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope) const;
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     bool axisIsOneSided(int physicalAxis) const;

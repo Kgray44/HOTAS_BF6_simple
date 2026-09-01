@@ -1,5 +1,7 @@
 #include "automation_engine.h"
 
+#include "adaptive_response.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -287,6 +289,40 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
                 // No game-output payload: the worker consumes this compact
                 // action at a state boundary.
                 break;
+            case AutomationActionType::AdaptiveResponseEnable:
+            case AutomationActionType::AdaptiveResponseDisable:
+                if (!validAxis(source.targetAxis)) {
+                    invalidate(*result, index, u"Adaptive Response target axis is invalid."_qs);
+                    valid = false;
+                    break;
+                }
+                target.target = source.targetAxis;
+                target.adaptiveResponse.active = true;
+                target.adaptiveResponse.properties = AdaptiveResponseEnabled;
+                target.adaptiveResponse.settings.enabled =
+                    source.type == AutomationActionType::AdaptiveResponseEnable;
+                break;
+            case AutomationActionType::AdaptiveResponsePreset: {
+                if (!validAxis(source.targetAxis)) {
+                    invalidate(*result, index, u"Adaptive Response target axis is invalid."_qs);
+                    valid = false;
+                    break;
+                }
+                const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(
+                    configuration, source.adaptiveResponsePresetId);
+                if (!preset) {
+                    invalidate(*result, index, u"Adaptive Response preset no longer exists."_qs);
+                    valid = false;
+                    break;
+                }
+                target.target = source.targetAxis;
+                const AdaptiveResponseAxisOverride &presetAxis = preset->axes[
+                    static_cast<size_t>(source.targetAxis)];
+                target.adaptiveResponse.active = true;
+                target.adaptiveResponse.properties = presetAxis.properties;
+                target.adaptiveResponse.settings = presetAxis.settings;
+                break;
+            }
             }
             if (!valid) break;
         }
@@ -602,6 +638,7 @@ const AutomationEvaluationResult &AutomationRuntime::evaluateLevelOnly(
             }
         }
     }
+    composeAdaptiveResponseOverlays();
     m_result.toggledButtons = m_toggledButtons;
     return m_result;
 }
@@ -744,8 +781,33 @@ const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationIn
             }
         }
     }
+    composeAdaptiveResponseOverlays();
     m_result.toggledButtons = m_toggledButtons;
     return m_result;
+}
+
+void AutomationRuntime::composeAdaptiveResponseOverlays()
+{
+    std::array<int, kPhysicalAxisCount> winnerPriority{};
+    std::array<int, kPhysicalAxisCount> winnerOrder{};
+    winnerPriority.fill(-1);
+    winnerOrder.fill(kMaximumAutomationRules + 1);
+    for (int ruleIndex = 0; ruleIndex < m_compiled->ruleCount; ++ruleIndex) {
+        const CompiledAutomationRule &rule = m_compiled->rules[static_cast<size_t>(ruleIndex)];
+        if (!m_result.activeRules[static_cast<size_t>(ruleIndex)]) continue;
+        for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
+            const CompiledAutomationAction &action = rule.actions[static_cast<size_t>(actionIndex)];
+            if (!action.adaptiveResponse.active || !validAxis(action.target)) continue;
+            const size_t axis = static_cast<size_t>(action.target);
+            if (rule.priority < winnerPriority[axis]
+                || (rule.priority == winnerPriority[axis] && rule.sourceOrder >= winnerOrder[axis])) {
+                continue;
+            }
+            winnerPriority[axis] = rule.priority;
+            winnerOrder[axis] = rule.sourceOrder;
+            m_result.adaptiveResponseOverlays[axis] = action.adaptiveResponse;
+        }
+    }
 }
 
 void AutomationRuntime::applyAxisActions(const AutomationInputSnapshot &input,

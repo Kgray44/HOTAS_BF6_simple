@@ -29,6 +29,21 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> afterInversion{};
     std::array<std::atomic<float>, kPhysicalAxisCount> curveResponse{};
     std::array<std::atomic<float>, kPhysicalAxisCount> transformed{};
+    // Adaptive Response publishes only this latest fixed-size snapshot. The
+    // QML timer samples it independently; no report fires a UI event.
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEstimated{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptivePredicted{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocity{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAcceleration{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveConfidence{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMotionIntensity{};
+    std::array<std::atomic_int, kPhysicalAxisCount> adaptiveMotionState{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveReversing{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveSafetyLimited{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveReversalCount{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveSafetyClampCount{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};

@@ -111,10 +111,13 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     const ProcessMemoryFootprint fresh = currentProcessMemoryFootprint();
     const int freshObjectCount = surface->findChildren<QObject *>().size();
     for (int cycle = 0; cycle < 20; ++cycle) {
-        for (int page = 0; page <= 8; ++page) {
+        for (int page = 0; page <= 9; ++page) {
             if (!selectPage(surface, page)) return false;
         }
     }
+    // Return to the baseline Overview page before comparing object counts;
+    // the new page is intentionally richer than the landing page.
+    if (!selectPage(surface, 8)) return false;
     settlePresentation();
     const ProcessMemoryFootprint afterNavigation = currentProcessMemoryFootprint();
     const int afterNavigationObjectCount = surface->findChildren<QObject *>().size();
@@ -253,6 +256,7 @@ bool verifyAutomationEditorInteraction(hotas::AppBackend &backend)
     constexpr ActionCase actionCases[] = {
         {1, 0}, {2, 1}, {3, 2}, {4, 3}, {5, 4}, {6, 5}, {7, 6},
         {8, 7}, {9, 8}, {10, 9}, {11, 10}, {12, 11}, {13, 12}, {14, 13},
+        {15, 14}, {16, 15}, {17, 16},
     };
     bool passed = true;
     for (const ActionCase &test : actionCases) {

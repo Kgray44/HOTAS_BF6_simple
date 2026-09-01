@@ -1,5 +1,6 @@
 #include "profile_portability.h"
 
+#include "adaptive_response.h"
 #include "config_store.h"
 #include "profile_model.h"
 
@@ -60,6 +61,25 @@ bool automationReferencesAnyProfile(const AutomationDefinition &automation, cons
         if (profileIds.contains(action.profileId)) return true;
     }
     return false;
+}
+
+bool adaptiveLayerReferencesAvailable(const AdaptiveResponseLayer &layer,
+                                      const QSet<QString> &portablePresetIds)
+{
+    MapperConfiguration builtIns;
+    for (const AdaptiveResponseAxisOverride &axis : layer.axes) {
+        if (axis.presetId.isEmpty()) continue;
+        if (!portablePresetIds.contains(axis.presetId)
+            && !findAdaptiveResponsePreset(builtIns, axis.presetId)) return false;
+    }
+    return true;
+}
+
+bool adaptivePresetReferenceAvailable(const QString &id, const QSet<QString> &portablePresetIds)
+{
+    if (id.isEmpty()) return false;
+    MapperConfiguration builtIns;
+    return portablePresetIds.contains(id) || findAdaptiveResponsePreset(builtIns, id);
 }
 
 QJsonObject vjoyRequirementsDescriptor(const ControllerVJoyRequirements &requirements)
@@ -276,6 +296,10 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
             automations.append(ConfigStore::portableAutomationToJson(automation));
         }
     }
+    QJsonArray adaptiveResponsePresets;
+    for (const AdaptiveResponsePreset &preset : configuration.adaptiveResponsePresets) {
+        adaptiveResponsePresets.append(ConfigStore::portableAdaptiveResponsePresetToJson(preset));
+    }
 
     ProfileTriggerBindings profileTriggers;
     PovProfileTriggerBindings povProfileTriggers;
@@ -297,10 +321,15 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
         {u"profiles"_qs, profiles},
         {u"curves"_qs, curves},
         {u"automations"_qs, automations},
+        {u"adaptiveResponsePresets"_qs, adaptiveResponsePresets},
         {u"outputLayouts"_qs, layouts},
         {u"profileTriggers"_qs, ConfigStore::portableProfileTriggersToJson(profileTriggers)},
         {u"povProfileTriggers"_qs, ConfigStore::portablePovProfileTriggersToJson(povProfileTriggers)},
     };
+    if (kind == PortableConfigurationKind::Pack) {
+        payload.insert(u"adaptiveResponseGlobal"_qs,
+                       ConfigStore::portableAdaptiveResponseLayerToJson(configuration.adaptiveResponseGlobal));
+    }
     if (includeDevices) {
         QJsonArray devices;
         for (const SavedControllerRecord &record : configuration.savedControllers) {
@@ -328,6 +357,8 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
                                        {u"includesAutomations"_qs, includeAutomations},
                                        {u"includesProfileRelationships"_qs, includeProfileRelationships},
                                        {u"includesGameDetection"_qs, includeGameDetection},
+                                       {u"includesAdaptiveResponseGlobal"_qs,
+                                        kind == PortableConfigurationKind::Pack},
                                        {u"profileCount"_qs, static_cast<int>(resolvedProfileIds.size())},
                                        {u"categoryCount"_qs, static_cast<int>(selectedCategoryIds.size())},
                                        {u"sourceController"_qs, sourceController
@@ -335,6 +366,7 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
                                        {u"dependencySummary"_qs, QJsonObject{
                                             {u"requiredCurves"_qs, curves.size()},
                                             {u"requiredOutputLayouts"_qs, layouts.size()},
+                                            {u"requiredAdaptiveResponsePresets"_qs, adaptiveResponsePresets.size()},
                                             {u"relatedAutomations"_qs, automations.size()},
                                             {u"profileControls"_qs, includeProfileRelationships}}}}},
         {u"payload"_qs, payload},
@@ -484,12 +516,17 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     const QJsonObject manifest = root.value(u"manifest"_qs).toObject();
     const QJsonObject payload = root.value(u"payload"_qs).toObject();
     QJsonArray categories; QJsonArray profiles; QJsonArray curves; QJsonArray automations; QJsonArray layouts;
+    QJsonArray adaptiveResponsePresets;
     if (payload.isEmpty() || !parseArray(payload, u"categories"_qs, 64, &categories)
         || !parseArray(payload, u"profiles"_qs, 256, &profiles)
         || !parseArray(payload, u"curves"_qs, 128, &curves)
         || !parseArray(payload, u"automations"_qs, kMaximumAutomationRules, &automations)
         || !parseArray(payload, u"outputLayouts"_qs, 16, &layouts) || profiles.empty()) {
         setError(error, u"The portable configuration has an invalid or oversized payload"_qs); return false;
+    }
+    if (payload.contains(u"adaptiveResponsePresets"_qs)
+        && !parseArray(payload, u"adaptiveResponsePresets"_qs, 64, &adaptiveResponsePresets)) {
+        setError(error, u"The portable configuration has invalid Adaptive Response preset dependencies"_qs); return false;
     }
     PortableConfigurationBundle parsed;
     parsed.kind = kind;
@@ -499,6 +536,12 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     parsed.exportedAtUtc = root.value(u"exportedAtUtc"_qs).toString().trimmed().left(64);
     parsed.includesDevices = manifest.value(u"includesDevices"_qs).toBool(false);
     parsed.includesCalibration = parsed.includesDevices && manifest.value(u"includesCalibration"_qs).toBool(false);
+    parsed.includesAdaptiveResponseGlobal = manifest.value(u"includesAdaptiveResponseGlobal"_qs).toBool(false);
+    if (parsed.includesAdaptiveResponseGlobal
+        && !ConfigStore::portableAdaptiveResponseLayerFromJson(payload.value(u"adaptiveResponseGlobal"_qs),
+                                                                &parsed.adaptiveResponseGlobal)) {
+        setError(error, u"The portable configuration has invalid Adaptive Response global defaults"_qs); return false;
+    }
     const QJsonObject sourceController = manifest.value(u"sourceController"_qs).toObject();
     if (!sourceController.isEmpty() && !portableDeviceDescriptorIsValid(sourceController, false)) {
         setError(error, u"The portable configuration has invalid source controller metadata"_qs); return false;
@@ -537,6 +580,23 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
         }
         curveIds.insert(curve.id);
         parsed.curves.push_back(std::move(curve));
+    }
+    QSet<QString> adaptivePresetIds;
+    QSet<QString> adaptivePresetNames;
+    for (const QJsonValue &value : adaptiveResponsePresets) {
+        AdaptiveResponsePreset preset;
+        if (!ConfigStore::portableAdaptiveResponsePresetFromJson(value.toObject(), &preset)
+            || adaptivePresetIds.contains(preset.id) || adaptivePresetNames.contains(preset.name.toCaseFolded())
+            || findAdaptiveResponsePreset(MapperConfiguration{}, preset.id)) {
+            setError(error, u"The portable configuration has an invalid Adaptive Response preset"_qs); return false;
+        }
+        adaptivePresetIds.insert(preset.id);
+        adaptivePresetNames.insert(preset.name.toCaseFolded());
+        parsed.adaptiveResponsePresets.push_back(std::move(preset));
+    }
+    if (parsed.includesAdaptiveResponseGlobal
+        && !adaptiveLayerReferencesAvailable(parsed.adaptiveResponseGlobal, adaptivePresetIds)) {
+        setError(error, u"Adaptive Response global defaults reference a missing preset"_qs); return false;
     }
     QSet<QString> automationIds;
     for (const QJsonValue &value : automations) {
@@ -583,6 +643,14 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
                 setError(error, u"A portable profile is missing a required custom curve"_qs); return false;
             }
         }
+        if (!adaptiveLayerReferencesAvailable(profile.adaptiveResponse, adaptivePresetIds)) {
+            setError(error, u"A portable profile references a missing Adaptive Response preset"_qs); return false;
+        }
+    }
+    for (const ProfileCategory &category : parsed.categories) {
+        if (!adaptiveLayerReferencesAvailable(category.adaptiveResponse, adaptivePresetIds)) {
+            setError(error, u"A portable category references a missing Adaptive Response preset"_qs); return false;
+        }
     }
     const auto isBundleProfile = [&profileIds](const QString &id) {
         return id.isEmpty() || profileIds.contains(id);
@@ -596,6 +664,10 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
         for (const AutomationActionDefinition &action : automation.actions) {
             if (!isBundleProfile(action.profileId)) {
                 setError(error, u"An Automation references a profile missing from this portable configuration"_qs); return false;
+            }
+            if (action.type == AutomationActionType::AdaptiveResponsePreset
+                && !adaptivePresetReferenceAvailable(action.adaptiveResponsePresetId, adaptivePresetIds)) {
+                setError(error, u"An Automation references a missing Adaptive Response preset"_qs); return false;
             }
         }
     }
@@ -621,6 +693,40 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
     PortableCategoryConflictMode categoryMode = options.categoryConflictMode;
     if (!options.mergeCategories && categoryMode == PortableCategoryConflictMode::Merge) {
         categoryMode = PortableCategoryConflictMode::ImportAsNew;
+    }
+    // Presets are dependencies, not a hidden extra hierarchy. Keep an exact
+    // local ID if present; otherwise import it before profiles/categories are
+    // copied so every persistent reference remains resolvable.
+    for (const AdaptiveResponsePreset &source : bundle.adaptiveResponsePresets) {
+        if (findAdaptiveResponsePreset(candidate, source.id)) {
+            if (warnings) warnings->append(QString(u"Adaptive Response preset %1 was kept local by ID"_qs)
+                .arg(source.name));
+            continue;
+        }
+        if (candidate.adaptiveResponsePresets.size() >= 64) {
+            setError(error, u"The Pack requires too many Adaptive Response presets"_qs); return false;
+        }
+        AdaptiveResponsePreset copied = source;
+        const auto nameAvailable = [&candidate](const QString &name) {
+            return std::none_of(candidate.adaptiveResponsePresets.cbegin(),
+                candidate.adaptiveResponsePresets.cend(), [&name](const AdaptiveResponsePreset &existing) {
+                    return existing.name.compare(name, Qt::CaseInsensitive) == 0;
+                });
+        };
+        if (!nameAvailable(copied.name)) {
+            const QString base = copied.name.left(52);
+            for (int suffix = 2; suffix < 100; ++suffix) {
+                const QString candidateName = QString(u"%1 (Imported %2)"_qs).arg(base).arg(suffix);
+                if (nameAvailable(candidateName)) { copied.name = candidateName; break; }
+            }
+        }
+        if (!nameAvailable(copied.name)) {
+            setError(error, u"A unique imported Adaptive Response preset name could not be created"_qs); return false;
+        }
+        candidate.adaptiveResponsePresets.push_back(std::move(copied));
+    }
+    if (bundle.includesAdaptiveResponseGlobal) {
+        candidate.adaptiveResponseGlobal = bundle.adaptiveResponseGlobal;
     }
     QHash<QString, QString> categoryIds;
     for (const ProfileCategory &source : bundle.categories) {
@@ -659,6 +765,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
                 existing->executableRules = source.executableRules;
                 existing->restoreLastProfile = source.restoreLastProfile;
                 existing->enabled = source.enabled;
+                existing->adaptiveResponse = source.adaptiveResponse;
                 destinationId = existing->id;
                 if (warnings) warnings->append(QString(u"Replaced Category %1 after clearing its existing profiles"_qs)
                     .arg(existing->name));
@@ -684,6 +791,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             destination->executableRules = source.executableRules;
             destination->restoreLastProfile = source.restoreLastProfile;
             destination->enabled = source.enabled;
+            destination->adaptiveResponse = source.adaptiveResponse;
         }
         categoryIds.insert(source.id, destinationId);
     }
@@ -872,6 +980,7 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
     result.insert(u"profileCount"_qs, static_cast<int>(bundle.profiles.size()));
     result.insert(u"automationCount"_qs, static_cast<int>(bundle.automations.size()));
     result.insert(u"curveCount"_qs, static_cast<int>(bundle.curves.size()));
+    result.insert(u"adaptiveResponsePresetCount"_qs, static_cast<int>(bundle.adaptiveResponsePresets.size()));
     result.insert(u"includesDevices"_qs, bundle.includesDevices);
     result.insert(u"includesCalibration"_qs, bundle.includesCalibration);
     QVariantList warnings;
@@ -899,6 +1008,7 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
     QVariantList layouts;
     QVariantList curves;
     QVariantList automations;
+    QVariantList adaptiveResponsePresets;
     int profileControlCount = 0;
     for (const ProfileTriggerBinding &binding : bundle.profileTriggers) {
         if (profileTriggerBindingEnabled(binding)) ++profileControlCount;
@@ -914,6 +1024,10 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
         automations.append(QVariantMap{{u"name"_qs, automation.name}, {u"enabled"_qs, automation.enabled},
                                        {u"conditions"_qs, static_cast<int>(automation.conditions.size())},
                                        {u"actions"_qs, static_cast<int>(automation.actions.size())}});
+    }
+    for (const AdaptiveResponsePreset &preset : bundle.adaptiveResponsePresets) {
+        adaptiveResponsePresets.append(QVariantMap{{u"name"_qs, preset.name},
+            {u"description"_qs, preset.description}, {u"axisCount"_qs, kPhysicalAxisCount}});
     }
     for (const VirtualOutputLayout &layout : bundle.outputLayouts) {
         int axisCount = 0;
@@ -979,6 +1093,7 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
     }
     result.insert(u"curves"_qs, curves);
     result.insert(u"automations"_qs, automations);
+    result.insert(u"adaptiveResponsePresets"_qs, adaptiveResponsePresets);
     result.insert(u"outputLayouts"_qs, layouts);
     result.insert(u"profileControlCount"_qs, profileControlCount);
     result.insert(u"devices"_qs, devices);

@@ -1,5 +1,6 @@
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
+#include "adaptive_response.h"
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "mapping_worker.h"
@@ -79,6 +80,7 @@ struct HotPathState {
     std::array<bool, hotas::kPhysicalAxisCount> availableAxes{};
     std::array<bool, hotas::kMaximumPhysicalButtons> availableButtons{};
     std::array<hotas::AxisHysteresisState, hotas::kPhysicalAxisCount> hysteresis{};
+    std::array<hotas::AdaptiveResponseProcessor, hotas::kPhysicalAxisCount> adaptiveResponse{};
     std::array<float, hotas::kVirtualAxisSlotCount> lastVirtualValues{};
     hotas::AxisMappingTransitionEngine axisTransitions;
     std::array<int, hotas::kVirtualAxisSlotCount> virtualAxisSources{};
@@ -185,16 +187,22 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
     std::array<float, hotas::kVirtualAxisSlotCount> output{};
     std::array<bool, hotas::kVirtualAxisSlotCount> targetUsed{};
     state.virtualAxisSources.fill(-1);
+    const auto reportTimestamp = Clock::now();
     for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
         if (!state.availableAxes[static_cast<size_t>(index)]) continue;
         const float raw = snapshot.axes[static_cast<size_t>(index)];
         const hotas::RuntimeAxisMapping &axis = mapping.axes[static_cast<size_t>(index)];
+        const float physicalNormalized = hotas::normalizeCalibrated(raw, axis.calibration);
+        const hotas::AdaptiveResponseTelemetry adaptive =
+            state.adaptiveResponse[static_cast<size_t>(index)].process(
+                physicalNormalized, axis.adaptiveResponse, reportTimestamp);
         float curveResponse = 0.0F;
         hotas::AxisSignalPath path;
-        const float transformed = hotas::transformAxisLive(raw, axis,
+        const float transformed = hotas::transformNormalizedAxisLive(adaptive.predicted, axis,
             state.hysteresis[static_cast<size_t>(index)], &curveResponse, &path);
         state.publication.raw[static_cast<size_t>(index)].store(raw, std::memory_order_relaxed);
-        state.publication.normalized[static_cast<size_t>(index)].store(path.normalized, std::memory_order_relaxed);
+        state.publication.normalized[static_cast<size_t>(index)].store(physicalNormalized,
+                                                                        std::memory_order_relaxed);
         state.publication.afterDeadzone[static_cast<size_t>(index)].store(path.afterDeadzone, std::memory_order_relaxed);
         state.publication.afterHysteresis[static_cast<size_t>(index)].store(path.afterHysteresis, std::memory_order_relaxed);
         state.publication.afterInversion[static_cast<size_t>(index)].store(path.afterInversion, std::memory_order_relaxed);
@@ -283,6 +291,11 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
     hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
     hotas::ControllerProfile &profile = hotas::activeProfile(configuration);
     const bool oneSided = name == "One-Sided Linear";
+    if (name == "Adaptive Response") {
+        for (hotas::AdaptiveResponseAxisOverride &axis : configuration.adaptiveResponseGlobal.axes) {
+            axis.presetId = QStringLiteral("fast");
+        }
+    }
     profile.buttons = hotas::defaultButtonMappings(15, 32);
     profile.povs.resize(1);
     profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Right))] =
@@ -714,7 +727,7 @@ void runSuite(std::string_view condition, const std::vector<SyntheticReport> &re
     std::atomic_bool stop{false};
     std::thread uiThread;
     if (runUiStress) uiThread = std::thread(runUiModelStress, std::ref(stop));
-    for (const std::string_view name : {"Linear", "One-Sided Linear", "J-Curve", "S-Curve", "Advanced", "Shooter-Flight", "Personal", "Custom-25"}) {
+    for (const std::string_view name : {"Linear", "Adaptive Response", "One-Sided Linear", "J-Curve", "S-Curve", "Advanced", "Shooter-Flight", "Personal", "Custom-25"}) {
         printResult(condition, benchmark(name, reports));
     }
     if (runUiStress) {

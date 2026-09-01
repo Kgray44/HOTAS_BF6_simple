@@ -24,6 +24,10 @@ public:
     static bool portableCategoryFromJson(const QJsonObject &json, ProfileCategory *category);
     static QJsonObject portableCurveToJson(const PersonalCurvePreset &preset);
     static bool portableCurveFromJson(const QJsonObject &json, PersonalCurvePreset *preset);
+    static QJsonObject portableAdaptiveResponsePresetToJson(const AdaptiveResponsePreset &preset);
+    static bool portableAdaptiveResponsePresetFromJson(const QJsonObject &json, AdaptiveResponsePreset *preset);
+    static QJsonObject portableAdaptiveResponseLayerToJson(const AdaptiveResponseLayer &layer);
+    static bool portableAdaptiveResponseLayerFromJson(const QJsonValue &value, AdaptiveResponseLayer *layer);
     static QJsonObject portableAutomationToJson(const AutomationDefinition &automation);
     static bool portableAutomationFromJson(const QJsonObject &json, AutomationDefinition *automation);
     static QJsonObject portableOutputLayoutToJson(const VirtualOutputLayout &layout);

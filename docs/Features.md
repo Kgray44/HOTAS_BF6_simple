@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.2.0**
+**Current release: v2.3.0**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -46,6 +46,7 @@ Physical DirectInput axes can be routed only to the selected profile layout's av
 - Per-profile axis routing with conflict prevention and selected-layout unsupported-target handling.
 - Completed calibration marks real controls Active and stationary advertised slots Fixed; Fixed slots are never routed.
 - Calibration and normalization before profile transforms.
+- Adaptive Response can add a bounded 0–30 ms predictive phase lead from physical normalized input before deadzone, hysteresis, inversion, response curve, and output limits; it is not smoothing or PID control.
 - Rescaled deadzone, hysteresis, inversion, response curve, and output-limit processing.
 - Centered or One-Sided axis domain selectable per profile and per axis.
 - Direct decimal Output Min/Max entry with 0.1% step adjustment.
@@ -134,6 +135,7 @@ A deterministic, fixed-capacity Automation subsystem evaluates rules inside the 
 - Profile Hold and Toggle actions.
 - Axis Scale, Offset, Clamp, Override, Mix, and Follow actions.
 - Mapping On, Mapping Off, and Toggle Mapping actions.
+- Temporary per-axis Adaptive Response enable, disable, and preset actions resolve by rule priority and compiled source order without changing saved profile settings.
 - Per-rule timing for sequence gap, long press, brief active duration, and tap duration.
 - Runtime latch/timer state is bounded, nonpersistent, and cleared on mapping stop, disconnect, configuration replacement, or Automation master disable.
 - Global persisted Automation master kill switch, invalid-rule health, and evaluation diagnostics.
@@ -171,6 +173,7 @@ The application exposes physical input, transformed output, capacity, readiness,
 - vJoy readiness, button capacity, axis availability, and POV capability reporting.
 - HidHide installation/cloaking status when the supported CLI can answer.
 - Automation rule count, active count, invalid health, and evaluation timing.
+- Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, motion state, reversal count, and safety-clamp count.
 - Actual parked disabled-axis output reported separately from raw physical input.
 - Configuration warnings for capability mismatch or unavailable targets.
 
@@ -183,6 +186,7 @@ The app provides three persistent visual systems without allowing presentation s
 - Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.
 - Instant theme switching with theme state stored separately from mapper configuration.
 - Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
+- Adaptive Response page with per-axis preset strip, Global/Category/Profile scope selection, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
 - Curve Transition Smoothing controls use the shared themed Settings and Profile Library surfaces in Legacy, Standard, and Top Gun.
 - Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces.
@@ -247,6 +251,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 - QSettings-backed persistent profiles and global settings.
 - Schema migrations preserve established behavior for older configurations, including schema-18 data-only migration to reusable virtual-output layouts.
 - Schema 20 adds deterministic Curve Transition Smoothing defaults and an optional profile override while preserving prior mapping behavior.
+- Schema 21 adds safe-off Adaptive Response defaults plus global/category/profile layers, bounded custom presets, and portable preset dependencies; legacy configurations retain direct physical response.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.
 - Runtime-only toggles, latches, timers, and held-control state are never persisted.

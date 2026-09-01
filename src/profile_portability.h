@@ -25,6 +25,9 @@ struct PortableConfigurationBundle {
     std::vector<ProfileCategory> categories;
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> curves;
+    std::vector<AdaptiveResponsePreset> adaptiveResponsePresets;
+    AdaptiveResponseLayer adaptiveResponseGlobal;
+    bool includesAdaptiveResponseGlobal = false;
     std::vector<AutomationDefinition> automations;
     std::vector<VirtualOutputLayout> outputLayouts;
     ProfileTriggerBindings profileTriggers;

@@ -1,5 +1,6 @@
 #include "mapping_worker.h"
 
+#include "adaptive_response.h"
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
 #include "automation_engine.h"
@@ -502,6 +503,19 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.afterInversion[index] = 0.0F;
         m_runtime.curveResponse[index] = 0.0F;
         m_runtime.transformed[index] = 0.0F;
+        m_runtime.adaptiveEstimated[index] = 0.0F;
+        m_runtime.adaptivePredicted[index] = 0.0F;
+        m_runtime.adaptiveVelocity[index] = 0.0F;
+        m_runtime.adaptiveAcceleration[index] = 0.0F;
+        m_runtime.adaptiveHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveLead[index] = 0.0F;
+        m_runtime.adaptiveConfidence[index] = 0.0F;
+        m_runtime.adaptiveMotionIntensity[index] = 0.0F;
+        m_runtime.adaptiveMotionState[index] = static_cast<int>(AdaptiveMotionState::Stable);
+        m_runtime.adaptiveReversing[index] = false;
+        m_runtime.adaptiveSafetyLimited[index] = false;
+        m_runtime.adaptiveReversalCount[index] = 0;
+        m_runtime.adaptiveSafetyClampCount[index] = 0;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
         m_runtime.axisActivity[index] = static_cast<int>(m_configuration.axisActivity[index]);
@@ -776,6 +790,7 @@ void MappingWorker::run()
     std::array<int, kVirtualAxisSlotCount> virtualAxisSources{};
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
+    std::array<AdaptiveResponseProcessor, kPhysicalAxisCount> adaptiveProcessors{};
     PhysicalButtonStates latestPhysicalButtons{};
     PhysicalPovValues latestPovValues{};
     latestPovValues.fill(-1);
@@ -1101,6 +1116,7 @@ void MappingWorker::run()
         // Settings/profile updates receive a fully compiled table and begin a
         // new hysteresis acceptance window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         appliedVersion = currentVersion;
         buttonDefaultsPending = false;
         const bool manualBaseChanged = configuration.activeProfileId != previousProfileId;
@@ -1332,6 +1348,7 @@ void MappingWorker::run()
             const bool changed = selectEffectiveProfile(selection, true);
             if (changed) {
                 pendingProfileSwitchStarted = profileSwitchStarted;
+                for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
             }
 
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -1359,7 +1376,10 @@ void MappingWorker::run()
                 static_cast<int>(activeProfileCache->profiles.size()));
             const EffectiveProfileSelection automationSelection = profileTriggers.effectiveProfile(*activeProfileCache);
             const bool automationProfileChanged = selectEffectiveProfile(automationSelection, true);
-            if (automationProfileChanged) pendingProfileSwitchStarted = automationStarted;
+            if (automationProfileChanged) {
+                pendingProfileSwitchStarted = automationStarted;
+                for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
+            }
             m_runtime.automationActiveRuleCount = automationEffects->activeRuleCount;
             for (int rule = 0; rule < kMaximumAutomationRules; ++rule) {
                 const bool active = automationEffects->activeRules[static_cast<size_t>(rule)];
@@ -1405,16 +1425,39 @@ void MappingWorker::run()
             const float raw = physicalSnapshot.axes[index];
             m_runtime.raw[index] = raw;
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
+            const float physicalNormalized = normalizeCalibrated(raw, mapping.calibration);
+            RuntimeAdaptiveResponseConfig adaptiveConfiguration = mapping.adaptiveResponse;
+            if (automationEffects) {
+                adaptiveConfiguration = applyAdaptiveResponseRuntimeOverride(adaptiveConfiguration,
+                    automationEffects->adaptiveResponseOverlays[static_cast<size_t>(index)]);
+            }
+            const AdaptiveResponseTelemetry adaptive = adaptiveProcessors[static_cast<size_t>(index)].process(
+                physicalNormalized, adaptiveConfiguration, started);
             float curveResponse = 0.0F;
             AxisSignalPath signalPath;
-            const float transformed = transformAxisLive(raw, mapping, hysteresisStates[index],
-                &curveResponse, &signalPath);
-            m_runtime.normalized[index] = signalPath.normalized;
+            const float transformed = transformNormalizedAxisLive(adaptive.predicted, mapping,
+                hysteresisStates[index], &curveResponse, &signalPath);
+            // Existing diagnostics retain the measured physical normalisation.
+            // Predictor stages are exposed by their dedicated telemetry fields.
+            m_runtime.normalized[index] = physicalNormalized;
             m_runtime.afterDeadzone[index] = signalPath.afterDeadzone;
             m_runtime.afterHysteresis[index] = signalPath.afterHysteresis;
             m_runtime.afterInversion[index] = signalPath.afterInversion;
             m_runtime.curveResponse[index] = curveResponse;
             m_runtime.transformed[index] = transformed;
+            m_runtime.adaptiveEstimated[index] = adaptive.estimated;
+            m_runtime.adaptivePredicted[index] = adaptive.predicted;
+            m_runtime.adaptiveVelocity[index] = adaptive.velocity;
+            m_runtime.adaptiveAcceleration[index] = adaptive.acceleration;
+            m_runtime.adaptiveHorizonSeconds[index] = adaptive.activeHorizonSeconds;
+            m_runtime.adaptiveLead[index] = adaptive.lead;
+            m_runtime.adaptiveConfidence[index] = adaptive.confidence;
+            m_runtime.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
+            m_runtime.adaptiveMotionState[index] = static_cast<int>(adaptive.state);
+            m_runtime.adaptiveReversing[index] = adaptive.reversal;
+            m_runtime.adaptiveSafetyLimited[index] = adaptive.safetyLimited;
+            m_runtime.adaptiveReversalCount[index] = adaptiveProcessors[static_cast<size_t>(index)].reversalCount();
+            m_runtime.adaptiveSafetyClampCount[index] = adaptiveProcessors[static_cast<size_t>(index)].safetyClampCount();
             transformedAxes[static_cast<size_t>(index)] = transformed;
         }
         if (automationEffects) {

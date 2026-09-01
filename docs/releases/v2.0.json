@@ -326,7 +326,7 @@
     "status": "historical-stable",
     "replacement": null,
     "syncToGitHubRelease": true,
-    "statusNote": "Historical stable release. v2.1.4 established the responsive control-plane and unloadable page lifecycle baseline; v2.2.0 is the current recommended release. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain machine- or release-specific checks.",
+    "statusNote": "Historical stable release. v2.1.4 established the responsive control-plane and unloadable page lifecycle baseline; v2.3.0 is the current recommended release. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain machine- or release-specific checks.",
     "highlights": [
       "Windows process enumeration and DirectInput controller inventory discovery run on low-priority control-plane threads. The Qt/UI thread receives completed snapshots only, while MappingWorker remains independent.",
       "Automatic game detection keeps case-insensitive basename matching, active-category preference, deterministic category tie-breaking, unchanged-set suppression, and slower visible/minimized/tray-hidden cadence. The explicit Add Game list also receives asynchronous cached snapshots.",
@@ -347,7 +347,7 @@
     "status": "historical-stable",
     "replacement": null,
     "syncToGitHubRelease": true,
-    "statusNote": "Historical stable release. v2.1.5 remains a valid record of the input-learning and vJoy-capacity correction baseline; v2.2.0 is the current recommended release.",
+    "statusNote": "Historical stable release. v2.1.5 remains a valid record of the input-learning and vJoy-capacity correction baseline; v2.3.0 is the current recommended release.",
     "highlights": [
       "Learn Input observes the existing UI/control-plane physical snapshot and guided Axis Quick Assign uses configured game-output aliases without adding report-loop work.",
       "Button custom names gained stable inline editing, while Axis Name and Game Output Name retain dedicated editing drafts protected from live telemetry refresh.",
@@ -364,7 +364,7 @@
     "status": "historical-stable",
     "replacement": null,
     "syncToGitHubRelease": true,
-    "statusNote": "Historical stable release. v2.1.6 remains the completed input-learning and Quick Map correction baseline; v2.2.0 is the current recommended release.",
+    "statusNote": "Historical stable release. v2.1.6 remains the completed input-learning and Quick Map correction baseline; v2.3.0 is the current recommended release.",
     "highlights": [
       "Learn Input freezes its intended virtual button before physical detection and uses the same explicit Replace, Ignore, and Cancel route-conflict choices as manual assignment and Quick Map.",
       "Axis Quick Map re-arms after a bounded stability window, Button Quick Map waits for held buttons to release, and both keep completed assignments if the workflow exits early.",
@@ -378,10 +378,10 @@
     "releaseTitle": "v2.2.0",
     "title": "Bumpless Curve / Mapping Transition Smoothing",
     "summary": "HOTAS BF6 v2.2.0 prevents mapper-created virtual-axis jumps during curve and mapping changes while retaining immediate physical-input response and the allocation-free DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "historical-stable",
+    "replacement": "2.3.0",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release for compatible DirectInput controllers. v2.2.0 has focused local core, migration, QML-startup, UI-contract, automation, and synthetic hot-path evidence. Physical controller, game, installer, signing, published updater, and live packaged-resource acceptance remain release- and machine-specific checks.",
+    "statusNote": "Historical stable release. v2.2.0 remains the bumpless transition baseline; use v2.3.0 for Adaptive Response. Physical controller, game, installer, signing, published updater, and live packaged-resource acceptance remain release- and machine-specific checks.",
     "highlights": [
       "Each material compiled-mapping transition anchors to the actual virtual output, evaluates the new mapping immediately, and decays only the correction offset over an optional 0–1000 ms duration (100 ms default).",
       "The correction cancels when the player moves the physical control aggressively, and rapid toggles use the current actual output as the next anchor so transitions remain continuous without input filtering.",
@@ -389,6 +389,24 @@
       "Schema 20 persists global and per-profile settings with deterministic enabled/100 ms defaults for legacy configuration and no rewrite of existing mappings, curves, Automation, or output layouts.",
       "Focused tests prove both transition directions, direct new-mapping response, rapid toggles, tiny-change suppression, opposite-output reversal, zero/disabled behavior, user-intent cancellation, independent axes, and migration persistence.",
       "The synthetic report benchmark reports zero hot-path allocations in the normal steady state. No per-report heap allocation, lock, logging, persistence, process discovery, or UI work was added to MappingWorker."
+    ]
+  },
+  {
+    "version": "2.3.0",
+    "tag": "v2.3.0",
+    "releaseTitle": "v2.3.0",
+    "title": "Adaptive Response",
+    "summary": "HOTAS BF6 v2.3.0 adds a bounded per-axis predictive phase lead for deliberate physical HOTAS movement while keeping direct physical-position reacquisition and the allocation-free DirectInput-to-vJoy report path.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current candidate release pending protected CI, signed installer, public updater, physical-controller, game, and packaged-resource acceptance. Local core, Automation, QML-startup, UI-contract, and synthetic hot-path evidence do not replace those gates.",
+    "highlights": [
+      "Each axis predicts only from its calibrated normalized physical position and derivatives with an adaptive 0–30 ms horizon; it is not smoothing and does not feed prediction back into the estimator.",
+      "Velocity, Alpha-Beta, Alpha-Beta-Gamma, and Auto models cancel stale lead on reversal, reduce lead at stops, taper at endpoints, and clamp within the legal axis domain.",
+      "Global, Category, Profile, and temporary Automation layers expose built-in and user presets while compiling durable hierarchy and preset lookups outside the mapper report loop.",
+      "Adaptive Response controls, static preview/Test Lab scenarios, diagnostics telemetry, portable preset validation, schema-21 migration, focused tests, and a synthetic hot-path benchmark provide local implementation evidence.",
+      "No per-report allocation, lock, UI callback, logging, persistence, process discovery, device inspection, or profile hierarchy lookup was added to MappingWorker."
     ]
   }
 ]

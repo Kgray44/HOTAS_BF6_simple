@@ -34,6 +34,8 @@ set(HOTAS_MAPPER_SOURCES
     src/axis_transform.cpp
     src/axis_mapping_transition.h
     src/axis_mapping_transition.cpp
+    src/adaptive_response.h
+    src/adaptive_response.cpp
     src/response_curve.h
     src/response_curve.cpp
     src/button_mapping.h
@@ -82,6 +84,7 @@ qt_add_qml_module(HOTASMapper
     VERSION 1.0
     QML_FILES
         qml/AviationPanel.qml
+        qml/AdaptiveResponsePage.qml
         qml/AutomationPage.qml
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
@@ -186,6 +189,8 @@ if (BUILD_TESTING)
         src/axis_transform.cpp
         src/axis_mapping_transition.h
         src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h
@@ -232,6 +237,8 @@ if (BUILD_TESTING)
         src/axis_transform.cpp
         src/axis_mapping_transition.h
         src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h
@@ -296,6 +303,8 @@ if (BUILD_TESTING)
     qt_add_executable(upgrade_configuration_fixture
         tests/upgrade_configuration_fixture.cpp
         src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
         src/axis_transform.h
         src/axis_transform.cpp
         src/response_curve.h
@@ -352,6 +361,7 @@ if (BUILD_TESTING)
         VERSION 1.0
         QML_FILES
             qml/AviationPanel.qml
+            qml/AdaptiveResponsePage.qml
             qml/AutomationPage.qml
             qml/LegacyAviationPanel.qml
             qml/LegacyCurveEditor.qml
@@ -414,6 +424,8 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/axis_transform.cpp
         src/axis_mapping_transition.h
         src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
         src/response_curve.h
         src/response_curve.cpp
         src/button_mapping.h

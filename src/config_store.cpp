@@ -1,6 +1,7 @@
 #include "config_store.h"
 
 #include "axis_transform.h"
+#include "adaptive_response.h"
 #include "button_mapping.h"
 #include "response_curve.h"
 
@@ -20,7 +21,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 20;
+constexpr int kProfileSchemaVersion = 21;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -60,6 +61,112 @@ Calibration calibrationFromJson(const QJsonObject &json)
         calibration.centered = true;
     }
     return calibration;
+}
+
+QJsonObject adaptiveResponseSettingsToJson(const AdaptiveResponseSettings &settings)
+{
+    const AdaptiveResponseSettings clean = sanitizedAdaptiveResponseSettings(settings);
+    return {{u"enabled"_qs, clean.enabled}, {u"model"_qs, adaptiveResponseModelKey(clean.model)},
+            {u"maximumHorizonMs"_qs, clean.maximumHorizonMs}, {u"maximumLead"_qs, clean.maximumLead},
+            {u"velocityResponse"_qs, clean.velocityResponse},
+            {u"accelerationResponse"_qs, clean.accelerationResponse},
+            {u"motionSensitivity"_qs, clean.motionSensitivity}, {u"noiseRejection"_qs, clean.noiseRejection},
+            {u"reversalDetection"_qs, clean.reversalDetection},
+            {u"reversalResponse"_qs, clean.reversalResponse},
+            {u"decelerationResponse"_qs, clean.decelerationResponse},
+            {u"settlingResponse"_qs, clean.settlingResponse}, {u"endpointTaper"_qs, clean.endpointTaper}};
+}
+
+bool adaptiveResponseSettingsFromJson(const QJsonObject &json, AdaptiveResponseSettings *settings)
+{
+    if (!settings || json.isEmpty()) return false;
+    const QString model = json.value(u"model"_qs).toString();
+    const QString normalizedModel = model.trimmed().toCaseFolded();
+    if (normalizedModel != u"auto"_qs && normalizedModel != u"velocity"_qs
+        && normalizedModel != u"alpha-beta"_qs && normalizedModel != u"alpha-beta-gamma"_qs
+        && normalizedModel != u"abg"_qs) return false;
+    AdaptiveResponseSettings restored;
+    restored.enabled = json.value(u"enabled"_qs).toBool(false);
+    restored.model = adaptiveResponseModelFromKey(model);
+    restored.maximumHorizonMs = static_cast<float>(json.value(u"maximumHorizonMs"_qs).toDouble(8.0));
+    restored.maximumLead = static_cast<float>(json.value(u"maximumLead"_qs).toDouble(0.12));
+    restored.velocityResponse = static_cast<float>(json.value(u"velocityResponse"_qs).toDouble(0.72));
+    restored.accelerationResponse = static_cast<float>(json.value(u"accelerationResponse"_qs).toDouble(0.58));
+    restored.motionSensitivity = static_cast<float>(json.value(u"motionSensitivity"_qs).toDouble(0.035));
+    restored.noiseRejection = static_cast<float>(json.value(u"noiseRejection"_qs).toDouble(0.012));
+    restored.reversalDetection = static_cast<float>(json.value(u"reversalDetection"_qs).toDouble(0.075));
+    restored.reversalResponse = static_cast<float>(json.value(u"reversalResponse"_qs).toDouble(1.0));
+    restored.decelerationResponse = static_cast<float>(json.value(u"decelerationResponse"_qs).toDouble(0.85));
+    restored.settlingResponse = static_cast<float>(json.value(u"settlingResponse"_qs).toDouble(0.92));
+    restored.endpointTaper = static_cast<float>(json.value(u"endpointTaper"_qs).toDouble(0.16));
+    *settings = sanitizedAdaptiveResponseSettings(restored);
+    return true;
+}
+
+QJsonObject adaptiveResponseOverrideToJson(const AdaptiveResponseAxisOverride &override)
+{
+    return {{u"properties"_qs, static_cast<int>(override.properties & kAdaptiveResponseAllProperties)},
+            {u"presetId"_qs, override.presetId.trimmed().left(96)},
+            {u"settings"_qs, adaptiveResponseSettingsToJson(override.settings)}};
+}
+
+bool adaptiveResponseOverrideFromJson(const QJsonObject &json, AdaptiveResponseAxisOverride *override)
+{
+    if (!override || json.isEmpty()) return false;
+    const int properties = json.value(u"properties"_qs).toInt(-1);
+    if (properties < 0 || (static_cast<std::uint32_t>(properties) & ~kAdaptiveResponseAllProperties) != 0) return false;
+    AdaptiveResponseAxisOverride restored;
+    restored.properties = static_cast<std::uint32_t>(properties);
+    restored.presetId = json.value(u"presetId"_qs).toString().trimmed().left(96);
+    if (!adaptiveResponseSettingsFromJson(json.value(u"settings"_qs).toObject(), &restored.settings)) return false;
+    *override = std::move(restored);
+    return true;
+}
+
+QJsonObject adaptiveResponseLayerToJson(const AdaptiveResponseLayer &layer)
+{
+    QJsonArray axes;
+    for (const AdaptiveResponseAxisOverride &axis : layer.axes) axes.append(adaptiveResponseOverrideToJson(axis));
+    return {{u"axes"_qs, axes}};
+}
+
+bool adaptiveResponseLayerFromJson(const QJsonValue &value, AdaptiveResponseLayer *layer)
+{
+    if (!layer || !value.isObject()) return false;
+    const QJsonArray axes = value.toObject().value(u"axes"_qs).toArray();
+    if (axes.size() != kPhysicalAxisCount) return false;
+    AdaptiveResponseLayer restored;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (!adaptiveResponseOverrideFromJson(axes.at(axis).toObject(),
+                                              &restored.axes[static_cast<size_t>(axis)])) return false;
+    }
+    *layer = std::move(restored);
+    return true;
+}
+
+QJsonObject adaptiveResponsePresetToJson(const AdaptiveResponsePreset &preset)
+{
+    QJsonArray axes;
+    for (const AdaptiveResponseAxisOverride &axis : preset.axes) axes.append(adaptiveResponseOverrideToJson(axis));
+    return {{u"id"_qs, preset.id.trimmed().left(96)}, {u"name"_qs, preset.name.trimmed().left(64)},
+            {u"description"_qs, preset.description.trimmed().left(160)}, {u"axes"_qs, axes}};
+}
+
+bool adaptiveResponsePresetFromJson(const QJsonObject &json, AdaptiveResponsePreset *preset)
+{
+    if (!preset) return false;
+    AdaptiveResponsePreset restored;
+    restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
+    restored.name = json.value(u"name"_qs).toString().trimmed().left(64);
+    restored.description = json.value(u"description"_qs).toString().trimmed().left(160);
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    if (restored.id.isEmpty() || restored.name.isEmpty() || axes.size() != kPhysicalAxisCount) return false;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (!adaptiveResponseOverrideFromJson(axes.at(axis).toObject(),
+                                              &restored.axes[static_cast<size_t>(axis)])) return false;
+    }
+    *preset = std::move(restored);
+    return true;
 }
 
 QJsonObject calibrationHistoryEntryToJson(const CalibrationHistoryEntry &entry)
@@ -512,6 +619,9 @@ QString automationActionTypeToString(AutomationActionType type)
     case AutomationActionType::MappingOn: return u"mappingOn"_qs;
     case AutomationActionType::MappingOff: return u"mappingOff"_qs;
     case AutomationActionType::ToggleMapping: return u"toggleMapping"_qs;
+    case AutomationActionType::AdaptiveResponseEnable: return u"adaptiveResponseEnable"_qs;
+    case AutomationActionType::AdaptiveResponseDisable: return u"adaptiveResponseDisable"_qs;
+    case AutomationActionType::AdaptiveResponsePreset: return u"adaptiveResponsePreset"_qs;
     }
     return {};
 }
@@ -520,7 +630,7 @@ bool automationActionTypeFromString(const QString &value, AutomationActionType *
 {
     if (!type) return false;
     const QString normalized = value.trimmed();
-    const std::array<std::pair<QString, AutomationActionType>, 14> choices{{
+    const std::array<std::pair<QString, AutomationActionType>, 17> choices{{
         {u"vJoyButtonHold"_qs, AutomationActionType::VJoyButtonHold}, {u"vJoyButtonToggle"_qs, AutomationActionType::VJoyButtonToggle},
         {u"profileHold"_qs, AutomationActionType::ProfileHold}, {u"profileToggle"_qs, AutomationActionType::ProfileToggle},
         {u"axisScale"_qs, AutomationActionType::AxisScale}, {u"axisOffset"_qs, AutomationActionType::AxisOffset},
@@ -530,6 +640,9 @@ bool automationActionTypeFromString(const QString &value, AutomationActionType *
         {u"mappingOn"_qs, AutomationActionType::MappingOn},
         {u"mappingOff"_qs, AutomationActionType::MappingOff},
         {u"toggleMapping"_qs, AutomationActionType::ToggleMapping},
+        {u"adaptiveResponseEnable"_qs, AutomationActionType::AdaptiveResponseEnable},
+        {u"adaptiveResponseDisable"_qs, AutomationActionType::AdaptiveResponseDisable},
+        {u"adaptiveResponsePreset"_qs, AutomationActionType::AdaptiveResponsePreset},
     }};
     for (const auto &[key, candidate] : choices) if (normalized == key) { *type = candidate; return true; }
     return false;
@@ -572,7 +685,9 @@ bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDef
 QJsonObject automationActionToJson(const AutomationActionDefinition &action)
 {
     return {{u"type"_qs, automationActionTypeToString(action.type)}, {u"virtualButton"_qs, action.virtualButton},
-            {u"profileId"_qs, action.profileId}, {u"targetAxis"_qs, action.targetAxis},
+            {u"profileId"_qs, action.profileId},
+            {u"adaptiveResponsePresetId"_qs, action.adaptiveResponsePresetId},
+            {u"targetAxis"_qs, action.targetAxis},
             {u"sourceAxis"_qs, action.sourceAxis}, {u"sourceStage"_qs, static_cast<int>(action.sourceStage)},
             {u"value"_qs, action.value}, {u"offset"_qs, action.offset},
             {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum},
@@ -584,6 +699,8 @@ bool automationActionFromJson(const QJsonObject &json, AutomationActionDefinitio
     if (!action || !automationActionTypeFromString(json.value(u"type"_qs).toString(), &action->type)) return false;
     action->virtualButton = json.value(u"virtualButton"_qs).toInt(1);
     action->profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
+    action->adaptiveResponsePresetId = json.value(u"adaptiveResponsePresetId"_qs)
+        .toString().trimmed().left(96);
     action->targetAxis = json.value(u"targetAxis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
     action->sourceAxis = json.value(u"sourceAxis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
     action->sourceStage = static_cast<AutomationAxisSourceStage>(json.value(u"sourceStage"_qs)
@@ -855,6 +972,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
         {u"curveTransitionSmoothing"_qs,
          curveTransitionSmoothingToJson(profile.curveTransitionSmoothing)},
+        {u"adaptiveResponse"_qs, adaptiveResponseLayerToJson(profile.adaptiveResponse)},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
         {u"povs"_qs, povBindingsToJson(profile.povs)},
@@ -883,6 +1001,10 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
         u"curveTransitionSmoothingOverride"_qs).toBool(false);
     restored.curveTransitionSmoothing = curveTransitionSmoothingFromJson(
         json.value(u"curveTransitionSmoothing"_qs));
+    if (json.contains(u"adaptiveResponse"_qs)
+        && !adaptiveResponseLayerFromJson(json.value(u"adaptiveResponse"_qs), &restored.adaptiveResponse)) {
+        return false;
+    }
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
         if (axis.isEmpty()) return false;
@@ -920,6 +1042,7 @@ QJsonObject profileCategoryToJson(const ProfileCategory &category)
         {u"executableRules"_qs, executableRules},
         {u"enabled"_qs, category.enabled},
         {u"restoreLastProfile"_qs, category.restoreLastProfile},
+        {u"adaptiveResponse"_qs, adaptiveResponseLayerToJson(category.adaptiveResponse)},
     };
 }
 
@@ -934,6 +1057,10 @@ bool profileCategoryFromJson(const QJsonObject &json, ProfileCategory *category)
     restored.lastActiveProfileId = json.value(u"lastActiveProfileId"_qs).toString().trimmed().left(96);
     restored.enabled = json.value(u"enabled"_qs).toBool(true);
     restored.restoreLastProfile = json.value(u"restoreLastProfile"_qs).toBool(true);
+    if (json.contains(u"adaptiveResponse"_qs)
+        && !adaptiveResponseLayerFromJson(json.value(u"adaptiveResponse"_qs), &restored.adaptiveResponse)) {
+        return false;
+    }
     const QJsonArray profileIds = json.value(u"profileIds"_qs).toArray();
     const QJsonArray rules = json.value(u"executableRules"_qs).toArray();
     if (restored.id.isEmpty() || restored.id.size() > 96 || restored.name.isEmpty()
@@ -1179,6 +1306,12 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     for (const SavedControllerRecord &record : configuration.savedControllers) {
         savedControllers.append(savedControllerToJson(record));
     }
+    QJsonArray adaptiveResponsePresets;
+    const int adaptivePresetCount = std::min(static_cast<int>(configuration.adaptiveResponsePresets.size()), 64);
+    for (int index = 0; index < adaptivePresetCount; ++index) {
+        adaptiveResponsePresets.append(adaptiveResponsePresetToJson(
+            configuration.adaptiveResponsePresets[static_cast<size_t>(index)]));
+    }
 
     return {
         {u"version"_qs, kProfileSchemaVersion},
@@ -1192,6 +1325,9 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
         {u"curveTransitionSmoothing"_qs,
          curveTransitionSmoothingToJson(configuration.curveTransitionSmoothing)},
+        {u"adaptiveResponseSchemaVersion"_qs, kAdaptiveResponseSchemaVersion},
+        {u"adaptiveResponseGlobal"_qs, adaptiveResponseLayerToJson(configuration.adaptiveResponseGlobal)},
+        {u"adaptiveResponsePresets"_qs, adaptiveResponsePresets},
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
         {u"axisActivity"_qs, axisActivityToJson(configuration.axisActivity)},
@@ -1218,13 +1354,38 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != 15 && version != 16 && version != 17 && version != 18 && version != 19
+        && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
 
     MapperConfiguration configuration = fallbackWithGlobalSettings(json);
+    if (version >= 21) {
+        const int adaptiveSchema = json.value(u"adaptiveResponseSchemaVersion"_qs).toInt();
+        const QJsonArray presets = json.value(u"adaptiveResponsePresets"_qs).toArray();
+        if (adaptiveSchema != kAdaptiveResponseSchemaVersion || presets.size() > 64
+            || !adaptiveResponseLayerFromJson(json.value(u"adaptiveResponseGlobal"_qs),
+                                               &configuration.adaptiveResponseGlobal)) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        QSet<QString> presetIds;
+        QSet<QString> presetNames;
+        for (const QJsonValue &value : presets) {
+            AdaptiveResponsePreset preset;
+            if (!adaptiveResponsePresetFromJson(value.toObject(), &preset)
+                || presetIds.contains(preset.id) || presetNames.contains(preset.name.toCaseFolded())
+                || findAdaptiveResponsePreset(defaultConfiguration(), preset.id)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            presetIds.insert(preset.id);
+            presetNames.insert(preset.name.toCaseFolded());
+            configuration.adaptiveResponsePresets.push_back(std::move(preset));
+        }
+        configuration.adaptiveResponseSchemaVersion = adaptiveSchema;
+    }
     const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
     const QJsonArray profiles = json.value(u"profiles"_qs).toArray();
     if (calibration.size() != kPhysicalAxisCount || profiles.empty()) {
@@ -1590,6 +1751,28 @@ QJsonObject ConfigStore::portableCurveToJson(const PersonalCurvePreset &preset)
 bool ConfigStore::portableCurveFromJson(const QJsonObject &json, PersonalCurvePreset *preset)
 {
     return personalCurvePresetFromJson(json, preset);
+}
+
+QJsonObject ConfigStore::portableAdaptiveResponsePresetToJson(const AdaptiveResponsePreset &preset)
+{
+    return adaptiveResponsePresetToJson(preset);
+}
+
+bool ConfigStore::portableAdaptiveResponsePresetFromJson(const QJsonObject &json,
+                                                          AdaptiveResponsePreset *preset)
+{
+    return adaptiveResponsePresetFromJson(json, preset);
+}
+
+QJsonObject ConfigStore::portableAdaptiveResponseLayerToJson(const AdaptiveResponseLayer &layer)
+{
+    return adaptiveResponseLayerToJson(layer);
+}
+
+bool ConfigStore::portableAdaptiveResponseLayerFromJson(const QJsonValue &value,
+                                                         AdaptiveResponseLayer *layer)
+{
+    return adaptiveResponseLayerFromJson(value, layer);
 }
 
 QJsonObject ConfigStore::portableAutomationToJson(const AutomationDefinition &automation)

@@ -1,5 +1,6 @@
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
+#include "adaptive_response.h"
 #include "button_mapping.h"
 #include "config_store.h"
 #include "controller_manager.h"
@@ -131,6 +132,10 @@ private slots:
     void curveTransitionUserSlamCancelsCorrection();
     void curveTransitionsRemainIndependentAcrossAxes();
     void curveTransitionSettingsPersistAndMigrate();
+    void adaptiveResponsePredictsThenConvergesToPhysicalInput();
+    void adaptiveResponseCancelsStaleLeadAtReversal();
+    void adaptiveResponseTapersAndClampsAtEndpoint();
+    void adaptiveResponsePersistsAndResolvesLayeredSettings();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -553,6 +558,121 @@ void MappingCoreTests::curveTransitionSettingsPersistAndMigrate()
     QCOMPARE(migrated.curveTransitionSmoothing.durationMs, 100);
     const ControllerProfile *migratedPrecision = findProfile(migrated, precisionProfileId());
     QVERIFY(migratedPrecision && !migratedPrecision->curveTransitionSmoothingOverride);
+}
+
+void MappingCoreTests::adaptiveResponsePredictsThenConvergesToPhysicalInput()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    QVERIFY(nearlyEqual(processor.process(0.0F, configuration, origin).predicted, 0.0F));
+    const AdaptiveResponseTelemetry moving = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(4));
+    QVERIFY(moving.predicted > moving.physical);
+    QVERIFY(moving.activeHorizonSeconds > 0.0F);
+
+    const AdaptiveResponseTelemetry stopped = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(nearlyEqual(stopped.predicted, stopped.physical));
+    QVERIFY(nearlyEqual(stopped.velocity, 0.0F));
+}
+
+void MappingCoreTests::adaptiveResponseCancelsStaleLeadAtReversal()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.024F;
+    configuration.maximumLead = 0.35F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+    configuration.reversalDetection = 0.020F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.0F, configuration, origin);
+    processor.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry reversed = processor.process(
+        0.15F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(reversed.reversal);
+    QVERIFY(reversed.predicted < reversed.physical);
+    QCOMPARE(reversed.state, AdaptiveMotionState::Reversing);
+    QCOMPARE(processor.reversalCount(), std::uint64_t{1});
+}
+
+void MappingCoreTests::adaptiveResponseTapersAndClampsAtEndpoint()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.50F;
+    configuration.motionSensitivity = 0.005F;
+    configuration.noiseRejection = 0.0001F;
+    configuration.endpointTaper = 0.20F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.80F, configuration, origin);
+    const AdaptiveResponseTelemetry endpoint = processor.process(
+        1.0F, configuration, origin + std::chrono::milliseconds(4));
+    QCOMPARE(endpoint.predicted, 1.0F);
+    QVERIFY(endpoint.safetyLimited);
+    QVERIFY(processor.safetyClampCount() > 0);
+
+    configuration.enabled = false;
+    const AdaptiveResponseTelemetry disabled = processor.process(
+        0.42F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(nearlyEqual(disabled.predicted, 0.42F));
+}
+
+void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    configuration.adaptiveResponseGlobal.axes[0].presetId = QStringLiteral("light");
+    profile.adaptiveResponse.axes[0].properties = AdaptiveResponseMaximumHorizon;
+    profile.adaptiveResponse.axes[0].settings.maximumHorizonMs = 16.0F;
+
+    AdaptiveResponsePreset custom;
+    custom.id = QStringLiteral("test-response");
+    custom.name = QStringLiteral("Test Response");
+    custom.description = QStringLiteral("Core persistence fixture");
+    custom.axes = configuration.adaptiveResponseGlobal.axes;
+    configuration.adaptiveResponsePresets.push_back(custom);
+
+    const RuntimeAdaptiveResponseConfig effective =
+        resolveAdaptiveResponseConfiguration(configuration, profile, 0);
+    QVERIFY(effective.enabled);
+    QCOMPARE(effective.maximumHorizonSeconds, 0.016F);
+
+    bool valid = false;
+    const QJsonObject json = ConfigStore::toJson(configuration);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
+    QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 1);
+    const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(restored.adaptiveResponseGlobal.axes[0].presetId, QStringLiteral("light"));
+    const RuntimeAdaptiveResponseConfig restoredEffective =
+        resolveAdaptiveResponseConfiguration(restored, activeProfile(restored), 0);
+    QCOMPARE(restoredEffective.maximumHorizonSeconds, 0.016F);
+
+    QJsonObject legacy = json;
+    legacy.insert(QStringLiteral("version"), 20);
+    legacy.remove(QStringLiteral("adaptiveResponseSchemaVersion"));
+    legacy.remove(QStringLiteral("adaptiveResponseGlobal"));
+    legacy.remove(QStringLiteral("adaptiveResponsePresets"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    QVERIFY(!resolveAdaptiveResponseConfiguration(migrated, activeProfile(migrated), 0).enabled);
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
@@ -1842,6 +1962,28 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(createProfileInCategory(source, QStringLiteral("Vehicle"), categoryId,
                                     normalProfileId(), &profileId));
     findProfileCategory(source, categoryId)->executableRules = {QStringLiteral("bf6.exe")};
+    AdaptiveResponsePreset responsePreset;
+    responsePreset.id = QStringLiteral("pack-response");
+    responsePreset.name = QStringLiteral("Pack Response");
+    responsePreset.description = QStringLiteral("Portable Adaptive Response dependency");
+    for (AdaptiveResponseAxisOverride &axis : responsePreset.axes) {
+        axis.properties = kAdaptiveResponseAllProperties;
+        axis.settings.enabled = true;
+        axis.settings.maximumHorizonMs = 12.0F;
+    }
+    source.adaptiveResponsePresets.push_back(responsePreset);
+    findProfileCategory(source, categoryId)->adaptiveResponse.axes[0].presetId = responsePreset.id;
+    AutomationDefinition responseAutomation;
+    responseAutomation.id = QStringLiteral("pack-response-automation");
+    responseAutomation.name = QStringLiteral("Pack Response Automation");
+    responseAutomation.conditions.push_back({AutomationConditionType::BaseProfileIs, 0, 0.0F,
+        0.0F, 0.0F, 1, 1, PovDirection::Up, profileId});
+    AutomationActionDefinition responseAction;
+    responseAction.type = AutomationActionType::AdaptiveResponsePreset;
+    responseAction.targetAxis = static_cast<int>(PhysicalAxis::X);
+    responseAction.adaptiveResponsePresetId = responsePreset.id;
+    responseAutomation.actions.push_back(responseAction);
+    source.automations.push_back(responseAutomation);
     source.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum = -0.91F;
 
     const QString fileName = temporary.filePath(QStringLiteral("bf6.hbf6pack"));
@@ -1857,6 +1999,8 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(!bundle.includesCalibration);
     QCOMPARE(bundle.categories.size(), size_t{1});
     QCOMPARE(bundle.profiles.size(), size_t{1});
+    QCOMPARE(bundle.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(bundle.automations.size(), size_t{1});
 
     MapperConfiguration target = defaultConfiguration();
     const float originalMinimum = target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum;
@@ -1866,6 +2010,9 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
         [](const ProfileCategory &item) { return item.name == QStringLiteral("Battlefield 6"); });
     QVERIFY(category != target.profileCategories.cend());
     QCOMPARE(category->executableRules, QStringList{QStringLiteral("bf6.exe")});
+    QVERIFY(findAdaptiveResponsePreset(target, QStringLiteral("pack-response")));
+    QVERIFY(std::any_of(target.automations.cbegin(), target.automations.cend(),
+        [](const AutomationDefinition &item) { return item.name == QStringLiteral("Pack Response Automation"); }));
     QCOMPARE(target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum, originalMinimum);
 }
 
@@ -2254,7 +2401,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -2497,7 +2644,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
