@@ -380,6 +380,7 @@ std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario)
     float lastSourceSampleTime = 0.0F;
     float heldPhysical = clampDomain(valueAt(points, 0.0F), scenario.unipolar);
     float previousVelocity = 0.0F;
+    int previousIntentDirection = 0;
     bool previousMoving = false;
     while (time <= scenario.durationSeconds + 0.000001F) {
         const float intended = clampDomain(valueAt(points, time), scenario.unipolar);
@@ -422,7 +423,8 @@ std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario)
             sourceSampleUpdated = true;
             nextSourceSampleTime += sourcePeriod;
         }
-        const bool moving = std::abs(velocity) > 0.0005F;
+        const int intentDirection = velocity > 0.0005F ? 1 : velocity < -0.0005F ? -1 : 0;
+        const bool moving = intentDirection != 0;
         float dt = baseDt;
         if (scenario.variableDt) {
             constexpr float factors[] = {0.50F, 1.75F, 0.75F, 1.25F, 1.0F, 0.95F, 1.075F};
@@ -430,12 +432,29 @@ std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario)
         }
         const float nextTime = std::min(scenario.durationSeconds, time + dt);
         const float actualDt = std::max(0.0F, nextTime - time);
-        const bool reversal = (velocity > 0.0005F && previousVelocity < -0.0005F)
-            || (velocity < -0.0005F && previousVelocity > 0.0005F);
-        trace.push_back({time, intended, heldPhysical, velocity, actualDt, moving, sourceSampleUpdated,
-            latestSourceTime, !moving && previousMoving, !moving && previousMoving, reversal});
+        const bool reversal = intentDirection != 0 && previousIntentDirection != 0
+            && intentDirection != previousIntentDirection;
+        TraceSample sample;
+        sample.timeSeconds = time;
+        sample.intended = intended;
+        sample.humanIntentVelocity = velocity;
+        sample.humanIntentAcceleration = actualDt <= 0.0F ? 0.0F : (velocity - previousVelocity) / actualDt;
+        sample.humanIntentDirection = intentDirection;
+        sample.humanIntentReversal = reversal;
+        sample.humanIntentStop = !moving && previousMoving;
+        sample.physical = heldPhysical;
+        sample.velocity = velocity;
+        sample.dtSeconds = actualDt;
+        sample.intendedMoving = moving;
+        sample.sourceSampleUpdated = sourceSampleUpdated;
+        sample.sourceSampleTimeSeconds = latestSourceTime;
+        sample.targetArrival = !moving && previousMoving;
+        sample.physicalStop = !moving && previousMoving;
+        sample.trueReversal = reversal;
+        trace.push_back(sample);
         if (actualDt <= 0.0F) break;
         previousVelocity = velocity;
+        if (intentDirection != 0) previousIntentDirection = intentDirection;
         previousMoving = moving;
         if (scenario.variableDt) {
             time = nextTime;
