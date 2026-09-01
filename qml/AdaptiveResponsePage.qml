@@ -337,8 +337,11 @@ Item {
                 id: choiceMouse
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: {
+                    // Close while this delegate is still alive.  A selection can
+                    // rebuild the page, so closing after the callback leaves a
+                    // recreated popup visible over the updated selection.
+                    combo.popup.close()
                     combo.choiceActivated(index, combo.valueAt(index))
-                    Qt.callLater(function() { if (combo.popup.visible) combo.popup.close() })
                 }
             }
         }
