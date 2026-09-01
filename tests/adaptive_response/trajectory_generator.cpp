@@ -61,7 +61,7 @@ float velocityAt(const std::vector<ControlPoint> &points, float timeSeconds)
 {
     if (points.size() < 2) return 0.0F;
     for (size_t index = 1; index < points.size(); ++index) {
-        if (timeSeconds <= points[index].timeSeconds + 0.000001F) {
+        if (timeSeconds < points[index].timeSeconds - 0.000001F) {
             const ControlPoint &left = points[index - 1];
             const ControlPoint &right = points[index];
             return (right.position - left.position) / std::max(0.000001F, right.timeSeconds - left.timeSeconds);
@@ -92,6 +92,70 @@ std::vector<ControlPoint> randomHumanPoints(const ScenarioDefinition &scenario)
         target = clampDomain(target, scenario.unipolar);
         points.push_back({time, target});
         position = target;
+    }
+    return points;
+}
+
+std::vector<ControlPoint> personaPoints(const ScenarioDefinition &scenario)
+{
+    struct PersonaLimits {
+        float maximumVelocity;
+        float maximumAcceleration;
+        float maximumJerk;
+        float targetRange;
+        float holdMinimum;
+        float holdMaximum;
+        float centerBias;
+    };
+    const bool combat = scenario.id.find("combat-helicopter") != std::string::npos;
+    const bool landing = scenario.id.find("helicopter-landing") != std::string::npos;
+    const bool space = scenario.id.find("space-sim") != std::string::npos;
+    const bool fixedWing = scenario.id.find("fixed-wing") != std::string::npos;
+    const bool noisy = scenario.id.find("noisy-older-sensor") != std::string::npos;
+    const PersonaLimits limits = combat ? PersonaLimits{4.5F, 24.0F, 260.0F, 1.0F, 0.020F, 0.160F, 0.10F}
+        : landing ? PersonaLimits{0.55F, 2.2F, 18.0F, 0.38F, 0.050F, 0.250F, 0.75F}
+        : space ? PersonaLimits{2.0F, 8.0F, 80.0F, 0.95F, 0.080F, 0.450F, 0.25F}
+        : fixedWing ? PersonaLimits{1.55F, 5.0F, 42.0F, 0.90F, 0.100F, 0.700F, 0.20F}
+        : noisy ? PersonaLimits{1.10F, 4.0F, 32.0F, 0.70F, 0.080F, 0.500F, 0.45F}
+        : PersonaLimits{0.42F, 1.5F, 12.0F, 0.30F, 0.180F, 0.900F, 0.82F};
+    DeterministicRng rng(scenario.seed);
+    constexpr float dt = 0.010F;
+    std::vector<ControlPoint> points;
+    points.reserve(static_cast<size_t>(scenario.durationSeconds / dt) + 2U);
+    float time = 0.0F;
+    float position = scenario.unipolar ? 0.50F : rng.between(-0.10F, 0.10F);
+    float velocity = 0.0F;
+    float acceleration = 0.0F;
+    float target = position;
+    float targetChangeTime = 0.0F;
+    while (time < scenario.durationSeconds + 0.000001F) {
+        if (time + 0.000001F >= targetChangeTime || std::abs(target - position) < 0.015F) {
+            const float centered = rng.between(-limits.targetRange, limits.targetRange);
+            target = centered * (1.0F - limits.centerBias) + rng.between(-0.08F, 0.08F) * limits.centerBias;
+            if (combat && rng.unit() < 0.45F) target = -position + rng.between(-0.20F, 0.20F);
+            if (scenario.unipolar) target = rng.between(0.05F, 0.95F);
+            target = clampDomain(target, scenario.unipolar);
+            targetChangeTime = time + rng.between(limits.holdMinimum, limits.holdMaximum);
+        }
+        const float desiredVelocity = std::clamp((target - position) * 3.2F,
+            -limits.maximumVelocity, limits.maximumVelocity);
+        const float desiredAcceleration = std::clamp((desiredVelocity - velocity) * 7.0F,
+            -limits.maximumAcceleration, limits.maximumAcceleration);
+        acceleration += std::clamp(desiredAcceleration - acceleration,
+            -limits.maximumJerk * dt, limits.maximumJerk * dt);
+        velocity = std::clamp(velocity + acceleration * dt, -limits.maximumVelocity, limits.maximumVelocity);
+        position = clampDomain(position + velocity * dt, scenario.unipolar);
+        if ((position <= (scenario.unipolar ? 0.0F : -1.0F) || position >= 1.0F)
+            && ((position <= (scenario.unipolar ? 0.0F : -1.0F) && velocity < 0.0F)
+                || (position >= 1.0F && velocity > 0.0F))) {
+            velocity *= -0.12F;
+            acceleration = 0.0F;
+        }
+        points.push_back({std::min(time, scenario.durationSeconds), position});
+        time += dt;
+    }
+    if (points.empty() || points.back().timeSeconds < scenario.durationSeconds) {
+        points.push_back({scenario.durationSeconds, position});
     }
     return points;
 }
@@ -242,23 +306,34 @@ std::vector<ScenarioDefinition> canonicalScenarioCatalog(std::uint32_t masterSee
 
 std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario)
 {
-    const std::vector<ControlPoint> points = scenario.points.empty() ? randomHumanPoints(scenario) : scenario.points;
+    const std::vector<ControlPoint> points = scenario.points.empty()
+        ? (scenario.family == "persona" ? personaPoints(scenario) : randomHumanPoints(scenario)) : scenario.points;
     const int mapperRate = std::max(1, scenario.mapperRateHz);
     const float baseDt = 1.0F / static_cast<float>(mapperRate);
     const int sourceRate = scenario.sourceRateHz <= 0 ? mapperRate : scenario.sourceRateHz;
     const float sourcePeriod = 1.0F / static_cast<float>(std::max(1, sourceRate));
     DeterministicRng rng(scenario.seed);
     std::vector<TraceSample> trace;
-    trace.reserve(static_cast<size_t>(scenario.durationSeconds / baseDt) + 3U);
+    trace.reserve(static_cast<size_t>(scenario.durationSeconds / baseDt * 1.5F) + 3U);
     float time = 0.0F;
-    float lastSourceTime = -sourcePeriod;
+    std::uint64_t mapperTick = 0;
+    float nextSourceSampleTime = 0.0F;
+    float lastSourceSampleTime = 0.0F;
     float heldPhysical = clampDomain(valueAt(points, 0.0F), scenario.unipolar);
-    while (time < scenario.durationSeconds + 0.000001F) {
+    float previousVelocity = 0.0F;
+    bool previousMoving = false;
+    while (time <= scenario.durationSeconds + 0.000001F) {
         const float intended = clampDomain(valueAt(points, time), scenario.unipolar);
         const float velocity = velocityAt(points, time);
-        if (time - lastSourceTime + 0.0000001F >= sourcePeriod) {
-            lastSourceTime = time;
-            heldPhysical = intended;
+        bool sourceSampleUpdated = false;
+        float latestSourceTime = lastSourceSampleTime;
+        // The physical source has its own cadence.  Mapper ticks only observe
+        // the latest source sample; they never retime that source clock.
+        while (nextSourceSampleTime <= time + 0.0000001F) {
+            latestSourceTime = nextSourceSampleTime;
+            lastSourceSampleTime = nextSourceSampleTime;
+            heldPhysical = clampDomain(valueAt(points, nextSourceSampleTime), scenario.unipolar);
+            const float sourceVelocity = velocityAt(points, nextSourceSampleTime);
             switch (scenario.noise) {
             case NoiseModel::WhiteJitter: heldPhysical += rng.between(-scenario.noiseAmplitude, scenario.noiseAmplitude); break;
             case NoiseModel::Quantized:
@@ -266,31 +341,49 @@ std::vector<TraceSample> generateTrace(const ScenarioDefinition &scenario)
                     * std::max(0.0001F, scenario.noiseAmplitude);
                 break;
             case NoiseModel::PositiveSpike:
-                if (std::abs(time - scenario.durationSeconds * 0.50F) < sourcePeriod) heldPhysical += scenario.noiseAmplitude * 40.0F;
+                if (std::abs(nextSourceSampleTime - scenario.durationSeconds * 0.50F) < sourcePeriod * 0.5F) {
+                    heldPhysical += scenario.noiseAmplitude * 40.0F;
+                }
                 break;
             case NoiseModel::OppositeSpike:
-                if (std::abs(time - scenario.durationSeconds * 0.50F) < sourcePeriod) {
-                    heldPhysical -= velocity >= 0.0F ? scenario.noiseAmplitude * 40.0F : -scenario.noiseAmplitude * 40.0F;
+                if (std::abs(nextSourceSampleTime - scenario.durationSeconds * 0.50F) < sourcePeriod * 0.5F) {
+                    heldPhysical -= sourceVelocity >= 0.0F ? scenario.noiseAmplitude * 40.0F : -scenario.noiseAmplitude * 40.0F;
                 }
                 break;
             case NoiseModel::Burst:
-                if (time > scenario.durationSeconds * 0.45F && time < scenario.durationSeconds * 0.55F) {
+                if (nextSourceSampleTime > scenario.durationSeconds * 0.45F
+                    && nextSourceSampleTime < scenario.durationSeconds * 0.55F) {
                     heldPhysical += rng.between(-scenario.noiseAmplitude * 8.0F, scenario.noiseAmplitude * 8.0F);
                 }
                 break;
-            case NoiseModel::Drift: heldPhysical += scenario.noiseAmplitude * std::sin(time * 1.2F); break;
+            case NoiseModel::Drift: heldPhysical += scenario.noiseAmplitude * std::sin(nextSourceSampleTime * 1.2F); break;
             case NoiseModel::None: break;
             }
             heldPhysical = clampDomain(heldPhysical, scenario.unipolar);
+            sourceSampleUpdated = true;
+            nextSourceSampleTime += sourcePeriod;
         }
         const bool moving = std::abs(velocity) > 0.0005F;
-        trace.push_back({time, intended, heldPhysical, velocity, baseDt, moving});
         float dt = baseDt;
         if (scenario.variableDt) {
             constexpr float factors[] = {0.50F, 1.75F, 0.75F, 1.25F, 1.0F, 0.95F, 1.075F};
             dt *= factors[rng.next() % (sizeof(factors) / sizeof(factors[0]))];
         }
-        time = std::min(scenario.durationSeconds + baseDt * 0.25F, time + dt);
+        const float nextTime = std::min(scenario.durationSeconds, time + dt);
+        const float actualDt = std::max(0.0F, nextTime - time);
+        const bool reversal = (velocity > 0.0005F && previousVelocity < -0.0005F)
+            || (velocity < -0.0005F && previousVelocity > 0.0005F);
+        trace.push_back({time, intended, heldPhysical, velocity, actualDt, moving, sourceSampleUpdated,
+            latestSourceTime, !moving && previousMoving, !moving && previousMoving, reversal});
+        if (actualDt <= 0.0F) break;
+        previousVelocity = velocity;
+        previousMoving = moving;
+        if (scenario.variableDt) {
+            time = nextTime;
+        } else {
+            ++mapperTick;
+            time = std::min(scenario.durationSeconds, static_cast<float>(mapperTick) * baseDt);
+        }
     }
     return trace;
 }

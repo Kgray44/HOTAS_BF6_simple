@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QTextStream>
 
 #include <algorithm>
@@ -469,18 +470,41 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     const auto origin = Clock::time_point{};
     int previousTruthDirection = 0;
     int activeTruthDirection = 0;
-    float reversalTime = -1.0F;
+    int oldTruthDirection = 0;
+    int pendingReversal = -1;
     float stopTime = -1.0F;
+    float stopTarget = 0.0F;
+    int stopApproachDirection = 0;
     float stableAfterStop = -1.0F;
     float settledAfterStop = -1.0F;
+    float firstMotionTime = -1.0F;
     float lastPredicted = 0.0F;
+    float lastConfidence = 0.0F;
+    float lastHorizon = 0.0F;
     float leadSquared = 0.0F;
+    float leadSum = 0.0F;
     float noiseSquared = 0.0F;
     float predictedNoiseSquared = 0.0F;
+    float stationaryLeadSquared = 0.0F;
+    float stationaryLeadPeak = 0.0F;
+    std::uint64_t stationarySamples = 0;
     float horizonSum = 0.0F;
     float confidenceSum = 0.0F;
+    float dropoutCurrentSeconds = 0.0F;
+    float falseStopCurrentSeconds = 0.0F;
+    float lastSourceSampleTime = -1.0F;
+    double sourceCadenceErrorSeconds = 0.0;
+    std::vector<float> absoluteLeads;
+    std::vector<float> horizons;
+    absoluteLeads.reserve(result.trace.size());
+    horizons.reserve(result.trace.size());
     bool lastStable = true;
     bool wasMoving = false;
+    AdaptiveMotionState lastState = AdaptiveMotionState::Stable;
+    const float sourcePeriod = 1.0F / static_cast<float>(std::max(1,
+        scenario.sourceRateHz > 0 ? scenario.sourceRateHz : scenario.mapperRateHz));
+    const float reversalDeadline = std::max(3.0F / static_cast<float>(std::max(1, scenario.mapperRateHz)),
+        sourcePeriod * 2.5F);
     for (size_t index = 0; index < result.trace.size(); ++index) {
         const TraceSample &sample = result.trace[index];
         const auto timestamp = origin + std::chrono::microseconds(static_cast<long long>(sample.timeSeconds * 1000000.0F));
@@ -491,26 +515,44 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
             : sample.velocity < -kMotionVelocityThreshold ? -1 : 0;
         if (truthDirection != 0) {
             if (previousTruthDirection != 0 && truthDirection != previousTruthDirection) {
+                if (pendingReversal >= 0 && result.reversalEvents[static_cast<size_t>(pendingReversal)].detectedTimeSeconds < 0.0F) {
+                    result.reversalEvents[static_cast<size_t>(pendingReversal)].missed = true;
+                    ++result.metrics.missedReversals;
+                }
                 ++result.metrics.trueReversals;
-                reversalTime = sample.timeSeconds;
+                oldTruthDirection = previousTruthDirection;
                 activeTruthDirection = truthDirection;
+                result.reversalEvents.push_back({sample.timeSeconds});
+                pendingReversal = static_cast<int>(result.reversalEvents.size() - 1U);
             }
             previousTruthDirection = truthDirection;
         }
         if (telemetry.reversal) {
             ++result.metrics.detectedReversals;
-            if (reversalTime >= 0.0F && sample.timeSeconds - reversalTime <= 0.25F) {
-                if (result.metrics.reversalLatencyMs < 0.0) {
-                    result.metrics.reversalLatencyMs = (sample.timeSeconds - reversalTime) * 1000.0;
+            if (pendingReversal >= 0) {
+                ReversalEvent &event = result.reversalEvents[static_cast<size_t>(pendingReversal)];
+                if (event.detectedTimeSeconds < 0.0F
+                    && sample.timeSeconds - event.groundTruthTimeSeconds <= reversalDeadline) {
+                    event.detectedTimeSeconds = sample.timeSeconds;
+                    if (result.metrics.reversalLatencyMs < 0.0) {
+                        result.metrics.reversalLatencyMs = (sample.timeSeconds - event.groundTruthTimeSeconds) * 1000.0;
+                    }
+                } else {
+                    ++result.metrics.falseReversals;
+                    event.surroundedByFalseDetection = true;
                 }
-                reversalTime = -1.0F;
             } else {
                 ++result.metrics.falseReversals;
             }
         }
-        if (reversalTime >= 0.0F && sample.timeSeconds - reversalTime > 0.25F) {
-            ++result.metrics.missedReversals;
-            reversalTime = -1.0F;
+        if (pendingReversal >= 0) {
+            ReversalEvent &event = result.reversalEvents[static_cast<size_t>(pendingReversal)];
+            if (event.detectedTimeSeconds < 0.0F
+                && sample.timeSeconds - event.groundTruthTimeSeconds > reversalDeadline) {
+                event.missed = true;
+                ++result.metrics.missedReversals;
+                pendingReversal = -1;
+            }
         }
         const bool finite = std::isfinite(telemetry.predicted) && std::isfinite(telemetry.lead)
             && std::isfinite(telemetry.velocity) && std::isfinite(telemetry.acceleration)
@@ -520,52 +562,158 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
             || telemetry.predicted > configuration.domainMaximum + 0.00001F) ++result.metrics.illegalOutput;
         const float lead = telemetry.lead;
         leadSquared += lead * lead;
+        leadSum += std::abs(lead);
+        absoluteLeads.push_back(std::abs(lead));
+        horizons.push_back(telemetry.activeHorizonSeconds * 1000.0F);
         result.metrics.peakLead = std::max(result.metrics.peakLead, static_cast<double>(std::abs(lead)));
         horizonSum += telemetry.activeHorizonSeconds;
         result.metrics.peakHorizonMs = std::max(result.metrics.peakHorizonMs,
             static_cast<double>(telemetry.activeHorizonSeconds * 1000.0F));
         confidenceSum += telemetry.confidence;
-        const float noise = sample.physical - sample.intended;
-        noiseSquared += noise * noise;
-        predictedNoiseSquared += lead * lead;
+        const float physicalNoise = sample.physical - sample.intended;
+        const float predictedNoise = telemetry.predicted - sample.intended;
+        noiseSquared += physicalNoise * physicalNoise;
+        predictedNoiseSquared += predictedNoise * predictedNoise;
         if (index > 0) result.metrics.maximumOutputStep = std::max(result.metrics.maximumOutputStep,
             static_cast<double>(std::abs(telemetry.predicted - lastPredicted)));
+        if (index > 0) {
+            result.metrics.confidenceOscillation += std::abs(telemetry.confidence - lastConfidence);
+            result.metrics.horizonOscillationMs += std::abs(telemetry.activeHorizonSeconds - lastHorizon) * 1000.0;
+        }
         lastPredicted = telemetry.predicted;
+        lastConfidence = telemetry.confidence;
+        lastHorizon = telemetry.activeHorizonSeconds;
         const bool stable = telemetry.state == AdaptiveMotionState::Stable;
-        if (sample.intendedMoving && sample.timeSeconds > 0.10F && stable) {
+        const size_t state = static_cast<size_t>(telemetry.state);
+        if (state < result.metrics.stateDurationMs.size()) {
+            result.metrics.stateDurationMs[state] += sample.dtSeconds * 1000.0;
+            if (index > 0 && telemetry.state != lastState) ++result.metrics.stateTransitions[state];
+        }
+        lastState = telemetry.state;
+        if (sample.sourceSampleUpdated) {
+            ++result.metrics.sourceUpdateCount;
+            if (lastSourceSampleTime >= 0.0F) {
+                sourceCadenceErrorSeconds += std::abs((sample.sourceSampleTimeSeconds - lastSourceSampleTime) - sourcePeriod);
+            }
+            lastSourceSampleTime = sample.sourceSampleTimeSeconds;
+        }
+        if (sample.intendedMoving && firstMotionTime < 0.0F) firstMotionTime = sample.timeSeconds;
+        if (firstMotionTime >= 0.0F && result.metrics.motionRecognitionLatencyMs < 0.0
+            && telemetry.state != AdaptiveMotionState::Stable) {
+            result.metrics.motionRecognitionLatencyMs = (sample.timeSeconds - firstMotionTime) * 1000.0;
+        }
+        if (firstMotionTime >= 0.0F && result.metrics.predictionActivationLatencyMs < 0.0
+            && std::abs(lead) > kLeadTolerance) {
+            result.metrics.predictionActivationLatencyMs = (sample.timeSeconds - firstMotionTime) * 1000.0;
+        }
+        if (configuration.enabled && sample.intendedMoving && sample.timeSeconds > 0.10F && stable) {
             ++result.metrics.falseStops;
             if (lastStable != stable) ++result.metrics.stableChatter;
+            falseStopCurrentSeconds += sample.dtSeconds;
+            result.metrics.falseStopTotalMs += sample.dtSeconds * 1000.0;
+        } else {
+            falseStopCurrentSeconds = 0.0F;
         }
-        if (sample.intendedMoving && sample.timeSeconds > 0.10F
-            && (stable || (telemetry.activeHorizonSeconds <= 0.00001F && telemetry.confidence <= 0.00001F))) {
-            ++result.metrics.dropouts;
+        const bool dropout = configuration.enabled && sample.intendedMoving && sample.timeSeconds > 0.10F
+            && (stable || (telemetry.activeHorizonSeconds <= 0.00001F && telemetry.confidence <= 0.00001F));
+        if (dropout) {
+            if (dropoutCurrentSeconds <= 0.0F) ++result.metrics.dropouts;
+            dropoutCurrentSeconds += sample.dtSeconds;
+            result.metrics.dropoutTotalMs += sample.dtSeconds * 1000.0;
+            result.metrics.longestDropoutMs = std::max(result.metrics.longestDropoutMs,
+                static_cast<double>(dropoutCurrentSeconds * 1000.0F));
+        } else {
+            dropoutCurrentSeconds = 0.0F;
         }
-        if (!sample.intendedMoving && std::abs(telemetry.lead) > 0.002F
-            && (scenario.family == "stationary" || scenario.family == "noise")) ++result.metrics.stationaryDrift;
+        if (!sample.intendedMoving) {
+            stationaryLeadSquared += lead * lead;
+            stationaryLeadPeak = std::max(stationaryLeadPeak, std::abs(lead));
+            ++stationarySamples;
+            if (std::abs(telemetry.lead) > 0.002F && (scenario.family == "stationary" || scenario.family == "noise")) {
+                ++result.metrics.stationaryDrift;
+            }
+        }
         if (activeTruthDirection != 0 && truthDirection == activeTruthDirection
             && lead * static_cast<float>(activeTruthDirection) < -kLeadTolerance) {
             result.metrics.wrongDirectionLeadArea += std::abs(lead) * sample.dtSeconds;
+            if (pendingReversal >= 0) {
+                ReversalEvent &event = result.reversalEvents[static_cast<size_t>(pendingReversal)];
+                event.peakStaleLead = std::max(event.peakStaleLead, std::abs(lead));
+                event.wrongDirectionLeadArea += std::abs(lead) * sample.dtSeconds;
+            }
         }
-        if (wasMoving && !sample.intendedMoving && stopTime < 0.0F) stopTime = sample.timeSeconds;
+        if (pendingReversal >= 0) {
+            ReversalEvent &event = result.reversalEvents[static_cast<size_t>(pendingReversal)];
+            if (event.staleLeadCancellationTimeSeconds < 0.0F && lead * static_cast<float>(oldTruthDirection) <= kLeadTolerance) {
+                event.staleLeadCancellationTimeSeconds = sample.timeSeconds;
+            }
+            if (event.reacquisitionTimeSeconds < 0.0F && lead * static_cast<float>(activeTruthDirection) > kLeadTolerance) {
+                event.reacquisitionTimeSeconds = sample.timeSeconds;
+            }
+        }
+        if (wasMoving && !sample.intendedMoving && stopTime < 0.0F) {
+            stopTime = sample.timeSeconds;
+            stopTarget = sample.intended;
+            stopApproachDirection = previousTruthDirection;
+        }
         if (stopTime >= 0.0F && stable && stableAfterStop < 0.0F) stableAfterStop = sample.timeSeconds;
         if (stopTime >= 0.0F && std::abs(lead) < kLeadTolerance && settledAfterStop < 0.0F) settledAfterStop = sample.timeSeconds;
+        if (stopTime >= 0.0F && stopApproachDirection != 0) {
+            const float overshoot = (telemetry.predicted - stopTarget) * static_cast<float>(stopApproachDirection);
+            if (overshoot > 0.0F) {
+                result.metrics.targetOvershootPeak = std::max(result.metrics.targetOvershootPeak, static_cast<double>(overshoot));
+                result.metrics.targetOvershootArea += overshoot * sample.dtSeconds;
+                result.metrics.targetOvershootDurationMs += sample.dtSeconds * 1000.0;
+            }
+        }
         wasMoving = sample.intendedMoving;
         lastStable = stable;
     }
-    if (reversalTime >= 0.0F) ++result.metrics.missedReversals;
+    if (pendingReversal >= 0 && result.reversalEvents[static_cast<size_t>(pendingReversal)].detectedTimeSeconds < 0.0F) {
+        result.reversalEvents[static_cast<size_t>(pendingReversal)].missed = true;
+        ++result.metrics.missedReversals;
+    }
     const double count = std::max<std::uint64_t>(1, result.metrics.samples);
     result.metrics.rmsLead = std::sqrt(leadSquared / count);
+    result.metrics.meanLead = leadSum / count;
     result.metrics.meanHorizonMs = horizonSum / count * 1000.0;
     result.metrics.meanConfidence = confidenceSum / count;
     result.metrics.noiseRms = std::sqrt(noiseSquared / count);
     result.metrics.predictedNoiseRms = std::sqrt(predictedNoiseSquared / count);
+    result.metrics.noiseAmplificationRatio = result.metrics.noiseRms > 0.0000001
+        ? result.metrics.predictedNoiseRms / result.metrics.noiseRms : 0.0;
+    result.metrics.stationaryLeadRms = stationarySamples == 0 ? 0.0
+        : std::sqrt(stationaryLeadSquared / static_cast<double>(stationarySamples));
+    result.metrics.stationaryLeadPeak = stationaryLeadPeak;
+    result.metrics.effectiveSourceRateHz = scenario.durationSeconds <= 0.0F ? 0.0
+        : result.metrics.sourceUpdateCount / scenario.durationSeconds;
+    result.metrics.sourceCadenceErrorMs = result.metrics.sourceUpdateCount < 2 ? 0.0
+        : sourceCadenceErrorSeconds * 1000.0 / static_cast<double>(result.metrics.sourceUpdateCount - 1U);
+    const auto percentile = [](std::vector<float> values, float fraction) {
+        if (values.empty()) return 0.0;
+        const size_t index = static_cast<size_t>(std::clamp(fraction, 0.0F, 1.0F) * static_cast<float>(values.size() - 1U));
+        std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(index), values.end());
+        return static_cast<double>(values[index]);
+    };
+    result.metrics.medianLead = percentile(absoluteLeads, 0.50F);
+    result.metrics.p95Lead = percentile(absoluteLeads, 0.95F);
+    result.metrics.medianHorizonMs = percentile(horizons, 0.50F);
+    result.metrics.p95HorizonMs = percentile(horizons, 0.95F);
+    for (const ReversalEvent &event : result.reversalEvents) {
+        if (result.metrics.staleLeadCancellationMs < 0.0 && event.staleLeadCancellationTimeSeconds >= 0.0F) {
+            result.metrics.staleLeadCancellationMs = (event.staleLeadCancellationTimeSeconds - event.groundTruthTimeSeconds) * 1000.0;
+        }
+        if (result.metrics.oppositeDirectionReacquisitionMs < 0.0 && event.reacquisitionTimeSeconds >= 0.0F) {
+            result.metrics.oppositeDirectionReacquisitionMs = (event.reacquisitionTimeSeconds - event.groundTruthTimeSeconds) * 1000.0;
+        }
+    }
     if (stopTime >= 0.0F && stableAfterStop >= 0.0F) result.metrics.stopRecognitionMs = (stableAfterStop - stopTime) * 1000.0;
     if (stopTime >= 0.0F && settledAfterStop >= 0.0F) result.metrics.settlingMs = (settledAfterStop - stopTime) * 1000.0;
     if (result.metrics.nonFinite > 0) result.failures.push_back("HARD: non-finite estimator telemetry");
     if (result.metrics.illegalOutput > 0) result.failures.push_back("HARD: illegal axis output");
     if (result.metrics.stationaryDrift > 0) result.failures.push_back("HARD: stationary output drift");
     if (result.metrics.falseReversals > 0) result.failures.push_back("BEHAVIOR: false reversal detected");
-    if (result.metrics.missedReversals > 0) result.failures.push_back("BEHAVIOR: physical reversal was not reacquired within 250 ms");
+    if (result.metrics.missedReversals > 0) result.failures.push_back("BEHAVIOR: physical reversal was not reacquired within the source/rate-scaled window");
     if (result.metrics.dropouts > 2 && scenario.family != "noise") result.failures.push_back("BEHAVIOR: prediction dropout during intended motion");
     if (result.metrics.falseStops > 2 && scenario.family != "noise") result.failures.push_back("BEHAVIOR: false Stable state during intended motion");
     if (result.metrics.wrongDirectionLeadArea > 0.004) result.failures.push_back("FINDING: elevated stale-direction lead area");
@@ -578,14 +726,26 @@ bool selfValidate(QStringList *failures)
     const auto record = [&local](bool condition, const QString &message) { if (!condition) local.push_back(message); };
     const auto catalog = canonicalScenarioCatalog(kDefaultMasterSeed);
     record(!catalog.empty(), "Canonical catalog is empty.");
-    const auto first = generateTrace(catalog.back());
-    const auto second = generateTrace(catalog.back());
+    ScenarioDefinition deterministic;
+    deterministic.id = "self/persona-precision";
+    deterministic.trajectoryId = deterministic.id;
+    deterministic.family = "persona";
+    deterministic.durationSeconds = 2.0F;
+    deterministic.seed = deriveSeed(kDefaultMasterSeed, "self", "persona", 1, "Auto");
+    const auto first = generateTrace(deterministic);
+    const auto second = generateTrace(deterministic);
     record(first.size() == second.size(), "Same deterministic seed produced a different trace size.");
     for (size_t index = 0; index < std::min(first.size(), second.size()); ++index) {
-        record(first[index].physical == second[index].physical, "Same deterministic seed changed a sample.");
+        record(first[index].physical == second[index].physical && first[index].timeSeconds == second[index].timeSeconds,
+            "Same deterministic seed changed a sample.");
     }
+    deterministic.seed ^= 0x13579BDFU;
+    const auto changedSeed = generateTrace(deterministic);
+    record(!changedSeed.empty() && !first.empty() && changedSeed.front().physical != first.front().physical,
+        "A changed deterministic seed did not change a randomized persona trajectory.");
     ScenarioDefinition rate;
     rate.id = "self/rate";
+    rate.trajectoryId = "self/rate";
     rate.family = "self";
     rate.durationSeconds = 3.5F;
     rate.points = {{0.0F, -0.8F}, {3.0F, 0.2F}, {3.5F, 0.2F}};
@@ -593,12 +753,53 @@ bool selfValidate(QStringList *failures)
     const auto lowRate = generateTrace(rate);
     rate.mapperRateHz = 1000;
     const auto highRate = generateTrace(rate);
-    record(std::abs(lowRate.back().intended - highRate.back().intended) < 0.0001F,
-        "Sample-rate generator does not preserve the continuous trajectory endpoint.");
+    record(!lowRate.empty() && !highRate.empty() && std::abs(lowRate.front().intended - highRate.front().intended) < 0.0001F
+            && std::abs(lowRate.back().intended - highRate.back().intended) < 0.0001F,
+        "Sample-rate generator does not preserve continuous trajectory endpoints.");
+    for (const TraceSample &sample : lowRate) {
+        const auto found = std::find_if(highRate.cbegin(), highRate.cend(), [&sample](const TraceSample &candidate) {
+            return std::abs(candidate.timeSeconds - sample.timeSeconds) < 0.00001F;
+        });
+        record(found != highRate.cend() && std::abs(found->intended - sample.intended) < 0.0001F,
+            "Sample-rate generator changed a continuous trajectory at a common timestamp.");
+    }
+    for (const auto [mapperRate, sourceRate] : std::vector<std::pair<int, int>>{
+             {250, 125}, {250, 60}, {250, 30}, {500, 60}, {250, 100}, {1000, 125}, {200, 60}}) {
+        ScenarioDefinition sourceClock = rate;
+        sourceClock.id = "self/source-clock";
+        sourceClock.durationSeconds = 1.0F;
+        sourceClock.points = {{0.0F, 0.0F}, {1.0F, 1.0F}};
+        sourceClock.mapperRateHz = mapperRate;
+        sourceClock.sourceRateHz = sourceRate;
+        const auto samples = generateTrace(sourceClock);
+        std::vector<float> sourceTimes;
+        for (const TraceSample &sample : samples) if (sample.sourceSampleUpdated) sourceTimes.push_back(sample.sourceSampleTimeSeconds);
+        const int expectedUpdates = sourceRate + 1;
+        record(std::abs(static_cast<int>(sourceTimes.size()) - expectedUpdates) <= 1,
+            QStringLiteral("Independent source clock update count failed for %1/%2.").arg(mapperRate).arg(sourceRate));
+        for (size_t index = 1; index < sourceTimes.size(); ++index) {
+            record(std::abs((sourceTimes[index] - sourceTimes[index - 1]) - 1.0F / sourceRate) < 0.0001F,
+                QStringLiteral("Independent source clock cadence drifted for %1/%2.").arg(mapperRate).arg(sourceRate));
+        }
+    }
+    ScenarioDefinition variableDt = rate;
+    variableDt.id = "self/variable-dt";
+    variableDt.durationSeconds = 1.0F;
+    variableDt.variableDt = true;
+    variableDt.seed = 0x51424344U;
+    const auto jittered = generateTrace(variableDt);
+    const double accumulatedDt = std::accumulate(jittered.cbegin(), jittered.cend(), 0.0,
+        [](double sum, const TraceSample &sample) { return sum + sample.dtSeconds; });
+    record(std::abs(accumulatedDt - variableDt.durationSeconds) < 0.0001,
+        "Variable-dt samples do not integrate to the trace duration.");
     RuntimeAdaptiveResponseConfig off = verificationConfiguration(AdaptiveResponseModel::Auto);
     off.enabled = false;
     const auto offResult = replayScenario(rate, off, "Off");
-    record(offResult.metrics.peakLead == 0.0 && offResult.metrics.peakHorizonMs == 0.0,
+    const bool offIdentity = std::all_of(offResult.trace.cbegin(), offResult.trace.cend(), [&offResult, index = size_t{0}](const TraceSample &sample) mutable {
+        const AdaptiveResponseTelemetry &telemetry = offResult.telemetry[index++];
+        return telemetry.predicted == sample.physical && telemetry.lead == 0.0F && telemetry.activeHorizonSeconds == 0.0F;
+    });
+    record(offIdentity && offResult.metrics.peakLead == 0.0 && offResult.metrics.peakHorizonMs == 0.0,
         "Adaptive Off is not an identity control.");
     ScenarioDefinition reversal;
     reversal.id = "self/reversal";
@@ -606,7 +807,12 @@ bool selfValidate(QStringList *failures)
     reversal.durationSeconds = 0.5F;
     reversal.points = {{0.0F, -0.6F}, {0.2F, 0.6F}, {0.4F, -0.6F}, {0.5F, -0.6F}};
     const auto reversalResult = replayScenario(reversal, verificationConfiguration(AdaptiveResponseModel::Auto), "Auto");
-    record(reversalResult.metrics.trueReversals >= 1, "Known synthetic reversal ground truth was not identified.");
+    record(reversalResult.metrics.trueReversals == 1 && !reversalResult.reversalEvents.empty()
+            && std::abs(reversalResult.reversalEvents.front().groundTruthTimeSeconds - 0.2F) < 0.005F,
+        "Known synthetic reversal ground truth timestamp was not identified.");
+    const auto stop = std::find_if(lowRate.cbegin(), lowRate.cend(), [](const TraceSample &sample) { return sample.physicalStop; });
+    record(stop != lowRate.cend() && std::abs(stop->timeSeconds - 3.0F) < 0.0001F,
+        "Known physical stop timestamp was not exposed.");
     ScenarioDefinition hold;
     hold.id = "self/hold";
     hold.family = "sample-hold";
@@ -616,6 +822,46 @@ bool selfValidate(QStringList *failures)
     hold.sourceRateHz = 60;
     const auto holdResult = replayScenario(hold, verificationConfiguration(AdaptiveResponseModel::Auto), "Auto");
     record(holdResult.metrics.samples > 200, "Sample-and-hold generator did not create the expected report cadence.");
+    ScenarioDefinition noise;
+    noise.id = "self/noise";
+    noise.family = "noise";
+    noise.durationSeconds = 1.0F;
+    noise.points = {{0.0F, 0.3F}, {1.0F, 0.3F}};
+    noise.noise = NoiseModel::WhiteJitter;
+    noise.noiseAmplitude = 0.01F;
+    noise.seed = 0x5166AA11U;
+    const auto noiseResult = replayScenario(noise, off, "Off");
+    record(noiseResult.metrics.noiseRms > 0.0 && std::abs(noiseResult.metrics.noiseAmplificationRatio - 1.0) < 0.0001,
+        "Noise RMS fixture did not preserve predicted physical noise for Adaptive Off.");
+    QTemporaryDir temporary;
+    record(temporary.isValid(), "Unable to create temporary artifact directory.");
+    if (temporary.isValid()) {
+        CampaignOptions options;
+        options.tier = "self";
+        TimedResult forced{offResult, 1.0};
+        forced.result.failures = {"HARD: forced failure trace retention fixture"};
+        QString artifactError;
+        record(writeArtifacts(options, temporary.path(), {forced}, &artifactError),
+            "Result schema fixture could not write artifacts: " + artifactError);
+        QFile campaign(QDir(temporary.path()).filePath("campaign.json"));
+        record(campaign.exists() && campaign.open(QIODevice::ReadOnly), "Campaign artifact is missing.");
+        if (campaign.isOpen()) {
+            const QJsonObject object = QJsonDocument::fromJson(campaign.readAll()).object();
+            record(object.value("adaptiveVerificationSchemaVersion").toInt() == kAdaptiveVerificationSchemaVersion
+                    && object.contains("scenarioRuns") && object.contains("summary"),
+                "Campaign artifact lacks required schema fields.");
+        }
+        const QDir traceDirectory(QDir(temporary.path()).filePath("traces"));
+        record(!traceDirectory.entryList({"*.csv"}, QDir::Files).isEmpty(), "Forced failure did not retain a trace.");
+        QString compareError;
+        const QString comparisonPath = QDir(temporary.path()).filePath("comparison.md");
+        record(compareCampaignDirectories(temporary.path(), temporary.path(), comparisonPath, &compareError),
+            "Comparator failed for identical compatible campaigns: " + compareError);
+        QFile comparison(comparisonPath);
+        record(comparison.exists() && comparison.open(QIODevice::ReadOnly)
+                && comparison.readAll().contains("0.00%"),
+            "Comparator did not report zero deltas for identical campaigns.");
+    }
     if (failures) *failures = local;
     return local.empty();
 }
