@@ -30,6 +30,7 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <tuple>
 
 namespace hotas::verification {
 namespace {
@@ -78,6 +79,7 @@ constexpr float kMotionVelocityThreshold = 0.002F;
 constexpr float kGroundTruthReversalVelocityThreshold = 0.020F;
 constexpr float kLeadTolerance = 0.00015F;
 constexpr size_t kWorstCasesPerMetric = 10;
+constexpr size_t kFailureTracesPerCategory = 10;
 
 struct WorstMetric {
     const char *name;
@@ -516,7 +518,8 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             {"configuration", q(result.configuration)}, {"seed", QString::asprintf("0x%08X", result.scenario.seed)},
             {"mapperRateHz", result.scenario.mapperRateHz}, {"sourceRateHz", result.scenario.sourceRateHz},
             {"metrics", metricsJson(result.metrics)}, {"failures", failures},
-            {"traceRetained", result.scenario.retainTrace || result.retainedForWorstCase || !result.failures.empty()}});
+            {"traceRetained", !result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase
+                || result.retainedForFailure)}});
         scenarioCsv << csv(result.scenario.id) << ',' << csv(result.scenario.family) << ',' << csv(result.configuration) << ','
             << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ','
             << result.scenario.mapperRateHz << ',' << result.scenario.sourceRateHz << ',' << result.metrics.samples << ','
@@ -589,7 +592,7 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             failuresCsv << severity << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
                 << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ',' << csv(failure) << '\n';
         }
-        if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || !result.failures.empty())) {
+        if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || result.retainedForFailure)) {
             std::ostringstream trace;
             trace << "time_seconds,intended,physical,estimated,predicted,lead,velocity,acceleration,horizon_ms,confidence,motion_intensity,state,reversal,ground_truth_moving,ground_truth_direction,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop,true_reversal\n";
             for (size_t index = 0; index < result.trace.size(); ++index) {
@@ -710,7 +713,7 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                 << result.metrics.wrongDirectionLeadArea << ',' << result.metrics.peakLead << ','
                 << result.metrics.longestDropoutMs << ',' << result.metrics.falseStopTotalMs << ','
                 << result.metrics.settlingMs << ',' << result.metrics.targetOvershootPeak << ','
-                << result.metrics.maximumOutputStep << ',' << (result.retainedForWorstCase ? 1 : 0) << ','
+                << result.metrics.maximumOutputStep << ',' << (result.retainedForWorstCase || result.retainedForFailure ? 1 : 0) << ','
                 << csv(failureText(result).toStdString()) << '\n';
         }
     }
@@ -857,6 +860,31 @@ CampaignOptions parseOptions(int argc, char *argv[], QString *error)
         if (error) *error = "--campaign must be smoke, canonical, torture, or full.";
     }
     return options;
+}
+
+void retainFailureTriageTraces(std::vector<TimedResult> &results)
+{
+    // Preserve a deterministic, bounded forensic sample for every distinct
+    // failure category. Full/Torture still retain every metric and finding in
+    // their summaries, but never allocate a complete trace for every failure.
+    std::map<std::string, std::vector<TimedResult *>> byCategory;
+    for (TimedResult &timed : results) {
+        for (const std::string &failure : timed.result.failures) byCategory[failure].push_back(&timed);
+    }
+    for (auto &[category, candidates] : byCategory) {
+        std::sort(candidates.begin(), candidates.end(), [](const TimedResult *left, const TimedResult *right) {
+            return std::tie(left->result.scenario.id, left->result.configuration)
+                < std::tie(right->result.scenario.id, right->result.configuration);
+        });
+        for (size_t index = 0; index < std::min(kFailureTracesPerCategory, candidates.size()); ++index) {
+            TimedResult &timed = *candidates[index];
+            if (timed.result.trace.empty()) {
+                timed.result = replayScenario(timed.result.scenario, timed.configuration,
+                    timed.result.configuration, true);
+            }
+            timed.result.retainedForFailure = true;
+        }
+    }
 }
 
 void retainWorstCaseTraces(std::vector<TimedResult> &results)
@@ -1311,6 +1339,7 @@ bool selfValidate(QStringList *failures)
         options.tier = "self";
         TimedResult forced{offResult, off, 1.0};
         forced.result.failures = {"HARD: forced failure trace retention fixture"};
+        forced.result.retainedForFailure = true;
         QString artifactError;
         record(writeArtifacts(options, temporary.path(), {forced}, &artifactError),
             "Result schema fixture could not write artifacts: " + artifactError);
@@ -1496,11 +1525,6 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
             const auto started = Clock::now();
             const bool retainSamples = task.scenario->retainTrace || task.scenario->id.find('@') != std::string::npos;
             ScenarioResult result = replayScenario(*task.scenario, task.configuration->value, task.configuration->name, retainSamples);
-            // Full/Torture summaries remain bounded, while any failure is
-            // immediately replayed deterministically with forensic samples.
-            if (!retainSamples && !result.failures.empty()) {
-                result = replayScenario(*task.scenario, task.configuration->value, task.configuration->name, true);
-            }
             const auto finished = Clock::now();
             results[index] = {std::move(result), task.configuration->value,
                 std::chrono::duration<double, std::micro>(finished - started).count()};
@@ -1515,6 +1539,7 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
         for (int worker = 0; worker < workerCount; ++worker) workers.emplace_back(execute);
         for (std::thread &worker : workers) worker.join();
     }
+    retainFailureTriageTraces(results);
     retainWorstCaseTraces(results);
     const QString outputDirectory = options.outputDirectory.isEmpty() ? defaultOutputDirectory(options) : options.outputDirectory;
     QString writeError;
