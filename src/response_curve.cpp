@@ -941,6 +941,9 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
     }
     runtime.buttons = profile.buttons;
     runtime.povs = profile.povs;
+    runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
+        profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
+                                                 : configuration.curveTransitionSmoothing);
     return runtime;
 }
 
@@ -962,6 +965,9 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
         }
         runtime.buttons = profile.buttons;
         runtime.povs = profile.povs;
+        runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
+            profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
+                                                     : configuration.curveTransitionSmoothing);
         const VirtualOutputLayout *layout = findOutputLayout(configuration, profile.outputLayoutId);
         cache.profileVjoyDeviceIds.push_back(layout ? layout->requirements.deviceId
                                                     : configuration.vjoyDeviceId);

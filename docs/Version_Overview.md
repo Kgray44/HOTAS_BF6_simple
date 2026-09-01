@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.1.6**
+**Current release: v2.2.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.2.0 — Bumpless Curve / Mapping Transition Smoothing
+
+Prevents mapper-created virtual-axis jumps when curves, sensitivity, profiles, precision modes, or related mapping configuration changes while keeping physical stick movement immediate and preserving the allocation-free DirectInput-to-vJoy report path.
+
+- An event-driven per-virtual-axis correction anchors each material mapping change to the last confirmed virtual output, then decays only that correction over a configurable 0–1000 ms duration (100 ms by default).
+- The new mapping always evaluates the next physical report directly; aggressive physical movement cancels the correction rather than making the controller feel laggy, and rapid successive toggles anchor from the actual current output.
+- Global Settings controls provide enablement and transition time, while Profile Library supports an explicit inherit-or-override choice with its own enabled state and duration. Legacy, Standard, and Top Gun reuse the existing themed controls.
+- Schema 20 persists global and optional profile settings, defaults missing fields to the established enabled/100 ms behavior, and preserves legacy profiles without requiring manual migration.
+- Focused core tests cover both transition directions, direct physical response, rapid toggles, insignificant change suppression, reversal, zero/disabled modes, user intent cancellation, multi-axis independence, and persistence migration.
+- The synthetic report benchmark keeps zero hot-path allocations while measuring the transition engine's steady-state check; no UI, logging, locking, storage, or per-report allocation was added to MappingWorker.
 
 ## v2.1.6 — Input Learning & Quick Map Correction
 

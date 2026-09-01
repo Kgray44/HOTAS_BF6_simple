@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.1.6 makes Learn Input and Quick Map safer and clearer with explicit physical-to-virtual button identity, Replace/Ignore/Cancel conflict decisions, shared-output fan-in, and re-arming between guided steps. The product combines deterministic real-time input processing with persistent controller memory, profiles, advanced response curves, button and POV routing, Automation, diagnostics, three themes, a native installer/updater, and Controller Setup & Verification while preserving the allocation-free DirectInput-to-vJoy report path.",
+  "summary": "HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.2.0 adds bumpless Curve Transition Smoothing: mapping changes anchor to the current virtual output, apply the new mapping immediately, then decay only the correction offset so physical stick movement remains direct. Global and per-profile controls, schema-20 migration, and all three themes retain the allocation-free DirectInput-to-vJoy report path.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {

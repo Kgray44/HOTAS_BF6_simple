@@ -1511,6 +1511,16 @@ double AppBackend::disabledAxisValue() const
 {
     return static_cast<double>(sanitizedDisabledAxisValue(m_configuration.disabledAxisValue)) * 100.0;
 }
+
+bool AppBackend::curveTransitionSmoothingEnabled() const
+{
+    return sanitizedCurveTransitionSmoothing(m_configuration.curveTransitionSmoothing).enabled;
+}
+
+int AppBackend::curveTransitionDurationMs() const
+{
+    return sanitizedCurveTransitionSmoothing(m_configuration.curveTransitionSmoothing).durationMs;
+}
 qulonglong AppBackend::latencyCurrentUs() const { return m_worker.runtime().latencyCurrentUs.load(); }
 qulonglong AppBackend::latencyAverageUs() const { return m_worker.runtime().latencyAverageUs.load(); }
 qulonglong AppBackend::latencyPeakUs() const { return m_worker.runtime().latencyPeakUs.load(); }
@@ -3070,6 +3080,17 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
+    const CurveTransitionSmoothingSettings transitionSettings = sanitizedCurveTransitionSmoothing(
+        profile->curveTransitionSmoothingOverride ? profile->curveTransitionSmoothing
+                                                  : m_configuration.curveTransitionSmoothing);
+    detail.insert(u"curveTransitionSmoothingOverride"_qs,
+                  profile->curveTransitionSmoothingOverride);
+    detail.insert(u"curveTransitionSmoothingEnabled"_qs, transitionSettings.enabled);
+    detail.insert(u"curveTransitionDurationMs"_qs, transitionSettings.durationMs);
+    detail.insert(u"globalCurveTransitionSmoothingEnabled"_qs,
+                  curveTransitionSmoothingEnabled());
+    detail.insert(u"globalCurveTransitionDurationMs"_qs,
+                  curveTransitionDurationMs());
     QVariantList axes;
     QVariantList curves;
     int mappedAxes = 0;
@@ -3801,6 +3822,75 @@ void AppBackend::setDisabledAxisValue(double percent)
     persistAndApply();
     appendEvent(QString(u"Disabled Axis Value set to %1%"_qs)
         .arg(static_cast<double>(normalized) * 100.0, 0, 'f', 1));
+}
+
+void AppBackend::setCurveTransitionSmoothingEnabled(bool enabled)
+{
+    CurveTransitionSmoothingSettings settings = sanitizedCurveTransitionSmoothing(
+        m_configuration.curveTransitionSmoothing);
+    if (settings.enabled == enabled) return;
+    settings.enabled = enabled;
+    m_configuration.curveTransitionSmoothing = settings;
+    persistAndApply();
+    appendEvent(enabled ? u"Curve Transition Smoothing enabled"_qs
+                        : u"Curve Transition Smoothing disabled"_qs);
+}
+
+void AppBackend::setCurveTransitionDurationMs(int durationMs)
+{
+    CurveTransitionSmoothingSettings settings = m_configuration.curveTransitionSmoothing;
+    settings.durationMs = durationMs;
+    settings = sanitizedCurveTransitionSmoothing(settings);
+    if (settings.durationMs == curveTransitionDurationMs()) return;
+    m_configuration.curveTransitionSmoothing = settings;
+    persistAndApply();
+    appendEvent(QString(u"Curve Transition Smoothing duration set to %1 ms"_qs)
+        .arg(settings.durationMs));
+}
+
+bool AppBackend::setProfileCurveTransitionSmoothingOverride(const QString &profileId, bool enabled)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile) return false;
+    if (profile->curveTransitionSmoothingOverride == enabled) return true;
+    profile->curveTransitionSmoothingOverride = enabled;
+    profile->curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
+        profile->curveTransitionSmoothing);
+    persistAndApply();
+    appendEvent(QString(u"%1 Curve Transition Smoothing override for %2"_qs)
+        .arg(enabled ? u"Enabled"_qs : u"Cleared"_qs, profile->name));
+    return true;
+}
+
+bool AppBackend::setProfileCurveTransitionSmoothingEnabled(const QString &profileId, bool enabled)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile || !profile->curveTransitionSmoothingOverride) return false;
+    CurveTransitionSmoothingSettings settings = sanitizedCurveTransitionSmoothing(
+        profile->curveTransitionSmoothing);
+    if (settings.enabled == enabled) return true;
+    settings.enabled = enabled;
+    profile->curveTransitionSmoothing = settings;
+    persistAndApply();
+    appendEvent(QString(u"Curve Transition Smoothing %1 for profile %2"_qs)
+        .arg(enabled ? u"enabled"_qs : u"disabled"_qs, profile->name));
+    return true;
+}
+
+bool AppBackend::setProfileCurveTransitionDurationMs(const QString &profileId, int durationMs)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    if (!profile || !profile->curveTransitionSmoothingOverride) return false;
+    CurveTransitionSmoothingSettings settings = profile->curveTransitionSmoothing;
+    settings.durationMs = durationMs;
+    settings = sanitizedCurveTransitionSmoothing(settings);
+    if (settings.durationMs == sanitizedCurveTransitionSmoothing(
+            profile->curveTransitionSmoothing).durationMs) return true;
+    profile->curveTransitionSmoothing = settings;
+    persistAndApply();
+    appendEvent(QString(u"Curve Transition Smoothing duration for %1 set to %2 ms"_qs)
+        .arg(profile->name).arg(settings.durationMs));
+    return true;
 }
 
 void AppBackend::checkForUpdates()

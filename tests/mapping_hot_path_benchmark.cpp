@@ -1,4 +1,5 @@
 #include "axis_transform.h"
+#include "axis_mapping_transition.h"
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "mapping_worker.h"
@@ -79,6 +80,7 @@ struct HotPathState {
     std::array<bool, hotas::kMaximumPhysicalButtons> availableButtons{};
     std::array<hotas::AxisHysteresisState, hotas::kPhysicalAxisCount> hysteresis{};
     std::array<float, hotas::kVirtualAxisSlotCount> lastVirtualValues{};
+    hotas::AxisMappingTransitionEngine axisTransitions;
     std::array<int, hotas::kVirtualAxisSlotCount> virtualAxisSources{};
     hotas::RuntimeButtonTargets buttonTargets{};
     hotas::RuntimePovTargets povTargets{};
@@ -211,7 +213,14 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
             snapshot.buttons[static_cast<size_t>(source)], std::memory_order_relaxed);
     }
     for (int target = 1; target < static_cast<int>(output.size()); ++target) {
-        const float desired = targetUsed[static_cast<size_t>(target)] ? output[static_cast<size_t>(target)] : 0.0F;
+        const int source = state.virtualAxisSources[static_cast<size_t>(target)];
+        const float physicalInput = source >= 0 ? snapshot.axes[static_cast<size_t>(source)] : 0.0F;
+        // Production has the same inactive-state branch. No transition is
+        // scheduled in the steady-state benchmark, so this measures the
+        // persistent cost without fabricating a curve transition workload.
+        const float desired = state.axisTransitions.apply(static_cast<size_t>(target),
+            targetUsed[static_cast<size_t>(target)] ? output[static_cast<size_t>(target)] : 0.0F,
+            physicalInput, source, state.latencySampleSequence);
         if (!std::isfinite(state.lastVirtualValues[static_cast<size_t>(target)])
             || std::abs(desired - state.lastVirtualValues[static_cast<size_t>(target)]) >= 0.00001F) {
             state.lastVirtualValues[static_cast<size_t>(target)] = desired;

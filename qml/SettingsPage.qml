@@ -182,6 +182,19 @@ Flickable {
                 Toggle { checked: backend.automaticGameDetection; onToggled: backend.setAutomaticGameDetection(checked) }
             }
         }
+        SectionLabel { label: "ADVANCED CONTROLS" }
+        GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 13; rowSpacing: 13
+            SettingRow { Layout.fillWidth: true; title: "CURVE TRANSITION SMOOTHING"; detail: "Prevents sudden virtual-axis jumps when curves, sensitivity, profiles, precision modes, or other mappings change. Physical stick movement remains direct."
+                Toggle { checked: backend.curveTransitionSmoothingEnabled; onToggled: backend.setCurveTransitionSmoothingEnabled(checked) }
+            }
+            SettingRow { Layout.fillWidth: true; title: "TRANSITION TIME"; detail: "Bumpless-transfer time in milliseconds. Instant (0 ms) preserves legacy immediate mapping changes."
+                Rectangle { implicitWidth: 82; implicitHeight: 30; radius: theme.topGun ? 1 : theme.controlRadius; color: root.panelColor; border.color: root.borderColor; opacity: backend.curveTransitionSmoothingEnabled ? 1.0 : 0.5
+                    TextInput { anchors.fill: parent; anchors.margins: 7; text: Number(backend.curveTransitionDurationMs).toFixed(0); enabled: backend.curveTransitionSmoothingEnabled; color: root.textColor; font.pixelSize: 10; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
+                        onEditingFinished: { backend.setCurveTransitionDurationMs(Number(text)); text = Number(backend.curveTransitionDurationMs).toFixed(0) } }
+                }
+                Text { text: "ms"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+            }
+        }
         Card { Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2

@@ -20,7 +20,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 19;
+constexpr int kProfileSchemaVersion = 20;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 
 QString settingsFilePath()
@@ -344,6 +344,22 @@ ButtonBinding buttonBindingFromJson(const QJsonObject &json)
     return {ButtonActionType::Disabled, 0, explicitlyConfigured, customName};
 }
 
+QJsonObject curveTransitionSmoothingToJson(CurveTransitionSmoothingSettings settings)
+{
+    settings = sanitizedCurveTransitionSmoothing(settings);
+    return {{u"enabled"_qs, settings.enabled}, {u"durationMs"_qs, settings.durationMs}};
+}
+
+CurveTransitionSmoothingSettings curveTransitionSmoothingFromJson(
+    const QJsonValue &value, CurveTransitionSmoothingSettings fallback = {})
+{
+    if (!value.isObject()) return sanitizedCurveTransitionSmoothing(fallback);
+    const QJsonObject json = value.toObject();
+    fallback.enabled = json.value(u"enabled"_qs).toBool(fallback.enabled);
+    fallback.durationMs = json.value(u"durationMs"_qs).toInt(fallback.durationMs);
+    return sanitizedCurveTransitionSmoothing(fallback);
+}
+
 void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configuration)
 {
     configuration.preferredDeviceId = json.value(u"preferredDeviceId"_qs).toString();
@@ -354,6 +370,8 @@ void readGlobalSettings(const QJsonObject &json, MapperConfiguration &configurat
     configuration.selectedAxisIndex = std::clamp(json.value(u"selectedAxisIndex"_qs)
         .toInt(static_cast<int>(PhysicalAxis::X)), 0, kPhysicalAxisCount - 1);
     configuration.automationEnabled = json.value(u"automationEnabled"_qs).toBool(true);
+    configuration.curveTransitionSmoothing = curveTransitionSmoothingFromJson(
+        json.value(u"curveTransitionSmoothing"_qs), configuration.curveTransitionSmoothing);
 }
 
 AxisRangeMode legacyRangeModeFor(PhysicalAxis axis)
@@ -834,6 +852,9 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"categoryId"_qs, profile.categoryId},
         {u"enabled"_qs, profile.enabled},
         {u"outputLayoutId"_qs, profile.outputLayoutId},
+        {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
+        {u"curveTransitionSmoothing"_qs,
+         curveTransitionSmoothingToJson(profile.curveTransitionSmoothing)},
         {u"axes"_qs, axes},
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
         {u"povs"_qs, povBindingsToJson(profile.povs)},
@@ -858,6 +879,10 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     restored.categoryId = json.value(u"categoryId"_qs).toString().trimmed().left(96);
     restored.enabled = json.value(u"enabled"_qs).toBool(true);
     restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
+    restored.curveTransitionSmoothingOverride = json.value(
+        u"curveTransitionSmoothingOverride"_qs).toBool(false);
+    restored.curveTransitionSmoothing = curveTransitionSmoothingFromJson(
+        json.value(u"curveTransitionSmoothing"_qs));
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
         if (axis.isEmpty()) return false;
@@ -1165,6 +1190,8 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
         {u"startMappingOnLaunch"_qs, configuration.startMappingOnLaunch},
         {u"disabledAxisValue"_qs, sanitizedDisabledAxisValue(configuration.disabledAxisValue)},
+        {u"curveTransitionSmoothing"_qs,
+         curveTransitionSmoothingToJson(configuration.curveTransitionSmoothing)},
         {u"selectedAxisIndex"_qs, configuration.selectedAxisIndex},
         {u"calibration"_qs, calibration},
         {u"axisActivity"_qs, axisActivityToJson(configuration.axisActivity)},
@@ -1191,7 +1218,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
-        && version != 15 && version != 16 && version != 17 && version != 18
+        && version != 15 && version != 16 && version != 17 && version != 18 && version != 19
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);

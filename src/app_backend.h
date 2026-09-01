@@ -129,6 +129,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString activeOutputLayoutDescriptor READ activeOutputLayoutDescriptor NOTIFY stateChanged)
     Q_PROPERTY(QVariantList virtualOutputLayouts READ virtualOutputLayouts NOTIFY stateChanged)
     Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
+    Q_PROPERTY(bool curveTransitionSmoothingEnabled READ curveTransitionSmoothingEnabled NOTIFY stateChanged)
+    Q_PROPERTY(int curveTransitionDurationMs READ curveTransitionDurationMs NOTIFY stateChanged)
     Q_PROPERTY(bool updateChecking READ updateChecking NOTIFY stateChanged)
     Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY stateChanged)
     Q_PROPERTY(bool updateCheckFailed READ updateCheckFailed NOTIFY stateChanged)
@@ -267,6 +269,8 @@ public:
     QString activeOutputLayoutDescriptor() const;
     QVariantList virtualOutputLayouts() const;
     double disabledAxisValue() const;
+    bool curveTransitionSmoothingEnabled() const;
+    int curveTransitionDurationMs() const;
     bool updateChecking() const { return m_updateChecking; }
     bool updateAvailable() const { return m_updateAvailable; }
     bool updateCheckFailed() const { return m_updateCheckFailed; }
@@ -426,6 +430,14 @@ public:
     Q_INVOKABLE bool setAutomationEnabled(const QString &id, bool enabled);
     Q_INVOKABLE bool saveAutomation(const QVariantMap &automation);
     Q_INVOKABLE void setDisabledAxisValue(double percent);
+    Q_INVOKABLE void setCurveTransitionSmoothingEnabled(bool enabled);
+    Q_INVOKABLE void setCurveTransitionDurationMs(int durationMs);
+    Q_INVOKABLE bool setProfileCurveTransitionSmoothingOverride(const QString &profileId,
+                                                                 bool enabled);
+    Q_INVOKABLE bool setProfileCurveTransitionSmoothingEnabled(const QString &profileId,
+                                                                bool enabled);
+    Q_INVOKABLE bool setProfileCurveTransitionDurationMs(const QString &profileId,
+                                                          int durationMs);
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE bool handoffToLauncher();
     Q_INVOKABLE bool openVjoyConfiguration();

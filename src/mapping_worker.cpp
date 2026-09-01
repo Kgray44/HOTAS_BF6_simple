@@ -1,6 +1,7 @@
 #include "mapping_worker.h"
 
 #include "axis_transform.h"
+#include "axis_mapping_transition.h"
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "physical_input_monitor.h"
@@ -766,6 +767,12 @@ void MappingWorker::run()
     quint64 appliedVersion = m_configurationVersion.load();
     std::array<float, kVirtualAxisSlotCount> lastVirtualValues{};
     lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+    // This remains separate from the write-diff cache. Profile/configuration
+    // changes invalidate that cache, while bumpless transfer must retain the
+    // actual latest output as its continuity anchor.
+    std::array<float, kVirtualAxisSlotCount> lastActualVirtualValues{};
+    lastActualVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+    AxisMappingTransitionEngine axisTransitions;
     std::array<int, kVirtualAxisSlotCount> virtualAxisSources{};
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
@@ -784,6 +791,7 @@ void MappingWorker::run()
     bool buttonDefaultsPending = false;
     bool profileTriggerSessionActive = false;
     bool controlPlaneInitialized = false;
+    bool mappingTransitionRequested = false;
     std::array<bool, kMaximumAutomationRules> lastAutomationRuleStates{};
     bool wasMappingRequested = false;
     std::optional<std::chrono::steady_clock::time_point> pendingProfileSwitchStarted;
@@ -851,6 +859,7 @@ void MappingWorker::run()
         m_runtime.profileOverrideAutomationRule = selection.sourceAutomationRule;
         m_runtime.profileOverrideAutomationAction = selection.sourceAutomationAction;
         if (!changed) return false;
+        mappingTransitionRequested = true;
         // The current physical snapshot is re-evaluated immediately below.
         // Axis cache invalidation forces a same-report output publication;
         // the normal button diff loop releases/asserts changed routes.
@@ -888,6 +897,8 @@ void MappingWorker::run()
             }
         }
         lastVirtualValues.fill(0.0F);
+        lastActualVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
+        axisTransitions.clear();
         lastNativePovValues.fill(-1);
         clearVirtualButtonSnapshot();
         for (std::atomic<float> &value : m_runtime.virtualValues) value = 0.0F;
@@ -1074,6 +1085,10 @@ void MappingWorker::run()
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
         activeProfileCache = std::move(prepared.second);
+        // Any configuration mutation can alter a curve, limit, sensitivity,
+        // or routing transfer function. The actual output is captured only
+        // when the next physical report reaches the publication path.
+        mappingTransitionRequested = true;
         automation.setCompiled(activeProfileCache->automation.get());
         profileTriggers.clearAutomationContributions();
         lastAutomationRuleStates.fill(false);
@@ -1352,6 +1367,10 @@ void MappingWorker::run()
                 if (active != lastAutomationRuleStates[static_cast<size_t>(rule)]
                     && activeProfileCache->automation
                     && rule < activeProfileCache->automation->ruleCount) {
+                    // An active Automation can change scale, offset, clamp,
+                    // mix, or override routing. Treat its edge as one mapping
+                    // transition, never as continuous input filtering.
+                    mappingTransitionRequested = true;
                     emit workerEvent((active ? u"Automation activated: "_qs
                                              : u"Automation cleared: "_qs)
                         + activeProfileCache->automation->ruleNames[static_cast<size_t>(rule)]);
@@ -1426,8 +1445,34 @@ void MappingWorker::run()
         }
         const VirtualAxisOutputPlan axisOutputPlan = buildVirtualAxisOutputPlan(
             *activeMapping, routableAxes, transformedAxes, configuration.disabledAxisValue);
-        const std::array<float, kVirtualAxisSlotCount> &output = axisOutputPlan.values;
+        std::array<float, kVirtualAxisSlotCount> output = axisOutputPlan.values;
         virtualAxisSources = axisOutputPlan.sourceIndexes;
+        const std::uint64_t transitionNowUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                started.time_since_epoch()).count());
+        if (mappingTransitionRequested) {
+            // The last successful vJoy write is the only valid anchor for a
+            // mid-transition reconfiguration. Never substitute an old curve's
+            // theoretical result: rapid toggles remain continuous this way.
+            for (int target = 1; target < kVirtualAxisSlotCount; ++target) {
+                const int source = virtualAxisSources[static_cast<size_t>(target)];
+                const float currentInput = source >= 0
+                    ? physicalSnapshot.axes[static_cast<size_t>(source)] : 0.0F;
+                axisTransitions.begin(static_cast<size_t>(target),
+                    lastActualVirtualValues[static_cast<size_t>(target)],
+                    output[static_cast<size_t>(target)], currentInput, source, transitionNowUs,
+                    activeMapping->curveTransitionSmoothing);
+            }
+            mappingTransitionRequested = false;
+        }
+        for (int target = 1; target < kVirtualAxisSlotCount; ++target) {
+            const int source = virtualAxisSources[static_cast<size_t>(target)];
+            const float currentInput = source >= 0
+                ? physicalSnapshot.axes[static_cast<size_t>(source)] : 0.0F;
+            output[static_cast<size_t>(target)] = axisTransitions.apply(
+                static_cast<size_t>(target), output[static_cast<size_t>(target)], currentInput,
+                source, transitionNowUs);
+        }
         const float parkedAxisValue = sanitizedDisabledAxisValue(configuration.disabledAxisValue);
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             m_runtime.virtualValues[index] = parkedAxisValue;
@@ -1497,6 +1542,7 @@ void MappingWorker::run()
                 }
                 if (vjoy.setAxis(static_cast<VirtualAxis>(target), desired)) {
                     lastVirtualValues[target] = desired;
+                    lastActualVirtualValues[target] = desired;
                     const int source = virtualAxisSources[target];
                     if (source >= 0) m_runtime.virtualValues[source] = desired;
                     ++m_runtime.vjoyWrites;
