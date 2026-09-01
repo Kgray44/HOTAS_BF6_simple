@@ -465,6 +465,76 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.3.T is an internal, offline verification workstream.  It links the exact
+# production estimator but is never part of the mapper target or installer.
+option(HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION
+    "Build the deterministic Adaptive Response verification campaign runner" ON)
+if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
+    execute_process(COMMAND git rev-parse HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND git branch --show-current
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if (NOT HOTAS_VERIFICATION_SOURCE_COMMIT)
+        set(HOTAS_VERIFICATION_SOURCE_COMMIT "unknown")
+    endif()
+    if (NOT HOTAS_VERIFICATION_SOURCE_BRANCH)
+        set(HOTAS_VERIFICATION_SOURCE_BRANCH "detached")
+    endif()
+
+    set(HOTAS_ADAPTIVE_VERIFICATION_SOURCES
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    qt_add_executable(adaptive_response_verification
+        tests/adaptive_response/verification_main.cpp
+        ${HOTAS_ADAPTIVE_VERIFICATION_SOURCES}
+    )
+    target_link_libraries(adaptive_response_verification PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_verification PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_verification PRIVATE
+        HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_verification PROPERTIES WIN32_EXECUTABLE FALSE)
+
+    if (BUILD_TESTING)
+        qt_add_executable(adaptive_response_verification_tests
+            tests/adaptive_response/verification_tests.cpp
+            ${HOTAS_ADAPTIVE_VERIFICATION_SOURCES}
+        )
+        target_link_libraries(adaptive_response_verification_tests PRIVATE Qt6::Core Qt6::Test)
+        target_include_directories(adaptive_response_verification_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+        )
+        target_compile_definitions(adaptive_response_verification_tests PRIVATE
+            HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
+            HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+            HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+        )
+        add_test(NAME adaptive_response_verification_tests COMMAND adaptive_response_verification_tests)
+        add_test(NAME adaptive_response_verification_smoke
+            COMMAND adaptive_response_verification --campaign smoke
+                --output "${CMAKE_CURRENT_BINARY_DIR}/adaptive_response_verification_smoke")
+        if (WIN32)
+            set_tests_properties(adaptive_response_verification_tests adaptive_response_verification_smoke PROPERTIES
+                ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+        endif()
+    endif()
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
