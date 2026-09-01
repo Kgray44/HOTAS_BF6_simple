@@ -144,6 +144,11 @@ struct ScenarioResult {
     std::vector<std::string> failures;
     std::vector<TraceSample> trace;
     std::vector<AdaptiveResponseTelemetry> telemetry;
+    // This result was deterministically replayed after aggregation because it
+    // ranked in a worst-N forensic category.  Kept separate from authored
+    // retainTrace so large campaigns stay bounded while still preserving the
+    // evidence that led the report.
+    bool retainedForWorstCase = false;
 };
 
 std::uint32_t deriveSeed(std::uint32_t masterSeed, const std::string &campaign,

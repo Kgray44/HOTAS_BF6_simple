@@ -44,6 +44,7 @@ struct NamedConfiguration {
 
 struct TimedResult {
     ScenarioResult result;
+    RuntimeAdaptiveResponseConfig configuration;
     double elapsedMicroseconds = 0.0;
 };
 
@@ -76,6 +77,38 @@ struct Aggregate {
 constexpr float kMotionVelocityThreshold = 0.002F;
 constexpr float kGroundTruthReversalVelocityThreshold = 0.020F;
 constexpr float kLeadTolerance = 0.00015F;
+constexpr size_t kWorstCasesPerMetric = 10;
+
+struct WorstMetric {
+    const char *name;
+    double (*score)(const ScenarioResult &result);
+};
+
+double wrongDirectionLeadScore(const ScenarioResult &result) { return result.metrics.wrongDirectionLeadArea; }
+double peakLeadScore(const ScenarioResult &result) { return result.metrics.peakLead; }
+double noiseAmplificationScore(const ScenarioResult &result)
+{
+    // The ratio is meaningful only where a declared injected-noise source
+    // exists; otherwise a near-zero numerical residual would dominate a
+    // forensic ranking without measuring noise amplification.
+    return result.scenario.noise == NoiseModel::None ? 0.0 : result.metrics.noiseAmplificationRatio;
+}
+double dropoutDurationScore(const ScenarioResult &result) { return result.metrics.longestDropoutMs; }
+double falseStopDurationScore(const ScenarioResult &result) { return result.metrics.falseStopTotalMs; }
+double settlingScore(const ScenarioResult &result) { return std::max(0.0, result.metrics.settlingMs); }
+double overshootScore(const ScenarioResult &result) { return result.metrics.targetOvershootPeak; }
+double outputStepScore(const ScenarioResult &result) { return result.metrics.maximumOutputStep; }
+
+const std::array<WorstMetric, 8> kWorstMetrics{{
+    {"wrong_direction_lead_area", wrongDirectionLeadScore},
+    {"peak_lead", peakLeadScore},
+    {"noise_amplification_ratio", noiseAmplificationScore},
+    {"longest_dropout_ms", dropoutDurationScore},
+    {"false_stop_total_ms", falseStopDurationScore},
+    {"settling_ms", settlingScore},
+    {"target_overshoot_peak", overshootScore},
+    {"maximum_output_step", outputStepScore},
+}};
 
 QString q(const std::string &value) { return QString::fromStdString(value); }
 
@@ -272,11 +305,24 @@ std::vector<ScenarioDefinition> campaignScenarios(const CampaignOptions &options
     }
     const int defaultRandomCount = options.tier == "full" ? 50000 : options.tier == "torture" ? 5000 : 0;
     const int randomCount = options.randomCountOverride >= 0 ? options.randomCountOverride : defaultRandomCount;
+    const std::array<std::string, 6> personas{"precision-pilot", "fixed-wing", "helicopter-landing", "combat-helicopter",
+        "space-sim", "noisy-older-sensor"};
     for (int index = 0; index < randomCount; ++index) {
         ScenarioDefinition scenario;
-        scenario.id = (index % 2 == 0 ? "randomized/combat-helicopter-" : "randomized/fixed-wing-") + std::to_string(index);
-        scenario.family = "randomized";
-        scenario.durationSeconds = index % 2 == 0 ? 3.0F : 5.0F;
+        const bool adversarial = index % 5 == 0;
+        if (adversarial) {
+            scenario.id = "adversarial-piecewise/combat-helicopter-" + std::to_string(index);
+            scenario.family = "adversarial-piecewise";
+            scenario.adversarialPiecewise = true;
+            scenario.durationSeconds = 3.0F;
+        } else {
+            const std::string &persona = personas[static_cast<size_t>(index) % personas.size()];
+            scenario.id = "persona/" + persona + "-generated-" + std::to_string(index);
+            scenario.family = "persona";
+            scenario.durationSeconds = persona == "combat-helicopter" ? 3.0F : 5.0F;
+            scenario.noise = persona == "noisy-older-sensor" ? NoiseModel::Quantized : NoiseModel::None;
+            scenario.noiseAmplitude = persona == "noisy-older-sensor" ? 0.005F : 0.0F;
+        }
         scenario.seed = deriveSeed(options.masterSeed, options.tier, scenario.family, static_cast<std::uint32_t>(index), "trajectory");
         scenario.retainTrace = index < 2;
         add(std::move(scenario));
@@ -468,7 +514,8 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         scenarios.append(QJsonObject{{"id", q(result.scenario.id)}, {"family", q(result.scenario.family)},
             {"configuration", q(result.configuration)}, {"seed", QString::asprintf("0x%08X", result.scenario.seed)},
             {"mapperRateHz", result.scenario.mapperRateHz}, {"sourceRateHz", result.scenario.sourceRateHz},
-            {"metrics", metricsJson(result.metrics)}, {"failures", failures}});
+            {"metrics", metricsJson(result.metrics)}, {"failures", failures},
+            {"traceRetained", result.scenario.retainTrace || result.retainedForWorstCase || !result.failures.empty()}});
         scenarioCsv << csv(result.scenario.id) << ',' << csv(result.scenario.family) << ',' << csv(result.configuration) << ','
             << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ','
             << result.scenario.mapperRateHz << ',' << result.scenario.sourceRateHz << ',' << result.metrics.samples << ','
@@ -540,7 +587,7 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             failuresCsv << severity << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
                 << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ',' << csv(failure) << '\n';
         }
-        if (result.scenario.retainTrace || !result.failures.empty()) {
+        if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || !result.failures.empty())) {
             std::ostringstream trace;
             trace << "time_seconds,intended,physical,estimated,predicted,lead,velocity,acceleration,horizon_ms,confidence,motion_intensity,state,reversal,ground_truth_moving,ground_truth_direction,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop,true_reversal\n";
             for (size_t index = 0; index < result.trace.size(); ++index) {
@@ -646,17 +693,24 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
             << aggregate.predicted / aggregate.comparisons << ",,," << aggregate.lead / aggregate.comparisons
             << ",," << aggregate.horizon / aggregate.comparisons << ",,\n";
     }
-    std::sort(worst.begin(), worst.end(), [](const TimedResult *left, const TimedResult *right) {
-        return left->result.metrics.wrongDirectionLeadArea > right->result.metrics.wrongDirectionLeadArea;
-    });
     std::ostringstream worstCsv;
-    worstCsv << "rank,scenario_id,configuration,seed,wrong_direction_lead_area,peak_lead,dropouts,failures\n";
-    for (size_t index = 0; index < std::min<size_t>(20, worst.size()); ++index) {
-        const ScenarioResult &result = worst[index]->result;
-        worstCsv << index + 1 << ',' << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
-            << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ','
-            << result.metrics.wrongDirectionLeadArea << ',' << result.metrics.peakLead << ',' << result.metrics.dropouts << ','
-            << csv(failureText(result).toStdString()) << '\n';
+    worstCsv << "metric,rank,score,scenario_id,configuration,seed,wrong_direction_lead_area,peak_lead,longest_dropout_ms,false_stop_total_ms,settling_ms,target_overshoot_peak,maximum_output_step,trace_retained,failures\n";
+    for (const WorstMetric &metric : kWorstMetrics) {
+        std::vector<const TimedResult *> ranked = worst;
+        std::sort(ranked.begin(), ranked.end(), [&metric](const TimedResult *left, const TimedResult *right) {
+            return metric.score(left->result) > metric.score(right->result);
+        });
+        for (size_t index = 0; index < std::min(kWorstCasesPerMetric, ranked.size()); ++index) {
+            const ScenarioResult &result = ranked[index]->result;
+            worstCsv << metric.name << ',' << index + 1 << ',' << metric.score(result) << ','
+                << csv(result.scenario.id) << ',' << csv(result.configuration) << ','
+                << "0x" << std::hex << std::uppercase << result.scenario.seed << std::dec << ','
+                << result.metrics.wrongDirectionLeadArea << ',' << result.metrics.peakLead << ','
+                << result.metrics.longestDropoutMs << ',' << result.metrics.falseStopTotalMs << ','
+                << result.metrics.settlingMs << ',' << result.metrics.targetOvershootPeak << ','
+                << result.metrics.maximumOutputStep << ',' << (result.retainedForWorstCase ? 1 : 0) << ','
+                << csv(failureText(result).toStdString()) << '\n';
+        }
     }
     const auto aggregateJson = [&aggregate]() {
         return QJsonObject{{"scenarioRuns", static_cast<qint64>(aggregate.scenarios)}, {"samples", static_cast<qint64>(aggregate.samples)},
@@ -786,6 +840,29 @@ CampaignOptions parseOptions(int argc, char *argv[], QString *error)
         if (error) *error = "--campaign must be smoke, canonical, torture, or full.";
     }
     return options;
+}
+
+void retainWorstCaseTraces(std::vector<TimedResult> &results)
+{
+    // Re-run only the bounded forensic subset after the concurrent metrics pass.
+    // This preserves deterministic full/torture evidence without retaining every
+    // sampled point for every successful randomized scenario.
+    for (const WorstMetric &metric : kWorstMetrics) {
+        std::vector<TimedResult *> ranked;
+        ranked.reserve(results.size());
+        for (TimedResult &timed : results) ranked.push_back(&timed);
+        std::sort(ranked.begin(), ranked.end(), [&metric](const TimedResult *left, const TimedResult *right) {
+            return metric.score(left->result) > metric.score(right->result);
+        });
+        for (size_t index = 0; index < std::min(kWorstCasesPerMetric, ranked.size()); ++index) {
+            TimedResult &timed = *ranked[index];
+            if (timed.result.trace.empty()) {
+                timed.result = replayScenario(timed.result.scenario, timed.configuration,
+                    timed.result.configuration, true);
+            }
+            timed.result.retainedForWorstCase = true;
+        }
+    }
 }
 
 } // namespace
@@ -1203,7 +1280,7 @@ bool selfValidate(QStringList *failures)
             "Recorded HOTAS trace did not convert into a replayable axis trajectory.");
         CampaignOptions options;
         options.tier = "self";
-        TimedResult forced{offResult, 1.0};
+        TimedResult forced{offResult, off, 1.0};
         forced.result.failures = {"HARD: forced failure trace retention fixture"};
         QString artifactError;
         record(writeArtifacts(options, temporary.path(), {forced}, &artifactError),
@@ -1338,7 +1415,7 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
     const CampaignOptions options = parseOptions(argc, argv, &optionError);
     if (optionError == "help") {
         std::cout << "adaptive_response_verification --campaign smoke|canonical|torture|full [--seed 0xBFA62300]"
-            << " [--scenario substring] [--model auto|all|presets] [--sample-rate Hz] [--output directory]\n"
+            << " [--scenario substring] [--model auto|all|presets] [--sample-rate Hz] [--random-count N] [--jobs N] [--output directory]\n"
             << "adaptive_response_verification --compare <baseline-directory> <candidate-directory> [--output comparison.md]\n";
         return 0;
     }
@@ -1396,7 +1473,8 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
                 result = replayScenario(*task.scenario, task.configuration->value, task.configuration->name, true);
             }
             const auto finished = Clock::now();
-            results[index] = {std::move(result), std::chrono::duration<double, std::micro>(finished - started).count()};
+            results[index] = {std::move(result), task.configuration->value,
+                std::chrono::duration<double, std::micro>(finished - started).count()};
         }
     };
     const int workerCount = std::min<int>(std::max(1, options.jobs), static_cast<int>(std::max<size_t>(1, tasks.size())));
@@ -1408,6 +1486,7 @@ int runAdaptiveResponseVerification(int argc, char *argv[])
         for (int worker = 0; worker < workerCount; ++worker) workers.emplace_back(execute);
         for (std::thread &worker : workers) worker.join();
     }
+    retainWorstCaseTraces(results);
     const QString outputDirectory = options.outputDirectory.isEmpty() ? defaultOutputDirectory(options) : options.outputDirectory;
     QString writeError;
     if (!writeArtifacts(options, outputDirectory, results, &writeError)) {

@@ -37,6 +37,8 @@ The runner proves deterministic synthetic estimator behavior and produces CPU-si
 
 The current result schema is `adaptiveVerificationSchemaVersion: 2` with `adaptiveScenarioCatalogVersion: 2`. Stored provenance includes the source and harness commits/branches, application version, campaign tier, seed, configuration list, worker count, random-count override, OS/compiler, command shape, scenario counts, and sample counts.
 
+Each completed campaign writes specialized, importable CSV evidence for sample-rate invariance, slow motion, source sample-hold, reversals, stops, noise, motion states, acceleration, multi-axis isolation, automation, lifecycle, bumpless transitions, performance, failures, and seeds. `worst_cases.csv` ranks the top ten scenarios independently for stale-lead area, peak lead, injected-noise amplification, dropout duration, false-stop duration, settling, overshoot, and output step. The matching traces are deterministically replayed and retained even in large campaigns; other successful randomized traces remain summary-only to bound memory and artifact size.
+
 ## CI
 
 `adaptive_response_verification_tests` self-validates the harness. `adaptive_response_verification_smoke` runs the smoke campaign as a CTest target, so existing CI remains compact while the manual tiers stay available for escalation.
