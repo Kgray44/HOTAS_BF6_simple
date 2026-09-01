@@ -2,16 +2,18 @@
 
 #include "adaptive_response.h"
 
+#include <QString>
+#include <QStringList>
+
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-class QString;
-class QStringList;
-
 namespace hotas::verification {
 
-inline constexpr int kAdaptiveVerificationSchemaVersion = 1;
+inline constexpr int kAdaptiveVerificationSchemaVersion = 2;
+inline constexpr int kAdaptiveScenarioCatalogVersion = 2;
 inline constexpr std::uint32_t kDefaultMasterSeed = 0xBFA62300U;
 
 enum class NoiseModel {
@@ -31,6 +33,9 @@ struct ControlPoint {
 
 struct ScenarioDefinition {
     std::string id;
+    // The stable physical trajectory identity intentionally excludes sampling
+    // rate, allowing rate variants to be paired scientifically.
+    std::string trajectoryId;
     std::string family;
     std::vector<ControlPoint> points;
     float durationSeconds = 1.0F;
@@ -41,6 +46,7 @@ struct ScenarioDefinition {
     bool unipolar = false;
     bool variableDt = false;
     bool retainTrace = false;
+    bool adversarialPiecewise = false;
     std::uint32_t seed = 0;
 };
 
@@ -51,6 +57,11 @@ struct TraceSample {
     float velocity = 0.0F;
     float dtSeconds = 0.0F;
     bool intendedMoving = false;
+    bool sourceSampleUpdated = false;
+    float sourceSampleTimeSeconds = 0.0F;
+    bool targetArrival = false;
+    bool physicalStop = false;
+    bool trueReversal = false;
 };
 
 struct ScenarioMetrics {
@@ -60,29 +71,66 @@ struct ScenarioMetrics {
     std::uint64_t falseReversals = 0;
     std::uint64_t missedReversals = 0;
     std::uint64_t dropouts = 0;
+    double dropoutTotalMs = 0.0;
+    double longestDropoutMs = 0.0;
     std::uint64_t falseStops = 0;
+    double falseStopTotalMs = 0.0;
     std::uint64_t stableChatter = 0;
     std::uint64_t nonFinite = 0;
     std::uint64_t illegalOutput = 0;
     std::uint64_t stationaryDrift = 0;
     double rmsLead = 0.0;
+    double meanLead = 0.0;
+    double medianLead = 0.0;
+    double p95Lead = 0.0;
     double peakLead = 0.0;
     double meanHorizonMs = 0.0;
+    double medianHorizonMs = 0.0;
+    double p95HorizonMs = 0.0;
     double peakHorizonMs = 0.0;
     double meanConfidence = 0.0;
     double wrongDirectionLeadArea = 0.0;
     double noiseRms = 0.0;
     double predictedNoiseRms = 0.0;
+    double noiseAmplificationRatio = 0.0;
+    double stationaryLeadRms = 0.0;
+    double stationaryLeadPeak = 0.0;
     double maximumOutputStep = 0.0;
     double stopRecognitionMs = -1.0;
     double settlingMs = -1.0;
     double reversalLatencyMs = -1.0;
+    double motionRecognitionLatencyMs = -1.0;
+    double predictionActivationLatencyMs = -1.0;
+    double staleLeadCancellationMs = -1.0;
+    double oppositeDirectionReacquisitionMs = -1.0;
+    double targetOvershootPeak = 0.0;
+    double targetOvershootArea = 0.0;
+    double targetOvershootDurationMs = 0.0;
+    std::uint64_t sourceUpdateCount = 0;
+    double effectiveSourceRateHz = 0.0;
+    double sourceCadenceErrorMs = 0.0;
+    double confidenceOscillation = 0.0;
+    double horizonOscillationMs = 0.0;
+    std::array<double, 8> stateDurationMs{};
+    std::array<std::uint64_t, 8> stateTransitions{};
+};
+
+struct ReversalEvent {
+    float groundTruthTimeSeconds = 0.0F;
+    float detectedTimeSeconds = -1.0F;
+    float staleLeadCancellationTimeSeconds = -1.0F;
+    float reacquisitionTimeSeconds = -1.0F;
+    float peakStaleLead = 0.0F;
+    double wrongDirectionLeadArea = 0.0;
+    bool missed = false;
+    bool surroundedByFalseDetection = false;
 };
 
 struct ScenarioResult {
     ScenarioDefinition scenario;
     std::string configuration;
     ScenarioMetrics metrics;
+    std::vector<ReversalEvent> reversalEvents;
     std::vector<std::string> failures;
     std::vector<TraceSample> trace;
     std::vector<AdaptiveResponseTelemetry> telemetry;
