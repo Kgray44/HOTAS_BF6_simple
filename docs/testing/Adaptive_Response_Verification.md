@@ -15,10 +15,10 @@ The campaign tiers are deliberately staged:
 
 - `smoke` is the CI-friendly core: stationary, slow movement, reversal, stop, sample-and-hold, noise, and timing probes.
 - `canonical` runs the deterministic catalog, including the complete slow-motion rate matrix and source/mapper sample-hold matrix.
-- `torture` adds 512 deterministic, physically continuous randomized pilot traces.
-- `full` adds 5,000 deterministic randomized traces. It remains an offline manual command; it is not part of ordinary CI.
+- `torture` adds 5,000 deterministic, physically continuous randomized pilot traces by default.
+- `full` adds 50,000 deterministic randomized traces by default. It remains an offline manual command; it is not part of ordinary CI.
 
-All commands accept `--seed 0xBFA62300`, `--scenario <substring>`, `--model <auto|velocity|alpha-beta|alpha-beta-gamma|off|all|presets>`, `--sample-rate <Hz>`, and `--output <directory>`. A rerun should use the recorded scenario id, configuration, and seed.
+All commands accept `--seed 0xBFA62300`, `--scenario <substring>`, `--model <auto|velocity|alpha-beta|alpha-beta-gamma|off|all|presets>`, `--sample-rate <Hz>`, `--random-count <N>`, `--jobs <N>`, and `--output <directory>`. `--jobs 1` preserves single-threaded debugging; independent scenario/configuration runs may use more workers while retaining deterministic task order and seed identities. A rerun should use the recorded scenario id, configuration, and seed.
 
 ```powershell
 .\build\Release\adaptive_response_verification.exe --campaign canonical --scenario slow/sweep-3.000000 --model auto --seed 0x4A91BF27
@@ -35,7 +35,7 @@ To compare compatible completed campaigns:
 
 The runner proves deterministic synthetic estimator behavior and produces CPU-side performance measurements for the offline runner. It does not prove rendered GUI behavior or physical HOTAS/vJoy behavior. Production report-path allocation evidence remains the responsibility of `mapping_hot_path_benchmark`, which continues to be run in CI.
 
-The V2.3.T result schema is `adaptiveVerificationSchemaVersion: 1`. The stored provenance includes source commit/branch, application version, campaign tier, seed, command shape, scenario counts, and sample counts.
+The current result schema is `adaptiveVerificationSchemaVersion: 2` with `adaptiveScenarioCatalogVersion: 2`. Stored provenance includes the source and harness commits/branches, application version, campaign tier, seed, configuration list, worker count, random-count override, OS/compiler, command shape, scenario counts, and sample counts.
 
 ## CI
 
