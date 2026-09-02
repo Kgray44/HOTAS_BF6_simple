@@ -448,8 +448,11 @@ struct RecordedRealTraceMetrics {
     float maximumHorizonExtensionMs = 0.0F;
     float maximumHorizonExtensionTimestampMs = 0.0F;
     float maximumSustainedAuthority = 0.0F;
+    float maximumSustainedAuthorityTimestampMs = 0.0F;
     float maximumOnsetAuthority = 0.0F;
     float maximumOnsetTimestampMs = 0.0F;
+    float turningOvershoot = 0.0F;
+    float turningOvershootTimestampMs = 0.0F;
     float stationaryLead = 0.0F;
     float staleCancellationMs = 0.0F;
     float staleCancellationTimestampMs = 0.0F;
@@ -494,8 +497,10 @@ RecordedRealTraceMetrics metricsForRecordedRealTrace(const RecordedRealTrace &tr
             metrics.maximumHorizonExtensionMs = horizonExtensionMs;
             metrics.maximumHorizonExtensionTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
         }
-        metrics.maximumSustainedAuthority = std::max(metrics.maximumSustainedAuthority,
-            telemetry.sustainedAuthority);
+        if (telemetry.sustainedAuthority > metrics.maximumSustainedAuthority) {
+            metrics.maximumSustainedAuthority = telemetry.sustainedAuthority;
+            metrics.maximumSustainedAuthorityTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+        }
         if (telemetry.onsetAuthority > metrics.maximumOnsetAuthority) {
             metrics.maximumOnsetAuthority = telemetry.onsetAuthority;
             metrics.maximumOnsetTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
@@ -538,6 +543,16 @@ RecordedRealTraceMetrics metricsForRecordedRealTrace(const RecordedRealTrace &tr
             if (error > metrics.forecastMax) {
                 metrics.forecastMax = error;
                 metrics.forecastMaxTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+            }
+            if (telemetry.turningPointConfidence > 0.00001F && std::abs(telemetry.velocity) > 0.00001F) {
+                const float inMotionDirection = telemetry.velocity > 0.0F
+                    ? telemetry.predicted - trace.physical[futureIndex]
+                    : trace.physical[futureIndex] - telemetry.predicted;
+                const float overshoot = std::max(0.0F, inMotionDirection);
+                if (overshoot > metrics.turningOvershoot) {
+                    metrics.turningOvershoot = overshoot;
+                    metrics.turningOvershootTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+                }
             }
         }
         if (index == 0) continue;
@@ -2205,12 +2220,18 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
     float worstCancellation = -1.0F;
     QString worstCancellationTrace;
     float worstCancellationTimestampMs = 0.0F;
+    float worstTurningOvershoot = -1.0F;
+    QString worstTurningOvershootTrace;
+    float worstTurningOvershootTimestampMs = 0.0F;
     float worstSettling = -1.0F;
     QString worstSettlingTrace;
     float worstSettlingTimestampMs = 0.0F;
     float worstExtension = -1.0F;
     QString worstExtensionTrace;
     float worstExtensionTimestampMs = 0.0F;
+    float worstSustained = -1.0F;
+    QString worstSustainedTrace;
+    float worstSustainedTimestampMs = 0.0F;
     float worstOnset = -1.0F;
     QString worstOnsetTrace;
     float worstOnsetTimestampMs = 0.0F;
@@ -2269,9 +2290,12 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
                           << " output_step=" << metrics.maximumOutputStep
                           << " max_extension_ms_at=" << metrics.maximumHorizonExtensionMs << '@'
                           << metrics.maximumHorizonExtensionTimestampMs
-                          << " max_sustained=" << metrics.maximumSustainedAuthority
+                          << " max_sustained_at=" << metrics.maximumSustainedAuthority << '@'
+                          << metrics.maximumSustainedAuthorityTimestampMs
                           << " max_onset_at=" << metrics.maximumOnsetAuthority << '@'
                           << metrics.maximumOnsetTimestampMs
+                          << " turning_overshoot_at=" << metrics.turningOvershoot << '@'
+                          << metrics.turningOvershootTimestampMs
                           << " max_lead_saturations=" << metrics.maximumLeadSaturations << '\n';
                 aggregateErrors.add(metrics.forecastMae);
                 aggregateSteps.add(metrics.artificialStep);
@@ -2290,6 +2314,11 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
                     worstCancellationTrace = trace.id;
                     worstCancellationTimestampMs = metrics.staleCancellationTimestampMs;
                 }
+                if (metrics.turningOvershoot > worstTurningOvershoot) {
+                    worstTurningOvershoot = metrics.turningOvershoot;
+                    worstTurningOvershootTrace = trace.id;
+                    worstTurningOvershootTimestampMs = metrics.turningOvershootTimestampMs;
+                }
                 if (metrics.settlingMs > worstSettling) {
                     worstSettling = metrics.settlingMs;
                     worstSettlingTrace = trace.id;
@@ -2299,6 +2328,11 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
                     worstExtension = metrics.maximumHorizonExtensionMs;
                     worstExtensionTrace = trace.id;
                     worstExtensionTimestampMs = metrics.maximumHorizonExtensionTimestampMs;
+                }
+                if (metrics.maximumSustainedAuthority > worstSustained) {
+                    worstSustained = metrics.maximumSustainedAuthority;
+                    worstSustainedTrace = trace.id;
+                    worstSustainedTimestampMs = metrics.maximumSustainedAuthorityTimestampMs;
                 }
                 if (metrics.maximumOnsetAuthority > worstOnset) {
                     worstOnset = metrics.maximumOnsetAuthority;
@@ -2320,12 +2354,18 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
               << " stale_cancellation_trace=" << worstCancellationTrace.toStdString()
               << " stale_cancellation_ms=" << worstCancellation
               << " timestamp_ms=" << worstCancellationTimestampMs
+              << " turning_overshoot_trace=" << worstTurningOvershootTrace.toStdString()
+              << " turning_overshoot=" << worstTurningOvershoot
+              << " timestamp_ms=" << worstTurningOvershootTimestampMs
               << " settling_trace=" << worstSettlingTrace.toStdString()
               << " settling_ms=" << worstSettling
               << " timestamp_ms=" << worstSettlingTimestampMs
               << " extension_trace=" << worstExtensionTrace.toStdString()
               << " extension_ms=" << worstExtension
               << " timestamp_ms=" << worstExtensionTimestampMs
+              << " sustained_trace=" << worstSustainedTrace.toStdString()
+              << " sustained_authority=" << worstSustained
+              << " timestamp_ms=" << worstSustainedTimestampMs
               << " onset_trace=" << worstOnsetTrace.toStdString()
               << " onset_authority=" << worstOnset
               << " timestamp_ms=" << worstOnsetTimestampMs << '\n';
