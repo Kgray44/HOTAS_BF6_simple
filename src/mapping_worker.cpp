@@ -62,7 +62,12 @@ bool sameAdaptiveResponseOverlay(const RuntimeAdaptiveResponseOverride &left,
         && a.motionSensitivity == b.motionSensitivity && a.noiseRejection == b.noiseRejection
         && a.reversalDetection == b.reversalDetection && a.reversalResponse == b.reversalResponse
         && a.decelerationResponse == b.decelerationResponse && a.settlingResponse == b.settlingResponse
-        && a.endpointTaper == b.endpointTaper;
+        && a.endpointTaper == b.endpointTaper && a.onsetAssist == b.onsetAssist
+        && a.onsetCap == b.onsetCap && a.sustainedAssist == b.sustainedAssist
+        && a.sustainedCap == b.sustainedCap && a.horizonExtension == b.horizonExtension
+        && a.horizonExtensionCapMs == b.horizonExtensionCapMs
+        && a.turningPointProtection == b.turningPointProtection
+        && a.turningPointMargin == b.turningPointMargin;
 }
 
 int axisIndexForOffset(DWORD offset)
@@ -527,6 +532,21 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.adaptiveLead[index] = 0.0F;
         m_runtime.adaptiveConfidence[index] = 0.0F;
         m_runtime.adaptiveMotionIntensity[index] = 0.0F;
+        m_runtime.adaptiveVelocityAuthority[index] = 0.0F;
+        m_runtime.adaptiveAccelerationIntent[index] = 0.0F;
+        m_runtime.adaptiveOnsetAuthority[index] = 0.0F;
+        m_runtime.adaptiveSustainedEvidence[index] = 0.0F;
+        m_runtime.adaptiveSustainedAuthority[index] = 0.0F;
+        m_runtime.adaptiveMotionUrgency[index] = 0.0F;
+        m_runtime.adaptiveHorizonExtensionEligibility[index] = 0.0F;
+        m_runtime.adaptiveNormalMaximumHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveAllowedMaximumHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveTurningPointConfidence[index] = 0.0F;
+        m_runtime.adaptiveEstimatedTimeToTurnSeconds[index] = 0.0F;
+        m_runtime.adaptiveEstimatedRemainingTravel[index] = 0.0F;
+        m_runtime.adaptiveTurningPointHorizonLimitSeconds[index] = 0.0F;
+        m_runtime.adaptiveTurningPointLeadLimit[index] = 0.0F;
+        m_runtime.adaptiveReacquisitionAuthority[index] = 0.0F;
         m_runtime.adaptiveMotionState[index] = static_cast<int>(AdaptiveMotionState::Stable);
         m_runtime.adaptiveReversing[index] = false;
         m_runtime.adaptiveSafetyLimited[index] = false;
@@ -1510,6 +1530,21 @@ void MappingWorker::run()
             m_runtime.adaptiveLead[index] = adaptive.lead;
             m_runtime.adaptiveConfidence[index] = adaptive.confidence;
             m_runtime.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
+            m_runtime.adaptiveVelocityAuthority[index].store(adaptive.velocityAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveAccelerationIntent[index].store(adaptive.accelerationIntent, std::memory_order_relaxed);
+            m_runtime.adaptiveOnsetAuthority[index].store(adaptive.onsetAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveSustainedEvidence[index].store(adaptive.sustainedEvidence, std::memory_order_relaxed);
+            m_runtime.adaptiveSustainedAuthority[index].store(adaptive.sustainedAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveMotionUrgency[index].store(adaptive.motionUrgency, std::memory_order_relaxed);
+            m_runtime.adaptiveHorizonExtensionEligibility[index].store(adaptive.horizonExtensionEligibility, std::memory_order_relaxed);
+            m_runtime.adaptiveNormalMaximumHorizonSeconds[index].store(adaptive.normalMaximumHorizonSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveAllowedMaximumHorizonSeconds[index].store(adaptive.allowedMaximumHorizonSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointConfidence[index].store(adaptive.turningPointConfidence, std::memory_order_relaxed);
+            m_runtime.adaptiveEstimatedTimeToTurnSeconds[index].store(adaptive.estimatedTimeToTurnSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveEstimatedRemainingTravel[index].store(adaptive.estimatedRemainingTravel, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointHorizonLimitSeconds[index].store(adaptive.turningPointHorizonLimitSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointLeadLimit[index].store(adaptive.turningPointLeadLimit, std::memory_order_relaxed);
+            m_runtime.adaptiveReacquisitionAuthority[index].store(adaptive.reacquisitionAuthority, std::memory_order_relaxed);
             m_runtime.adaptiveMotionState[index] = static_cast<int>(adaptive.state);
             m_runtime.adaptiveReversing[index] = adaptive.reversal;
             m_runtime.adaptiveSafetyLimited[index] = adaptive.safetyLimited;
@@ -1528,6 +1563,14 @@ void MappingWorker::run()
             m_runtime.adaptiveRuntimeDecelerationResponse[index] = adaptiveConfiguration.decelerationResponse;
             m_runtime.adaptiveRuntimeSettlingResponse[index] = adaptiveConfiguration.settlingResponse;
             m_runtime.adaptiveRuntimeEndpointTaper[index] = adaptiveConfiguration.endpointTaper;
+            m_runtime.adaptiveRuntimeOnsetAssist[index].store(adaptiveConfiguration.onsetAssist, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeOnsetCap[index].store(adaptiveConfiguration.onsetCap, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeSustainedAssist[index].store(adaptiveConfiguration.sustainedAssist, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeSustainedCap[index].store(adaptiveConfiguration.sustainedCap, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeHorizonExtension[index].store(adaptiveConfiguration.horizonExtension, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeHorizonExtensionCapSeconds[index].store(adaptiveConfiguration.horizonExtensionCapSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeTurningPointProtection[index].store(adaptiveConfiguration.turningPointProtection, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeTurningPointMargin[index].store(adaptiveConfiguration.turningPointMargin, std::memory_order_relaxed);
             const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[static_cast<size_t>(index)];
             m_runtime.adaptiveAutomationOverlayActive[index] = overlay.active;
             m_runtime.adaptiveAutomationOverlayProperties[index] = overlay.properties;

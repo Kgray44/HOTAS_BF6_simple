@@ -99,6 +99,16 @@ enum AdaptiveResponseProperty : std::uint32_t {
     AdaptiveResponseDecelerationResponse = 1U << 10,
     AdaptiveResponseSettlingResponse = 1U << 11,
     AdaptiveResponseEndpointTaper = 1U << 12,
+    // Append-only: these numeric flags are persisted in user configuration.
+    // Do not reorder earlier Adaptive Response properties.
+    AdaptiveResponseOnsetAssist = 1U << 13,
+    AdaptiveResponseOnsetCap = 1U << 14,
+    AdaptiveResponseSustainedAssist = 1U << 15,
+    AdaptiveResponseSustainedCap = 1U << 16,
+    AdaptiveResponseHorizonExtension = 1U << 17,
+    AdaptiveResponseHorizonExtensionCap = 1U << 18,
+    AdaptiveResponseTurningPointProtection = 1U << 19,
+    AdaptiveResponseTurningPointMargin = 1U << 20,
 };
 
 constexpr std::uint32_t kAdaptiveResponseAllProperties =
@@ -107,7 +117,11 @@ constexpr std::uint32_t kAdaptiveResponseAllProperties =
     | AdaptiveResponseAccelerationResponse | AdaptiveResponseMotionSensitivity
     | AdaptiveResponseNoiseRejection | AdaptiveResponseReversalDetection
     | AdaptiveResponseReversalResponse | AdaptiveResponseDecelerationResponse
-    | AdaptiveResponseSettlingResponse | AdaptiveResponseEndpointTaper;
+    | AdaptiveResponseSettlingResponse | AdaptiveResponseEndpointTaper
+    | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
+    | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
+    | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
+    | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin;
 
 struct AdaptiveResponseSettings {
     bool enabled = false;
@@ -123,6 +137,18 @@ struct AdaptiveResponseSettings {
     float decelerationResponse = 0.85F;
     float settlingResponse = 0.92F;
     float endpointTaper = 0.16F;
+    // Acceleration can fill only unused velocity-derived predictive authority.
+    // Defaults preserve pre-onset-assist configuration behavior exactly.
+    float onsetAssist = 0.0F;
+    float onsetCap = 0.0F;
+    // Sustained/horizon/turning defaults retain the pre-V2.3.0 predictor
+    // unless the owning preset or layer explicitly enables them.
+    float sustainedAssist = 0.0F;
+    float sustainedCap = 0.0F;
+    float horizonExtension = 0.0F;
+    float horizonExtensionCapMs = 0.0F;
+    float turningPointProtection = 0.0F;
+    float turningPointMargin = 0.0F;
 };
 
 // A zero mask means "inherit every property". A layer can select a reusable
@@ -162,6 +188,14 @@ struct RuntimeAdaptiveResponseConfig {
     float decelerationResponse = 0.85F;
     float settlingResponse = 0.92F;
     float endpointTaper = 0.16F;
+    float onsetAssist = 0.0F;
+    float onsetCap = 0.0F;
+    float sustainedAssist = 0.0F;
+    float sustainedCap = 0.0F;
+    float horizonExtension = 0.0F;
+    float horizonExtensionCapSeconds = 0.0F;
+    float turningPointProtection = 0.0F;
+    float turningPointMargin = 0.0F;
     float domainMinimum = -1.0F;
     float domainMaximum = 1.0F;
 };

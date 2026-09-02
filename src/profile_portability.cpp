@@ -94,7 +94,13 @@ bool sameAdaptiveResponseSettings(const AdaptiveResponseSettings &left,
         && left.motionSensitivity == right.motionSensitivity && left.noiseRejection == right.noiseRejection
         && left.reversalDetection == right.reversalDetection && left.reversalResponse == right.reversalResponse
         && left.decelerationResponse == right.decelerationResponse
-        && left.settlingResponse == right.settlingResponse && left.endpointTaper == right.endpointTaper;
+        && left.settlingResponse == right.settlingResponse && left.endpointTaper == right.endpointTaper
+        && left.onsetAssist == right.onsetAssist && left.onsetCap == right.onsetCap
+        && left.sustainedAssist == right.sustainedAssist && left.sustainedCap == right.sustainedCap
+        && left.horizonExtension == right.horizonExtension
+        && left.horizonExtensionCapMs == right.horizonExtensionCapMs
+        && left.turningPointProtection == right.turningPointProtection
+        && left.turningPointMargin == right.turningPointMargin;
 }
 
 bool sameAdaptiveResponsePresetContent(const AdaptiveResponsePreset &left,

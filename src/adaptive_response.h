@@ -34,6 +34,23 @@ struct AdaptiveResponseTelemetry {
     float lead = 0.0F;
     float confidence = 0.0F;
     float motionIntensity = 0.0F;
+    float velocityAuthority = 0.0F;
+    // Bounded decomposition of predictive authority. These fixed scalars are
+    // published for preview/diagnostics only; they do not allocate or notify.
+    float accelerationIntent = 0.0F;
+    float onsetAuthority = 0.0F;
+    float sustainedEvidence = 0.0F;
+    float sustainedAuthority = 0.0F;
+    float motionUrgency = 0.0F;
+    float horizonExtensionEligibility = 0.0F;
+    float normalMaximumHorizonSeconds = 0.0F;
+    float allowedMaximumHorizonSeconds = 0.0F;
+    float turningPointConfidence = 0.0F;
+    float estimatedTimeToTurnSeconds = 0.0F;
+    float estimatedRemainingTravel = 0.0F;
+    float turningPointHorizonLimitSeconds = 0.0F;
+    float turningPointLeadLimit = 0.0F;
+    float reacquisitionAuthority = 1.0F;
     float motionCoherence = 0.0F;
     float sourceUpdatePeriodSeconds = 0.0F;
     float quietDurationSeconds = 0.0F;
@@ -93,6 +110,11 @@ private:
     float m_brakingReductionTarget = 0.0F;
     float m_brakingReductionFactor = 0.0F;
 #endif
+    // Confirmed reversals retain immediate stale-lead cancellation, while the
+    // new direction's predictive authority rises over a very short envelope.
+    float m_reacquisitionAuthority = 1.0F;
+    float m_onsetAuthority = 0.0F;
+    float m_sustainedEvidence = 0.0F;
     std::uint8_t m_oppositeEvidenceCount = 0;
     int m_motionDirection = 0;
     std::chrono::steady_clock::time_point m_lastTimestamp{};

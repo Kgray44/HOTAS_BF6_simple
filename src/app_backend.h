@@ -607,6 +607,21 @@ private:
         float lead = 0.0F;
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
+        float velocityAuthority = 0.0F;
+        float accelerationIntent = 0.0F;
+        float onsetAuthority = 0.0F;
+        float sustainedEvidence = 0.0F;
+        float sustainedAuthority = 0.0F;
+        float motionUrgency = 0.0F;
+        float horizonExtensionEligibility = 0.0F;
+        float normalMaximumHorizonSeconds = 0.0F;
+        float allowedMaximumHorizonSeconds = 0.0F;
+        float turningPointConfidence = 0.0F;
+        float estimatedTimeToTurnSeconds = 0.0F;
+        float estimatedRemainingTravel = 0.0F;
+        float turningPointHorizonLimitSeconds = 0.0F;
+        float turningPointLeadLimit = 0.0F;
+        float reacquisitionAuthority = 0.0F;
         int motionState = 0;
     };
 
@@ -625,6 +640,21 @@ private:
         float lead = 0.0F;
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
+        float velocityAuthority = 0.0F;
+        float accelerationIntent = 0.0F;
+        float onsetAuthority = 0.0F;
+        float sustainedEvidence = 0.0F;
+        float sustainedAuthority = 0.0F;
+        float motionUrgency = 0.0F;
+        float horizonExtensionEligibility = 0.0F;
+        float normalMaximumHorizonSeconds = 0.0F;
+        float allowedMaximumHorizonSeconds = 0.0F;
+        float turningPointConfidence = 0.0F;
+        float estimatedTimeToTurnSeconds = 0.0F;
+        float estimatedRemainingTravel = 0.0F;
+        float turningPointHorizonLimitSeconds = 0.0F;
+        float turningPointLeadLimit = 0.0F;
+        float reacquisitionAuthority = 0.0F;
         int motionState = 0;
     };
 

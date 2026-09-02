@@ -382,6 +382,14 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(adaptive.contains(QStringLiteral("STATIC PIPELINE")));
     QVERIFY(adaptive.contains(QStringLiteral("Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded.")));
     QVERIFY(adaptive.contains(QStringLiteral("MAPPED OUTPUT")));
+    QVERIFY(adaptive.contains(QStringLiteral("ONSET / MOTION ACQUISITION")));
+    QVERIFY(adaptive.contains(QStringLiteral("Uses coherent acceleration to build predictive response sooner while motion is still gaining speed.")));
+    QVERIFY(adaptive.contains(QStringLiteral("Limits how much acceleration may add to predictive authority. Maximum Horizon and Maximum Lead remain absolute limits.")));
+    QVERIFY(adaptive.contains(QStringLiteral("SUSTAINED MOTION")));
+    QVERIFY(adaptive.contains(QStringLiteral("Builds additional predictive response during continuous, predictable movement, including slower sustained control inputs.")));
+    QVERIFY(adaptive.contains(QStringLiteral("Permits longer temporal prediction only when slow, coherent sustained movement supports it.")));
+    QVERIFY(adaptive.contains(QStringLiteral("TURNING / REVERSAL")));
+    QVERIFY(adaptive.contains(QStringLiteral("Prevents prediction from extending beyond a credible imminent stop or reversal; a correctness floor remains at 0%.")));
     QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED PREDICTION LEAD")));
     QVERIFY(adaptive.contains(QStringLiteral("Scale is the configured maximum lead")));
     QVERIFY(adaptive.contains(QStringLiteral("piecewise-linear resampling")));

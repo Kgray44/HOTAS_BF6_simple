@@ -883,6 +883,14 @@ std::uint32_t adaptivePropertyForKey(const QString &key)
     if (normalized == u"decelerationresponse"_qs) return AdaptiveResponseDecelerationResponse;
     if (normalized == u"settlingresponse"_qs) return AdaptiveResponseSettlingResponse;
     if (normalized == u"endpointtaper"_qs) return AdaptiveResponseEndpointTaper;
+    if (normalized == u"onsetassist"_qs) return AdaptiveResponseOnsetAssist;
+    if (normalized == u"onsetcap"_qs) return AdaptiveResponseOnsetCap;
+    if (normalized == u"sustainedassist"_qs) return AdaptiveResponseSustainedAssist;
+    if (normalized == u"sustainedcap"_qs) return AdaptiveResponseSustainedCap;
+    if (normalized == u"horizonextension"_qs) return AdaptiveResponseHorizonExtension;
+    if (normalized == u"horizonextensioncap"_qs || normalized == u"horizonextensioncapms"_qs) return AdaptiveResponseHorizonExtensionCap;
+    if (normalized == u"turningpointprotection"_qs) return AdaptiveResponseTurningPointProtection;
+    if (normalized == u"turningpointmargin"_qs) return AdaptiveResponseTurningPointMargin;
     return 0;
 }
 
@@ -902,6 +910,14 @@ AdaptiveResponseSettings settingsFromRuntime(const RuntimeAdaptiveResponseConfig
     settings.decelerationResponse = runtime.decelerationResponse;
     settings.settlingResponse = runtime.settlingResponse;
     settings.endpointTaper = runtime.endpointTaper;
+    settings.onsetAssist = runtime.onsetAssist;
+    settings.onsetCap = runtime.onsetCap;
+    settings.sustainedAssist = runtime.sustainedAssist;
+    settings.sustainedCap = runtime.sustainedCap;
+    settings.horizonExtension = runtime.horizonExtension;
+    settings.horizonExtensionCapMs = runtime.horizonExtensionCapSeconds * 1000.0F;
+    settings.turningPointProtection = runtime.turningPointProtection;
+    settings.turningPointMargin = runtime.turningPointMargin;
     return sanitizedAdaptiveResponseSettings(settings);
 }
 
@@ -914,7 +930,12 @@ QVariantMap adaptiveSettingsMap(const RuntimeAdaptiveResponseConfig &runtime)
             {u"motionSensitivity"_qs, runtime.motionSensitivity}, {u"noiseRejection"_qs, runtime.noiseRejection},
             {u"reversalDetection"_qs, runtime.reversalDetection}, {u"reversalResponse"_qs, runtime.reversalResponse},
             {u"decelerationResponse"_qs, runtime.decelerationResponse}, {u"settlingResponse"_qs, runtime.settlingResponse},
-            {u"endpointTaper"_qs, runtime.endpointTaper}};
+            {u"endpointTaper"_qs, runtime.endpointTaper}, {u"onsetAssist"_qs, runtime.onsetAssist},
+            {u"onsetCap"_qs, runtime.onsetCap}, {u"sustainedAssist"_qs, runtime.sustainedAssist},
+            {u"sustainedCap"_qs, runtime.sustainedCap}, {u"horizonExtension"_qs, runtime.horizonExtension},
+            {u"horizonExtensionCapMs"_qs, runtime.horizonExtensionCapSeconds * 1000.0F},
+            {u"turningPointProtection"_qs, runtime.turningPointProtection},
+            {u"turningPointMargin"_qs, runtime.turningPointMargin}};
 }
 
 QVariantMap adaptiveRuntimeSettingsMap(const AtomicRuntimeState &runtime, int axis,
@@ -937,7 +958,15 @@ QVariantMap adaptiveRuntimeSettingsMap(const AtomicRuntimeState &runtime, int ax
             {u"reversalResponse"_qs, runtime.adaptiveRuntimeReversalResponse[index].load()},
             {u"decelerationResponse"_qs, runtime.adaptiveRuntimeDecelerationResponse[index].load()},
             {u"settlingResponse"_qs, runtime.adaptiveRuntimeSettlingResponse[index].load()},
-            {u"endpointTaper"_qs, runtime.adaptiveRuntimeEndpointTaper[index].load()}};
+            {u"endpointTaper"_qs, runtime.adaptiveRuntimeEndpointTaper[index].load()},
+            {u"onsetAssist"_qs, runtime.adaptiveRuntimeOnsetAssist[index].load()},
+            {u"onsetCap"_qs, runtime.adaptiveRuntimeOnsetCap[index].load()},
+            {u"sustainedAssist"_qs, runtime.adaptiveRuntimeSustainedAssist[index].load()},
+            {u"sustainedCap"_qs, runtime.adaptiveRuntimeSustainedCap[index].load()},
+            {u"horizonExtension"_qs, runtime.adaptiveRuntimeHorizonExtension[index].load()},
+            {u"horizonExtensionCapMs"_qs, runtime.adaptiveRuntimeHorizonExtensionCapSeconds[index].load() * 1000.0F},
+            {u"turningPointProtection"_qs, runtime.adaptiveRuntimeTurningPointProtection[index].load()},
+            {u"turningPointMargin"_qs, runtime.adaptiveRuntimeTurningPointMargin[index].load()}};
 }
 
 QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const QString &fallback)
@@ -953,7 +982,7 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
         AdaptiveResponseProperty property;
         QStringView label;
     };
-    static constexpr std::array<PropertyLabel, 13> labels{{
+    static constexpr std::array<PropertyLabel, 21> labels{{
         {AdaptiveResponseEnabled, u"Enabled"},
         {AdaptiveResponseModelProperty, u"Predictor"},
         {AdaptiveResponseMaximumHorizon, u"Maximum horizon"},
@@ -967,6 +996,14 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
         {AdaptiveResponseDecelerationResponse, u"Deceleration response"},
         {AdaptiveResponseSettlingResponse, u"Settling response"},
         {AdaptiveResponseEndpointTaper, u"Endpoint taper"},
+        {AdaptiveResponseOnsetAssist, u"Onset Assist"},
+        {AdaptiveResponseOnsetCap, u"Onset Cap"},
+        {AdaptiveResponseSustainedAssist, u"Sustained Assist"},
+        {AdaptiveResponseSustainedCap, u"Sustained Cap"},
+        {AdaptiveResponseHorizonExtension, u"Adaptive Horizon Extension"},
+        {AdaptiveResponseHorizonExtensionCap, u"Horizon Extension Cap"},
+        {AdaptiveResponseTurningPointProtection, u"Turning-Point Protection"},
+        {AdaptiveResponseTurningPointMargin, u"Turning-Point Margin"},
     }};
     QStringList result;
     for (const PropertyLabel &entry : labels) {
@@ -1114,6 +1151,21 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
             {u"lead"_qs, load(runtime.adaptiveLead)}, {u"maximumLead"_qs, maximumLead},
             {u"confidence"_qs, load(runtime.adaptiveConfidence)},
             {u"motionIntensity"_qs, load(runtime.adaptiveMotionIntensity)},
+            {u"velocityAuthority"_qs, load(runtime.adaptiveVelocityAuthority)},
+            {u"accelerationIntent"_qs, load(runtime.adaptiveAccelerationIntent)},
+            {u"onsetAuthority"_qs, load(runtime.adaptiveOnsetAuthority)},
+            {u"sustainedEvidence"_qs, load(runtime.adaptiveSustainedEvidence)},
+            {u"sustainedAuthority"_qs, load(runtime.adaptiveSustainedAuthority)},
+            {u"motionUrgency"_qs, load(runtime.adaptiveMotionUrgency)},
+            {u"horizonExtensionEligibility"_qs, load(runtime.adaptiveHorizonExtensionEligibility)},
+            {u"normalMaximumHorizonMs"_qs, load(runtime.adaptiveNormalMaximumHorizonSeconds) * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, load(runtime.adaptiveAllowedMaximumHorizonSeconds) * 1000.0F},
+            {u"turningPointConfidence"_qs, load(runtime.adaptiveTurningPointConfidence)},
+            {u"estimatedTimeToTurnMs"_qs, load(runtime.adaptiveEstimatedTimeToTurnSeconds) * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, load(runtime.adaptiveEstimatedRemainingTravel)},
+            {u"turningPointHorizonLimitMs"_qs, load(runtime.adaptiveTurningPointHorizonLimitSeconds) * 1000.0F},
+            {u"turningPointLeadLimit"_qs, load(runtime.adaptiveTurningPointLeadLimit)},
+            {u"reacquisitionAuthority"_qs, load(runtime.adaptiveReacquisitionAuthority)},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(load(runtime.adaptiveMotionState)))},
             {u"model"_qs, adaptiveResponseModelKey(model)},
             {u"enabled"_qs, runtimePublished ? load(runtime.adaptiveRuntimeEnabled) : persistent.enabled},
@@ -1152,10 +1204,24 @@ QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
                                   {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
                                   {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
                                       ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
-                                  {u"lead"_qs, sample.lead},
-                                  {u"confidence"_qs, sample.confidence},
-                                  {u"motionIntensity"_qs, sample.motionIntensity},
-                                  {u"state"_qs, adaptiveMotionStateLabel(
+                                   {u"lead"_qs, sample.lead},
+                                   {u"confidence"_qs, sample.confidence},
+                                   {u"motionIntensity"_qs, sample.motionIntensity},
+                                   {u"accelerationIntent"_qs, sample.accelerationIntent},
+                                   {u"onsetAuthority"_qs, sample.onsetAuthority},
+                                   {u"sustainedEvidence"_qs, sample.sustainedEvidence},
+                                   {u"sustainedAuthority"_qs, sample.sustainedAuthority},
+                                   {u"motionUrgency"_qs, sample.motionUrgency},
+                                   {u"horizonExtensionEligibility"_qs, sample.horizonExtensionEligibility},
+                                   {u"normalMaximumHorizonMs"_qs, sample.normalMaximumHorizonSeconds * 1000.0F},
+                                   {u"allowedMaximumHorizonMs"_qs, sample.allowedMaximumHorizonSeconds * 1000.0F},
+                                   {u"turningPointConfidence"_qs, sample.turningPointConfidence},
+                                   {u"estimatedTimeToTurnMs"_qs, sample.estimatedTimeToTurnSeconds * 1000.0F},
+                                   {u"estimatedRemainingTravel"_qs, sample.estimatedRemainingTravel},
+                                   {u"turningPointHorizonLimitMs"_qs, sample.turningPointHorizonLimitSeconds * 1000.0F},
+                                   {u"turningPointLeadLimit"_qs, sample.turningPointLeadLimit},
+                                   {u"reacquisitionAuthority"_qs, sample.reacquisitionAuthority},
+                                   {u"state"_qs, adaptiveMotionStateLabel(
                                       static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return result;
@@ -1194,6 +1260,20 @@ QVariantMap AppBackend::adaptiveResponseHistorySince(qint64 lastSequence, int se
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"accelerationIntent"_qs, sample.accelerationIntent},
+            {u"onsetAuthority"_qs, sample.onsetAuthority},
+            {u"sustainedEvidence"_qs, sample.sustainedEvidence},
+            {u"sustainedAuthority"_qs, sample.sustainedAuthority},
+            {u"motionUrgency"_qs, sample.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, sample.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, sample.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, sample.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, sample.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, sample.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, sample.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, sample.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, sample.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, sample.reacquisitionAuthority},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return {{u"samples"_qs, samples}, {u"newestSequence"_qs, m_adaptiveResponseHistorySequence},
@@ -1310,6 +1390,14 @@ bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, cons
     else if (key == u"decelerationresponse"_qs) override.settings.decelerationResponse = static_cast<float>(value.toDouble());
     else if (key == u"settlingresponse"_qs) override.settings.settlingResponse = static_cast<float>(value.toDouble());
     else if (key == u"endpointtaper"_qs) override.settings.endpointTaper = static_cast<float>(value.toDouble());
+    else if (key == u"onsetassist"_qs) override.settings.onsetAssist = static_cast<float>(value.toDouble());
+    else if (key == u"onsetcap"_qs) override.settings.onsetCap = static_cast<float>(value.toDouble());
+    else if (key == u"sustainedassist"_qs) override.settings.sustainedAssist = static_cast<float>(value.toDouble());
+    else if (key == u"sustainedcap"_qs) override.settings.sustainedCap = static_cast<float>(value.toDouble());
+    else if (key == u"horizonextension"_qs) override.settings.horizonExtension = static_cast<float>(value.toDouble());
+    else if (key == u"horizonextensioncap"_qs || key == u"horizonextensioncapms"_qs) override.settings.horizonExtensionCapMs = static_cast<float>(value.toDouble());
+    else if (key == u"turningpointprotection"_qs) override.settings.turningPointProtection = static_cast<float>(value.toDouble());
+    else if (key == u"turningpointmargin"_qs) override.settings.turningPointMargin = static_cast<float>(value.toDouble());
     else return false;
     override.settings = sanitizedAdaptiveResponseSettings(override.settings);
     override.properties |= bit;
@@ -1479,6 +1567,21 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
             {u"confidence"_qs, sample.telemetry.confidence},
             {u"velocity"_qs, sample.telemetry.velocity},
             {u"acceleration"_qs, sample.telemetry.acceleration},
+            {u"accelerationIntent"_qs, sample.telemetry.accelerationIntent},
+            {u"onsetAuthority"_qs, sample.telemetry.onsetAuthority},
+            {u"sustainedEvidence"_qs, sample.telemetry.sustainedEvidence},
+            {u"sustainedAuthority"_qs, sample.telemetry.sustainedAuthority},
+            {u"motionUrgency"_qs, sample.telemetry.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, sample.telemetry.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, sample.telemetry.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, sample.telemetry.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, sample.telemetry.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, sample.telemetry.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, sample.telemetry.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, sample.telemetry.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, sample.telemetry.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, sample.telemetry.reacquisitionAuthority},
+            {u"velocityAuthority"_qs, sample.telemetry.velocityAuthority},
             {u"motionCoherence"_qs, sample.telemetry.motionCoherence},
             {u"sourceUpdatePeriodMs"_qs, sample.telemetry.sourceUpdatePeriodSeconds * 1000.0F},
             {u"quietDurationMs"_qs, sample.telemetry.quietDurationSeconds * 1000.0F},
@@ -1511,6 +1614,14 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
         float virtualOutput = 0.0F;
         float lead = 0.0F;
         float horizonMs = 0.0F;
+        float normalMaximumHorizonMs = 0.0F;
+        float allowedMaximumHorizonMs = 0.0F;
+        float sustainedAuthority = 0.0F;
+        float horizonExtensionEligibility = 0.0F;
+        float turningPointConfidence = 0.0F;
+        float estimatedTimeToTurnMs = 0.0F;
+        float turningPointHorizonLimitMs = 0.0F;
+        float turningPointLeadLimit = 0.0F;
         QString state;
     };
     std::vector<TestSample> trace;
@@ -1523,6 +1634,14 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             static_cast<float>(sample.value(u"virtualOutput"_qs).toDouble()),
             static_cast<float>(sample.value(u"lead"_qs).toDouble()),
             static_cast<float>(sample.value(u"horizonMs"_qs).toDouble()),
+            static_cast<float>(sample.value(u"normalMaximumHorizonMs"_qs).toDouble()),
+            static_cast<float>(sample.value(u"allowedMaximumHorizonMs"_qs).toDouble()),
+            static_cast<float>(sample.value(u"sustainedAuthority"_qs).toDouble()),
+            static_cast<float>(sample.value(u"horizonExtensionEligibility"_qs).toDouble()),
+            static_cast<float>(sample.value(u"turningPointConfidence"_qs).toDouble()),
+            static_cast<float>(sample.value(u"estimatedTimeToTurnMs"_qs).toDouble()),
+            static_cast<float>(sample.value(u"turningPointHorizonLimitMs"_qs).toDouble()),
+            static_cast<float>(sample.value(u"turningPointLeadLimit"_qs).toDouble()),
             sample.value(u"state"_qs).toString()});
     }
     const auto directionOf = [](float value, float tolerance = 0.0002F) {
@@ -1548,6 +1667,15 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
     float maximumPredictedDelta = 0.0F;
     float maximumArtificialPredictorStep = 0.0F;
     float maximumVirtualOutputStep = 0.0F;
+    float maximumSustainedAuthority = 0.0F;
+    float maximumExtensionEligibility = 0.0F;
+    float maximumAllowedHorizonMs = 0.0F;
+    float maximumHorizonExtensionMs = 0.0F;
+    float maximumTurningPointConfidence = 0.0F;
+    float maximumEstimatedTimeToTurnMs = 0.0F;
+    float minimumTurningPointHorizonLimitMs = 0.0F;
+    float minimumTurningPointLeadLimit = 0.0F;
+    int turningPointProtectionActivations = 0;
     std::vector<float> leadMagnitudes;
     std::vector<float> predictionErrors;
     leadMagnitudes.reserve(static_cast<size_t>(samples.size()));
@@ -1591,6 +1719,25 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
         const float virtualOutput = sample.virtualOutput;
         const float lead = sample.lead;
         const double timeMs = sample.timeMs;
+        maximumSustainedAuthority = std::max(maximumSustainedAuthority, sample.sustainedAuthority);
+        maximumExtensionEligibility = std::max(maximumExtensionEligibility, sample.horizonExtensionEligibility);
+        maximumAllowedHorizonMs = std::max(maximumAllowedHorizonMs, sample.allowedMaximumHorizonMs);
+        maximumHorizonExtensionMs = std::max(maximumHorizonExtensionMs,
+            std::max(0.0F, sample.allowedMaximumHorizonMs - sample.normalMaximumHorizonMs));
+        maximumTurningPointConfidence = std::max(maximumTurningPointConfidence, sample.turningPointConfidence);
+        maximumEstimatedTimeToTurnMs = std::max(maximumEstimatedTimeToTurnMs, sample.estimatedTimeToTurnMs);
+        if (sample.turningPointConfidence > 0.01F && sample.turningPointHorizonLimitMs > 0.0F) {
+            ++turningPointProtectionActivations;
+            if (minimumTurningPointHorizonLimitMs <= 0.0F) {
+                minimumTurningPointHorizonLimitMs = sample.turningPointHorizonLimitMs;
+                minimumTurningPointLeadLimit = sample.turningPointLeadLimit;
+            } else {
+                minimumTurningPointHorizonLimitMs = std::min(minimumTurningPointHorizonLimitMs,
+                    sample.turningPointHorizonLimitMs);
+                minimumTurningPointLeadLimit = std::min(minimumTurningPointLeadLimit,
+                    sample.turningPointLeadLimit);
+            }
+        }
         peakLead = std::max(peakLead, std::abs(lead));
         leadMagnitudes.push_back(std::abs(lead));
         const float predictionError = predicted - physicalAt(timeMs + sample.horizonMs);
@@ -1696,6 +1843,24 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             targetOvershoot = std::max(targetOvershoot, std::max(0.0F, overshoot));
         }
     }
+    // Where the authored trace supplies an imminent physical local extremum,
+    // measure whether a prediction inside its own active horizon crosses it.
+    // This is a test-lab truth metric, not a special-case predictor input.
+    float maximumTurningPointOvershoot = 0.0F;
+    for (size_t index = 1; index + 1 < trace.size(); ++index) {
+        const int direction = directionOf(trace[index].physical - trace[index - 1].physical);
+        if (direction == 0 || trace[index].horizonMs <= 0.0F) continue;
+        size_t apex = index;
+        while (apex + 1 < trace.size()) {
+            const int nextDirection = directionOf(trace[apex + 1].physical - trace[apex].physical);
+            if (nextDirection != 0 && nextDirection != direction) break;
+            ++apex;
+        }
+        if (apex == index || trace[apex].timeMs - trace[index].timeMs > trace[index].horizonMs + 0.001) continue;
+        const float overshoot = direction > 0 ? trace[index].predicted - trace[apex].physical
+                                               : trace[apex].physical - trace[index].predicted;
+        maximumTurningPointOvershoot = std::max(maximumTurningPointOvershoot, std::max(0.0F, overshoot));
+    }
     const float medianLead = leadMagnitudes.empty() ? 0.0F : [&leadMagnitudes]() {
         const size_t middle = leadMagnitudes.size() / 2;
         std::nth_element(leadMagnitudes.begin(), leadMagnitudes.begin() + middle, leadMagnitudes.end());
@@ -1734,7 +1899,17 @@ QVariantMap AppBackend::adaptiveResponseTestLabAtContext(const QString &scenario
             {u"maximumPhysicalDelta"_qs, maximumPhysicalDelta},
             {u"maximumPredictedDelta"_qs, maximumPredictedDelta},
             {u"maximumArtificialPredictorStep"_qs, maximumArtificialPredictorStep},
-            {u"maximumVirtualOutputStep"_qs, maximumVirtualOutputStep}};
+            {u"maximumVirtualOutputStep"_qs, maximumVirtualOutputStep},
+            {u"maximumSustainedAuthority"_qs, maximumSustainedAuthority},
+            {u"maximumExtensionEligibility"_qs, maximumExtensionEligibility},
+            {u"maximumAllowedHorizonMs"_qs, maximumAllowedHorizonMs},
+            {u"maximumHorizonExtensionMs"_qs, maximumHorizonExtensionMs},
+            {u"maximumTurningPointConfidence"_qs, maximumTurningPointConfidence},
+            {u"maximumEstimatedTimeToTurnMs"_qs, maximumEstimatedTimeToTurnMs},
+            {u"minimumTurningPointHorizonLimitMs"_qs, minimumTurningPointHorizonLimitMs},
+            {u"minimumTurningPointLeadLimit"_qs, minimumTurningPointLeadLimit},
+            {u"turningPointProtectionActivations"_qs, turningPointProtectionActivations},
+            {u"maximumTurningPointOvershoot"_qs, maximumTurningPointOvershoot}};
 }
 
 void AppBackend::adaptiveResponseSimulatorStepAtContext(double physical, const QString &scope,
@@ -1824,6 +1999,21 @@ void AppBackend::advanceAdaptiveResponseSimulator(float manualInput, const QStri
         sample.lead = telemetry.lead;
         sample.confidence = telemetry.confidence;
         sample.motionIntensity = telemetry.motionIntensity;
+        sample.velocityAuthority = telemetry.velocityAuthority;
+        sample.accelerationIntent = telemetry.accelerationIntent;
+        sample.onsetAuthority = telemetry.onsetAuthority;
+        sample.sustainedEvidence = telemetry.sustainedEvidence;
+        sample.sustainedAuthority = telemetry.sustainedAuthority;
+        sample.motionUrgency = telemetry.motionUrgency;
+        sample.horizonExtensionEligibility = telemetry.horizonExtensionEligibility;
+        sample.normalMaximumHorizonSeconds = telemetry.normalMaximumHorizonSeconds;
+        sample.allowedMaximumHorizonSeconds = telemetry.allowedMaximumHorizonSeconds;
+        sample.turningPointConfidence = telemetry.turningPointConfidence;
+        sample.estimatedTimeToTurnSeconds = telemetry.estimatedTimeToTurnSeconds;
+        sample.estimatedRemainingTravel = telemetry.estimatedRemainingTravel;
+        sample.turningPointHorizonLimitSeconds = telemetry.turningPointHorizonLimitSeconds;
+        sample.turningPointLeadLimit = telemetry.turningPointLeadLimit;
+        sample.reacquisitionAuthority = telemetry.reacquisitionAuthority;
         sample.motionState = static_cast<int>(telemetry.state);
         appendAdaptiveResponseSimulatorSample(sample);
         ++generated;
@@ -1874,6 +2064,20 @@ QVariantList AppBackend::adaptiveResponseSimulatorHistory() const
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"accelerationIntent"_qs, sample.accelerationIntent},
+            {u"onsetAuthority"_qs, sample.onsetAuthority},
+            {u"sustainedEvidence"_qs, sample.sustainedEvidence},
+            {u"sustainedAuthority"_qs, sample.sustainedAuthority},
+            {u"motionUrgency"_qs, sample.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, sample.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, sample.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, sample.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, sample.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, sample.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, sample.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, sample.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, sample.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, sample.reacquisitionAuthority},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return result;
@@ -1910,6 +2114,20 @@ QVariantMap AppBackend::adaptiveResponseSimulatorHistorySince(qint64 lastSequenc
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"accelerationIntent"_qs, sample.accelerationIntent},
+            {u"onsetAuthority"_qs, sample.onsetAuthority},
+            {u"sustainedEvidence"_qs, sample.sustainedEvidence},
+            {u"sustainedAuthority"_qs, sample.sustainedAuthority},
+            {u"motionUrgency"_qs, sample.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, sample.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, sample.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, sample.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, sample.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, sample.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, sample.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, sample.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, sample.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, sample.reacquisitionAuthority},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return {{u"samples"_qs, samples}, {u"newestSequence"_qs, m_adaptiveResponseSimulatorSequence},
@@ -1976,6 +2194,20 @@ QVariantList AppBackend::adaptiveResponseSimulatorRecording() const
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"accelerationIntent"_qs, sample.accelerationIntent},
+            {u"onsetAuthority"_qs, sample.onsetAuthority},
+            {u"sustainedEvidence"_qs, sample.sustainedEvidence},
+            {u"sustainedAuthority"_qs, sample.sustainedAuthority},
+            {u"motionUrgency"_qs, sample.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, sample.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, sample.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, sample.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, sample.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, sample.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, sample.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, sample.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, sample.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, sample.reacquisitionAuthority},
             {u"state"_qs, adaptiveMotionStateLabel(static_cast<AdaptiveMotionState>(sample.motionState))}});
     }
     return result;
@@ -6480,6 +6712,21 @@ void AppBackend::sampleAdaptiveResponseHistory()
     sample.lead = runtime.adaptiveLead[index].load();
     sample.confidence = runtime.adaptiveConfidence[index].load();
     sample.motionIntensity = runtime.adaptiveMotionIntensity[index].load();
+    sample.velocityAuthority = runtime.adaptiveVelocityAuthority[index].load();
+    sample.accelerationIntent = runtime.adaptiveAccelerationIntent[index].load();
+    sample.onsetAuthority = runtime.adaptiveOnsetAuthority[index].load();
+    sample.sustainedEvidence = runtime.adaptiveSustainedEvidence[index].load();
+    sample.sustainedAuthority = runtime.adaptiveSustainedAuthority[index].load();
+    sample.motionUrgency = runtime.adaptiveMotionUrgency[index].load();
+    sample.horizonExtensionEligibility = runtime.adaptiveHorizonExtensionEligibility[index].load();
+    sample.normalMaximumHorizonSeconds = runtime.adaptiveNormalMaximumHorizonSeconds[index].load();
+    sample.allowedMaximumHorizonSeconds = runtime.adaptiveAllowedMaximumHorizonSeconds[index].load();
+    sample.turningPointConfidence = runtime.adaptiveTurningPointConfidence[index].load();
+    sample.estimatedTimeToTurnSeconds = runtime.adaptiveEstimatedTimeToTurnSeconds[index].load();
+    sample.estimatedRemainingTravel = runtime.adaptiveEstimatedRemainingTravel[index].load();
+    sample.turningPointHorizonLimitSeconds = runtime.adaptiveTurningPointHorizonLimitSeconds[index].load();
+    sample.turningPointLeadLimit = runtime.adaptiveTurningPointLeadLimit[index].load();
+    sample.reacquisitionAuthority = runtime.adaptiveReacquisitionAuthority[index].load();
     sample.motionState = runtime.adaptiveMotionState[index].load();
     m_adaptiveResponseHistoryNext = (m_adaptiveResponseHistoryNext + 1)
         % static_cast<int>(m_adaptiveResponseHistory.size());

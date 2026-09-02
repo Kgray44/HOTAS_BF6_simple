@@ -59,6 +59,14 @@ void copyAdaptiveResponseProperty(AdaptiveResponseSettings &target,
     case AdaptiveResponseDecelerationResponse: target.decelerationResponse = source.decelerationResponse; break;
     case AdaptiveResponseSettlingResponse: target.settlingResponse = source.settlingResponse; break;
     case AdaptiveResponseEndpointTaper: target.endpointTaper = source.endpointTaper; break;
+    case AdaptiveResponseOnsetAssist: target.onsetAssist = source.onsetAssist; break;
+    case AdaptiveResponseOnsetCap: target.onsetCap = source.onsetCap; break;
+    case AdaptiveResponseSustainedAssist: target.sustainedAssist = source.sustainedAssist; break;
+    case AdaptiveResponseSustainedCap: target.sustainedCap = source.sustainedCap; break;
+    case AdaptiveResponseHorizonExtension: target.horizonExtension = source.horizonExtension; break;
+    case AdaptiveResponseHorizonExtensionCap: target.horizonExtensionCapMs = source.horizonExtensionCapMs; break;
+    case AdaptiveResponseTurningPointProtection: target.turningPointProtection = source.turningPointProtection; break;
+    case AdaptiveResponseTurningPointMargin: target.turningPointMargin = source.turningPointMargin; break;
     }
 }
 

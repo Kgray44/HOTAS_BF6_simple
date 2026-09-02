@@ -334,7 +334,8 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
             return failPresentationLifecycleTest(QStringLiteral("Human-Like Rapid Reversal lacks its stationary settling tail"));
         }
     }
-    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive")}) {
+    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"),
+         QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), backend.activeProfileId(), 0, preset)) {
             return failPresentationLifecycleTest(QStringLiteral("Built-in Adaptive Response preset %1 was unavailable").arg(preset));
         }
@@ -385,12 +386,16 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         configuration.enabled = preset != QStringLiteral("off");
         configuration.model = hotas::AdaptiveResponseModel::Auto;
         configuration.maximumLead = preset == QStringLiteral("extreme") ? 0.40F
+            : preset == QStringLiteral("aggressive") ? 0.27F
             : preset == QStringLiteral("fast") ? 0.18F : 0.12F;
         configuration.maximumHorizonSeconds = preset == QStringLiteral("extreme") ? 0.030F
+            : preset == QStringLiteral("aggressive") ? 0.018F
             : preset == QStringLiteral("fast") ? 0.012F : 0.008F;
         configuration.velocityResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.91F
             : preset == QStringLiteral("fast") ? 0.80F : 0.72F;
         configuration.accelerationResponse = preset == QStringLiteral("extreme") ? 0.95F
+            : preset == QStringLiteral("aggressive") ? 0.82F
             : preset == QStringLiteral("fast") ? 0.68F : 0.58F;
         configuration.motionSensitivity = 0.035F;
         configuration.noiseRejection = 0.012F;
@@ -399,6 +404,30 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         configuration.decelerationResponse = 0.85F;
         configuration.settlingResponse = 0.92F;
         configuration.endpointTaper = 0.16F;
+        configuration.onsetAssist = preset == QStringLiteral("extreme") ? 0.50F
+            : preset == QStringLiteral("aggressive") ? 0.38F
+            : preset == QStringLiteral("fast") ? 0.28F : 0.0F;
+        configuration.onsetCap = preset == QStringLiteral("extreme") ? 0.30F
+            : preset == QStringLiteral("aggressive") ? 0.22F
+            : preset == QStringLiteral("fast") ? 0.16F : 0.0F;
+        configuration.sustainedAssist = preset == QStringLiteral("extreme") ? 0.55F
+            : preset == QStringLiteral("aggressive") ? 0.42F
+            : preset == QStringLiteral("fast") ? 0.32F : 0.0F;
+        configuration.sustainedCap = preset == QStringLiteral("extreme") ? 0.28F
+            : preset == QStringLiteral("aggressive") ? 0.20F
+            : preset == QStringLiteral("fast") ? 0.15F : 0.0F;
+        configuration.horizonExtension = preset == QStringLiteral("extreme") ? 0.65F
+            : preset == QStringLiteral("aggressive") ? 0.48F
+            : preset == QStringLiteral("fast") ? 0.35F : 0.0F;
+        configuration.horizonExtensionCapSeconds = preset == QStringLiteral("extreme") ? 0.024F
+            : preset == QStringLiteral("aggressive") ? 0.018F
+            : preset == QStringLiteral("fast") ? 0.012F : 0.0F;
+        configuration.turningPointProtection = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.94F
+            : preset == QStringLiteral("fast") ? 0.88F : 0.0F;
+        configuration.turningPointMargin = preset == QStringLiteral("extreme") ? 0.08F
+            : preset == QStringLiteral("aggressive") ? 0.10F
+            : preset == QStringLiteral("fast") ? 0.12F : 0.0F;
         return configuration;
     };
     const auto verifyProductionPredictor = [&](const QString &preset) {
@@ -429,6 +458,20 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
                 || !equal(direct[index].telemetry.lead, sample, QStringLiteral("lead"))
                 || !equal(direct[index].telemetry.activeHorizonSeconds * 1000.0F, sample, QStringLiteral("horizonMs"))
                 || !equal(direct[index].telemetry.confidence, sample, QStringLiteral("confidence"))
+                || !equal(direct[index].telemetry.accelerationIntent, sample, QStringLiteral("accelerationIntent"))
+                || !equal(direct[index].telemetry.onsetAuthority, sample, QStringLiteral("onsetAuthority"))
+                || !equal(direct[index].telemetry.sustainedEvidence, sample, QStringLiteral("sustainedEvidence"))
+                || !equal(direct[index].telemetry.sustainedAuthority, sample, QStringLiteral("sustainedAuthority"))
+                || !equal(direct[index].telemetry.motionUrgency, sample, QStringLiteral("motionUrgency"))
+                || !equal(direct[index].telemetry.horizonExtensionEligibility, sample, QStringLiteral("horizonExtensionEligibility"))
+                || !equal(direct[index].telemetry.normalMaximumHorizonSeconds * 1000.0F, sample, QStringLiteral("normalMaximumHorizonMs"))
+                || !equal(direct[index].telemetry.allowedMaximumHorizonSeconds * 1000.0F, sample, QStringLiteral("allowedMaximumHorizonMs"))
+                || !equal(direct[index].telemetry.turningPointConfidence, sample, QStringLiteral("turningPointConfidence"))
+                || !equal(direct[index].telemetry.estimatedTimeToTurnSeconds * 1000.0F, sample, QStringLiteral("estimatedTimeToTurnMs"))
+                || !equal(direct[index].telemetry.estimatedRemainingTravel, sample, QStringLiteral("estimatedRemainingTravel"))
+                || !equal(direct[index].telemetry.turningPointHorizonLimitSeconds * 1000.0F, sample, QStringLiteral("turningPointHorizonLimitMs"))
+                || !equal(direct[index].telemetry.turningPointLeadLimit, sample, QStringLiteral("turningPointLeadLimit"))
+                || !equal(direct[index].telemetry.reacquisitionAuthority, sample, QStringLiteral("reacquisitionAuthority"))
                 || hotas::adaptiveMotionStateLabel(direct[index].telemetry.state)
                     != sample.value(QStringLiteral("state")).toString()) {
                 return failPresentationLifecycleTest(QStringLiteral("Preview diverged from AdaptiveResponseProcessor for %1 at sample %2")
@@ -437,14 +480,17 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         }
         return true;
     };
-    for (const QString &preset : {QStringLiteral("off"), QStringLiteral("fast"), QStringLiteral("extreme")}) {
+    for (const QString &preset : {QStringLiteral("off"), QStringLiteral("fast"),
+         QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         if (!verifyProductionPredictor(preset)) return false;
     }
     for (const QString &scenario : {QStringLiteral("Human-Like Rapid Reversal"),
          QStringLiteral("Instant Reversal Torture"), QStringLiteral("Positive-Side Reversal"),
          QStringLiteral("Negative-Side Reversal"), QStringLiteral("Center-Crossing Reversal"),
          QStringLiteral("Micro Adjustments"), QStringLiteral("Sudden Stop"),
-         QStringLiteral("Center Fighting"), QStringLiteral("Fast Sweep")}) {
+         QStringLiteral("Center Fighting"), QStringLiteral("Fast Sweep"),
+         QStringLiteral("Slow Coherent Waggle"), QStringLiteral("Slow One-Way Sweep"),
+         QStringLiteral("Small Slow Correction"), QStringLiteral("Extreme Turning-Point Torture")}) {
         const QVariantList samples = backend.adaptiveResponsePreviewAtContext(
             scenario, QStringLiteral("profile"), profileId, axis);
         const QVariantMap metrics = backend.adaptiveResponseTestLabAtContext(

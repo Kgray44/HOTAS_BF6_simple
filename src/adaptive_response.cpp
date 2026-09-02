@@ -23,13 +23,11 @@ constexpr float kSourceSpeedDecayRatio = 0.015F;
 constexpr float kSourceBrakingCoherence = 0.62F;
 #endif
 
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
 float smootherstep(float lower, float upper, float value)
 {
     const float normalized = std::clamp((value - lower) / std::max(0.000001F, upper - lower), 0.0F, 1.0F);
     return normalized * normalized * normalized * (normalized * (normalized * 6.0F - 15.0F) + 10.0F);
 }
-#endif
 
 int directionOf(float value, float threshold = 0.0F)
 {
@@ -57,6 +55,14 @@ void applyProperties(AdaptiveResponseSettings &target, const AdaptiveResponseSet
     const auto deceleration = static_cast<std::uint32_t>(AdaptiveResponseDecelerationResponse);
     const auto settling = static_cast<std::uint32_t>(AdaptiveResponseSettlingResponse);
     const auto endpoint = static_cast<std::uint32_t>(AdaptiveResponseEndpointTaper);
+    const auto onsetAssist = static_cast<std::uint32_t>(AdaptiveResponseOnsetAssist);
+    const auto onsetCap = static_cast<std::uint32_t>(AdaptiveResponseOnsetCap);
+    const auto sustainedAssist = static_cast<std::uint32_t>(AdaptiveResponseSustainedAssist);
+    const auto sustainedCap = static_cast<std::uint32_t>(AdaptiveResponseSustainedCap);
+    const auto horizonExtension = static_cast<std::uint32_t>(AdaptiveResponseHorizonExtension);
+    const auto horizonExtensionCap = static_cast<std::uint32_t>(AdaptiveResponseHorizonExtensionCap);
+    const auto turningPointProtection = static_cast<std::uint32_t>(AdaptiveResponseTurningPointProtection);
+    const auto turningPointMargin = static_cast<std::uint32_t>(AdaptiveResponseTurningPointMargin);
     if (properties & enabled) target.enabled = source.enabled;
     if (properties & model) target.model = source.model;
     if (properties & horizon) target.maximumHorizonMs = source.maximumHorizonMs;
@@ -70,6 +76,14 @@ void applyProperties(AdaptiveResponseSettings &target, const AdaptiveResponseSet
     if (properties & deceleration) target.decelerationResponse = source.decelerationResponse;
     if (properties & settling) target.settlingResponse = source.settlingResponse;
     if (properties & endpoint) target.endpointTaper = source.endpointTaper;
+    if (properties & onsetAssist) target.onsetAssist = source.onsetAssist;
+    if (properties & onsetCap) target.onsetCap = source.onsetCap;
+    if (properties & sustainedAssist) target.sustainedAssist = source.sustainedAssist;
+    if (properties & sustainedCap) target.sustainedCap = source.sustainedCap;
+    if (properties & horizonExtension) target.horizonExtension = source.horizonExtension;
+    if (properties & horizonExtensionCap) target.horizonExtensionCapMs = source.horizonExtensionCapMs;
+    if (properties & turningPointProtection) target.turningPointProtection = source.turningPointProtection;
+    if (properties & turningPointMargin) target.turningPointMargin = source.turningPointMargin;
 }
 
 AdaptiveResponseAxisOverride completeOverride(const AdaptiveResponseSettings &settings)
@@ -172,6 +186,14 @@ AdaptiveResponseSettings sanitizedAdaptiveResponseSettings(AdaptiveResponseSetti
     settings.decelerationResponse = clampFinite(settings.decelerationResponse, 0.0F, 1.0F, 0.85F);
     settings.settlingResponse = clampFinite(settings.settlingResponse, 0.0F, 1.0F, 0.92F);
     settings.endpointTaper = clampFinite(settings.endpointTaper, 0.01F, 1.0F, 0.16F);
+    settings.onsetAssist = clampFinite(settings.onsetAssist, 0.0F, 1.0F, 0.0F);
+    settings.onsetCap = clampFinite(settings.onsetCap, 0.0F, 0.40F, 0.0F);
+    settings.sustainedAssist = clampFinite(settings.sustainedAssist, 0.0F, 1.0F, 0.0F);
+    settings.sustainedCap = clampFinite(settings.sustainedCap, 0.0F, 0.35F, 0.0F);
+    settings.horizonExtension = clampFinite(settings.horizonExtension, 0.0F, 1.0F, 0.0F);
+    settings.horizonExtensionCapMs = clampFinite(settings.horizonExtensionCapMs, 0.0F, 30.0F, 0.0F);
+    settings.turningPointProtection = clampFinite(settings.turningPointProtection, 0.0F, 1.0F, 0.0F);
+    settings.turningPointMargin = clampFinite(settings.turningPointMargin, 0.0F, 0.30F, 0.0F);
     return settings;
 }
 
@@ -190,17 +212,37 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         AdaptiveResponseSettings light;
         light.enabled = true; light.maximumHorizonMs = 4.0F; light.maximumLead = 0.055F;
         light.velocityResponse = 0.56F; light.accelerationResponse = 0.35F;
+        light.onsetAssist = 0.10F; light.onsetCap = 0.06F;
+        light.sustainedAssist = 0.12F; light.sustainedCap = 0.06F;
+        light.horizonExtension = 0.10F; light.horizonExtensionCapMs = 4.0F;
+        light.turningPointProtection = 0.75F; light.turningPointMargin = 0.15F;
         AdaptiveResponseSettings balanced;
         balanced.enabled = true; balanced.maximumHorizonMs = 8.0F; balanced.maximumLead = 0.12F;
+        balanced.onsetAssist = 0.18F; balanced.onsetCap = 0.10F;
+        balanced.sustainedAssist = 0.22F; balanced.sustainedCap = 0.10F;
+        balanced.horizonExtension = 0.22F; balanced.horizonExtensionCapMs = 8.0F;
+        balanced.turningPointProtection = 0.82F; balanced.turningPointMargin = 0.14F;
         AdaptiveResponseSettings fast = balanced;
         fast.maximumHorizonMs = 12.0F; fast.maximumLead = 0.18F;
         fast.velocityResponse = 0.80F; fast.accelerationResponse = 0.68F;
+        fast.onsetAssist = 0.28F; fast.onsetCap = 0.16F;
+        fast.sustainedAssist = 0.32F; fast.sustainedCap = 0.15F;
+        fast.horizonExtension = 0.35F; fast.horizonExtensionCapMs = 12.0F;
+        fast.turningPointProtection = 0.88F; fast.turningPointMargin = 0.12F;
         AdaptiveResponseSettings aggressive = fast;
         aggressive.maximumHorizonMs = 18.0F; aggressive.maximumLead = 0.27F;
         aggressive.velocityResponse = 0.91F; aggressive.accelerationResponse = 0.82F;
+        aggressive.onsetAssist = 0.38F; aggressive.onsetCap = 0.22F;
+        aggressive.sustainedAssist = 0.42F; aggressive.sustainedCap = 0.20F;
+        aggressive.horizonExtension = 0.48F; aggressive.horizonExtensionCapMs = 18.0F;
+        aggressive.turningPointProtection = 0.94F; aggressive.turningPointMargin = 0.10F;
         AdaptiveResponseSettings extreme = aggressive;
         extreme.maximumHorizonMs = 30.0F; extreme.maximumLead = 0.40F;
         extreme.velocityResponse = 1.0F; extreme.accelerationResponse = 0.95F;
+        extreme.onsetAssist = 0.50F; extreme.onsetCap = 0.30F;
+        extreme.sustainedAssist = 0.55F; extreme.sustainedCap = 0.28F;
+        extreme.horizonExtension = 0.65F; extreme.horizonExtensionCapMs = 24.0F;
+        extreme.turningPointProtection = 1.0F; extreme.turningPointMargin = 0.08F;
         return std::array<AdaptiveResponsePreset, 6>{
             makeBuiltInPreset(u"off"_qs, u"Off"_qs, u"Direct physical response with no prediction."_qs, off),
             makeBuiltInPreset(u"light"_qs, u"Light"_qs, u"Subtle, low-lead movement anticipation."_qs, light),
@@ -251,6 +293,14 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     runtime.decelerationResponse = settings.decelerationResponse;
     runtime.settlingResponse = settings.settlingResponse;
     runtime.endpointTaper = settings.endpointTaper;
+    runtime.onsetAssist = settings.onsetAssist;
+    runtime.onsetCap = settings.onsetCap;
+    runtime.sustainedAssist = settings.sustainedAssist;
+    runtime.sustainedCap = settings.sustainedCap;
+    runtime.horizonExtension = settings.horizonExtension;
+    runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
+    runtime.turningPointProtection = settings.turningPointProtection;
+    runtime.turningPointMargin = settings.turningPointMargin;
     const AxisMapping &mapping = profile.axes[static_cast<size_t>(std::clamp(axis, 0, kPhysicalAxisCount - 1))];
     runtime.domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
     runtime.domainMaximum = 1.0F;
@@ -275,6 +325,14 @@ RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     settings.decelerationResponse = base.decelerationResponse;
     settings.settlingResponse = base.settlingResponse;
     settings.endpointTaper = base.endpointTaper;
+    settings.onsetAssist = base.onsetAssist;
+    settings.onsetCap = base.onsetCap;
+    settings.sustainedAssist = base.sustainedAssist;
+    settings.sustainedCap = base.sustainedCap;
+    settings.horizonExtension = base.horizonExtension;
+    settings.horizonExtensionCapMs = base.horizonExtensionCapSeconds * 1000.0F;
+    settings.turningPointProtection = base.turningPointProtection;
+    settings.turningPointMargin = base.turningPointMargin;
     applyProperties(settings, override.settings, override.properties);
     settings = sanitizedAdaptiveResponseSettings(settings);
     base.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
@@ -290,6 +348,14 @@ RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     base.decelerationResponse = settings.decelerationResponse;
     base.settlingResponse = settings.settlingResponse;
     base.endpointTaper = settings.endpointTaper;
+    base.onsetAssist = settings.onsetAssist;
+    base.onsetCap = settings.onsetCap;
+    base.sustainedAssist = settings.sustainedAssist;
+    base.sustainedCap = settings.sustainedCap;
+    base.horizonExtension = settings.horizonExtension;
+    base.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
+    base.turningPointProtection = settings.turningPointProtection;
+    base.turningPointMargin = settings.turningPointMargin;
     return base;
 }
 
@@ -327,6 +393,9 @@ void AdaptiveResponseProcessor::reset()
 #endif
     m_oppositeEvidenceCount = 0;
     m_motionDirection = 0;
+    m_reacquisitionAuthority = 1.0F;
+    m_onsetAuthority = 0.0F;
+    m_sustainedEvidence = 0.0F;
     m_lastTimestamp = {};
     m_lastMeaningfulTimestamp = {};
     m_lastSourceTimestamp = {};
@@ -603,6 +672,10 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_acceleration = 0.0F;
         m_motionDirection = directionOf(m_velocity, velocityThreshold);
         m_softReversalMotion = 0.0F;
+        // A credible opposite sample has already zeroed stale old-direction
+        // lead. Start only the new direction's predictive authority from a
+        // bounded low value, rather than making the reset boundary a jump.
+        m_reacquisitionAuthority = 0.0F;
 #if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
         // A confirmed new direction owns a new braking envelope. The old one
         // has already cancelled stale lead safely and must not delay the
@@ -664,11 +737,19 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     m_velocity = std::clamp(m_velocity, -kMaximumEstimatedVelocity, kMaximumEstimatedVelocity);
     m_acceleration = std::clamp(m_acceleration, -kMaximumEstimatedAcceleration,
                                 kMaximumEstimatedAcceleration);
+    // Ordinary coherent motion owns a direction too. This is deliberately
+    // updated after estimator correction so source-braking and sustained
+    // evidence use the last trusted direction rather than a raw jitter sign.
+    if (!reversal && trustedMeasurement) {
+        const int trustedDirection = directionOf(m_velocity, velocityThreshold);
+        if (trustedDirection != 0) m_motionDirection = trustedDirection;
+    }
     if (confirmedQuiet) {
         m_velocity = 0.0F;
         m_acceleration = 0.0F;
         m_estimatedPosition = physical;
         m_motionDirection = 0;
+        m_reacquisitionAuthority = 1.0F;
     }
     const float speed = std::abs(m_velocity);
     const bool decelerating = !reversal && (m_velocity * priorVelocity > 0.0F)
@@ -688,8 +769,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_acceleration = 0.0F;
         confidence = 0.0F;
     }
-    float horizon = configuration.maximumHorizonSeconds * intensity * confidence;
-    if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
 #if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     // The envelope is a time-normalized first-order response. Its stored
     // value applies continuously, even when an instantaneous detector flickers
@@ -699,15 +778,197 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float brakingAlpha = dt / (brakingTau + dt);
     m_brakingReductionFactor += (m_brakingReductionTarget - m_brakingReductionFactor) * brakingAlpha;
     m_brakingReductionFactor = std::clamp(m_brakingReductionFactor, 0.0F, 1.0F);
+#endif
+    const bool braking = decelerating
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+        || m_brakingReductionTarget > 0.0001F || m_brakingReductionFactor > 0.0001F
+#endif
+        ;
+    // The authority pipeline has three bounded inputs. Velocity owns normal
+    // fast motion; onset helps only while a coherent motion is gaining speed;
+    // sustained evidence can fill what remains for deliberate slow/moderate
+    // motion. None of these are output smoothing or extra axis gain.
+    // Normalize acceleration evidence to the configured deliberate-motion
+    // scale. The band is deliberately low enough for a small fast correction,
+    // while coherence and direction gates still reject derivative noise.
+    const float accelerationLow = std::max(0.10F, configuration.motionSensitivity * 20.0F);
+    const float accelerationHigh = std::max(accelerationLow * 3.0F,
+                                            configuration.motionSensitivity * 120.0F);
+    const float rawAccelerationIntent = smootherstep(accelerationLow, accelerationHigh,
+        std::abs(m_acceleration));
+    const int accelerationDirection = directionOf(m_acceleration, accelerationLow * 0.25F);
+    const int velocityDirection = directionOf(m_velocity, velocityThreshold * 0.25F);
+    const int trendDirectionForOnset = directionOf(trendVelocity, velocityThreshold * 0.25F);
+    const int intendedDirection = velocityDirection != 0 ? velocityDirection : trendDirectionForOnset;
+    const bool accelerationAligned = accelerationDirection != 0 && intendedDirection != 0
+        && accelerationDirection == intendedDirection;
+    const bool onsetValid = meaningfulMeasurement && coherence >= 0.70F && accelerationAligned
+        && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
+        && m_reacquisitionAuthority >= 0.999F;
+    const float accelerationIntent = onsetValid
+        ? rawAccelerationIntent * configuration.accelerationResponse : 0.0F;
+    const float onsetTarget = accelerationIntent * configuration.onsetAssist * configuration.onsetCap
+        * coherence;
+    // This is a predictor-authority envelope, not an axis/output filter. It
+    // removes the last discrete eligibility knee while keeping braking and
+    // reversal shutdown immediate and safety-first.
+    if (!onsetValid) {
+        m_onsetAuthority = 0.0F;
+    } else {
+        constexpr float kOnsetAuthorityTauSeconds = 0.010F;
+        const float onsetAlpha = dt / (kOnsetAuthorityTauSeconds + dt);
+        m_onsetAuthority += (onsetTarget - m_onsetAuthority) * onsetAlpha;
+        m_onsetAuthority = std::clamp(m_onsetAuthority, 0.0F, 0.40F);
+    }
+    const float onsetAuthority = m_onsetAuthority;
+
+    const bool sameDirection = rawDirection != 0 && m_motionDirection != 0
+        && rawDirection == m_motionDirection;
+    const bool sustainedEligible = sourceUpdated && meaningfulMeasurement && sameDirection
+        && coherence >= 0.82F && speed > microCutoff * 0.65F
+        && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
+        && m_reacquisitionAuthority >= 0.999F;
+    if (safetyCancellation || reversal || confirmedQuiet) {
+        // A completed quiet, an ambiguous turn, or coherent braking must never
+        // carry slow-motion authority into an invalid old direction.
+        m_sustainedEvidence = 0.0F;
+    } else if (braking || settling) {
+        constexpr float kSustainedBrakeReleaseTauSeconds = 0.040F;
+        const float releaseAlpha = dt / (kSustainedBrakeReleaseTauSeconds + dt);
+        m_sustainedEvidence += (0.0F - m_sustainedEvidence) * releaseAlpha;
+    } else if (sustainedEligible) {
+        constexpr float kSustainedEvidenceTauSeconds = 0.080F;
+        const float sustainedAlpha = dt / (kSustainedEvidenceTauSeconds + dt);
+        m_sustainedEvidence += (1.0F - m_sustainedEvidence) * sustainedAlpha;
+    } else if (!sourceUpdated || coherence < 0.82F || !sameDirection) {
+        constexpr float kSustainedReleaseTauSeconds = 0.040F;
+        const float releaseAlpha = dt / (kSustainedReleaseTauSeconds + dt);
+        m_sustainedEvidence += (0.0F - m_sustainedEvidence) * releaseAlpha;
+    }
+    m_sustainedEvidence = std::clamp(m_sustainedEvidence, 0.0F, 1.0F);
+    // Moderate deliberate travel has not exhausted velocity authority yet.
+    // Preserve that room for sustained fill; genuinely fast motion still
+    // reaches zero assistance as intensity approaches one.
+    const float slowModerateAuthority = 1.0F - smootherstep(0.78F, 0.98F, intensity);
+    const float sustainedAuthority = (!braking && !settling) ? m_sustainedEvidence * coherence
+        * slowModerateAuthority * configuration.sustainedAssist * configuration.sustainedCap : 0.0F;
+    const float velocityAuthority = intensity;
+    const float motionUrgency = std::clamp(1.0F - (1.0F - velocityAuthority)
+        * (1.0F - std::clamp(onsetAuthority, 0.0F, 1.0F))
+        * (1.0F - std::clamp(sustainedAuthority, 0.0F, 1.0F)), 0.0F, 1.0F);
+
+    // Horizon extension is intentionally a separate eligibility from motion
+    // authority. It cannot grow from repeated sample-and-hold values: only
+    // real source updates build sustained evidence, and any braking/turning
+    // path collapses the eligibility immediately.
+    const float lowSpeedForExtension = 1.0F - smootherstep(0.65F, 0.98F, intensity);
+    // Estimator acceleration is intentionally responsive. Treat only a much
+    // larger sustained derivative as trajectory-dynamic here; otherwise a
+    // smooth low-speed sweep would be rejected simply because it began with
+    // finite jerk.
+    const float lowAccelerationForExtension = 1.0F - smootherstep(
+        accelerationHigh, accelerationHigh * 6.0F, std::abs(m_acceleration));
+    const float highCoherenceForExtension = smootherstep(0.80F, 0.98F, coherence);
+    const float horizonExtensionEligibility = (!braking && !settling && !safetyCancellation
+        && !reversal && !confirmedQuiet && m_reacquisitionAuthority >= 0.999F)
+        ? std::clamp(m_sustainedEvidence * lowSpeedForExtension * lowAccelerationForExtension
+            * highCoherenceForExtension * holdConfidence * configuration.horizonExtension, 0.0F, 1.0F)
+        : 0.0F;
+    const float normalMaximumHorizon = std::clamp(configuration.maximumHorizonSeconds, 0.0F, 0.030F);
+    const float allowedMaximumHorizon = std::min(0.060F, normalMaximumHorizon
+        + horizonExtensionEligibility * std::clamp(configuration.horizonExtensionCapSeconds, 0.0F, 0.030F));
+
+    // Strong, coherent reversals regain their justified new-direction lead in
+    // 8–16 ms. This touches only prediction authority, never input/mapping.
+    const float reacquisitionTau = 0.016F - 0.008F * coherence * configuration.reversalResponse;
+    const float reacquisitionAlpha = dt / (std::max(0.008F, reacquisitionTau) + dt);
+    m_reacquisitionAuthority += (1.0F - m_reacquisitionAuthority) * reacquisitionAlpha;
+    m_reacquisitionAuthority = std::clamp(m_reacquisitionAuthority, 0.0F, 1.0F);
+    float horizon = allowedMaximumHorizon * motionUrgency * confidence
+        * m_reacquisitionAuthority;
+    if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     if (m_brakingReductionFactor > 0.0001F) horizon *= 1.0F - m_brakingReductionFactor;
 #endif
     if (safetyCancellation) horizon = 0.0F;
+
+    // The source-speed-decay envelope is stronger evidence than a raw ABG
+    // derivative near a real turn. Derive a conservative stop time from the
+    // same accepted-source state, then use estimator deceleration only when
+    // it agrees. This is scalar state only and remains rate-normalized.
+    float sourceBrakingEvidence = 0.0F;
+    float sourceTimeToTurnSeconds = 0.0F;
+    float sourceRemainingTravel = 0.0F;
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+    if (m_sourceDecayEvidence >= 2 && m_brakingReductionFactor > 0.0001F
+        && m_acceptedSourceDirection != 0 && m_acceptedSourceDirection == m_motionDirection) {
+        const float sourceSpeed = m_lastAcceptedSourceDeltaMagnitude
+            / std::max(m_lastAcceptedSourceInterval, kMinimumPredictionDeltaSeconds);
+        const float evidenceDuration = std::max(m_sourceUpdatePeriodSeconds
+            * static_cast<float>(m_sourceDecayEvidence), kMinimumPredictionDeltaSeconds);
+        const float sourceDeceleration = std::max(0.0F,
+            (m_brakingReferenceSourceSpeed - sourceSpeed) / evidenceDuration);
+        if (sourceSpeed > velocityThreshold && sourceDeceleration > accelerationLow * 0.20F) {
+            sourceTimeToTurnSeconds = std::clamp(sourceSpeed / sourceDeceleration, 0.0F, 0.120F);
+            sourceRemainingTravel = 0.5F * sourceSpeed * sourceTimeToTurnSeconds;
+            // Two coherent accepted source-speed decays are already a strong
+            // directional fact. The envelope then refines how near the stop
+            // is; it must not postpone turn protection until the lead has
+            // already crossed the physical apex.
+            sourceBrakingEvidence = std::clamp((0.70F + 0.30F * m_brakingReductionFactor)
+                * coherence, 0.0F, 1.0F);
+        }
+    }
+#endif
+    const bool accelerationOpposesMotion = m_velocity * m_acceleration
+        < -accelerationLow * std::max(speed, velocityThreshold);
+    const float accelerationTurnConfidence = accelerationOpposesMotion
+        ? smootherstep(accelerationLow, accelerationHigh, std::abs(m_acceleration)) * coherence : 0.0F;
+    const float estimatorTimeToTurnSeconds = accelerationOpposesMotion
+        ? std::clamp(speed / std::max(std::abs(m_acceleration), accelerationLow), 0.0F, 0.120F) : 0.0F;
+    const float estimatorRemainingTravel = accelerationOpposesMotion
+        ? 0.5F * speed * estimatorTimeToTurnSeconds : 0.0F;
+    const float turningPointConfidence = std::clamp(std::max(sourceBrakingEvidence,
+        sourceBrakingEvidence > 0.0F ? accelerationTurnConfidence * sourceBrakingEvidence
+                                     : accelerationTurnConfidence * 0.45F), 0.0F, 1.0F);
+    const float estimatedTimeToTurnSeconds = sourceTimeToTurnSeconds > 0.0F
+        ? sourceTimeToTurnSeconds : estimatorTimeToTurnSeconds;
+    const float estimatedRemainingTravel = sourceRemainingTravel > 0.0F
+        ? sourceRemainingTravel : estimatorRemainingTravel;
+    const float turningPointHorizonLimit = estimatedTimeToTurnSeconds > 0.0F
+        ? std::min(0.060F, estimatedTimeToTurnSeconds
+            * (0.78F + 0.22F * configuration.turningPointMargin)) : 0.0F;
+    const float turningPointLeadLimit = estimatedRemainingTravel > 0.0F
+        ? estimatedRemainingTravel * (1.0F + configuration.turningPointMargin) : 0.0F;
+    // Correctness never falls to zero at the UI's 0% setting; the user may
+    // tune how proactively we constrain a credible turn, not re-enable a
+    // prediction which source braking says cannot occur.
+    const float turnProtection = 0.25F + 0.75F * configuration.turningPointProtection;
+    const float turnBlend = turningPointConfidence * turnProtection;
+    if (turningPointHorizonLimit > 0.0F) {
+        const float limitedHorizon = std::min(horizon, turningPointHorizonLimit);
+        horizon += (limitedHorizon - horizon) * turnBlend;
+    }
+
     float lead = m_velocity * horizon;
     if (configuration.model == AdaptiveResponseModel::AlphaBetaGamma
         || configuration.model == AdaptiveResponseModel::Auto) {
-        lead += 0.5F * m_acceleration * horizon * horizon * configuration.accelerationResponse;
+        // If coherent source braking contradicts an old-direction ABG
+        // acceleration estimate, do not let that stale term add lead. The
+        // telemetry remains the unmodified estimator value for diagnostics.
+        const bool staleAccelerationReinforcesOldDirection = sourceBrakingEvidence > 0.0F
+            && m_velocity * m_acceleration > 0.0F;
+        const float accelerationLeadAuthority = staleAccelerationReinforcesOldDirection
+            ? configuration.accelerationResponse * (1.0F - turnBlend)
+            : configuration.accelerationResponse;
+        lead += 0.5F * m_acceleration * horizon * horizon * accelerationLeadAuthority;
     }
     const float maximumLead = configuration.maximumLead * std::max(0.10F, confidence);
+    if (turningPointLeadLimit > 0.0F) {
+        const float credibleLeadLimit = std::min(maximumLead, turningPointLeadLimit);
+        const float blendedLeadLimit = maximumLead + (credibleLeadLimit - maximumLead) * turnBlend;
+        lead = std::clamp(lead, -blendedLeadLimit, blendedLeadLimit);
+    }
     const float unclampedLead = lead;
     lead = std::clamp(lead, -maximumLead, maximumLead);
     const float headroom = lead >= 0.0F ? configuration.domainMaximum - physical
@@ -727,6 +988,21 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.lead = bounded - physical;
     result.confidence = confidence;
     result.motionIntensity = intensity;
+    result.velocityAuthority = velocityAuthority;
+    result.accelerationIntent = accelerationIntent;
+    result.onsetAuthority = onsetAuthority;
+    result.sustainedEvidence = m_sustainedEvidence;
+    result.sustainedAuthority = sustainedAuthority;
+    result.motionUrgency = motionUrgency;
+    result.horizonExtensionEligibility = horizonExtensionEligibility;
+    result.normalMaximumHorizonSeconds = normalMaximumHorizon;
+    result.allowedMaximumHorizonSeconds = allowedMaximumHorizon;
+    result.turningPointConfidence = turningPointConfidence;
+    result.estimatedTimeToTurnSeconds = estimatedTimeToTurnSeconds;
+    result.estimatedRemainingTravel = estimatedRemainingTravel;
+    result.turningPointHorizonLimitSeconds = turningPointHorizonLimit;
+    result.turningPointLeadLimit = turningPointLeadLimit;
+    result.reacquisitionAuthority = m_reacquisitionAuthority;
     result.motionCoherence = coherence;
     result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
     result.quietDurationSeconds = m_quietDurationSeconds;
@@ -815,6 +1091,34 @@ std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenar
         else if (mode == u"center fighting"_qs) value = minimum + span * 0.5F
             + span * ((index % 24 < 12 ? 1.0F : -1.0F) * 0.22F);
         else if (mode == u"fast sweep"_qs) value = t < 0.28F ? minimum + span * (t / 0.28F) : maximum;
+        else if (mode == u"slow coherent waggle"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float segmentProgress = std::max(0.0F, elapsed - 0.040F) / 0.120F;
+            const int segment = static_cast<int>(segmentProgress);
+            const float local = segmentProgress - static_cast<float>(segment);
+            const float start = segment == 0 ? 0.50F : (segment % 2 == 0 ? 0.26F : 0.74F);
+            const float endpoint = segment % 2 == 0 ? 0.74F : 0.26F;
+            value = minimum + span * (elapsed < 0.040F ? 0.50F
+                : start + (endpoint - start) * smootherstep(0.0F, 1.0F, local));
+        } else if (mode == u"slow one-way sweep"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.560F);
+            value = minimum + span * (elapsed < 0.080F ? 0.18F
+                : elapsed < 0.640F ? 0.18F + 0.64F * progress : 0.82F);
+        } else if (mode == u"small slow correction"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.120F) / 0.360F);
+            value = minimum + span * (elapsed < 0.120F ? 0.50F
+                : elapsed < 0.480F ? 0.50F + 0.018F * progress : 0.518F);
+        } else if (mode == u"extreme turning-point torture"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            if (elapsed < 0.060F) value = minimum + span * 0.12F;
+            else if (elapsed < 0.400F) value = minimum + span * (0.12F + 0.82F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.060F) / 0.340F));
+            else if (elapsed < 0.700F) value = minimum + span * (0.94F - 0.64F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.400F) / 0.300F));
+            else value = minimum + span * 0.30F;
+        }
         physical.push_back(std::clamp(value, minimum, maximum));
     }
     return physical;

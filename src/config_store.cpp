@@ -74,7 +74,13 @@ QJsonObject adaptiveResponseSettingsToJson(const AdaptiveResponseSettings &setti
             {u"reversalDetection"_qs, clean.reversalDetection},
             {u"reversalResponse"_qs, clean.reversalResponse},
             {u"decelerationResponse"_qs, clean.decelerationResponse},
-            {u"settlingResponse"_qs, clean.settlingResponse}, {u"endpointTaper"_qs, clean.endpointTaper}};
+            {u"settlingResponse"_qs, clean.settlingResponse}, {u"endpointTaper"_qs, clean.endpointTaper},
+            {u"onsetAssist"_qs, clean.onsetAssist}, {u"onsetCap"_qs, clean.onsetCap},
+            {u"sustainedAssist"_qs, clean.sustainedAssist}, {u"sustainedCap"_qs, clean.sustainedCap},
+            {u"horizonExtension"_qs, clean.horizonExtension},
+            {u"horizonExtensionCapMs"_qs, clean.horizonExtensionCapMs},
+            {u"turningPointProtection"_qs, clean.turningPointProtection},
+            {u"turningPointMargin"_qs, clean.turningPointMargin}};
 }
 
 bool adaptiveResponseSettingsFromJson(const QJsonObject &json, AdaptiveResponseSettings *settings)
@@ -99,6 +105,16 @@ bool adaptiveResponseSettingsFromJson(const QJsonObject &json, AdaptiveResponseS
     restored.decelerationResponse = static_cast<float>(json.value(u"decelerationResponse"_qs).toDouble(0.85));
     restored.settlingResponse = static_cast<float>(json.value(u"settlingResponse"_qs).toDouble(0.92));
     restored.endpointTaper = static_cast<float>(json.value(u"endpointTaper"_qs).toDouble(0.16));
+    // Missing keys are pre-Onset-Assist configurations; retain their prior
+    // behavior deterministically by disabling the new authority path.
+    restored.onsetAssist = static_cast<float>(json.value(u"onsetAssist"_qs).toDouble(0.0));
+    restored.onsetCap = static_cast<float>(json.value(u"onsetCap"_qs).toDouble(0.0));
+    restored.sustainedAssist = static_cast<float>(json.value(u"sustainedAssist"_qs).toDouble(0.0));
+    restored.sustainedCap = static_cast<float>(json.value(u"sustainedCap"_qs).toDouble(0.0));
+    restored.horizonExtension = static_cast<float>(json.value(u"horizonExtension"_qs).toDouble(0.0));
+    restored.horizonExtensionCapMs = static_cast<float>(json.value(u"horizonExtensionCapMs"_qs).toDouble(0.0));
+    restored.turningPointProtection = static_cast<float>(json.value(u"turningPointProtection"_qs).toDouble(0.0));
+    restored.turningPointMargin = static_cast<float>(json.value(u"turningPointMargin"_qs).toDouble(0.0));
     *settings = sanitizedAdaptiveResponseSettings(restored);
     return true;
 }
