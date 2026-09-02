@@ -5,6 +5,12 @@
 #include <array>
 #include <chrono>
 
+#ifndef HOTAS_SPEED_DECAY_GATE_PROFILE_MODE
+// V2.3.T candidate default. Profiling builds override this with 0, 1, 2,
+// or 3 to isolate the state bookkeeping, detector, and full envelope cost.
+#define HOTAS_SPEED_DECAY_GATE_PROFILE_MODE 3
+#endif
+
 namespace hotas {
 
 enum class AdaptiveMotionState : int {
@@ -31,9 +37,16 @@ struct AdaptiveResponseTelemetry {
     float motionCoherence = 0.0F;
     float sourceUpdatePeriodSeconds = 0.0F;
     float quietDurationSeconds = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
+    float sourceStoppingSeconds = 0.0F;
+    float brakingReductionFactor = 0.0F;
+#endif
     AdaptiveMotionState state = AdaptiveMotionState::Stable;
     bool reversal = false;
     bool safetyLimited = false;
+#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
+    bool sourceBrakingDetected = false;
+#endif
 };
 
 // Runtime-only, allocation-free per-axis estimator state.  The Alpha-Beta
@@ -63,6 +76,23 @@ private:
     float m_quietDurationSeconds = 0.0F;
     float m_holdConfidence = 1.0F;
     float m_softReversalMotion = 0.0F;
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
+    float m_lastAcceptedSourcePhysical = 0.0F;
+    float m_lastAcceptedSourceDeltaMagnitude = 0.0F;
+    float m_lastAcceptedSourceInterval = 0.0F;
+    int m_acceptedSourceDirection = 0;
+#endif
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
+    std::uint8_t m_sourceDecayEvidence = 0;
+#endif
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+    float m_brakingReferenceSourceSpeed = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
+    float m_sourceStoppingSeconds = 0.0F;
+#endif
+    float m_brakingReductionTarget = 0.0F;
+    float m_brakingReductionFactor = 0.0F;
+#endif
     std::uint8_t m_oppositeEvidenceCount = 0;
     int m_motionDirection = 0;
     std::chrono::steady_clock::time_point m_lastTimestamp{};
