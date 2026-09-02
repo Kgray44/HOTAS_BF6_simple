@@ -6,3 +6,6 @@ docs/catalog/*.json text eol=lf
 scripts/sync-documentation.ps1 text eol=lf
 .github/workflows/*.yml text eol=lf
 HOTAS_VERSION text eol=lf
+
+# Physical replay captures are immutable byte-for-byte recorded evidence.
+tests/fixtures/adaptive_response_real_hotas/*.csv -text whitespace=cr-at-eol

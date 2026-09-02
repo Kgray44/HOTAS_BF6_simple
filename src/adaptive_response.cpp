@@ -18,10 +18,8 @@ constexpr float kMaximumSourceUpdatePeriodSeconds = 0.050F;
 constexpr float kBrakingAttackSeconds = 0.024F;
 constexpr float kBrakingReleaseSeconds = 0.032F;
 
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
 constexpr float kSourceSpeedDecayRatio = 0.015F;
 constexpr float kSourceBrakingCoherence = 0.62F;
-#endif
 
 float smootherstep(float lower, float upper, float value)
 {
@@ -374,28 +372,24 @@ void AdaptiveResponseProcessor::reset()
     m_quietDurationSeconds = 0.0F;
     m_holdConfidence = 1.0F;
     m_softReversalMotion = 0.0F;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
     m_lastAcceptedSourcePhysical = 0.0F;
     m_lastAcceptedSourceDeltaMagnitude = 0.0F;
     m_lastAcceptedSourceInterval = 0.0F;
     m_acceptedSourceDirection = 0;
-#endif
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
     m_sourceDecayEvidence = 0;
-#endif
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     m_brakingReferenceSourceSpeed = 0.0F;
-#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
     m_sourceStoppingSeconds = 0.0F;
-#endif
     m_brakingReductionTarget = 0.0F;
     m_brakingReductionFactor = 0.0F;
-#endif
     m_oppositeEvidenceCount = 0;
     m_motionDirection = 0;
     m_reacquisitionAuthority = 1.0F;
     m_onsetAuthority = 0.0F;
     m_sustainedEvidence = 0.0F;
+    m_horizonExtensionAuthority = 0.0F;
+    m_turningPointAuthority = 0.0F;
+    m_turningPointHorizonLimitSeconds = 0.060F;
+    m_turningPointLeadLimit = 0.50F;
     m_lastTimestamp = {};
     m_lastMeaningfulTimestamp = {};
     m_lastSourceTimestamp = {};
@@ -423,9 +417,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_lastPhysical = physical;
         m_lastMeaningfulPhysical = physical;
         m_estimatedPosition = physical;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
         m_lastAcceptedSourcePhysical = physical;
-#endif
         m_lastTimestamp = timestamp;
         m_lastMeaningfulTimestamp = timestamp;
         m_lastSourceTimestamp = timestamp;
@@ -461,16 +453,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         std::chrono::duration<double>(timestamp - m_lastMeaningfulTimestamp).count()),
         kMinimumPredictionDeltaSeconds, kMaximumPredictionDeltaSeconds) : dt;
     const bool sourceUpdated = absoluteDelta >= kMinimumMeaningfulDelta * 0.10F;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
     float acceptedSourceInterval = 0.0F;
-#endif
     if (sourceUpdated) {
         const float sourceInterval = std::clamp(static_cast<float>(
             std::chrono::duration<double>(timestamp - m_lastSourceTimestamp).count()),
             kMinimumPredictionDeltaSeconds, kMaximumSourceUpdatePeriodSeconds);
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
         acceptedSourceInterval = sourceInterval;
-#endif
         m_sourceUpdatePeriodSeconds += (sourceInterval - m_sourceUpdatePeriodSeconds) * 0.45F;
         m_sourceUpdatePeriodSeconds = std::clamp(m_sourceUpdatePeriodSeconds,
             kMinimumPredictionDeltaSeconds, kMaximumSourceUpdatePeriodSeconds);
@@ -531,9 +519,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     }
     const float minimumReversalSpeed = std::max(configuration.reversalDetection,
                                                  configuration.motionSensitivity * 0.50F);
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 1
-    // V2.3.T profiling levels: 1 records accepted-source state; 2 adds the
-    // coherent two-update detector; 3 applies the proven smooth envelope.
+    float sourceSpeedGrowth = 0.0F;
+    bool sourceSpeedGrowingInMotionDirection = false;
+    // Accepted-source speed is a fixed-state physical braking detector. It
+    // requires two coherent decays; individual report jitter cannot create
+    // braking or a turning constraint.
     if (sourceUpdated) {
         const float acceptedSourceDelta = physical - m_lastAcceptedSourcePhysical;
         const float acceptedSourceDeltaMagnitude = std::abs(acceptedSourceDelta);
@@ -543,7 +533,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         // direction and stop evidence that carried us into a turning point.
         const int acceptedSourceDirection = observedSourceDirection == 0
             ? m_acceptedSourceDirection : observedSourceDirection;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
         const float sourceSpeedFloor = minimumReversalSpeed;
         const bool sameDirection = observedSourceDirection != 0 && m_motionDirection != 0
             && acceptedSourceDirection == m_motionDirection
@@ -560,28 +549,26 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         const bool completingConfirmedBrake = sameDirection && coherence >= kSourceBrakingCoherence
             && m_sourceDecayEvidence >= 2 && !sourceSpeedAboveFloor
             && currentScaledSpeed <= priorScaledSpeed;
+        const float acceptedSourceSpeed = acceptedSourceDeltaMagnitude
+            / std::max(acceptedSourceInterval, kMinimumPredictionDeltaSeconds);
+        const float priorAcceptedSourceSpeed = m_lastAcceptedSourceDeltaMagnitude
+            / std::max(m_lastAcceptedSourceInterval, kMinimumPredictionDeltaSeconds);
+        sourceSpeedGrowth = std::max(0.0F, (acceptedSourceSpeed - priorAcceptedSourceSpeed)
+            / std::max(acceptedSourceInterval, kMinimumPredictionDeltaSeconds));
+        sourceSpeedGrowingInMotionDirection = sameDirection && sourceSpeedGrowth > 0.0F;
         if (meaningfulDecay) {
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
-            const float acceptedSourceSpeed = acceptedSourceDeltaMagnitude
-                / std::max(acceptedSourceInterval, kMinimumPredictionDeltaSeconds);
-            const float priorAcceptedSourceSpeed = m_lastAcceptedSourceDeltaMagnitude
-                / std::max(m_lastAcceptedSourceInterval, kMinimumPredictionDeltaSeconds);
             if (m_sourceDecayEvidence == 0) m_brakingReferenceSourceSpeed = priorAcceptedSourceSpeed;
-#endif
             m_sourceDecayEvidence = std::min<std::uint8_t>(4, m_sourceDecayEvidence + 1);
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
             if (m_sourceDecayEvidence >= 2) {
-#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
                 const float sourceSpeedDrop = std::max(0.0F, priorAcceptedSourceSpeed - acceptedSourceSpeed);
                 const float sourceSlope = sourceSpeedDrop / std::max(acceptedSourceInterval,
                                                                        kMinimumPredictionDeltaSeconds);
                 m_sourceStoppingSeconds = std::clamp(acceptedSourceSpeed / std::max(sourceSlope, 0.001F),
                                                      0.0F, 0.75F);
-#endif
                 const float cumulativeDecay = std::clamp((m_brakingReferenceSourceSpeed - acceptedSourceSpeed)
                         / std::max(m_brakingReferenceSourceSpeed, sourceSpeedFloor), 0.0F, 1.0F);
-                const float persistence = m_sourceDecayEvidence == 2 ? 0.50F
-                    : m_sourceDecayEvidence == 3 ? 0.78F : 1.0F;
+                const float persistence = smootherstep(1.0F, 4.0F,
+                    static_cast<float>(m_sourceDecayEvidence));
                 // Reduction follows progress toward the actual physical stop,
                 // not merely the first third of a speed decrease. A 50%
                 // remaining source speed therefore remains a useful, broad
@@ -591,46 +578,31 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                 m_brakingReductionTarget = smootherstep(0.02F, nearStopProgress, cumulativeDecay)
                     * persistence * configuration.decelerationResponse;
             }
-#endif
         } else if (completingConfirmedBrake) {
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
-#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
             m_sourceStoppingSeconds = 0.0F;
-#endif
             m_brakingReductionTarget = configuration.decelerationResponse;
-#endif
         } else if (observedSourceDirection == 0 && m_sourceDecayEvidence >= 2) {
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
             // The source is effectively still at the old-direction stop. Do
             // not create a detector dropout between the last coherent sample
             // and the first credible opposite sample.
             m_brakingReductionTarget = std::max(m_brakingReductionTarget,
                 configuration.decelerationResponse);
-#endif
         } else if (observedSourceDirection != 0 && acceptedSourceDirection != m_motionDirection) {
             // The first opposite report is safety-cancelled below. Retain the
             // stored envelope until the real reversal boundary resets it, so
             // a briefly indeterminate turn cannot reintroduce stale lead.
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
             m_brakingReductionTarget = 0.0F;
-#endif
         } else {
             m_sourceDecayEvidence = 0;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
             m_brakingReferenceSourceSpeed = 0.0F;
-#if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
             m_sourceStoppingSeconds = 0.0F;
-#endif
             m_brakingReductionTarget = 0.0F;
-#endif
         }
-#endif
         m_lastAcceptedSourcePhysical = physical;
         m_lastAcceptedSourceDeltaMagnitude = acceptedSourceDeltaMagnitude;
         m_lastAcceptedSourceInterval = acceptedSourceInterval;
         if (observedSourceDirection != 0) m_acceptedSourceDirection = acceptedSourceDirection;
     }
-#endif
     const float hardReversalDisplacement = std::max(configuration.noiseRejection * 2.0F,
         minimumReversalSpeed * dt * 0.50F);
     const bool hardReversal = oppositeRawDirection && m_oppositeEvidenceCount >= 2
@@ -644,15 +616,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         && trendDirection != m_motionDirection && coherence >= 0.62F
         && m_softReversalMotion >= softReversalThreshold;
     const bool reversal = hardReversal || softReversal;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3 \
-    && defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
     bool sourceBrakingDetected = false;
     if (m_sourceDecayEvidence >= 2 && m_brakingReductionTarget > 0.0F && !reversal
         && coherence >= kSourceBrakingCoherence && m_acceptedSourceDirection != 0
         && m_acceptedSourceDirection == m_motionDirection) {
         sourceBrakingDetected = true;
     }
-#endif
     // One accepted opposite report is enough to cancel stale lead safely, but
     // never enough to reverse the model. That keeps an isolated sensor spike
     // from commanding the wrong direction while the second coherent report
@@ -676,7 +645,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         // lead. Start only the new direction's predictive authority from a
         // bounded low value, rather than making the reset boundary a jump.
         m_reacquisitionAuthority = 0.0F;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
         // A confirmed new direction owns a new braking envelope. The old one
         // has already cancelled stale lead safely and must not delay the
         // opposite-direction acquisition.
@@ -684,7 +652,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_brakingReferenceSourceSpeed = 0.0F;
         m_brakingReductionTarget = 0.0F;
         m_brakingReductionFactor = 0.0F;
-#endif
+        m_onsetAuthority = 0.0F;
+        m_sustainedEvidence = 0.0F;
+        m_horizonExtensionAuthority = 0.0F;
+        m_turningPointAuthority = 0.0F;
+        m_turningPointHorizonLimitSeconds = 0.060F;
+        m_turningPointLeadLimit = 0.50F;
         ++m_reversalCount;
     } else if (trustedMeasurement && configuration.model == AdaptiveResponseModel::Velocity) {
         // Velocity mode deliberately remains a lightweight derivative
@@ -750,6 +723,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_estimatedPosition = physical;
         m_motionDirection = 0;
         m_reacquisitionAuthority = 1.0F;
+        m_onsetAuthority = 0.0F;
+        m_sustainedEvidence = 0.0F;
+        m_horizonExtensionAuthority = 0.0F;
+        m_turningPointAuthority = 0.0F;
+        m_turningPointHorizonLimitSeconds = 0.060F;
+        m_turningPointLeadLimit = 0.50F;
     }
     const float speed = std::abs(m_velocity);
     const bool decelerating = !reversal && (m_velocity * priorVelocity > 0.0F)
@@ -769,7 +748,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_acceleration = 0.0F;
         confidence = 0.0F;
     }
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     // The envelope is a time-normalized first-order response. Its stored
     // value applies continuously, even when an instantaneous detector flickers
     // false between source reports.
@@ -778,11 +756,8 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float brakingAlpha = dt / (brakingTau + dt);
     m_brakingReductionFactor += (m_brakingReductionTarget - m_brakingReductionFactor) * brakingAlpha;
     m_brakingReductionFactor = std::clamp(m_brakingReductionFactor, 0.0F, 1.0F);
-#endif
     const bool braking = decelerating
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
         || m_brakingReductionTarget > 0.0001F || m_brakingReductionFactor > 0.0001F
-#endif
         ;
     // The authority pipeline has three bounded inputs. Velocity owns normal
     // fast motion; onset helps only while a coherent motion is gaining speed;
@@ -802,21 +777,38 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const int intendedDirection = velocityDirection != 0 ? velocityDirection : trendDirectionForOnset;
     const bool accelerationAligned = accelerationDirection != 0 && intendedDirection != 0
         && accelerationDirection == intendedDirection;
-    const bool onsetValid = meaningfulMeasurement && coherence >= 0.70F && accelerationAligned
+    // Launch intent deliberately combines the estimator's acceleration with
+    // independent accepted-source/trend speed growth. A low-lag ABG estimate
+    // may be momentarily stale at launch, but it cannot by itself create
+    // authority without coherent directional motion.
+    const float trendSpeedGrowth = std::max(0.0F, (speed - std::abs(priorVelocity))
+        / std::max(dt, kMinimumPredictionDeltaSeconds));
+    const float sourceLaunchIntent = smootherstep(accelerationLow, accelerationHigh,
+        sourceSpeedGrowingInMotionDirection ? sourceSpeedGrowth : 0.0F);
+    const float trendLaunchIntent = smootherstep(accelerationLow, accelerationHigh,
+        trendSpeedGrowth);
+    const float launchIntent = std::max(rawAccelerationIntent,
+        std::max(sourceLaunchIntent, trendLaunchIntent));
+    const bool launchAligned = accelerationAligned || sourceSpeedGrowingInMotionDirection
+        || (trendSpeedGrowth > accelerationLow && intendedDirection == m_motionDirection);
+    const bool onsetValid = meaningfulMeasurement && coherence >= 0.70F && launchAligned
         && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
-        && m_reacquisitionAuthority >= 0.999F;
+        && m_reacquisitionAuthority > 0.0F;
     const float accelerationIntent = onsetValid
-        ? rawAccelerationIntent * configuration.accelerationResponse : 0.0F;
+        ? launchIntent * configuration.accelerationResponse : 0.0F;
     const float onsetTarget = accelerationIntent * configuration.onsetAssist * configuration.onsetCap
-        * coherence;
+        * coherence * m_reacquisitionAuthority;
     // This is a predictor-authority envelope, not an axis/output filter. It
     // removes the last discrete eligibility knee while keeping braking and
     // reversal shutdown immediate and safety-first.
-    if (!onsetValid) {
+    if (braking || safetyCancellation || reversal || confirmedQuiet) {
         m_onsetAuthority = 0.0F;
     } else {
-        constexpr float kOnsetAuthorityTauSeconds = 0.010F;
-        const float onsetAlpha = dt / (kOnsetAuthorityTauSeconds + dt);
+        constexpr float kOnsetAttackTauSeconds = 0.006F;
+        constexpr float kOnsetReleaseTauSeconds = 0.016F;
+        const float onsetTau = onsetTarget > m_onsetAuthority ? kOnsetAttackTauSeconds
+                                                               : kOnsetReleaseTauSeconds;
+        const float onsetAlpha = dt / (onsetTau + dt);
         m_onsetAuthority += (onsetTarget - m_onsetAuthority) * onsetAlpha;
         m_onsetAuthority = std::clamp(m_onsetAuthority, 0.0F, 0.40F);
     }
@@ -827,7 +819,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const bool sustainedEligible = sourceUpdated && meaningfulMeasurement && sameDirection
         && coherence >= 0.82F && speed > microCutoff * 0.65F
         && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
-        && m_reacquisitionAuthority >= 0.999F;
+        && m_reacquisitionAuthority > 0.0F;
     if (safetyCancellation || reversal || confirmedQuiet) {
         // A completed quiet, an ambiguous turn, or coherent braking must never
         // carry slow-motion authority into an invalid old direction.
@@ -851,7 +843,8 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // reaches zero assistance as intensity approaches one.
     const float slowModerateAuthority = 1.0F - smootherstep(0.78F, 0.98F, intensity);
     const float sustainedAuthority = (!braking && !settling) ? m_sustainedEvidence * coherence
-        * slowModerateAuthority * configuration.sustainedAssist * configuration.sustainedCap : 0.0F;
+        * slowModerateAuthority * configuration.sustainedAssist * configuration.sustainedCap
+        * m_reacquisitionAuthority : 0.0F;
     const float velocityAuthority = intensity;
     const float motionUrgency = std::clamp(1.0F - (1.0F - velocityAuthority)
         * (1.0F - std::clamp(onsetAuthority, 0.0F, 1.0F))
@@ -869,11 +862,28 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float lowAccelerationForExtension = 1.0F - smootherstep(
         accelerationHigh, accelerationHigh * 6.0F, std::abs(m_acceleration));
     const float highCoherenceForExtension = smootherstep(0.80F, 0.98F, coherence);
-    const float horizonExtensionEligibility = (!braking && !settling && !safetyCancellation
-        && !reversal && !confirmedQuiet && m_reacquisitionAuthority >= 0.999F)
+    // Only a fresh physical source change can build extension. The stored
+    // envelope may coast smoothly over an ordinary held report, but repeated
+    // sample-and-hold values cannot manufacture new horizon authority.
+    const float horizonExtensionTarget = (sourceUpdated && !braking && !settling && !safetyCancellation
+        && !reversal && !confirmedQuiet && m_reacquisitionAuthority > 0.0F)
         ? std::clamp(m_sustainedEvidence * lowSpeedForExtension * lowAccelerationForExtension
-            * highCoherenceForExtension * holdConfidence * configuration.horizonExtension, 0.0F, 1.0F)
+            * highCoherenceForExtension * holdConfidence * configuration.horizonExtension
+            * m_reacquisitionAuthority, 0.0F, 1.0F)
         : 0.0F;
+    if (braking || safetyCancellation || reversal || confirmedQuiet) {
+        m_horizonExtensionAuthority = 0.0F;
+    } else {
+        constexpr float kExtensionAttackTauSeconds = 0.045F;
+        constexpr float kExtensionReleaseTauSeconds = 0.020F;
+        const float extensionTau = horizonExtensionTarget > m_horizonExtensionAuthority
+            ? kExtensionAttackTauSeconds : kExtensionReleaseTauSeconds;
+        const float extensionAlpha = dt / (extensionTau + dt);
+        m_horizonExtensionAuthority += (horizonExtensionTarget - m_horizonExtensionAuthority)
+            * extensionAlpha;
+        m_horizonExtensionAuthority = std::clamp(m_horizonExtensionAuthority, 0.0F, 1.0F);
+    }
+    const float horizonExtensionEligibility = m_horizonExtensionAuthority;
     const float normalMaximumHorizon = std::clamp(configuration.maximumHorizonSeconds, 0.0F, 0.030F);
     const float allowedMaximumHorizon = std::min(0.060F, normalMaximumHorizon
         + horizonExtensionEligibility * std::clamp(configuration.horizonExtensionCapSeconds, 0.0F, 0.030F));
@@ -887,9 +897,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     float horizon = allowedMaximumHorizon * motionUrgency * confidence
         * m_reacquisitionAuthority;
     if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     if (m_brakingReductionFactor > 0.0001F) horizon *= 1.0F - m_brakingReductionFactor;
-#endif
     if (safetyCancellation) horizon = 0.0F;
 
     // The source-speed-decay envelope is stronger evidence than a raw ABG
@@ -899,7 +907,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     float sourceBrakingEvidence = 0.0F;
     float sourceTimeToTurnSeconds = 0.0F;
     float sourceRemainingTravel = 0.0F;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
     if (m_sourceDecayEvidence >= 2 && m_brakingReductionFactor > 0.0001F
         && m_acceptedSourceDirection != 0 && m_acceptedSourceDirection == m_motionDirection) {
         const float sourceSpeed = m_lastAcceptedSourceDeltaMagnitude
@@ -919,7 +926,6 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                 * coherence, 0.0F, 1.0F);
         }
     }
-#endif
     const bool accelerationOpposesMotion = m_velocity * m_acceleration
         < -accelerationLow * std::max(speed, velocityThreshold);
     const float accelerationTurnConfidence = accelerationOpposesMotion
@@ -928,18 +934,65 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         ? std::clamp(speed / std::max(std::abs(m_acceleration), accelerationLow), 0.0F, 0.120F) : 0.0F;
     const float estimatorRemainingTravel = accelerationOpposesMotion
         ? 0.5F * speed * estimatorTimeToTurnSeconds : 0.0F;
-    const float turningPointConfidence = std::clamp(std::max(sourceBrakingEvidence,
+    const float rawTurningPointConfidence = std::clamp(std::max(sourceBrakingEvidence,
         sourceBrakingEvidence > 0.0F ? accelerationTurnConfidence * sourceBrakingEvidence
                                      : accelerationTurnConfidence * 0.45F), 0.0F, 1.0F);
     const float estimatedTimeToTurnSeconds = sourceTimeToTurnSeconds > 0.0F
         ? sourceTimeToTurnSeconds : estimatorTimeToTurnSeconds;
     const float estimatedRemainingTravel = sourceRemainingTravel > 0.0F
         ? sourceRemainingTravel : estimatorRemainingTravel;
-    const float turningPointHorizonLimit = estimatedTimeToTurnSeconds > 0.0F
+    const float rawTurningPointHorizonLimit = estimatedTimeToTurnSeconds > 0.0F
         ? std::min(0.060F, estimatedTimeToTurnSeconds
             * (0.78F + 0.22F * configuration.turningPointMargin)) : 0.0F;
-    const float turningPointLeadLimit = estimatedRemainingTravel > 0.0F
+    const float rawTurningPointLeadLimit = estimatedRemainingTravel > 0.0F
         ? estimatedRemainingTravel * (1.0F + configuration.turningPointMargin) : 0.0F;
+    // The estimator may suggest deceleration, but persistent turning
+    // protection requires the same two accepted source-speed decays as the
+    // braking envelope. That prevents a responsive ABG derivative from
+    // constraining normal high-speed travel before physical braking is real.
+    const bool credibleTurningConstraint = sourceBrakingEvidence > 0.0001F
+        && (rawTurningPointHorizonLimit > 0.0F || rawTurningPointLeadLimit > 0.0F);
+    const bool renewedAcceleration = !sourceBrakingDetected
+        && (sourceSpeedGrowingInMotionDirection
+            || m_velocity * m_acceleration > accelerationLow * std::max(speed, velocityThreshold));
+    if (safetyCancellation || reversal || confirmedQuiet) {
+        m_turningPointAuthority = 0.0F;
+        m_turningPointHorizonLimitSeconds = 0.060F;
+        m_turningPointLeadLimit = 0.50F;
+    } else if (credibleTurningConstraint) {
+        // A braking episode only tightens while source/estimator evidence is
+        // credible. It cannot relax because one report happens to be less
+        // pessimistic than its predecessor.
+        constexpr float kTurningConstraintAttackTauSeconds = 0.010F;
+        const float attackAlpha = dt / (kTurningConstraintAttackTauSeconds + dt);
+        if (rawTurningPointConfidence > m_turningPointAuthority) {
+            m_turningPointAuthority += (rawTurningPointConfidence - m_turningPointAuthority) * attackAlpha;
+        }
+        if (rawTurningPointHorizonLimit > 0.0F) {
+            m_turningPointHorizonLimitSeconds += (rawTurningPointHorizonLimit
+                - m_turningPointHorizonLimitSeconds) * attackAlpha;
+        }
+        if (rawTurningPointLeadLimit > 0.0F) {
+            m_turningPointLeadLimit += (rawTurningPointLeadLimit - m_turningPointLeadLimit) * attackAlpha;
+        }
+    } else {
+        const float releaseTau = renewedAcceleration ? 0.012F : 0.055F;
+        const float releaseAlpha = dt / (releaseTau + dt);
+        m_turningPointAuthority += (0.0F - m_turningPointAuthority) * releaseAlpha;
+        m_turningPointHorizonLimitSeconds += (0.060F - m_turningPointHorizonLimitSeconds)
+            * releaseAlpha;
+        m_turningPointLeadLimit += (0.50F - m_turningPointLeadLimit) * releaseAlpha;
+    }
+    m_turningPointAuthority = std::clamp(m_turningPointAuthority, 0.0F, 1.0F);
+    m_turningPointHorizonLimitSeconds = std::clamp(m_turningPointHorizonLimitSeconds, 0.0F, 0.060F);
+    m_turningPointLeadLimit = std::clamp(m_turningPointLeadLimit, 0.0F, 0.50F);
+    const float turningPointConfidence = m_turningPointAuthority;
+    // Confidence is persistent, but the physical stop-distance constraint is
+    // recomputed from the current accepted source state. Retaining an old
+    // minimum after the stick has legitimately continued moving was the
+    // cross-corpus regression this envelope is meant to avoid.
+    const float turningPointHorizonLimit = rawTurningPointHorizonLimit;
+    const float turningPointLeadLimit = rawTurningPointLeadLimit;
     // Correctness never falls to zero at the UI's 0% setting; the user may
     // tune how proactively we constrain a credible turn, not re-enable a
     // prediction which source braking says cannot occur.
@@ -956,11 +1009,13 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         // If coherent source braking contradicts an old-direction ABG
         // acceleration estimate, do not let that stale term add lead. The
         // telemetry remains the unmodified estimator value for diagnostics.
-        const bool staleAccelerationReinforcesOldDirection = sourceBrakingEvidence > 0.0F
-            && m_velocity * m_acceleration > 0.0F;
-        const float accelerationLeadAuthority = staleAccelerationReinforcesOldDirection
-            ? configuration.accelerationResponse * (1.0F - turnBlend)
-            : configuration.accelerationResponse;
+        const float accelerationReinforcement = smootherstep(0.0F,
+            accelerationHigh * std::max(speed, velocityThreshold),
+            std::max(0.0F, m_velocity * m_acceleration));
+        const float staleAccelerationSuppression = std::clamp(sourceBrakingEvidence
+            * turningPointConfidence * accelerationReinforcement, 0.0F, 1.0F);
+        const float accelerationLeadAuthority = configuration.accelerationResponse
+            * (1.0F - staleAccelerationSuppression);
         lead += 0.5F * m_acceleration * horizon * horizon * accelerationLeadAuthority;
     }
     const float maximumLead = configuration.maximumLead * std::max(0.10F, confidence);
@@ -1006,16 +1061,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.motionCoherence = coherence;
     result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
     result.quietDurationSeconds = m_quietDurationSeconds;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3 \
-    && defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
     result.sourceStoppingSeconds = m_sourceStoppingSeconds;
     result.brakingReductionFactor = m_brakingReductionFactor;
-#endif
     result.reversal = reversal;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3 \
-    && defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
+    result.safetyCancelled = safetyCancellation;
     result.sourceBrakingDetected = sourceBrakingDetected;
-#endif
     result.state = reversal ? AdaptiveMotionState::Reversing
         : confirmedQuiet || speed <= velocityThreshold ? AdaptiveMotionState::Stable
         : intensity < 0.16F ? AdaptiveMotionState::Micro
