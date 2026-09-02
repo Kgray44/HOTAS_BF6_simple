@@ -23,6 +23,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <tuple>
 
 using namespace hotas;
 
@@ -147,6 +148,7 @@ private slots:
     void adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike();
     void adaptiveResponseHandlesHardGentleAndRepeatedReversals();
     void adaptiveResponseConvergesEstimatorsAfterStopAndResume();
+    void adaptiveResponseHumanLikeTurningPointShape();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -677,17 +679,23 @@ void MappingCoreTests::adaptiveResponseVelocityAndSettlingControlsChangePredicti
     AdaptiveResponseProcessor looseSettling;
     looseSettling.process(0.0F, configuration, origin);
     looseSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    looseSettling.process(0.32F, configuration, origin + std::chrono::milliseconds(8));
+    looseSettling.process(0.40F, configuration, origin + std::chrono::milliseconds(12));
     const AdaptiveResponseTelemetry loose = looseSettling.process(
-        0.22F, configuration, origin + std::chrono::milliseconds(8));
+        0.44F, configuration, origin + std::chrono::milliseconds(16));
 
     configuration.settlingResponse = 1.0F;
     AdaptiveResponseProcessor tightSettling;
     tightSettling.process(0.0F, configuration, origin);
     tightSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    tightSettling.process(0.32F, configuration, origin + std::chrono::milliseconds(8));
+    tightSettling.process(0.40F, configuration, origin + std::chrono::milliseconds(12));
     const AdaptiveResponseTelemetry tight = tightSettling.process(
-        0.22F, configuration, origin + std::chrono::milliseconds(8));
+        0.44F, configuration, origin + std::chrono::milliseconds(16));
     QVERIFY(tight.activeHorizonSeconds < loose.activeHorizonSeconds);
-    QVERIFY(std::abs(tight.lead) < std::abs(loose.lead));
+    // Stop policy shapes the prediction horizon; it must not rewrite the
+    // estimator's physical-motion state merely to make the graph look quiet.
+    QVERIFY(nearlyEqual(tight.velocity, loose.velocity));
 }
 
 void MappingCoreTests::adaptiveResponseResetClearsSessionMotionState()
@@ -1077,6 +1085,79 @@ void MappingCoreTests::adaptiveResponseConvergesEstimatorsAfterStopAndResume()
             0.34F, configuration, origin + std::chrono::milliseconds(404));
         QVERIFY(resumed.predicted >= resumed.physical - 0.0001F);
         QVERIFY(std::abs(resumed.estimated - resumed.physical) < 0.20F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseHumanLikeTurningPointShape()
+{
+    const std::vector<float> physical = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Human-Like Rapid Reversal"), -1.0F, 1.0F);
+    const auto origin = std::chrono::steady_clock::time_point{};
+    Q_UNUSED(origin);
+    for (const auto &[name, horizon, maximumLead, velocity, acceleration] : {
+             std::tuple<const char *, float, float, float, float>{"Fast", 0.012F, 0.18F, 0.80F, 0.68F},
+             std::tuple<const char *, float, float, float, float>{"Extreme", 0.030F, 0.40F, 1.00F, 0.95F}}) {
+        RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = true;
+        configuration.model = AdaptiveResponseModel::Auto;
+        configuration.maximumHorizonSeconds = horizon;
+        configuration.maximumLead = maximumLead;
+        configuration.velocityResponse = velocity;
+        configuration.accelerationResponse = acceleration;
+        configuration.motionSensitivity = 0.035F;
+        configuration.noiseRejection = 0.012F;
+        configuration.reversalDetection = 0.075F;
+        configuration.reversalResponse = 1.0F;
+        configuration.decelerationResponse = 0.85F;
+        configuration.settlingResponse = 0.92F;
+        configuration.endpointTaper = 0.16F;
+        const AdaptiveResponseSimulation simulated = simulateAdaptiveResponse(configuration, physical, 0.004F);
+        constexpr size_t turn = 85; // 340 ms, authored zero-velocity apex.
+        constexpr size_t finalStop = 150; // 600 ms, authored stationary target.
+        float peakBeforeTurn = 0.0F;
+        float halfSpeedLead = 0.0F;
+        float turningLead = 0.0F;
+        float finalStopLead = 0.0F;
+        float stationaryLead = 0.0F;
+        float maximumStep = 0.0F;
+        size_t reversalSample = simulated.size();
+        for (size_t index = 1; index < simulated.size(); ++index) {
+            const float lead = simulated[index].telemetry.lead;
+            if (index < turn) peakBeforeTurn = std::max(peakBeforeTurn, lead);
+            if (index >= 70 && index < turn && std::abs(physical[index] - physical[index - 1])
+                <= 0.5F * std::abs(physical[55] - physical[54])) {
+                halfSpeedLead = std::max(halfSpeedLead, lead);
+            }
+            if (index >= turn - 3 && index <= turn) turningLead = std::max(turningLead, lead);
+            if (index >= finalStop && index < finalStop + 20) finalStopLead = std::min(finalStopLead, lead);
+            if (index >= finalStop + 20) stationaryLead = std::max(stationaryLead, std::abs(lead));
+            maximumStep = std::max(maximumStep, std::abs(lead - simulated[index - 1].telemetry.lead));
+            if (reversalSample == simulated.size() && simulated[index].telemetry.reversal) reversalSample = index;
+        }
+        qInfo().nospace() << "HumanLike " << name << " peak=" << peakBeforeTurn
+                          << " half_speed=" << halfSpeedLead << " turning_lead=" << turningLead
+                          << " final_stop_lead=" << finalStopLead << " stationary=" << stationaryLead
+                          << " lead_step=" << maximumStep;
+        QVERIFY2(halfSpeedLead >= peakBeforeTurn * 0.45F,
+                 "Predictive lead collapsed before most of the physical brake was complete.");
+        for (size_t index = 75; index <= turn; ++index) {
+            QVERIFY2(simulated[index].telemetry.lead <= simulated[index - 1].telemetry.lead + 0.0005F,
+                     "Positive turning-point lead developed an artificial secondary pulse.");
+        }
+        for (size_t index = turn + 1; index < reversalSample; ++index) {
+            QVERIFY2(simulated[index].telemetry.lead <= 0.0001F,
+                     "Stale positive lead reappeared after credible opposite motion.");
+        }
+        QVERIFY2(reversalSample <= turn + 15 && simulated[reversalSample].telemetry.lead < -0.0001F,
+                 "Confirmed reversal did not reacquire a clean opposite-direction lead promptly.");
+        for (size_t index = finalStop + 1; index < finalStop + 20; ++index) {
+            QVERIFY2(std::abs(simulated[index].telemetry.lead)
+                         <= std::abs(simulated[index - 1].telemetry.lead) + 0.0005F,
+                     "Final-stop lead rebounded into an isolated pulse.");
+        }
+        QVERIFY(std::abs(finalStopLead) < peakBeforeTurn * 0.30F);
+        QVERIFY(stationaryLead < 0.0001F);
+        QVERIFY(maximumStep < maximumLead * 0.16F);
     }
 }
 

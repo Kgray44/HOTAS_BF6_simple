@@ -15,6 +15,8 @@ constexpr float kMotionEvidenceWindowSeconds = 0.060F;
 constexpr float kMinimumMeaningfulDelta = 0.00015F;
 constexpr float kMinimumExpectedHoldSeconds = 0.004F;
 constexpr float kMaximumSourceUpdatePeriodSeconds = 0.050F;
+constexpr float kBrakingAttackSeconds = 0.024F;
+constexpr float kBrakingReleaseSeconds = 0.032F;
 
 #if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
 constexpr float kSourceSpeedDecayRatio = 0.015F;
@@ -466,10 +468,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     if (sourceUpdated) {
         const float acceptedSourceDelta = physical - m_lastAcceptedSourcePhysical;
         const float acceptedSourceDeltaMagnitude = std::abs(acceptedSourceDelta);
-        const int acceptedSourceDirection = directionOf(acceptedSourceDelta, kMinimumMeaningfulDelta);
+        const int observedSourceDirection = directionOf(acceptedSourceDelta, kMinimumMeaningfulDelta);
+        // A tiny accepted source update is useful for cadence/quiet tracking,
+        // but its sign is not trustworthy. It must not erase the coherent
+        // direction and stop evidence that carried us into a turning point.
+        const int acceptedSourceDirection = observedSourceDirection == 0
+            ? m_acceptedSourceDirection : observedSourceDirection;
 #if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
         const float sourceSpeedFloor = minimumReversalSpeed;
-        const bool sameDirection = acceptedSourceDirection != 0 && m_motionDirection != 0
+        const bool sameDirection = observedSourceDirection != 0 && m_motionDirection != 0
             && acceptedSourceDirection == m_motionDirection
             && (m_acceptedSourceDirection == 0 || m_acceptedSourceDirection == acceptedSourceDirection);
         const bool sourceSpeedAboveFloor = acceptedSourceDeltaMagnitude
@@ -506,7 +513,14 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                         / std::max(m_brakingReferenceSourceSpeed, sourceSpeedFloor), 0.0F, 1.0F);
                 const float persistence = m_sourceDecayEvidence == 2 ? 0.50F
                     : m_sourceDecayEvidence == 3 ? 0.78F : 1.0F;
-                m_brakingReductionTarget = smootherstep(0.02F, 0.30F, cumulativeDecay) * persistence;
+                // Reduction follows progress toward the actual physical stop,
+                // not merely the first third of a speed decrease. A 50%
+                // remaining source speed therefore remains a useful, broad
+                // prediction gradient instead of an early guillotine.
+                const float nearStopProgress = 0.97F - 0.12F * std::clamp(
+                    configuration.settlingResponse, 0.0F, 1.0F);
+                m_brakingReductionTarget = smootherstep(0.02F, nearStopProgress, cumulativeDecay)
+                    * persistence * configuration.decelerationResponse;
             }
 #endif
         } else if (completingConfirmedBrake) {
@@ -514,7 +528,22 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
 #if defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
             m_sourceStoppingSeconds = 0.0F;
 #endif
-            m_brakingReductionTarget = 1.0F;
+            m_brakingReductionTarget = configuration.decelerationResponse;
+#endif
+        } else if (observedSourceDirection == 0 && m_sourceDecayEvidence >= 2) {
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+            // The source is effectively still at the old-direction stop. Do
+            // not create a detector dropout between the last coherent sample
+            // and the first credible opposite sample.
+            m_brakingReductionTarget = std::max(m_brakingReductionTarget,
+                configuration.decelerationResponse);
+#endif
+        } else if (observedSourceDirection != 0 && acceptedSourceDirection != m_motionDirection) {
+            // The first opposite report is safety-cancelled below. Retain the
+            // stored envelope until the real reversal boundary resets it, so
+            // a briefly indeterminate turn cannot reintroduce stale lead.
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+            m_brakingReductionTarget = 0.0F;
 #endif
         } else {
             m_sourceDecayEvidence = 0;
@@ -530,7 +559,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_lastAcceptedSourcePhysical = physical;
         m_lastAcceptedSourceDeltaMagnitude = acceptedSourceDeltaMagnitude;
         m_lastAcceptedSourceInterval = acceptedSourceInterval;
-        m_acceptedSourceDirection = acceptedSourceDirection;
+        if (observedSourceDirection != 0) m_acceptedSourceDirection = acceptedSourceDirection;
     }
 #endif
     const float hardReversalDisplacement = std::max(configuration.noiseRejection * 2.0F,
@@ -546,14 +575,14 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         && trendDirection != m_motionDirection && coherence >= 0.62F
         && m_softReversalMotion >= softReversalThreshold;
     const bool reversal = hardReversal || softReversal;
-#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3 \
+    && defined(HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY)
     bool sourceBrakingDetected = false;
     if (m_sourceDecayEvidence >= 2 && m_brakingReductionTarget > 0.0F && !reversal
         && coherence >= kSourceBrakingCoherence && m_acceptedSourceDirection != 0
         && m_acceptedSourceDirection == m_motionDirection) {
         sourceBrakingDetected = true;
     }
-    if (!sourceBrakingDetected) m_brakingReductionTarget = 0.0F;
 #endif
     // One accepted opposite report is enough to cancel stale lead safely, but
     // never enough to reverse the model. That keeps an isolated sensor spike
@@ -574,6 +603,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_acceleration = 0.0F;
         m_motionDirection = directionOf(m_velocity, velocityThreshold);
         m_softReversalMotion = 0.0F;
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+        // A confirmed new direction owns a new braking envelope. The old one
+        // has already cancelled stale lead safely and must not delay the
+        // opposite-direction acquisition.
+        m_sourceDecayEvidence = 0;
+        m_brakingReferenceSourceSpeed = 0.0F;
+        m_brakingReductionTarget = 0.0F;
+        m_brakingReductionFactor = 0.0F;
+#endif
         ++m_reversalCount;
     } else if (trustedMeasurement && configuration.model == AdaptiveResponseModel::Velocity) {
         // Velocity mode deliberately remains a lightweight derivative
@@ -635,23 +673,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float speed = std::abs(m_velocity);
     const bool decelerating = !reversal && (m_velocity * priorVelocity > 0.0F)
         && speed < std::abs(priorVelocity) * 0.88F;
-    const bool braking = !reversal && priorVelocity * m_acceleration < 0.0F
-        && std::abs(m_acceleration) > std::max(std::abs(priorVelocity) * 4.0F,
-            minimumReversalSpeed / std::max(dt, 0.001F) * 0.25F);
     const float microCutoff = std::max(configuration.noiseRejection * 0.25F,
                                        configuration.motionSensitivity * 0.50F);
     const float intensity = std::clamp((speed - microCutoff) / (configuration.motionSensitivity * 18.0F),
                                        0.0F, 1.0F);
     const bool settling = !reversal && (decelerating || confirmedQuiet
         || (holdConfidence < 0.45F && !meaningfulMeasurement));
-    float confidence = intensity * (0.35F + coherence * 0.65F) * holdConfidence;
-    if (decelerating) confidence *= 1.0F - configuration.decelerationResponse * 0.72F;
-    if (settling) {
-        const float settle = std::clamp(configuration.settlingResponse, 0.0F, 1.0F);
-        confidence *= 1.0F - settle * 0.80F;
-        m_velocity *= 1.0F - settle * 0.45F;
-        m_acceleration *= 1.0F - settle * 0.65F;
-    }
+    // Confidence is estimator trust, not a second copy of movement magnitude.
+    // Motion intensity is applied exactly once when the horizon is formed.
+    float confidence = (0.35F + coherence * 0.65F) * holdConfidence;
     if (reversal) confidence = std::max(confidence, 0.28F + 0.42F * configuration.reversalResponse);
     if (confirmedQuiet) {
         m_velocity = 0.0F;
@@ -659,17 +689,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         confidence = 0.0F;
     }
     float horizon = configuration.maximumHorizonSeconds * intensity * confidence;
-    if (decelerating) horizon *= 1.0F - configuration.decelerationResponse * 0.65F;
-    if (braking) horizon *= 1.0F - configuration.decelerationResponse * 0.45F;
-    if (settling) horizon *= 1.0F - configuration.settlingResponse * 0.88F;
     if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
 #if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
-    if (sourceBrakingDetected || m_brakingReductionTarget > 0.0F || m_brakingReductionFactor > 0.0F) {
-        const float brakingBlend = sourceUpdated ? 0.48F : 0.18F;
-        m_brakingReductionFactor += (m_brakingReductionTarget - m_brakingReductionFactor) * brakingBlend;
-        m_brakingReductionFactor = std::clamp(m_brakingReductionFactor, 0.0F, 1.0F);
-        if (sourceBrakingDetected) horizon *= 1.0F - m_brakingReductionFactor;
-    }
+    // The envelope is a time-normalized first-order response. Its stored
+    // value applies continuously, even when an instantaneous detector flickers
+    // false between source reports.
+    const float brakingTau = m_brakingReductionTarget > m_brakingReductionFactor
+        ? kBrakingAttackSeconds : kBrakingReleaseSeconds;
+    const float brakingAlpha = dt / (brakingTau + dt);
+    m_brakingReductionFactor += (m_brakingReductionTarget - m_brakingReductionFactor) * brakingAlpha;
+    m_brakingReductionFactor = std::clamp(m_brakingReductionFactor, 0.0F, 1.0F);
+    if (m_brakingReductionFactor > 0.0001F) horizon *= 1.0F - m_brakingReductionFactor;
 #endif
     if (safetyCancellation) horizon = 0.0F;
     float lead = m_velocity * horizon;
@@ -738,6 +768,56 @@ AdaptiveResponseSimulation simulateAdaptiveResponse(const RuntimeAdaptiveRespons
                            processor.process(physicalSamples[index], configuration, at)});
     }
     return samples;
+}
+
+std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenario,
+                                                           float domainMinimum, float domainMaximum)
+{
+    constexpr int kSamples = 211;
+    constexpr float kSamplePeriodSeconds = 0.004F;
+    const float minimum = std::min(domainMinimum, domainMaximum);
+    const float maximum = std::max(domainMinimum, domainMaximum);
+    const float span = maximum - minimum;
+    const QString mode = scenario.trimmed().toCaseFolded();
+    std::vector<float> physical;
+    physical.reserve(kSamples);
+    for (int index = 0; index < kSamples; ++index) {
+        const float t = static_cast<float>(index) / static_cast<float>(kSamples - 1);
+        float value = minimum + span * t;
+        if (mode == u"rapid reversal"_qs || mode == u"instant reversal torture"_qs) value = t < 0.46F
+            ? minimum + span * (t / 0.46F) : maximum - span * ((t - 0.46F) / 0.54F);
+        else if (mode == u"human-like rapid reversal"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const auto smootherStep = [](float progress) {
+                const float u = std::clamp(progress, 0.0F, 1.0F);
+                return u * u * u * (u * (u * 6.0F - 15.0F) + 10.0F);
+            };
+            if (elapsed < 0.080F) value = minimum + span * 0.20F;
+            else if (elapsed < 0.340F) {
+                value = minimum + span * (0.20F + 0.66F
+                    * smootherStep((elapsed - 0.080F) / 0.260F));
+            } else if (elapsed < 0.600F) {
+                value = minimum + span * (0.86F - 0.56F
+                    * smootherStep((elapsed - 0.340F) / 0.260F));
+            } else value = minimum + span * 0.30F;
+        } else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
+            ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
+            : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));
+        else if (mode == u"negative-side reversal"_qs) value = t < 0.46F
+            ? minimum + span * (0.50F - 0.44F * (t / 0.46F))
+            : minimum + span * (0.06F + 0.36F * ((t - 0.46F) / 0.54F));
+        else if (mode == u"center-crossing reversal"_qs) value = t < 0.42F
+            ? minimum + span * (0.18F + 0.64F * (t / 0.42F))
+            : minimum + span * (0.82F - 0.64F * ((t - 0.42F) / 0.58F));
+        else if (mode == u"micro adjustments"_qs) value = minimum + span * 0.5F
+            + span * ((index % 16 < 8 ? 1.0F : -1.0F) * 0.018F);
+        else if (mode == u"sudden stop"_qs) value = t < 0.48F ? minimum + span * (t / 0.48F) : maximum;
+        else if (mode == u"center fighting"_qs) value = minimum + span * 0.5F
+            + span * ((index % 24 < 12 ? 1.0F : -1.0F) * 0.22F);
+        else if (mode == u"fast sweep"_qs) value = t < 0.28F ? minimum + span * (t / 0.28F) : maximum;
+        physical.push_back(std::clamp(value, minimum, maximum));
+    }
+    return physical;
 }
 
 } // namespace hotas

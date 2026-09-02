@@ -128,4 +128,11 @@ AdaptiveResponseSimulation simulateAdaptiveResponse(const RuntimeAdaptiveRespons
                                                      const std::vector<float> &physicalSamples,
                                                      float samplePeriodSeconds = 0.004F);
 
+// Static Preview and Test Lab input is generated in C++, never by the QML
+// renderer. Keeping the authored trace beside the production simulator makes
+// every diagnostic view consume the same deterministic source samples.
+std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenario,
+                                                            float domainMinimum,
+                                                            float domainMaximum);
+
 } // namespace hotas

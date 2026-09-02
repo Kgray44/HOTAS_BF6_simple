@@ -1,4 +1,6 @@
 #include "app_backend.h"
+#include "axis_transform.h"
+#include "response_curve.h"
 #include "theme_manager.h"
 
 #include <QApplication>
@@ -33,6 +35,7 @@
 #include <cmath>
 #include <limits>
 #include <cstdio>
+#include <vector>
 
 using namespace Qt::StringLiterals;
 
@@ -371,6 +374,143 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
     return true;
 }
 
+bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
+{
+    const int axis = 0;
+    const int originalAxis = backend.selectedAxisIndex();
+    backend.setSelectedAxis(axis);
+    const QString profileId = backend.activeProfileId();
+    const auto configurationForPreset = [](const QString &preset) {
+        hotas::RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = preset != QStringLiteral("off");
+        configuration.model = hotas::AdaptiveResponseModel::Auto;
+        configuration.maximumLead = preset == QStringLiteral("extreme") ? 0.40F
+            : preset == QStringLiteral("fast") ? 0.18F : 0.12F;
+        configuration.maximumHorizonSeconds = preset == QStringLiteral("extreme") ? 0.030F
+            : preset == QStringLiteral("fast") ? 0.012F : 0.008F;
+        configuration.velocityResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("fast") ? 0.80F : 0.72F;
+        configuration.accelerationResponse = preset == QStringLiteral("extreme") ? 0.95F
+            : preset == QStringLiteral("fast") ? 0.68F : 0.58F;
+        configuration.motionSensitivity = 0.035F;
+        configuration.noiseRejection = 0.012F;
+        configuration.reversalDetection = 0.075F;
+        configuration.reversalResponse = 1.0F;
+        configuration.decelerationResponse = 0.85F;
+        configuration.settlingResponse = 0.92F;
+        configuration.endpointTaper = 0.16F;
+        return configuration;
+    };
+    const auto verifyProductionPredictor = [&](const QString &preset) {
+        if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), profileId, axis, preset)) {
+            return failPresentationLifecycleTest(QStringLiteral("Preview parity could not select %1").arg(preset));
+        }
+        const QVariantList preview = backend.adaptiveResponsePreviewAtContext(
+            QStringLiteral("Human-Like Rapid Reversal"), QStringLiteral("profile"), profileId, axis);
+        std::vector<float> physical;
+        physical.reserve(static_cast<size_t>(preview.size()));
+        for (const QVariant &entry : preview) physical.push_back(
+            static_cast<float>(entry.toMap().value(QStringLiteral("physical")).toDouble()));
+        const hotas::AdaptiveResponseSimulation direct = hotas::simulateAdaptiveResponse(
+            configurationForPreset(preset), physical, 0.004F);
+        if (direct.size() != static_cast<size_t>(preview.size())) {
+            return failPresentationLifecycleTest(QStringLiteral("Preview parity sample count differed for %1").arg(preset));
+        }
+        for (size_t index = 0; index < direct.size(); ++index) {
+            const QVariantMap sample = preview.at(static_cast<qsizetype>(index)).toMap();
+            const auto equal = [](float actual, const QVariantMap &value, const QString &key) {
+                return std::abs(actual - static_cast<float>(value.value(key).toDouble())) < 0.00002F;
+            };
+            if (!equal(direct[index].telemetry.physical, sample, QStringLiteral("physical"))
+                || !equal(direct[index].telemetry.estimated, sample, QStringLiteral("estimated"))
+                || !equal(direct[index].telemetry.predicted, sample, QStringLiteral("predicted"))
+                || !equal(direct[index].telemetry.velocity, sample, QStringLiteral("velocity"))
+                || !equal(direct[index].telemetry.acceleration, sample, QStringLiteral("acceleration"))
+                || !equal(direct[index].telemetry.lead, sample, QStringLiteral("lead"))
+                || !equal(direct[index].telemetry.activeHorizonSeconds * 1000.0F, sample, QStringLiteral("horizonMs"))
+                || !equal(direct[index].telemetry.confidence, sample, QStringLiteral("confidence"))
+                || hotas::adaptiveMotionStateLabel(direct[index].telemetry.state)
+                    != sample.value(QStringLiteral("state")).toString()) {
+                return failPresentationLifecycleTest(QStringLiteral("Preview diverged from AdaptiveResponseProcessor for %1 at sample %2")
+                    .arg(preset).arg(index));
+            }
+        }
+        return true;
+    };
+    for (const QString &preset : {QStringLiteral("off"), QStringLiteral("fast"), QStringLiteral("extreme")}) {
+        if (!verifyProductionPredictor(preset)) return false;
+    }
+    for (const QString &scenario : {QStringLiteral("Human-Like Rapid Reversal"),
+         QStringLiteral("Instant Reversal Torture"), QStringLiteral("Positive-Side Reversal"),
+         QStringLiteral("Negative-Side Reversal"), QStringLiteral("Center-Crossing Reversal"),
+         QStringLiteral("Micro Adjustments"), QStringLiteral("Sudden Stop"),
+         QStringLiteral("Center Fighting"), QStringLiteral("Fast Sweep")}) {
+        const QVariantList samples = backend.adaptiveResponsePreviewAtContext(
+            scenario, QStringLiteral("profile"), profileId, axis);
+        const QVariantMap metrics = backend.adaptiveResponseTestLabAtContext(
+            scenario, QStringLiteral("profile"), profileId, axis);
+        if (samples.size() != 211 || metrics.value(QStringLiteral("sampleCount")).toInt() != samples.size()
+            || !std::isfinite(metrics.value(QStringLiteral("peakLead")).toDouble())
+            || !std::isfinite(metrics.value(QStringLiteral("maximumArtificialPredictorStep")).toDouble())) {
+            return failPresentationLifecycleTest(QStringLiteral("Static scenario %1 was incomplete or non-finite")
+                .arg(scenario));
+        }
+    }
+
+    backend.setAxisDeadzone(axis, 0.0);
+    if (!backend.setAxisOutputLimits(axis, -0.15, 0.15)) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview context base mapping could not be prepared"));
+    }
+    backend.resetCurveLinear();
+    const QString targetName = QStringLiteral("Preview Truth Mapping");
+    if (!backend.createProfile(targetName, profileId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview context profile could not be created"));
+    }
+    QString targetId;
+    for (const QVariant &entry : backend.profiles()) {
+        const QVariantMap profile = entry.toMap();
+        if (profile.value(QStringLiteral("name")).toString() == targetName) {
+            targetId = profile.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    if (targetId.isEmpty() || !backend.activateProfile(targetId)
+        || !backend.setAxisOutputLimits(axis, 0.55, 0.70)) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview context target mapping could not be prepared"));
+    }
+    backend.setAxisInverted(axis, true);
+    backend.resetCurveLinear();
+    const QVariantList targetPreview = backend.adaptiveResponsePreviewAtContext(
+        QStringLiteral("Human-Like Rapid Reversal"), QStringLiteral("profile"), targetId, axis);
+    if (!backend.activateProfile(profileId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview context base profile could not be restored"));
+    }
+    const QVariantList inactiveTargetPreview = backend.adaptiveResponsePreviewAtContext(
+        QStringLiteral("Human-Like Rapid Reversal"), QStringLiteral("profile"), targetId, axis);
+    if (targetPreview.size() != inactiveTargetPreview.size()) {
+        return failPresentationLifecycleTest(QStringLiteral("Inactive profile preview lost samples"));
+    }
+    hotas::RuntimeAxisMapping targetMapping;
+    targetMapping.profile.inverted = true;
+    targetMapping.profile.deadzone = 0.0F;
+    targetMapping.profile.hysteresis = 0.0F;
+    targetMapping.profile.outputMinimum = 0.55F;
+    targetMapping.profile.outputMaximum = 0.70F;
+    targetMapping.responseCurve = hotas::compileResponseCurve(hotas::linearCurveDefinition(), false);
+    for (qsizetype index = 0; index < targetPreview.size(); ++index) {
+        const QVariantMap active = targetPreview.at(index).toMap();
+        const QVariantMap inactive = inactiveTargetPreview.at(index).toMap();
+        const float expected = hotas::evaluateStaticAxisTransfer(
+            static_cast<float>(active.value(QStringLiteral("predicted")).toDouble()), targetMapping);
+        if (std::abs(static_cast<float>(active.value(QStringLiteral("virtualOutput")).toDouble()) - expected) > 0.00002F
+            || std::abs(static_cast<float>(inactive.value(QStringLiteral("virtualOutput")).toDouble()) - expected) > 0.00002F) {
+            return failPresentationLifecycleTest(QStringLiteral("Static pipeline mixed live and requested mapping contexts"));
+        }
+    }
+    backend.setSelectedAxis(originalAxis);
+    return true;
+}
+
 bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QString &theme)
 {
     QObject *presentation = shell->findChild<QObject *>(QStringLiteral("presentationLoader"));
@@ -378,6 +518,14 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     QObject *surface = qvariant_cast<QObject *>(presentation->property("item"));
     if (!surface) return failPresentationLifecycleTest(QStringLiteral("theme surface was not loaded"));
 
+    // QML may finish one-time component-cache initialization when each page
+    // is first visited. Warm every page once, then measure repeated navigation
+    // so the contract detects retained state rather than first-use setup.
+    for (int page = 0; page <= 9; ++page) {
+        if (!selectPage(surface, page)) return false;
+    }
+    if (!selectPage(surface, 8)) return false;
+    settlePresentation();
     const ProcessMemoryFootprint fresh = currentProcessMemoryFootprint();
     const int freshObjectCount = surface->findChildren<QObject *>().size();
     for (int cycle = 0; cycle < 20; ++cycle) {
@@ -602,6 +750,7 @@ int main(int argc, char *argv[])
     }
 
     if (!verifyAdaptiveResponseSimulator(backend)) return 1;
+    if (!verifyAdaptiveResponsePreviewTruth(backend)) return 1;
     if (!verifyAutomationEditorInteraction(backend)) return 1;
 
     QTimer::singleShot(250, &application, &QCoreApplication::quit);

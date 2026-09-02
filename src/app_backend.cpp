@@ -981,7 +981,8 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
 
 RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext(
     const QString &scope, const QString &targetId, int physicalAxis,
-    AdaptiveResponseAxisOverride *contextOverride, QString *source) const
+    AdaptiveResponseAxisOverride *contextOverride, QString *source,
+    RuntimeAxisMapping *staticMapping) const
 {
     const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
     const QString normalized = scope.trimmed().toCaseFolded();
@@ -1029,7 +1030,16 @@ RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext
     }
     if (contextOverride) *contextOverride = selected;
     if (source) *source = label;
-    return resolveAdaptiveResponseConfiguration(contextConfiguration, contextProfile, axis);
+    const RuntimeAdaptiveResponseConfig effective = resolveAdaptiveResponseConfiguration(
+        contextConfiguration, contextProfile, axis);
+    if (staticMapping) {
+        staticMapping->profile = contextProfile.axes[static_cast<size_t>(axis)];
+        staticMapping->calibration = contextConfiguration.calibration[static_cast<size_t>(axis)];
+        staticMapping->responseCurve = compileResponseCurve(staticMapping->profile.curve,
+            staticMapping->profile.rangeMode == AxisRangeMode::OneSided);
+        staticMapping->adaptiveResponse = effective;
+    }
+    return effective;
 }
 
 QVariantMap AppBackend::adaptiveResponseState() const
@@ -1453,62 +1463,11 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
                                                           int physicalAxis) const
 {
     const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
-    const RuntimeAxisMapping &mapping = m_worker.runtimeProfileCache()->profiles[
-        static_cast<size_t>(std::clamp(m_worker.runtime().effectiveProfileIndex.load(), 0,
-            static_cast<int>(m_worker.runtimeProfileCache()->profiles.size()) - 1))].axes[static_cast<size_t>(axis)];
-    const RuntimeAdaptiveResponseConfig runtime =
-        adaptiveResponseConfigurationAtContext(scope, targetId, axis);
-    constexpr int samples = 211;
-    std::vector<float> physical;
-    physical.reserve(samples);
-    const float minimum = runtime.domainMinimum;
-    const float span = runtime.domainMaximum - minimum;
-    const QString mode = scenario.trimmed().toCaseFolded();
-    for (int index = 0; index < samples; ++index) {
-        const float t = static_cast<float>(index) / static_cast<float>(samples - 1);
-        float value = minimum + span * t;
-        if (mode == u"rapid reversal"_qs || mode == u"instant reversal torture"_qs) value = t < 0.46F ? minimum + span * (t / 0.46F)
-            : runtime.domainMaximum - span * ((t - 0.46F) / 0.54F);
-        else if (mode == u"human-like rapid reversal"_qs) {
-            // A finite-jerk hand-motion approximation: 80 ms at rest, a
-            // quintic ease toward positive travel, an equally smooth reverse,
-            // then a 240 ms stationary tail. Unlike the torture triangle it
-            // decelerates through zero velocity before accelerating back.
-            const float elapsed = static_cast<float>(index) * 0.004F;
-            const auto smootherStep = [](float progress) {
-                const float u = std::clamp(progress, 0.0F, 1.0F);
-                return u * u * u * (u * (u * 6.0F - 15.0F) + 10.0F);
-            };
-            if (elapsed < 0.080F) value = minimum + span * 0.20F;
-            else if (elapsed < 0.340F) {
-                const float eased = smootherStep((elapsed - 0.080F) / 0.260F);
-                value = minimum + span * (0.20F + 0.66F * eased);
-            } else if (elapsed < 0.600F) {
-                const float eased = smootherStep((elapsed - 0.340F) / 0.260F);
-                value = minimum + span * (0.86F - 0.56F * eased);
-            } else {
-                value = minimum + span * 0.30F;
-            }
-        }
-        else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
-            ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
-            : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));
-        else if (mode == u"negative-side reversal"_qs) value = t < 0.46F
-            ? minimum + span * (0.50F - 0.44F * (t / 0.46F))
-            : minimum + span * (0.06F + 0.36F * ((t - 0.46F) / 0.54F));
-        else if (mode == u"center-crossing reversal"_qs) value = t < 0.42F
-            ? minimum + span * (0.18F + 0.64F * (t / 0.42F))
-            : minimum + span * (0.82F - 0.64F * ((t - 0.42F) / 0.58F));
-        else if (mode == u"micro adjustments"_qs) value = minimum + span * 0.5F
-            + span * ((index % 16 < 8 ? 1.0F : -1.0F) * 0.018F);
-        else if (mode == u"sudden stop"_qs) value = t < 0.48F ? minimum + span * (t / 0.48F)
-            : runtime.domainMaximum;
-        else if (mode == u"center fighting"_qs) value = minimum + span * 0.5F
-            + span * ((index % 24 < 12 ? 1.0F : -1.0F) * 0.22F);
-        else if (mode == u"fast sweep"_qs) value = t < 0.28F ? minimum + span * (t / 0.28F)
-            : runtime.domainMaximum;
-        physical.push_back(std::clamp(value, minimum, runtime.domainMaximum));
-    }
+    RuntimeAxisMapping mapping;
+    const RuntimeAdaptiveResponseConfig runtime = adaptiveResponseConfigurationAtContext(
+        scope, targetId, axis, nullptr, nullptr, &mapping);
+    const std::vector<float> physical = adaptiveResponseScenarioPhysicalSamples(
+        scenario, runtime.domainMinimum, runtime.domainMaximum);
     const AdaptiveResponseSimulation simulated = simulateAdaptiveResponse(runtime, physical, 0.004F);
     QVariantList result;
     result.reserve(static_cast<qsizetype>(simulated.size()));

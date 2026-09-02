@@ -379,7 +379,9 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(adaptive.contains(QStringLiteral("objectName: \"adaptiveAxisSelector\"")));
     QVERIFY(adaptive.contains(QStringLiteral("property string staticPreviewView: \"predictor\"")));
     QVERIFY(adaptive.contains(QStringLiteral("property bool showFinalTrace: false")));
-    QVERIFY(adaptive.contains(QStringLiteral("Includes the selected axis's active response curve and mapping transformations.")));
+    QVERIFY(adaptive.contains(QStringLiteral("STATIC PIPELINE")));
+    QVERIFY(adaptive.contains(QStringLiteral("Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded.")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAPPED OUTPUT")));
     QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED PREDICTION LEAD")));
     QVERIFY(adaptive.contains(QStringLiteral("Scale is the configured maximum lead")));
     QVERIFY(adaptive.contains(QStringLiteral("piecewise-linear resampling")));

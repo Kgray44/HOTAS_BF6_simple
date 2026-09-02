@@ -637,7 +637,7 @@ private:
     RuntimeAdaptiveResponseConfig adaptiveResponseConfigurationAtContext(
         const QString &scope, const QString &targetId, int physicalAxis,
         AdaptiveResponseAxisOverride *contextOverride = nullptr,
-        QString *source = nullptr) const;
+        QString *source = nullptr, RuntimeAxisMapping *staticMapping = nullptr) const;
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();

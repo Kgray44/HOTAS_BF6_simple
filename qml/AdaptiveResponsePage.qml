@@ -777,7 +777,7 @@ Item {
                         Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(root.simulatorCurrentSample().physical, 0)) }
                         Metric { caption: "ESTIMATED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().estimated, 0)) }
                         Metric { caption: "PREDICTED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().predicted, 0)); tone: root.themeTokens.orange }
-                        Metric { caption: "FINAL OUTPUT"; value: root.percent(root.numericOr(root.simulatorCurrentSample().virtualOutput, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "MAPPED OUTPUT"; value: root.percent(root.numericOr(root.simulatorCurrentSample().virtualOutput, 0)); tone: root.themeTokens.ready }
                         Metric { caption: "VELOCITY"; value: root.numericOr(root.simulatorCurrentSample().velocity, 0).toFixed(2) + " /s" }
                         Metric { caption: "ACCELERATION"; value: root.numericOr(root.simulatorCurrentSample().acceleration, 0).toFixed(1) + " /s²" }
                         Metric { caption: "ACTIVE HORIZON"; value: root.numericOr(root.simulatorCurrentSample().activeHorizonMs, 0).toFixed(2) + " ms" }
@@ -786,7 +786,7 @@ Item {
                         Metric { caption: "STATE"; value: root.simulatorCurrentSample().state || "Stable" }
                     }
                     Text { text: "Move the slider like a virtual HOTAS. The simulator reconstructs your continuous gesture, samples it at the selected controller rate, then runs the real predictor. New samples appear at the right; older motion scrolls left."; color: root.themeTokens.textMuted; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
-                    Text { text: "Physical = manual slider · Estimated = internal motion estimate · Predicted = expected near-future stick position · Final Output = prediction after the active axis curve and transforms. Synthetic Source Rate emulates how often a physical controller reports a new axis sample."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { text: "Physical = manual slider · Estimated = internal motion estimate · Predicted = expected near-future stick position · Mapped Output = prediction through the static active-axis mapping. Synthetic Source Rate emulates how often a physical controller reports a new axis sample."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
                     Text { text: root.simulatorSamples.length === 0 || root.simulatorPaused ? "PAUSED — press LIVE or RECORD and move Manual Input." : "RECORD stores original timestamps and output samples. REPLAY redraws those stored samples only; it never recomputes predictor output."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
                     }
                 }
@@ -827,16 +827,16 @@ Item {
                     RowLayout { width: parent.width; spacing: 8
                         Caption { text: "VIEW" }
                         ActionButton { text: "PREDICTOR"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "predictor"; onClicked: root.setStaticPreviewView("predictor") }
-                        ActionButton { text: "FINAL PIPELINE"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "pipeline"; onClicked: root.setStaticPreviewView("pipeline") }
+                        ActionButton { text: "STATIC PIPELINE"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "pipeline"; onClicked: root.setStaticPreviewView("pipeline") }
                         Item { Layout.fillWidth: true }
-                        Caption { text: root.staticPreviewView === "predictor" ? "Estimator view · no curve/output-stage dominance" : "Includes the selected axis's active response curve and mapping transformations." }
+                        Caption { text: root.staticPreviewView === "predictor" ? "Estimator view · no curve/output-stage dominance" : root.editScope === "preset" ? "Static mapped output uses the current profile/axis mapping; Response Preset supplies predictor settings only. Dynamic stages are excluded." : root.editScope === "category" ? "Static mapped output uses the current profile/axis mapping with selected Category settings. Dynamic stages are excluded." : root.editScope === "global" ? "Static mapped output uses the current profile/axis mapping with application defaults. Dynamic stages are excluded." : "Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded." }
                     }
                     RowLayout { width: parent.width; spacing: 6
                         Caption { text: "TRACES" }
                         ActionButton { text: "PHYSICAL"; implicitHeight: 26; padding: 7; accent: root.showPhysicalTrace; onClicked: root.showPhysicalTrace = !root.showPhysicalTrace }
                         ActionButton { text: "ESTIMATED"; implicitHeight: 26; padding: 7; accent: root.showEstimatedTrace; onClicked: root.showEstimatedTrace = !root.showEstimatedTrace }
                         ActionButton { text: "PREDICTED"; implicitHeight: 26; padding: 7; accent: root.showPredictedTrace; onClicked: root.showPredictedTrace = !root.showPredictedTrace }
-                        ActionButton { text: "FINAL OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showFinalTrace; onClicked: root.showFinalTrace = !root.showFinalTrace }
+                        ActionButton { text: "MAPPED OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showFinalTrace; onClicked: root.showFinalTrace = !root.showFinalTrace }
                         Item { Layout.fillWidth: true }
                         Caption { text: root.staticScenarioDurationMs().toFixed(0) + " ms synthetic scenario" }
                     }
