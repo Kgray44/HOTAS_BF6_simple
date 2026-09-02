@@ -517,6 +517,26 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
     )
     set_target_properties(adaptive_response_verification PROPERTIES WIN32_EXECUTABLE FALSE)
 
+    # Phase 1 is an offline frozen-model characterization executable.  It is
+    # intentionally separate from the mapper, installer, and ordinary CTest
+    # targets; it only links the production estimator and test harness.
+    qt_add_executable(adaptive_response_monster_phase1
+        tests/adaptive_response/monster_phase1.cpp
+        ${HOTAS_ADAPTIVE_VERIFICATION_SOURCES}
+    )
+    target_link_libraries(adaptive_response_monster_phase1 PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_monster_phase1 PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_monster_phase1 PRIVATE
+        HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_monster_phase1 PROPERTIES WIN32_EXECUTABLE FALSE)
+
     if (BUILD_TESTING)
         qt_add_executable(adaptive_response_verification_tests
             tests/adaptive_response/verification_tests.cpp
