@@ -215,6 +215,7 @@ if (BUILD_TESTING)
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(mapping_core_tests PRIVATE HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
     add_test(NAME mapping_core_tests COMMAND mapping_core_tests)
 
     if (WIN32)

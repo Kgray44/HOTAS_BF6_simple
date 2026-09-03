@@ -384,6 +384,9 @@ void AdaptiveResponseProcessor::reset()
     m_oppositeEvidenceCount = 0;
     m_motionDirection = 0;
     m_reacquisitionAuthority = 1.0F;
+    m_launchEvidence = 0.0F;
+    m_launchEvidenceDirection = 0;
+    m_launchEvidenceCount = 0;
     m_onsetAuthority = 0.0F;
     m_sustainedEvidence = 0.0F;
     m_horizonExtensionAuthority = 0.0F;
@@ -521,6 +524,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                                                  configuration.motionSensitivity * 0.50F);
     float sourceSpeedGrowth = 0.0F;
     bool sourceSpeedGrowingInMotionDirection = false;
+    int sourceGrowthDirection = 0;
     // Accepted-source speed is a fixed-state physical braking detector. It
     // requires two coherent decays; individual report jitter cannot create
     // braking or a turning constraint.
@@ -528,6 +532,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         const float acceptedSourceDelta = physical - m_lastAcceptedSourcePhysical;
         const float acceptedSourceDeltaMagnitude = std::abs(acceptedSourceDelta);
         const int observedSourceDirection = directionOf(acceptedSourceDelta, kMinimumMeaningfulDelta);
+        // Launch preparation may use a finer, still bounded source report
+        // threshold than the braking detector. It is never sufficient on its
+        // own: two coherent speed-growth reports are required below.
+        sourceGrowthDirection = directionOf(acceptedSourceDelta,
+            kMinimumMeaningfulDelta * 0.10F);
         // A tiny accepted source update is useful for cadence/quiet tracking,
         // but its sign is not trustworthy. It must not erase the coherent
         // direction and stop evidence that carried us into a turning point.
@@ -652,6 +661,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_brakingReferenceSourceSpeed = 0.0F;
         m_brakingReductionTarget = 0.0F;
         m_brakingReductionFactor = 0.0F;
+        if (m_launchEvidenceDirection != m_motionDirection) {
+            m_launchEvidence = 0.0F;
+            m_launchEvidenceDirection = 0;
+            m_launchEvidenceCount = 0;
+        }
         m_onsetAuthority = 0.0F;
         m_sustainedEvidence = 0.0F;
         m_horizonExtensionAuthority = 0.0F;
@@ -723,6 +737,9 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_estimatedPosition = physical;
         m_motionDirection = 0;
         m_reacquisitionAuthority = 1.0F;
+        m_launchEvidence = 0.0F;
+        m_launchEvidenceDirection = 0;
+        m_launchEvidenceCount = 0;
         m_onsetAuthority = 0.0F;
         m_sustainedEvidence = 0.0F;
         m_horizonExtensionAuthority = 0.0F;
@@ -787,15 +804,89 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         sourceSpeedGrowingInMotionDirection ? sourceSpeedGrowth : 0.0F);
     const float trendLaunchIntent = smootherstep(accelerationLow, accelerationHigh,
         trendSpeedGrowth);
-    const float launchIntent = std::max(rawAccelerationIntent,
+    const float establishedLaunchIntent = std::max(rawAccelerationIntent,
         std::max(sourceLaunchIntent, trendLaunchIntent));
+    // Prearm state is relevant only before broad measurement validity, or
+    // while an opposite report is safety-cancelled. Established motion keeps
+    // the normal onset path and does not pay for preparatory authority work.
+    const bool launchNeedsPrearm = !meaningfulMeasurement || safetyCancellation;
+    const bool sourceGrowthCanPrearm = launchNeedsPrearm && sourceGrowthDirection != 0
+        && (m_motionDirection == 0 || sourceGrowthDirection == m_motionDirection)
+        && (m_launchEvidenceDirection == 0
+            || sourceGrowthDirection == m_launchEvidenceDirection)
+        && sourceSpeedGrowth > accelerationLow * 0.65F;
+    // Prearming contributes only before the broad measurement gate opens;
+    // established movement retains precisely the existing intent scale and
+    // therefore cannot gain a larger onset peak from this path.
+    float launchIntent = establishedLaunchIntent;
+    if (!meaningfulMeasurement && sourceGrowthCanPrearm) {
+        launchIntent = std::max(launchIntent, smootherstep(accelerationLow,
+            accelerationHigh, sourceSpeedGrowth));
+    }
     const bool launchAligned = accelerationAligned || sourceSpeedGrowingInMotionDirection
+        || sourceGrowthCanPrearm
         || (trendSpeedGrowth > accelerationLow && intendedDirection == m_motionDirection);
-    const bool onsetValid = meaningfulMeasurement && coherence >= 0.70F && launchAligned
+    // Launch evidence is intentionally separate from applied onset authority.
+    // A few fresh, same-direction source-speed increases can prepare a small
+    // contribution before the broad meaningful-measurement gate opens, but a
+    // lone sample, braking, or an old-direction prediction cannot command it.
+    const int launchEvidenceDirection = rawDirection != 0 ? rawDirection : intendedDirection;
+    const float launchTravelThreshold = std::max(kMinimumMeaningfulDelta * 1.5F,
+        meaningfulDelta * 0.45F);
+    const bool ordinaryPrearm = !meaningfulMeasurement && sourceUpdated && launchEvidenceDirection != 0
+        && (m_motionDirection == 0 || launchEvidenceDirection == m_motionDirection)
+        && coherence >= 0.84F && std::abs(physical - m_lastMeaningfulPhysical) >= launchTravelThreshold
+        && (sourceGrowthCanPrearm
+            || sourceSpeedGrowingInMotionDirection
+            || (trendSpeedGrowth > accelerationLow * 0.65F && launchAligned));
+    // Safety cancellation always keeps old-direction lead at zero. It may,
+    // however, collect bounded evidence for repeated credible opposite input
+    // so confirmed reversal reacquisition does not start from nothing.
+    const bool oppositePrearm = safetyCancellation && sourceUpdated && rawDirection != 0
+        && m_oppositeEvidenceCount >= 1 && absoluteDelta >= launchTravelThreshold
+        && coherence >= 0.72F;
+    const bool prearmCandidate = (!braking && !settling && ordinaryPrearm) || oppositePrearm;
+    if (confirmedQuiet) {
+        m_launchEvidence = 0.0F;
+        m_launchEvidenceDirection = 0;
+        m_launchEvidenceCount = 0;
+    } else if (prearmCandidate) {
+        if (m_launchEvidenceDirection != 0 && m_launchEvidenceDirection != launchEvidenceDirection) {
+            m_launchEvidence = 0.0F;
+            m_launchEvidenceCount = 0;
+        }
+        m_launchEvidenceDirection = launchEvidenceDirection;
+        m_launchEvidenceCount = std::min<std::uint8_t>(3, m_launchEvidenceCount + 1);
+        constexpr float kLaunchEvidenceAttackTauSeconds = 0.012F;
+        const float attackAlpha = dt / (kLaunchEvidenceAttackTauSeconds + dt);
+        m_launchEvidence += (1.0F - m_launchEvidence) * attackAlpha;
+    } else if (launchNeedsPrearm) {
+        const float releaseTau = (braking || settling) ? 0.006F : 0.020F;
+        const float releaseAlpha = dt / (releaseTau + dt);
+        m_launchEvidence += (0.0F - m_launchEvidence) * releaseAlpha;
+        if (m_launchEvidence < 0.0001F) {
+            m_launchEvidence = 0.0F;
+            m_launchEvidenceDirection = 0;
+            m_launchEvidenceCount = 0;
+        }
+    } else {
+        m_launchEvidence = 0.0F;
+        m_launchEvidenceDirection = 0;
+        m_launchEvidenceCount = 0;
+    }
+    m_launchEvidence = std::clamp(m_launchEvidence, 0.0F, 1.0F);
+    const int onsetDirection = intendedDirection != 0 ? intendedDirection : launchEvidenceDirection;
+    const bool prearmedDirectionMatches = m_launchEvidenceDirection != 0
+        && m_launchEvidenceDirection == onsetDirection;
+    const float prearmedReadiness = !meaningfulMeasurement && m_launchEvidenceCount >= 2
+        && prearmedDirectionMatches
+        ? 0.32F * smootherstep(0.15F, 0.70F, m_launchEvidence) : 0.0F;
+    const float onsetReadiness = meaningfulMeasurement ? 1.0F : prearmedReadiness;
+    const bool onsetValid = onsetReadiness > 0.0F && coherence >= 0.70F && launchAligned
         && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
         && m_reacquisitionAuthority > 0.0F;
     const float accelerationIntent = onsetValid
-        ? launchIntent * configuration.accelerationResponse : 0.0F;
+        ? launchIntent * configuration.accelerationResponse * onsetReadiness : 0.0F;
     const float onsetTarget = accelerationIntent * configuration.onsetAssist * configuration.onsetCap
         * coherence * m_reacquisitionAuthority;
     // This is a predictor-authority envelope, not an axis/output filter. It
@@ -842,9 +933,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // Preserve that room for sustained fill; genuinely fast motion still
     // reaches zero assistance as intensity approaches one.
     const float slowModerateAuthority = 1.0F - smootherstep(0.78F, 0.98F, intensity);
-    const float sustainedAuthority = (!braking && !settling) ? m_sustainedEvidence * coherence
-        * slowModerateAuthority * configuration.sustainedAssist * configuration.sustainedCap
-        * m_reacquisitionAuthority : 0.0F;
+    // Evidence already releases smoothly on ordinary braking/settling.  The
+    // applied authority uses the same continuous braking envelope instead of
+    // a binary handoff, while safety/reversal/quiet above still invalidate it
+    // immediately.
+    const float sustainedBrakeSuppression = 1.0F - smootherstep(0.03F, 0.72F,
+        m_brakingReductionFactor);
+    const float sustainedAuthority = m_sustainedEvidence * coherence * slowModerateAuthority
+        * configuration.sustainedAssist * configuration.sustainedCap
+        * m_reacquisitionAuthority * sustainedBrakeSuppression;
     const float velocityAuthority = intensity;
     const float motionUrgency = std::clamp(1.0F - (1.0F - velocityAuthority)
         * (1.0F - std::clamp(onsetAuthority, 0.0F, 1.0F))
@@ -871,14 +968,16 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
             * highCoherenceForExtension * holdConfidence * configuration.horizonExtension
             * m_reacquisitionAuthority, 0.0F, 1.0F)
         : 0.0F;
-    if (braking || safetyCancellation || reversal || confirmedQuiet) {
+    if (safetyCancellation || reversal || confirmedQuiet) {
         m_horizonExtensionAuthority = 0.0F;
     } else {
         constexpr float kExtensionAttackTauSeconds = 0.045F;
         constexpr float kExtensionReleaseTauSeconds = 0.020F;
+        constexpr float kExtensionBrakeReleaseTauSeconds = 0.008F;
         const float extensionTau = horizonExtensionTarget > m_horizonExtensionAuthority
             ? kExtensionAttackTauSeconds : kExtensionReleaseTauSeconds;
-        const float extensionAlpha = dt / (extensionTau + dt);
+        const float releaseTau = braking ? kExtensionBrakeReleaseTauSeconds : extensionTau;
+        const float extensionAlpha = dt / (releaseTau + dt);
         m_horizonExtensionAuthority += (horizonExtensionTarget - m_horizonExtensionAuthority)
             * extensionAlpha;
         m_horizonExtensionAuthority = std::clamp(m_horizonExtensionAuthority, 0.0F, 1.0F);
@@ -960,20 +1059,31 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_turningPointHorizonLimitSeconds = 0.060F;
         m_turningPointLeadLimit = 0.50F;
     } else if (credibleTurningConstraint) {
-        // A braking episode only tightens while source/estimator evidence is
-        // credible. It cannot relax because one report happens to be less
-        // pessimistic than its predecessor.
-        constexpr float kTurningConstraintAttackTauSeconds = 0.010F;
-        const float attackAlpha = dt / (kTurningConstraintAttackTauSeconds + dt);
+        // A coherent braking episode accepts tighter estimates quickly.  A
+        // looser raw estimate is held back unless acceleration is genuinely
+        // renewed, which removes source-cadence saw-toothing without making
+        // a credible physical apex less safe.
+        constexpr float kTurningConstraintTightenTauSeconds = 0.010F;
+        constexpr float kTurningConstraintSlowReleaseTauSeconds = 0.090F;
+        constexpr float kTurningConstraintRenewedReleaseTauSeconds = 0.014F;
+        const float tightenAlpha = dt / (kTurningConstraintTightenTauSeconds + dt);
         if (rawTurningPointConfidence > m_turningPointAuthority) {
-            m_turningPointAuthority += (rawTurningPointConfidence - m_turningPointAuthority) * attackAlpha;
+            m_turningPointAuthority += (rawTurningPointConfidence - m_turningPointAuthority) * tightenAlpha;
         }
         if (rawTurningPointHorizonLimit > 0.0F) {
+            const float releaseTau = renewedAcceleration ? kTurningConstraintRenewedReleaseTauSeconds
+                                                         : kTurningConstraintSlowReleaseTauSeconds;
+            const float alpha = rawTurningPointHorizonLimit < m_turningPointHorizonLimitSeconds
+                ? tightenAlpha : dt / (releaseTau + dt);
             m_turningPointHorizonLimitSeconds += (rawTurningPointHorizonLimit
-                - m_turningPointHorizonLimitSeconds) * attackAlpha;
+                - m_turningPointHorizonLimitSeconds) * alpha;
         }
         if (rawTurningPointLeadLimit > 0.0F) {
-            m_turningPointLeadLimit += (rawTurningPointLeadLimit - m_turningPointLeadLimit) * attackAlpha;
+            const float releaseTau = renewedAcceleration ? kTurningConstraintRenewedReleaseTauSeconds
+                                                         : kTurningConstraintSlowReleaseTauSeconds;
+            const float alpha = rawTurningPointLeadLimit < m_turningPointLeadLimit
+                ? tightenAlpha : dt / (releaseTau + dt);
+            m_turningPointLeadLimit += (rawTurningPointLeadLimit - m_turningPointLeadLimit) * alpha;
         }
     } else {
         const float releaseTau = renewedAcceleration ? 0.012F : 0.055F;
@@ -987,12 +1097,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     m_turningPointHorizonLimitSeconds = std::clamp(m_turningPointHorizonLimitSeconds, 0.0F, 0.060F);
     m_turningPointLeadLimit = std::clamp(m_turningPointLeadLimit, 0.0F, 0.50F);
     const float turningPointConfidence = m_turningPointAuthority;
-    // Confidence is persistent, but the physical stop-distance constraint is
-    // recomputed from the current accepted source state. Retaining an old
-    // minimum after the stick has legitimately continued moving was the
-    // cross-corpus regression this envelope is meant to avoid.
-    const float turningPointHorizonLimit = rawTurningPointHorizonLimit;
-    const float turningPointLeadLimit = rawTurningPointLeadLimit;
+    // A raw tighter limit is a correctness floor and applies immediately.
+    // The stored constraint then prevents a one-report looser estimate from
+    // reopening horizon/lead during the same braking episode.  Once evidence
+    // flickers out, its scalar release remains rate-normalized.
+    const bool persistentTurningConstraint = m_turningPointAuthority > 0.0001F;
+    const float turningPointHorizonLimit = rawTurningPointHorizonLimit > 0.0F
+        ? std::min(rawTurningPointHorizonLimit, m_turningPointHorizonLimitSeconds)
+        : persistentTurningConstraint ? m_turningPointHorizonLimitSeconds : 0.0F;
+    const float turningPointLeadLimit = rawTurningPointLeadLimit > 0.0F
+        ? std::min(rawTurningPointLeadLimit, m_turningPointLeadLimit)
+        : persistentTurningConstraint ? m_turningPointLeadLimit : 0.0F;
     // Correctness never falls to zero at the UI's 0% setting; the user may
     // tune how proactively we constrain a credible turn, not re-enable a
     // prediction which source braking says cannot occur.
@@ -1045,27 +1160,50 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.motionIntensity = intensity;
     result.velocityAuthority = velocityAuthority;
     result.accelerationIntent = accelerationIntent;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.launchIntent = launchIntent;
+    result.onsetTarget = onsetTarget;
+#endif
     result.onsetAuthority = onsetAuthority;
     result.sustainedEvidence = m_sustainedEvidence;
     result.sustainedAuthority = sustainedAuthority;
     result.motionUrgency = motionUrgency;
     result.horizonExtensionEligibility = horizonExtensionEligibility;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.horizonExtensionTarget = horizonExtensionTarget;
+#endif
     result.normalMaximumHorizonSeconds = normalMaximumHorizon;
     result.allowedMaximumHorizonSeconds = allowedMaximumHorizon;
     result.turningPointConfidence = turningPointConfidence;
     result.estimatedTimeToTurnSeconds = estimatedTimeToTurnSeconds;
     result.estimatedRemainingTravel = estimatedRemainingTravel;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.rawTurningPointHorizonLimitSeconds = rawTurningPointHorizonLimit;
+    result.rawTurningPointLeadLimit = rawTurningPointLeadLimit;
+#endif
     result.turningPointHorizonLimitSeconds = turningPointHorizonLimit;
     result.turningPointLeadLimit = turningPointLeadLimit;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.appliedTurningPointHorizonLimitSeconds = m_turningPointHorizonLimitSeconds;
+    result.appliedTurningPointLeadLimit = m_turningPointLeadLimit;
+#endif
     result.reacquisitionAuthority = m_reacquisitionAuthority;
     result.motionCoherence = coherence;
     result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
     result.quietDurationSeconds = m_quietDurationSeconds;
     result.sourceStoppingSeconds = m_sourceStoppingSeconds;
     result.brakingReductionFactor = m_brakingReductionFactor;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.sourceDecayEvidence = static_cast<float>(m_sourceDecayEvidence);
+#endif
     result.reversal = reversal;
     result.safetyCancelled = safetyCancellation;
     result.sourceBrakingDetected = sourceBrakingDetected;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.meaningfulMeasurement = meaningfulMeasurement;
+    result.sourceUpdated = sourceUpdated;
+    result.braking = braking;
+#endif
     result.state = reversal ? AdaptiveMotionState::Reversing
         : confirmedQuiet || speed <= velocityThreshold ? AdaptiveMotionState::Stable
         : intensity < 0.16F ? AdaptiveMotionState::Micro

@@ -89,8 +89,16 @@ struct AdaptiveContinuityMetrics {
     float maximumTurnTransition = 0.0F;
     float maximumHorizonLimitTransition = 0.0F;
     float maximumReacquisitionTransition = 0.0F;
+    float maximumNonSafetyPositivePredictorStep = 0.0F;
+    float maximumNonSafetyNegativePredictorStep = 0.0F;
+    float maximumNonSafetyPositiveRampDownStep = 0.0F;
+    float maximumNonSafetyNegativeRampDownStep = 0.0F;
     float stationaryLead = 0.0F;
     int turnActivations = 0;
+    int nonSafetyArtificialStepsOverQuarterPercent = 0;
+    int nonSafetyArtificialStepsOverHalfPercent = 0;
+    int nonSafetyArtificialStepsOverOnePercent = 0;
+    int nonSafetyArtificialStepsOverTwoPercent = 0;
     int artificialStepsOverHalfPercent = 0;
     int artificialStepsOverOnePercent = 0;
     int artificialStepsOverTwoPercent = 0;
@@ -182,6 +190,31 @@ AdaptiveContinuityMetrics adaptiveContinuityMetrics(const AdaptiveResponseSimula
                      - previous.turningPointHorizonLimitSeconds));
         metrics.maximumReacquisitionTransition = std::max(metrics.maximumReacquisitionTransition,
             std::abs(telemetry.reacquisitionAuthority - previous.reacquisitionAuthority));
+        const bool nonSafetyStep = !telemetry.safetyLimited && !previous.safetyLimited
+            && !telemetry.safetyCancelled && !previous.safetyCancelled
+            && !telemetry.reversal && !previous.reversal;
+        if (nonSafetyStep) {
+            const float signedPredictorStep = telemetry.predicted - previous.predicted;
+            if (signedPredictorStep > 0.0F) {
+                metrics.maximumNonSafetyPositivePredictorStep = std::max(
+                    metrics.maximumNonSafetyPositivePredictorStep, signedPredictorStep);
+            } else {
+                metrics.maximumNonSafetyNegativePredictorStep = std::max(
+                    metrics.maximumNonSafetyNegativePredictorStep, -signedPredictorStep);
+            }
+            if (previous.lead > 0.0F && telemetry.lead >= 0.0F && signedPredictorStep < 0.0F) {
+                metrics.maximumNonSafetyPositiveRampDownStep = std::max(
+                    metrics.maximumNonSafetyPositiveRampDownStep, -signedPredictorStep);
+            }
+            if (previous.lead < 0.0F && telemetry.lead <= 0.0F && signedPredictorStep > 0.0F) {
+                metrics.maximumNonSafetyNegativeRampDownStep = std::max(
+                    metrics.maximumNonSafetyNegativeRampDownStep, signedPredictorStep);
+            }
+            if (artificialStep > 0.0025F) ++metrics.nonSafetyArtificialStepsOverQuarterPercent;
+            if (artificialStep > 0.005F) ++metrics.nonSafetyArtificialStepsOverHalfPercent;
+            if (artificialStep > 0.010F) ++metrics.nonSafetyArtificialStepsOverOnePercent;
+            if (artificialStep > 0.020F) ++metrics.nonSafetyArtificialStepsOverTwoPercent;
+        }
         if (artificialStep > 0.005F) ++metrics.artificialStepsOverHalfPercent;
         if (artificialStep > 0.010F) ++metrics.artificialStepsOverOnePercent;
         if (artificialStep > 0.020F) ++metrics.artificialStepsOverTwoPercent;
@@ -1922,6 +1955,16 @@ void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
                   << " discontinuities_0_5_1_2=" << metrics.artificialStepsOverHalfPercent
                   << '/' << metrics.artificialStepsOverOnePercent
                   << '/' << metrics.artificialStepsOverTwoPercent
+                  << " non_safety_predictor_steps_pos_neg_pos_rampdown_neg_rampdown="
+                  << metrics.maximumNonSafetyPositivePredictorStep << '/'
+                  << metrics.maximumNonSafetyNegativePredictorStep << '/'
+                  << metrics.maximumNonSafetyPositiveRampDownStep << '/'
+                  << metrics.maximumNonSafetyNegativeRampDownStep
+                  << " non_safety_discontinuities_0_25_0_5_1_2="
+                  << metrics.nonSafetyArtificialStepsOverQuarterPercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverHalfPercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverOnePercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverTwoPercent
                   << " stationary_lead=" << metrics.stationaryLead << '\n';
         for (size_t lobe = 0; lobe < metrics.lobes.size(); ++lobe) {
             const AdaptiveLobeMetrics &lobeMetrics = metrics.lobes[lobe];
@@ -1934,6 +1977,83 @@ void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
                       << " centroid=" << lobeMetrics.leadCentroidSeconds
                       << " first_fraction=" << lobeMetrics.firstHalfLeadFraction
                       << " second_fraction=" << lobeMetrics.secondHalfLeadFraction << '\n';
+        }
+        bool launchWasActive = false;
+        bool onsetTargetWasActive = false;
+        bool onsetWasActive = false;
+        bool meaningfulWasActive = false;
+        bool sustainedEvidenceWasActive = false;
+        bool sustainedWasActive = false;
+        bool brakingWasActive = false;
+        bool turningWasActive = false;
+        float priorExtensionTarget = 0.0F;
+        float priorExtensionAuthority = 0.0F;
+        float priorRawTurnHorizon = 0.0F;
+        float priorAppliedTurnHorizon = 0.060F;
+        float priorRawTurnLead = 0.0F;
+        float priorAppliedTurnLead = 0.50F;
+        float priorReacquisition = 1.0F;
+        float priorSourceDecayEvidence = 0.0F;
+        for (size_t index = 0; index < simulation.size(); ++index) {
+            const AdaptiveResponseTelemetry &current = simulation[index].telemetry;
+            const bool launchActive = current.launchIntent > 0.00001F;
+            const bool onsetTargetActive = current.onsetTarget > 0.00001F;
+            const bool onsetActive = current.onsetAuthority > 0.00001F;
+            const bool sustainedEvidenceActive = current.sustainedEvidence > 0.00001F;
+            const bool sustainedActive = current.sustainedAuthority > 0.00001F;
+            const bool turningActive = current.turningPointConfidence > 0.00001F;
+            const bool event = launchActive != launchWasActive
+                || onsetTargetActive != onsetTargetWasActive || onsetActive != onsetWasActive
+                || current.meaningfulMeasurement != meaningfulWasActive
+                || sustainedEvidenceActive != sustainedEvidenceWasActive
+                || sustainedActive != sustainedWasActive || current.braking != brakingWasActive
+                || turningActive != turningWasActive || current.reversal || current.safetyCancelled
+                || current.sourceDecayEvidence != priorSourceDecayEvidence
+                || std::abs(current.horizonExtensionTarget - priorExtensionTarget) > 0.010F
+                || std::abs(current.horizonExtensionEligibility - priorExtensionAuthority) > 0.010F
+                || std::abs(current.rawTurningPointHorizonLimitSeconds - priorRawTurnHorizon) > 0.002F
+                || std::abs(current.appliedTurningPointHorizonLimitSeconds - priorAppliedTurnHorizon) > 0.002F
+                || std::abs(current.rawTurningPointLeadLimit - priorRawTurnLead) > 0.010F
+                || std::abs(current.appliedTurningPointLeadLimit - priorAppliedTurnLead) > 0.010F
+                || std::abs(current.reacquisitionAuthority - priorReacquisition) > 0.050F;
+            if (event) {
+                std::cout << "adaptive_continuity_event preset=" << name << " time="
+                          << simulation[index].timeSeconds << " launch=" << current.launchIntent
+                          << " onset_target=" << current.onsetTarget
+                          << " onset=" << current.onsetAuthority
+                          << " meaningful=" << current.meaningfulMeasurement
+                          << " sustained_evidence=" << current.sustainedEvidence
+                          << " sustained=" << current.sustainedAuthority
+                          << " braking=" << current.braking
+                          << " extension_target=" << current.horizonExtensionTarget
+                          << " extension=" << current.horizonExtensionEligibility
+                          << " source_decay_evidence=" << current.sourceDecayEvidence
+                          << " braking_maturity=" << current.brakingReductionFactor
+                          << " turn_active=" << current.turningPointConfidence
+                          << " raw_turn_horizon=" << current.rawTurningPointHorizonLimitSeconds
+                          << " applied_turn_horizon=" << current.appliedTurningPointHorizonLimitSeconds
+                          << " raw_turn_lead=" << current.rawTurningPointLeadLimit
+                          << " applied_turn_lead=" << current.appliedTurningPointLeadLimit
+                          << " reversal=" << current.reversal
+                          << " safety=" << current.safetyCancelled
+                          << " reacquire=" << current.reacquisitionAuthority << '\n';
+            }
+            launchWasActive = launchActive;
+            onsetTargetWasActive = onsetTargetActive;
+            onsetWasActive = onsetActive;
+            meaningfulWasActive = current.meaningfulMeasurement;
+            sustainedEvidenceWasActive = sustainedEvidenceActive;
+            sustainedWasActive = sustainedActive;
+            brakingWasActive = current.braking;
+            turningWasActive = turningActive;
+            priorExtensionTarget = current.horizonExtensionTarget;
+            priorExtensionAuthority = current.horizonExtensionEligibility;
+            priorRawTurnHorizon = current.rawTurningPointHorizonLimitSeconds;
+            priorAppliedTurnHorizon = current.appliedTurningPointHorizonLimitSeconds;
+            priorRawTurnLead = current.rawTurningPointLeadLimit;
+            priorAppliedTurnLead = current.appliedTurningPointLeadLimit;
+            priorReacquisition = current.reacquisitionAuthority;
+            priorSourceDecayEvidence = current.sourceDecayEvidence;
         }
         for (size_t index = 1; index < simulation.size(); ++index) {
             const AdaptiveResponseTelemetry &previous = simulation[index - 1].telemetry;
@@ -2408,12 +2528,22 @@ void MappingCoreTests::adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet()
     float maximumEarlyGain = 0.0F;
     size_t maximumGainIndex = 0;
     size_t firstOnsetIndex = withOnset.size();
+    size_t firstMeaningfulIndex = withOnset.size();
+    float preMeaningfulOnset = 0.0F;
     for (size_t index = 12; index < withOnset.size(); ++index) {
         earlyWithout = index < 36 ? std::max(earlyWithout, std::abs(withoutOnset[index].telemetry.lead)) : earlyWithout;
         earlyWith = index < 36 ? std::max(earlyWith, std::abs(withOnset[index].telemetry.lead)) : earlyWith;
         maximumOnset = std::max(maximumOnset, withOnset[index].telemetry.onsetAuthority);
         if (withOnset[index].telemetry.onsetAuthority > 0.00001F && firstOnsetIndex == withOnset.size()) {
             firstOnsetIndex = index;
+        }
+        if (withOnset[index].telemetry.meaningfulMeasurement
+            && firstMeaningfulIndex == withOnset.size()) {
+            firstMeaningfulIndex = index;
+        }
+        if (!withOnset[index].telemetry.meaningfulMeasurement) {
+            preMeaningfulOnset = std::max(preMeaningfulOnset,
+                withOnset[index].telemetry.onsetAuthority);
         }
         const float gain = std::abs(withOnset[index].telemetry.lead)
             - std::abs(withoutOnset[index].telemetry.lead);
@@ -2428,11 +2558,16 @@ void MappingCoreTests::adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet()
     }
     qInfo().nospace() << "Onset accelerating early_off=" << earlyWithout
                       << " early_on=" << earlyWith << " maximum_authority=" << maximumOnset
-                      << " first_onset=" << firstOnsetIndex << " max_gain=" << maximumGain
+                      << " first_onset=" << firstOnsetIndex
+                      << " first_meaningful=" << firstMeaningfulIndex
+                      << " pre_meaningful_onset=" << preMeaningfulOnset
+                      << " max_gain=" << maximumGain
                       << " max_gain_index=" << maximumGainIndex
                       << " early_gain=" << maximumEarlyGain;
     QVERIFY(maximumOnset > 0.0005F);
     QVERIFY(maximumEarlyGain > 0.0002F);
+    QVERIFY(firstOnsetIndex < firstMeaningfulIndex);
+    QVERIFY(preMeaningfulOnset > 0.00001F);
 
     std::vector<float> mirrored;
     mirrored.reserve(accelerating.size());
@@ -2453,6 +2588,17 @@ void MappingCoreTests::adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet()
     }
     const AdaptiveResponseSimulation noisy = simulateAdaptiveResponse(configuration, jitter, 0.004F);
     for (const AdaptiveResponseSimulationSample &sample : noisy) {
+        QVERIFY(sample.telemetry.onsetAuthority < 0.00001F);
+        QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
+    }
+
+    // One sub-meaningful source update may create evidence, but cannot apply
+    // onset: the early path requires a second coherent speed-growth report.
+    std::vector<float> singleReport(64, 0.0F);
+    for (size_t index = 12; index < singleReport.size(); ++index) singleReport[index] = 0.004F;
+    const AdaptiveResponseSimulation oneReport = simulateAdaptiveResponse(
+        configuration, singleReport, 0.004F);
+    for (const AdaptiveResponseSimulationSample &sample : oneReport) {
         QVERIFY(sample.telemetry.onsetAuthority < 0.00001F);
         QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
     }

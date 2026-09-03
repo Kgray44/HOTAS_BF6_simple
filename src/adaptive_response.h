@@ -32,18 +32,35 @@ struct AdaptiveResponseTelemetry {
     // Bounded decomposition of predictive authority. These fixed scalars are
     // published for preview/diagnostics only; they do not allocate or notify.
     float accelerationIntent = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    // Test-only microscope for deterministic continuity investigation. These
+    // are compiled into mapping-core validation, not the production hot path.
+    float launchIntent = 0.0F;
+    float onsetTarget = 0.0F;
+#endif
     float onsetAuthority = 0.0F;
     float sustainedEvidence = 0.0F;
     float sustainedAuthority = 0.0F;
     float motionUrgency = 0.0F;
     float horizonExtensionEligibility = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    float horizonExtensionTarget = 0.0F;
+#endif
     float normalMaximumHorizonSeconds = 0.0F;
     float allowedMaximumHorizonSeconds = 0.0F;
     float turningPointConfidence = 0.0F;
     float estimatedTimeToTurnSeconds = 0.0F;
     float estimatedRemainingTravel = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    float rawTurningPointHorizonLimitSeconds = 0.0F;
+    float rawTurningPointLeadLimit = 0.0F;
+#endif
     float turningPointHorizonLimitSeconds = 0.0F;
     float turningPointLeadLimit = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    float appliedTurningPointHorizonLimitSeconds = 0.060F;
+    float appliedTurningPointLeadLimit = 0.50F;
+#endif
     float reacquisitionAuthority = 1.0F;
     float motionCoherence = 0.0F;
     float sourceUpdatePeriodSeconds = 0.0F;
@@ -53,11 +70,19 @@ struct AdaptiveResponseTelemetry {
     // allocate, notify, or change mapping-thread ownership.
     float sourceStoppingSeconds = 0.0F;
     float brakingReductionFactor = 0.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    float sourceDecayEvidence = 0.0F;
+#endif
     AdaptiveMotionState state = AdaptiveMotionState::Stable;
     bool reversal = false;
     bool safetyCancelled = false;
     bool safetyLimited = false;
     bool sourceBrakingDetected = false;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    bool meaningfulMeasurement = false;
+    bool sourceUpdated = false;
+    bool braking = false;
+#endif
 };
 
 // Runtime-only, allocation-free per-axis estimator state.  The Alpha-Beta
@@ -99,6 +124,12 @@ private:
     // Confirmed reversals retain immediate stale-lead cancellation, while the
     // new direction's predictive authority rises over a very short envelope.
     float m_reacquisitionAuthority = 1.0F;
+    // Coherent source growth may pre-arm a bounded onset contribution before
+    // the broader meaningful-measurement gate opens.  It never authorizes
+    // predictive lead during an ambiguous opposite-direction report.
+    float m_launchEvidence = 0.0F;
+    int m_launchEvidenceDirection = 0;
+    std::uint8_t m_launchEvidenceCount = 0;
     float m_onsetAuthority = 0.0F;
     float m_sustainedEvidence = 0.0F;
     float m_horizonExtensionAuthority = 0.0F;
