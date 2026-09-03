@@ -29,6 +29,62 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> afterInversion{};
     std::array<std::atomic<float>, kPhysicalAxisCount> curveResponse{};
     std::array<std::atomic<float>, kPhysicalAxisCount> transformed{};
+    // Adaptive Response publishes only this latest fixed-size snapshot. The
+    // QML timer samples it independently; no report fires a UI event.
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEstimated{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptivePredicted{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocity{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAcceleration{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveConfidence{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMotionIntensity{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocityAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAccelerationIntent{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveOnsetAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveSustainedEvidence{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveSustainedAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMotionUrgency{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonExtensionEligibility{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveNormalMaximumHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAllowedMaximumHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveTurningPointConfidence{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEstimatedTimeToTurnSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEstimatedRemainingTravel{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveTurningPointHorizonLimitSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveTurningPointLeadLimit{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveReacquisitionAuthority{};
+    std::array<std::atomic_int, kPhysicalAxisCount> adaptiveMotionState{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveReversing{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveSafetyLimited{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveReversalCount{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveSafetyClampCount{};
+    // The worker's already-flattened config is published alongside live
+    // telemetry. This lets presentation show the true Automation-adjusted
+    // runtime instead of re-resolving only persistent configuration.
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveRuntimeEnabled{};
+    std::array<std::atomic_int, kPhysicalAxisCount> adaptiveRuntimeModel{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMaximumHorizonSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMaximumLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeVelocityResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeAccelerationResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeMotionSensitivity{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeNoiseRejection{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeReversalDetection{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeReversalResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeDecelerationResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeSettlingResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeEndpointTaper{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeOnsetAssist{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeOnsetCap{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeSustainedAssist{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeSustainedCap{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeHorizonExtension{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeHorizonExtensionCapSeconds{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeTurningPointProtection{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeTurningPointMargin{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveAutomationOverlayActive{};
+    std::array<std::atomic_uint32_t, kPhysicalAxisCount> adaptiveAutomationOverlayProperties{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};

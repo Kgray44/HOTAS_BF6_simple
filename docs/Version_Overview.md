@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.2.0**
+**Current release: v2.3.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.3.0 — Adaptive Response
+
+Adds a per-axis, short-horizon predictive phase-lead subsystem that anticipates deliberate physical movement without smoothing, PID feedback, or a steady-state position offset.
+
+- Velocity, Alpha-Beta, Alpha-Beta-Gamma, and Auto models process only the calibrated normalized physical axis; the estimator always reacquires measured physical position and runs before existing deadzone, hysteresis, inversion, curve, and output-limit transforms.
+- Adaptive 0–30 ms horizons use motion intensity and confidence, cancel stale lead on reversals, reduce lead on deceleration/stops, taper at endpoints, and clamp safely to the legal axis domain.
+- Global, Category, and Profile layers support inherit-or-override behavior, built-in Off/Light/Balanced/Fast/Aggressive/Extreme presets, bounded custom presets, and optional temporary Automation overlays resolved by priority and source order.
+- The Adaptive Response workspace provides themed preset controls, advanced tuning, static preview, repeatable Test Lab scenarios, and live physical/estimated/predicted telemetry with reversal and safety indicators.
+- Schema 21 migrates legacy configurations to safe-off Adaptive Response defaults. Profile and Pack files retain required custom Adaptive Response presets and validate dependencies before atomic import.
+- Focused core and Automation tests cover direct convergence, reversal cancellation, endpoint taper/clamping, layering/persistence, priority overlays, and hot-path allocation measurement. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain separate checks.
 
 ## v2.2.0 — Bumpless Curve / Mapping Transition Smoothing
 

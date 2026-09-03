@@ -14,7 +14,16 @@ Page {
     property var automationPresentationState: ({})
     property var curveEditorPresentationState: ({})
     // Do not materialize telemetry-shaped models when their page is unloaded.
-    property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3) ? backend.axes : []
+    property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3 || currentPage === 9) ? backend.axes : []
+    readonly property var adaptiveThemeTokens: ({
+        panel: "#e61a282e", panelInset: "#10171b", border: "#52717c", borderStrong: "#78aab9",
+        controlRadius: 4, textStrong: "#f3f7f7", text: "#d5e0e3", textMuted: "#9aa3a7",
+        textFaint: "#77919a", telemetryFont: "Consolas", displayFont: "Segoe UI Variable",
+        control: "#1b2a31", controlDisabled: "#142126", controlPressed: "#29414a",
+        controlHover: "#22343c", buttonSurface: "#294a57", buttonSecondary: "#1b2a31",
+        tooltip: "#16252b", selection: "#294a57", orange: "#78aab9", cyan: "#8fc8c0",
+        warning: "#d4ad69", divider: "#335268", ready: "#8fd5c9"
+    })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
     property var allPovInputs: (currentPage === 1 || currentPage === 3) ? backend.povInputs : []
@@ -40,6 +49,7 @@ Page {
         + (diagnosticsPageLoader.item ? 1 : 0)
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
+        + (adaptiveResponsePageLoader.item ? 1 : 0)
 
     function pageItem(page) {
         switch (page) {
@@ -52,6 +62,7 @@ Page {
         case 6: return curveEditorLoader.item
         case 7: return automationPageLoader.item
         case 8: return overviewPageLoader.item
+        case 9: return adaptiveResponsePageLoader.item
         }
         return null
     }
@@ -1127,7 +1138,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 417
+        height: 452
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1175,7 +1186,7 @@ Page {
                 model: [
                     { label: "OVERVIEW", page: 8, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
-                    { label: "AUTOMATION", page: 7, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
@@ -1277,6 +1288,7 @@ Page {
                     PageTitle { heading: "Axes"
                         detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
                     Item { Layout.fillWidth: true }
+                    CommandButton { label: "ADAPTIVE RESPONSE"; subdued: true; onTriggered: root.currentPage = 9 }
                     CommandButton { label: "QUICK MAP"; onTriggered: quickAssignDialog.open() }
                 }
                 Panel { width: parent.width; height: 90
@@ -1851,6 +1863,19 @@ Page {
                         }
                     }
                 }
+                Panel { width: parent.width; Layout.fillWidth: true; Layout.preferredHeight: 116
+                    property var adaptive: backend.adaptiveResponseTelemetry
+                    Column { anchors.fill: parent; anchors.margins: 12; spacing: 4
+                        Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptive.state || "STABLE").toUpperCase()
+                            color: "#9aa3a7"; font.pixelSize: 9; font.bold: true }
+                        Text { text: "PHYSICAL " + root.valuePercent(adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptive.virtualOutput || 0)
+                            color: "#d5e0e3"; font.pixelSize: 11; font.family: "Consolas" }
+                        Text { text: "V " + Number(adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptive.lead || 0)
+                            color: "#9aa3a7"; font.pixelSize: 10; font.family: "Consolas" }
+                        Text { text: "MODEL " + String(adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptive.safetyClampCount || 0)
+                            color: "#9aa3a7"; font.pixelSize: 9; font.family: "Consolas" }
+                    }
+                }
                 Text { visible: root.allPovs.length > 0; text: "POV / HAT INPUTS"
                     color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
                 GridLayout { visible: root.allPovs.length > 0; width: parent.width
@@ -1979,6 +2004,14 @@ Page {
                 AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true
                     presentationState: root.automationPresentationState
                     onPresentationStateCaptured: function(state) { root.automationPresentationState = state } }
+            }
+        }
+        Loader {
+            id: adaptiveResponsePageLoader
+            anchors.fill: parent
+            active: root.currentPage === 9
+            sourceComponent: Component {
+                AdaptiveResponsePage { anchors.fill: parent; visible: root.currentPage === 9; backendObject: backend; themeTokens: root.adaptiveThemeTokens }
             }
         }
     }

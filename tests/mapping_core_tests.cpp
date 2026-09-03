@@ -1,5 +1,6 @@
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
+#include "adaptive_response.h"
 #include "button_mapping.h"
 #include "config_store.h"
 #include "controller_manager.h"
@@ -16,11 +17,16 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <iostream>
 #include <limits>
+#include <random>
+#include <tuple>
 
 using namespace hotas;
 
@@ -28,6 +34,586 @@ namespace {
 bool nearlyEqual(float left, float right)
 {
     return std::abs(left - right) < 0.0001F;
+}
+
+RuntimeAdaptiveResponseConfig runtimeForAdaptiveSettings(const AdaptiveResponseSettings &settings)
+{
+    RuntimeAdaptiveResponseConfig runtime;
+    runtime.enabled = settings.enabled;
+    runtime.model = settings.model;
+    runtime.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
+    runtime.maximumLead = settings.maximumLead;
+    runtime.velocityResponse = settings.velocityResponse;
+    runtime.accelerationResponse = settings.accelerationResponse;
+    runtime.motionSensitivity = settings.motionSensitivity;
+    runtime.noiseRejection = settings.noiseRejection;
+    runtime.reversalDetection = settings.reversalDetection;
+    runtime.reversalResponse = settings.reversalResponse;
+    runtime.decelerationResponse = settings.decelerationResponse;
+    runtime.settlingResponse = settings.settlingResponse;
+    runtime.endpointTaper = settings.endpointTaper;
+    runtime.onsetAssist = settings.onsetAssist;
+    runtime.onsetCap = settings.onsetCap;
+    runtime.sustainedAssist = settings.sustainedAssist;
+    runtime.sustainedCap = settings.sustainedCap;
+    runtime.horizonExtension = settings.horizonExtension;
+    runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
+    runtime.turningPointProtection = settings.turningPointProtection;
+    runtime.turningPointMargin = settings.turningPointMargin;
+    return runtime;
+}
+
+struct AdaptiveLobeMetrics {
+    float movementStartSeconds = 0.0F;
+    float movementEndSeconds = 0.0F;
+    float midpointSeconds = 0.0F;
+    float peakPhysicalSpeedSeconds = 0.0F;
+    float peakLeadSeconds = 0.0F;
+    float leadCentroidSeconds = 0.0F;
+    float firstHalfLeadFraction = 0.0F;
+    float secondHalfLeadFraction = 0.0F;
+};
+
+struct AdaptiveContinuityMetrics {
+    float peakLead = 0.0F;
+    float medianLead = 0.0F;
+    float meanAbsoluteForecastError = 0.0F;
+    float rmsForecastError = 0.0F;
+    float p95ForecastError = 0.0F;
+    float maximumForecastError = 0.0F;
+    float maximumPhysicalStep = 0.0F;
+    float maximumPredictedStep = 0.0F;
+    float maximumArtificialStep = 0.0F;
+    float maximumOnsetTransition = 0.0F;
+    float maximumExtensionTransition = 0.0F;
+    float maximumTurnTransition = 0.0F;
+    float maximumHorizonLimitTransition = 0.0F;
+    float maximumReacquisitionTransition = 0.0F;
+    float maximumNonSafetyPositivePredictorStep = 0.0F;
+    float maximumNonSafetyNegativePredictorStep = 0.0F;
+    float maximumNonSafetyPositiveRampDownStep = 0.0F;
+    float maximumNonSafetyNegativeRampDownStep = 0.0F;
+    float stationaryLead = 0.0F;
+    int turnActivations = 0;
+    int nonSafetyArtificialStepsOverQuarterPercent = 0;
+    int nonSafetyArtificialStepsOverHalfPercent = 0;
+    int nonSafetyArtificialStepsOverOnePercent = 0;
+    int nonSafetyArtificialStepsOverTwoPercent = 0;
+    int artificialStepsOverHalfPercent = 0;
+    int artificialStepsOverOnePercent = 0;
+    int artificialStepsOverTwoPercent = 0;
+    std::array<AdaptiveLobeMetrics, 2> lobes{};
+};
+
+AdaptiveLobeMetrics adaptiveLobeMetrics(const AdaptiveResponseSimulation &simulation,
+                                        size_t start, size_t end)
+{
+    AdaptiveLobeMetrics metrics;
+    if (simulation.empty() || start >= simulation.size() || end <= start) return metrics;
+    end = std::min(end, simulation.size() - 1);
+    metrics.movementStartSeconds = simulation[start].timeSeconds;
+    metrics.movementEndSeconds = simulation[end].timeSeconds;
+    metrics.midpointSeconds = (metrics.movementStartSeconds + metrics.movementEndSeconds) * 0.5F;
+    float largestSpeed = -1.0F;
+    float largestLead = -1.0F;
+    float leadMass = 0.0F;
+    float weightedTime = 0.0F;
+    float firstHalfMass = 0.0F;
+    float secondHalfMass = 0.0F;
+    for (size_t index = start; index <= end; ++index) {
+        const float absoluteLead = std::abs(simulation[index].telemetry.lead);
+        leadMass += absoluteLead;
+        weightedTime += absoluteLead * simulation[index].timeSeconds;
+        if (simulation[index].timeSeconds <= metrics.midpointSeconds) firstHalfMass += absoluteLead;
+        else secondHalfMass += absoluteLead;
+        if (absoluteLead > largestLead) {
+            largestLead = absoluteLead;
+            metrics.peakLeadSeconds = simulation[index].timeSeconds;
+        }
+        if (index > start) {
+            const float speed = std::abs(simulation[index].telemetry.physical
+                                         - simulation[index - 1].telemetry.physical);
+            if (speed > largestSpeed) {
+                largestSpeed = speed;
+                metrics.peakPhysicalSpeedSeconds = simulation[index].timeSeconds;
+            }
+        }
+    }
+    metrics.leadCentroidSeconds = leadMass > 0.0F ? weightedTime / leadMass : metrics.midpointSeconds;
+    metrics.firstHalfLeadFraction = leadMass > 0.0F ? firstHalfMass / leadMass : 0.0F;
+    metrics.secondHalfLeadFraction = leadMass > 0.0F ? secondHalfMass / leadMass : 0.0F;
+    return metrics;
+}
+
+AdaptiveContinuityMetrics adaptiveContinuityMetrics(const AdaptiveResponseSimulation &simulation,
+                                                     float samplePeriodSeconds)
+{
+    AdaptiveContinuityMetrics metrics;
+    if (simulation.empty()) return metrics;
+    std::vector<float> absoluteLeads;
+    std::vector<float> forecastErrors;
+    absoluteLeads.reserve(simulation.size());
+    forecastErrors.reserve(simulation.size());
+    bool wasTurning = false;
+    for (size_t index = 0; index < simulation.size(); ++index) {
+        const AdaptiveResponseTelemetry &telemetry = simulation[index].telemetry;
+        const float absoluteLead = std::abs(telemetry.lead);
+        absoluteLeads.push_back(absoluteLead);
+        metrics.peakLead = std::max(metrics.peakLead, absoluteLead);
+        const size_t forecastIndex = std::min(simulation.size() - 1, index + static_cast<size_t>(
+            std::lround(telemetry.activeHorizonSeconds / std::max(0.0005F, samplePeriodSeconds))));
+        const float forecastError = std::abs(telemetry.predicted
+            - simulation[forecastIndex].telemetry.physical);
+        forecastErrors.push_back(forecastError);
+        metrics.meanAbsoluteForecastError += forecastError;
+        metrics.rmsForecastError += forecastError * forecastError;
+        metrics.maximumForecastError = std::max(metrics.maximumForecastError, forecastError);
+        const bool turning = telemetry.turningPointConfidence > 0.0001F;
+        if (turning && !wasTurning) ++metrics.turnActivations;
+        wasTurning = turning;
+        if (index == 0) continue;
+        const AdaptiveResponseTelemetry &previous = simulation[index - 1].telemetry;
+        const float physicalStep = std::abs(telemetry.physical - previous.physical);
+        const float predictedStep = std::abs(telemetry.predicted - previous.predicted);
+        const float artificialStep = std::max(0.0F, predictedStep - physicalStep);
+        metrics.maximumPhysicalStep = std::max(metrics.maximumPhysicalStep, physicalStep);
+        metrics.maximumPredictedStep = std::max(metrics.maximumPredictedStep, predictedStep);
+        metrics.maximumArtificialStep = std::max(metrics.maximumArtificialStep, artificialStep);
+        metrics.maximumOnsetTransition = std::max(metrics.maximumOnsetTransition,
+            std::abs(telemetry.onsetAuthority - previous.onsetAuthority));
+        metrics.maximumExtensionTransition = std::max(metrics.maximumExtensionTransition,
+            std::abs(telemetry.horizonExtensionEligibility - previous.horizonExtensionEligibility));
+        metrics.maximumTurnTransition = std::max(metrics.maximumTurnTransition,
+            std::abs(telemetry.turningPointConfidence - previous.turningPointConfidence));
+        metrics.maximumHorizonLimitTransition = std::max(metrics.maximumHorizonLimitTransition,
+            std::abs(telemetry.turningPointHorizonLimitSeconds
+                     - previous.turningPointHorizonLimitSeconds));
+        metrics.maximumReacquisitionTransition = std::max(metrics.maximumReacquisitionTransition,
+            std::abs(telemetry.reacquisitionAuthority - previous.reacquisitionAuthority));
+        const bool nonSafetyStep = !telemetry.safetyLimited && !previous.safetyLimited
+            && !telemetry.safetyCancelled && !previous.safetyCancelled
+            && !telemetry.reversal && !previous.reversal;
+        if (nonSafetyStep) {
+            const float signedPredictorStep = telemetry.predicted - previous.predicted;
+            if (signedPredictorStep > 0.0F) {
+                metrics.maximumNonSafetyPositivePredictorStep = std::max(
+                    metrics.maximumNonSafetyPositivePredictorStep, signedPredictorStep);
+            } else {
+                metrics.maximumNonSafetyNegativePredictorStep = std::max(
+                    metrics.maximumNonSafetyNegativePredictorStep, -signedPredictorStep);
+            }
+            if (previous.lead > 0.0F && telemetry.lead >= 0.0F && signedPredictorStep < 0.0F) {
+                metrics.maximumNonSafetyPositiveRampDownStep = std::max(
+                    metrics.maximumNonSafetyPositiveRampDownStep, -signedPredictorStep);
+            }
+            if (previous.lead < 0.0F && telemetry.lead <= 0.0F && signedPredictorStep > 0.0F) {
+                metrics.maximumNonSafetyNegativeRampDownStep = std::max(
+                    metrics.maximumNonSafetyNegativeRampDownStep, signedPredictorStep);
+            }
+            if (artificialStep > 0.0025F) ++metrics.nonSafetyArtificialStepsOverQuarterPercent;
+            if (artificialStep > 0.005F) ++metrics.nonSafetyArtificialStepsOverHalfPercent;
+            if (artificialStep > 0.010F) ++metrics.nonSafetyArtificialStepsOverOnePercent;
+            if (artificialStep > 0.020F) ++metrics.nonSafetyArtificialStepsOverTwoPercent;
+        }
+        if (artificialStep > 0.005F) ++metrics.artificialStepsOverHalfPercent;
+        if (artificialStep > 0.010F) ++metrics.artificialStepsOverOnePercent;
+        if (artificialStep > 0.020F) ++metrics.artificialStepsOverTwoPercent;
+    }
+    std::sort(absoluteLeads.begin(), absoluteLeads.end());
+    std::sort(forecastErrors.begin(), forecastErrors.end());
+    metrics.medianLead = absoluteLeads[absoluteLeads.size() / 2];
+    metrics.p95ForecastError = forecastErrors[static_cast<size_t>(
+        std::floor(static_cast<float>(forecastErrors.size() - 1) * 0.95F))];
+    metrics.meanAbsoluteForecastError /= static_cast<float>(forecastErrors.size());
+    metrics.rmsForecastError = std::sqrt(metrics.rmsForecastError
+        / static_cast<float>(forecastErrors.size()));
+    metrics.stationaryLead = std::abs(simulation.back().telemetry.lead);
+
+    std::array<size_t, 3> boundaries{0, simulation.size() - 1, simulation.size() - 1};
+    int boundaryCount = 0;
+    int priorDirection = 0;
+    for (size_t index = 1; index < simulation.size(); ++index) {
+        const int direction = simulation[index].telemetry.physical
+            > simulation[index - 1].telemetry.physical + 0.00001F ? 1
+            : simulation[index].telemetry.physical < simulation[index - 1].telemetry.physical - 0.00001F ? -1 : 0;
+        if (direction == 0) continue;
+        if (priorDirection != 0 && direction != priorDirection && boundaryCount == 0) {
+            boundaries[1] = index;
+            boundaryCount = 1;
+        }
+        priorDirection = direction;
+    }
+    metrics.lobes[0] = adaptiveLobeMetrics(simulation, 20, boundaries[1]);
+    metrics.lobes[1] = adaptiveLobeMetrics(simulation, boundaries[1], 150);
+    return metrics;
+}
+
+float quinticProgress(float progress)
+{
+    const float value = std::clamp(progress, 0.0F, 1.0F);
+    return value * value * value * (value * (value * 6.0F - 15.0F) + 10.0F);
+}
+
+float minimumJerkSegment(float start, float end, float time, float startTime, float duration)
+{
+    if (time <= startTime) return start;
+    if (time >= startTime + duration) return end;
+    return start + (end - start) * quinticProgress((time - startTime) / duration);
+}
+
+struct AdaptiveHoldoutCase {
+    int id = 0;
+    int speedBand = 0;
+    int amplitudeBand = 0;
+    bool stationaryNoise = false;
+    bool sampleAndHold = false;
+    std::vector<float> physical;
+};
+
+AdaptiveHoldoutCase makeAdaptiveHoldoutCase(std::uint32_t seed, int id, float samplePeriodSeconds)
+{
+    constexpr std::array<float, 5> amplitudes{0.018F, 0.075F, 0.22F, 0.52F, 0.88F};
+    constexpr std::array<float, 5> durations{0.95F, 0.70F, 0.46F, 0.28F, 0.17F};
+    std::mt19937 generator(seed + static_cast<std::uint32_t>(id) * 7919U);
+    std::uniform_real_distribution<float> unit(-1.0F, 1.0F);
+    AdaptiveHoldoutCase holdout;
+    holdout.id = id;
+    holdout.speedBand = id % 5;
+    holdout.amplitudeBand = (id / 5) % 5;
+    const int pattern = (id / 25) % 9;
+    holdout.stationaryNoise = pattern == 8;
+    holdout.sampleAndHold = pattern == 6 || pattern == 7;
+    const float amplitude = amplitudes[static_cast<size_t>(holdout.amplitudeBand)];
+    const float duration = durations[static_cast<size_t>(holdout.speedBand)];
+    const float direction = id % 2 == 0 ? 1.0F : -1.0F;
+    const float start = std::clamp(unit(generator) * (0.72F - amplitude * 0.45F), -0.86F, 0.86F);
+    const auto boundedTarget = [](float value) { return std::clamp(value, -0.96F, 0.96F); };
+    const float firstTarget = boundedTarget(start + direction * amplitude);
+    const float oppositeTarget = boundedTarget(start - direction * amplitude * (0.45F + 0.40F
+        * std::abs(unit(generator))));
+    const float correctionTarget = boundedTarget(firstTarget - direction * amplitude * 0.24F);
+    const float offset = 0.060F;
+    const float totalSeconds = std::max(1.55F, offset + duration * 3.60F + 0.38F);
+    const int sampleCount = static_cast<int>(std::ceil(totalSeconds / samplePeriodSeconds)) + 1;
+    holdout.physical.reserve(static_cast<size_t>(sampleCount));
+    float heldValue = start;
+    for (int index = 0; index < sampleCount; ++index) {
+        const float time = static_cast<float>(index) * samplePeriodSeconds;
+        float value = start;
+        switch (pattern) {
+        case 0: // one-way sweep
+            value = minimumJerkSegment(start, firstTarget, time, offset, duration);
+            break;
+        case 1: // smooth reversal
+            value = time < offset + duration ? minimumJerkSegment(start, firstTarget, time, offset, duration)
+                : minimumJerkSegment(firstTarget, oppositeTarget, time, offset + duration, duration * 0.82F);
+            break;
+        case 2: // repeated oscillation
+            value = time < offset + duration ? minimumJerkSegment(start, firstTarget, time, offset, duration)
+                : time < offset + duration * 2.0F ? minimumJerkSegment(firstTarget, oppositeTarget,
+                    time, offset + duration, duration) : minimumJerkSegment(oppositeTarget, firstTarget,
+                    time, offset + duration * 2.0F, duration);
+            break;
+        case 3: // asymmetric oscillation
+            value = time < offset + duration ? minimumJerkSegment(start, firstTarget, time, offset, duration)
+                : time < offset + duration * 1.60F ? minimumJerkSegment(firstTarget, oppositeTarget,
+                    time, offset + duration, duration * 0.60F) : minimumJerkSegment(oppositeTarget,
+                    correctionTarget, time, offset + duration * 1.60F, duration * 1.35F);
+            break;
+        case 4: // same-side correction
+            value = time < offset + duration ? minimumJerkSegment(start, firstTarget, time, offset, duration)
+                : minimumJerkSegment(firstTarget, correctionTarget, time, offset + duration, duration * 0.55F);
+            break;
+        case 5: // off-center center crossing
+            value = minimumJerkSegment(start, oppositeTarget, time, offset, duration * 1.15F);
+            break;
+        case 6: // deliberate pause followed by renewed acceleration
+            value = time < offset + duration ? minimumJerkSegment(start, firstTarget, time, offset, duration)
+                : time < offset + duration + 0.20F ? firstTarget : minimumJerkSegment(firstTarget,
+                    correctionTarget, time, offset + duration + 0.20F, duration * 0.70F);
+            break;
+        case 7: // quantized controller trajectory
+            value = minimumJerkSegment(start, firstTarget, time, offset, duration);
+            value = std::round(value / 0.004F) * 0.004F;
+            break;
+        default: // bounded stationary measurement noise
+            value = start + 0.0020F * std::sin(static_cast<float>(id + 3) * time * 17.0F)
+                + 0.0012F * std::sin(static_cast<float>(id + 11) * time * 43.0F);
+            break;
+        }
+        if (holdout.sampleAndHold && !holdout.stationaryNoise) {
+            const int holdSamples = samplePeriodSeconds < 0.010F ? 2 : 1;
+            if (index == 0 || index % holdSamples == 0) heldValue = value;
+            value = heldValue;
+        }
+        holdout.physical.push_back(std::clamp(value, -1.0F, 1.0F));
+    }
+    return holdout;
+}
+
+struct AdaptiveDistribution {
+    std::vector<float> values;
+
+    void add(float value) { values.push_back(value); }
+
+    float percentile(float fraction) const
+    {
+        if (values.empty()) return 0.0F;
+        std::vector<float> sorted = values;
+        std::sort(sorted.begin(), sorted.end());
+        return sorted[static_cast<size_t>(std::floor(fraction
+            * static_cast<float>(sorted.size() - 1)))];
+    }
+};
+
+float maximumTurningOvershoot(const AdaptiveResponseSimulation &simulation)
+{
+    float overshoot = 0.0F;
+    int priorDirection = 0;
+    for (size_t index = 1; index + 1 < simulation.size(); ++index) {
+        const float previousDelta = simulation[index].telemetry.physical
+            - simulation[index - 1].telemetry.physical;
+        const int direction = previousDelta > 0.00001F ? 1 : previousDelta < -0.00001F ? -1 : 0;
+        if (direction == 0) continue;
+        if (priorDirection != 0 && direction != priorDirection) {
+            const float apex = simulation[index].telemetry.physical;
+            for (size_t lookahead = index; lookahead < std::min(simulation.size(), index + 8); ++lookahead) {
+                const float candidate = simulation[lookahead].telemetry.predicted;
+                overshoot = std::max(overshoot, priorDirection > 0 ? candidate - apex : apex - candidate);
+            }
+        }
+        priorDirection = direction;
+    }
+    return std::max(0.0F, overshoot);
+}
+
+struct RecordedRealTrace {
+    QString id;
+    QString classification;
+    std::vector<float> physical;
+    std::vector<std::uint64_t> timestampsUs;
+};
+
+bool readRecordedRealTrace(const QString &id, const QString &classification,
+                           RecordedRealTrace *trace, QString *error)
+{
+    if (!trace) return false;
+    const QString path = QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath(
+        QStringLiteral("fixtures/adaptive_response_real_hotas/") + id + QStringLiteral(".csv"));
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error) *error = file.errorString();
+        return false;
+    }
+    constexpr auto kExpectedHeader = "time_ms,physical_raw_normalized,physical_raw_direct_input,physical_calibrated,source_reported,source_changed,elapsed_us,effective_cadence_hz,predicted,lead,active_horizon_ms,velocity,acceleration,source_update_period_ms,braking_detector,braking_reduction_factor,reversal,future_ground_truth_available,future_physical,future_position_error";
+    RecordedRealTrace parsed;
+    parsed.id = id;
+    parsed.classification = classification;
+    const QStringList lines = QString::fromUtf8(file.readAll()).split('\n', Qt::SkipEmptyParts);
+    if (lines.empty() || lines.front().trimmed() != QLatin1String(kExpectedHeader)) {
+        if (error) *error = QStringLiteral("Unexpected real-trace fixture schema.");
+        return false;
+    }
+    std::uint64_t accumulatedTimestampUs = 0;
+    for (qsizetype index = 1; index < lines.size(); ++index) {
+        const QStringList fields = lines[index].trimmed().split(',');
+        if (fields.size() != 20) {
+            if (error) *error = QStringLiteral("Malformed real-trace fixture row.");
+            return false;
+        }
+        bool physicalOk = false;
+        bool elapsedOk = false;
+        bool rawOk = false;
+        const float physical = fields[1].toFloat(&physicalOk);
+        const float calibrated = fields[3].toFloat(&rawOk);
+        const std::uint64_t elapsedUs = fields[6].toULongLong(&elapsedOk);
+        if (!physicalOk || !rawOk || !elapsedOk || !std::isfinite(physical)
+            || !std::isfinite(calibrated) || std::abs(physical) > 1.0001F
+            || std::abs(calibrated) > 1.0001F) {
+            if (error) *error = QStringLiteral("Invalid recorded physical trace sample.");
+            return false;
+        }
+        // These recordings had calibration disabled; checking equality keeps
+        // the preserved physical-input column auditable rather than silently
+        // substituting a prior predictor's output.
+        if (std::abs(physical - calibrated) > 0.00001F) {
+            if (error) *error = QStringLiteral("Recorded raw and calibrated values diverge.");
+            return false;
+        }
+        accumulatedTimestampUs += elapsedUs;
+        parsed.physical.push_back(physical);
+        parsed.timestampsUs.push_back(accumulatedTimestampUs);
+    }
+    if (parsed.physical.size() < 2) {
+        if (error) *error = QStringLiteral("Recorded real trace is too short.");
+        return false;
+    }
+    *trace = std::move(parsed);
+    return true;
+}
+
+AdaptiveResponseSimulation replayRecordedRealTrace(const RuntimeAdaptiveResponseConfig &configuration,
+                                                    const RecordedRealTrace &trace)
+{
+    AdaptiveResponseSimulation result;
+    result.reserve(trace.physical.size());
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    for (size_t index = 0; index < trace.physical.size(); ++index) {
+        const auto at = origin + std::chrono::microseconds(trace.timestampsUs[index]);
+        result.push_back({static_cast<float>(trace.timestampsUs[index]) / 1000000.0F,
+            processor.process(trace.physical[index], configuration, at)});
+    }
+    return result;
+}
+
+struct RecordedRealTraceMetrics {
+    float peakLead = 0.0F;
+    float medianLead = 0.0F;
+    float forecastMae = 0.0F;
+    float forecastRms = 0.0F;
+    float forecastP95 = 0.0F;
+    float forecastMax = 0.0F;
+    float forecastMaxTimestampMs = 0.0F;
+    float artificialStep = 0.0F;
+    float artificialStepTimestampMs = 0.0F;
+    float maximumOutputStep = 0.0F;
+    float maximumHorizonExtensionMs = 0.0F;
+    float maximumHorizonExtensionTimestampMs = 0.0F;
+    float maximumSustainedAuthority = 0.0F;
+    float maximumSustainedAuthorityTimestampMs = 0.0F;
+    float maximumOnsetAuthority = 0.0F;
+    float maximumOnsetTimestampMs = 0.0F;
+    float turningOvershoot = 0.0F;
+    float turningOvershootTimestampMs = 0.0F;
+    float stationaryLead = 0.0F;
+    float staleCancellationMs = 0.0F;
+    float staleCancellationTimestampMs = 0.0F;
+    float settlingMs = 0.0F;
+    float settlingTimestampMs = 0.0F;
+    int reversalCount = 0;
+    int ambiguousSafetyCancellations = 0;
+    int onsetActivations = 0;
+    int sustainedActivations = 0;
+    int extensionActivations = 0;
+    int turningActivations = 0;
+    int maximumLeadSaturations = 0;
+    AdaptiveDistribution horizons;
+    AdaptiveDistribution authority;
+};
+
+RecordedRealTraceMetrics metricsForRecordedRealTrace(const RecordedRealTrace &trace,
+                                                      const AdaptiveResponseSimulation &simulation,
+                                                      const RuntimeAdaptiveResponseConfig &configuration)
+{
+    RecordedRealTraceMetrics metrics;
+    std::vector<float> leads;
+    std::vector<float> errors;
+    leads.reserve(simulation.size());
+    errors.reserve(simulation.size());
+    bool onsetWasActive = false;
+    bool sustainedWasActive = false;
+    bool extensionWasActive = false;
+    bool turningWasActive = false;
+    std::uint64_t cancellationStartUs = 0;
+    std::uint64_t lastMeaningfulMovementUs = trace.timestampsUs.front();
+    for (size_t index = 0; index < simulation.size(); ++index) {
+        const AdaptiveResponseTelemetry &telemetry = simulation[index].telemetry;
+        const float absoluteLead = std::abs(telemetry.lead);
+        leads.push_back(absoluteLead);
+        metrics.peakLead = std::max(metrics.peakLead, absoluteLead);
+        metrics.horizons.add(telemetry.activeHorizonSeconds * 1000.0F);
+        metrics.authority.add(telemetry.motionUrgency);
+        const float horizonExtensionMs = std::max(0.0F, telemetry.allowedMaximumHorizonSeconds
+            - telemetry.normalMaximumHorizonSeconds) * 1000.0F;
+        if (horizonExtensionMs > metrics.maximumHorizonExtensionMs) {
+            metrics.maximumHorizonExtensionMs = horizonExtensionMs;
+            metrics.maximumHorizonExtensionTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+        }
+        if (telemetry.sustainedAuthority > metrics.maximumSustainedAuthority) {
+            metrics.maximumSustainedAuthority = telemetry.sustainedAuthority;
+            metrics.maximumSustainedAuthorityTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+        }
+        if (telemetry.onsetAuthority > metrics.maximumOnsetAuthority) {
+            metrics.maximumOnsetAuthority = telemetry.onsetAuthority;
+            metrics.maximumOnsetTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+        }
+        if (absoluteLead >= configuration.maximumLead * 0.999F) ++metrics.maximumLeadSaturations;
+        const bool onsetActive = telemetry.onsetAuthority > 0.00001F;
+        const bool sustainedActive = telemetry.sustainedAuthority > 0.00001F;
+        const bool extensionActive = telemetry.horizonExtensionEligibility > 0.00001F;
+        const bool turningActive = telemetry.turningPointConfidence > 0.00001F;
+        if (onsetActive && !onsetWasActive) ++metrics.onsetActivations;
+        if (sustainedActive && !sustainedWasActive) ++metrics.sustainedActivations;
+        if (extensionActive && !extensionWasActive) ++metrics.extensionActivations;
+        if (turningActive && !turningWasActive) ++metrics.turningActivations;
+        onsetWasActive = onsetActive;
+        sustainedWasActive = sustainedActive;
+        extensionWasActive = extensionActive;
+        turningWasActive = turningActive;
+        if (telemetry.reversal) ++metrics.reversalCount;
+        if (telemetry.safetyCancelled && !telemetry.reversal) ++metrics.ambiguousSafetyCancellations;
+        if ((telemetry.reversal || telemetry.safetyCancelled) && cancellationStartUs == 0) {
+            cancellationStartUs = trace.timestampsUs[index];
+        }
+        if (cancellationStartUs != 0 && absoluteLead < 0.0005F) {
+            const float cancellationMs = static_cast<float>(trace.timestampsUs[index] - cancellationStartUs) / 1000.0F;
+            if (cancellationMs > metrics.staleCancellationMs) {
+                metrics.staleCancellationMs = cancellationMs;
+                metrics.staleCancellationTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+            }
+            cancellationStartUs = 0;
+        }
+        const std::uint64_t predictionAtUs = trace.timestampsUs[index] + static_cast<std::uint64_t>(
+            std::llround(std::max(0.0F, telemetry.activeHorizonSeconds) * 1000000.0F));
+        const auto future = std::lower_bound(trace.timestampsUs.begin(), trace.timestampsUs.end(), predictionAtUs);
+        if (future != trace.timestampsUs.end()) {
+            const size_t futureIndex = static_cast<size_t>(std::distance(trace.timestampsUs.begin(), future));
+            const float error = std::abs(telemetry.predicted - trace.physical[futureIndex]);
+            errors.push_back(error);
+            metrics.forecastMae += error;
+            metrics.forecastRms += error * error;
+            if (error > metrics.forecastMax) {
+                metrics.forecastMax = error;
+                metrics.forecastMaxTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+            }
+            if (telemetry.turningPointConfidence > 0.00001F && std::abs(telemetry.velocity) > 0.00001F) {
+                const float inMotionDirection = telemetry.velocity > 0.0F
+                    ? telemetry.predicted - trace.physical[futureIndex]
+                    : trace.physical[futureIndex] - telemetry.predicted;
+                const float overshoot = std::max(0.0F, inMotionDirection);
+                if (overshoot > metrics.turningOvershoot) {
+                    metrics.turningOvershoot = overshoot;
+                    metrics.turningOvershootTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+                }
+            }
+        }
+        if (index == 0) continue;
+        const float physicalStep = std::abs(trace.physical[index] - trace.physical[index - 1]);
+        if (physicalStep > 0.00015F) lastMeaningfulMovementUs = trace.timestampsUs[index];
+        const float outputStep = std::abs(telemetry.predicted - simulation[index - 1].telemetry.predicted);
+        const float artificialStep = std::max(0.0F, outputStep - physicalStep);
+        metrics.maximumOutputStep = std::max(metrics.maximumOutputStep, outputStep);
+        if (artificialStep > metrics.artificialStep) {
+            metrics.artificialStep = artificialStep;
+            metrics.artificialStepTimestampMs = static_cast<float>(trace.timestampsUs[index]) / 1000.0F;
+        }
+    }
+    std::sort(leads.begin(), leads.end());
+    std::sort(errors.begin(), errors.end());
+    metrics.medianLead = leads[leads.size() / 2];
+    if (!errors.empty()) {
+        metrics.forecastMae /= static_cast<float>(errors.size());
+        metrics.forecastRms = std::sqrt(metrics.forecastRms / static_cast<float>(errors.size()));
+        metrics.forecastP95 = errors[static_cast<size_t>(std::floor(
+            static_cast<float>(errors.size() - 1) * 0.95F))];
+    }
+    metrics.stationaryLead = std::abs(simulation.back().telemetry.lead);
+    if (metrics.stationaryLead < 0.0005F && trace.timestampsUs.back() >= lastMeaningfulMovementUs) {
+        metrics.settlingMs = static_cast<float>(trace.timestampsUs.back() - lastMeaningfulMovementUs) / 1000.0F;
+        metrics.settlingTimestampMs = static_cast<float>(trace.timestampsUs.back()) / 1000.0F;
+    }
+    return metrics;
 }
 
 int profileIndexFor(const MapperConfiguration &configuration, const QString &id)
@@ -131,6 +717,26 @@ private slots:
     void curveTransitionUserSlamCancelsCorrection();
     void curveTransitionsRemainIndependentAcrossAxes();
     void curveTransitionSettingsPersistAndMigrate();
+    void adaptiveResponsePredictsThenConvergesToPhysicalInput();
+    void adaptiveResponseUsesDistinctAlphaBetaAndAlphaBetaGammaEstimators();
+    void adaptiveResponseVelocityAndSettlingControlsChangePrediction();
+    void adaptiveResponseResetClearsSessionMotionState();
+    void adaptiveResponseDetectsPositiveNegativeAndCenterCrossingReversals();
+    void adaptiveResponseCancelsStaleLeadAtReversal();
+    void adaptiveResponseTapersAndClampsAtEndpoint();
+    void adaptiveResponsePersistsAndResolvesLayeredSettings();
+    void adaptiveResponseRecognizesSlowMotionAcrossSampleRates();
+    void adaptiveResponsePreservesSlowWobbleAcrossSampleRates();
+    void adaptiveResponseHandlesSampleAndHoldSourcesThenSettles();
+    void adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike();
+    void adaptiveResponseHandlesHardGentleAndRepeatedReversals();
+    void adaptiveResponseConvergesEstimatorsAfterStopAndResume();
+    void adaptiveResponseHumanLikeTurningPointShape();
+    void adaptiveResponseContinuityTraceAndLobeMetrics();
+    void adaptiveResponseHoldoutGeneralizationCorpus();
+    void adaptiveResponseReplaysRecordedRealHotasCorpus();
+    void adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet();
+    void adaptiveResponseSustainedHorizonAndTurningProtection();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -553,6 +1159,1665 @@ void MappingCoreTests::curveTransitionSettingsPersistAndMigrate()
     QCOMPARE(migrated.curveTransitionSmoothing.durationMs, 100);
     const ControllerProfile *migratedPrecision = findProfile(migrated, precisionProfileId());
     QVERIFY(migratedPrecision && !migratedPrecision->curveTransitionSmoothingOverride);
+}
+
+void MappingCoreTests::adaptiveResponsePredictsThenConvergesToPhysicalInput()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    QVERIFY(nearlyEqual(processor.process(0.0F, configuration, origin).predicted, 0.0F));
+    const AdaptiveResponseTelemetry moving = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(4));
+    QVERIFY(moving.predicted > moving.physical);
+    QVERIFY(moving.activeHorizonSeconds > 0.0F);
+
+    const AdaptiveResponseTelemetry held = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(held.predicted > held.physical);
+    QVERIFY(held.velocity > 0.0F);
+    const AdaptiveResponseTelemetry stopped = processor.process(
+        0.12F, configuration, origin + std::chrono::milliseconds(60));
+    QVERIFY(nearlyEqual(stopped.predicted, stopped.physical));
+    QVERIFY(nearlyEqual(stopped.velocity, 0.0F));
+}
+
+void MappingCoreTests::adaptiveResponseUsesDistinctAlphaBetaAndAlphaBetaGammaEstimators()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.maximumLead = 0.35F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.76F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    configuration.model = AdaptiveResponseModel::AlphaBeta;
+    AdaptiveResponseProcessor alphaBeta;
+    alphaBeta.process(0.0F, configuration, origin);
+    const AdaptiveResponseTelemetry abFirst = alphaBeta.process(
+        0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry abSecond = alphaBeta.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(!nearlyEqual(abFirst.estimated, abFirst.physical));
+    QVERIFY(!nearlyEqual(abSecond.estimated, abSecond.physical));
+    QVERIFY(nearlyEqual(abSecond.acceleration, 0.0F));
+
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    AdaptiveResponseProcessor alphaBetaGamma;
+    alphaBetaGamma.process(0.0F, configuration, origin);
+    alphaBetaGamma.process(0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry abgSecond = alphaBetaGamma.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry abThird = alphaBeta.process(
+        0.46F, configuration, origin + std::chrono::milliseconds(12));
+    const AdaptiveResponseTelemetry abgThird = alphaBetaGamma.process(
+        0.46F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(!nearlyEqual(abgSecond.estimated, abgSecond.physical));
+    QVERIFY(std::abs(abgSecond.acceleration) > 0.001F);
+    QVERIFY(!nearlyEqual(abgThird.estimated, abThird.estimated));
+
+    configuration.model = AdaptiveResponseModel::Auto;
+    AdaptiveResponseProcessor automatic;
+    automatic.process(0.0F, configuration, origin);
+    automatic.process(0.18F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry autoSecond = automatic.process(
+        0.34F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(std::abs(autoSecond.acceleration) > 0.001F);
+    QVERIFY(!nearlyEqual(autoSecond.estimated, autoSecond.physical));
+}
+
+void MappingCoreTests::adaptiveResponseVelocityAndSettlingControlsChangePrediction()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.024F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.008F;
+    configuration.noiseRejection = 0.0001F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    configuration.velocityResponse = 0.10F;
+    AdaptiveResponseProcessor slowVelocity;
+    slowVelocity.process(0.0F, configuration, origin);
+    slowVelocity.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry slow = slowVelocity.process(
+        0.16F, configuration, origin + std::chrono::milliseconds(8));
+
+    configuration.velocityResponse = 1.0F;
+    AdaptiveResponseProcessor fastVelocity;
+    fastVelocity.process(0.0F, configuration, origin);
+    fastVelocity.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    const AdaptiveResponseTelemetry fast = fastVelocity.process(
+        0.16F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(fast.predicted > slow.predicted + 0.001F);
+
+    configuration.velocityResponse = 0.80F;
+    configuration.settlingResponse = 0.0F;
+    AdaptiveResponseProcessor looseSettling;
+    looseSettling.process(0.0F, configuration, origin);
+    looseSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    looseSettling.process(0.32F, configuration, origin + std::chrono::milliseconds(8));
+    looseSettling.process(0.40F, configuration, origin + std::chrono::milliseconds(12));
+    const AdaptiveResponseTelemetry loose = looseSettling.process(
+        0.44F, configuration, origin + std::chrono::milliseconds(16));
+
+    configuration.settlingResponse = 1.0F;
+    AdaptiveResponseProcessor tightSettling;
+    tightSettling.process(0.0F, configuration, origin);
+    tightSettling.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    tightSettling.process(0.32F, configuration, origin + std::chrono::milliseconds(8));
+    tightSettling.process(0.40F, configuration, origin + std::chrono::milliseconds(12));
+    const AdaptiveResponseTelemetry tight = tightSettling.process(
+        0.44F, configuration, origin + std::chrono::milliseconds(16));
+    QVERIFY(tight.activeHorizonSeconds < loose.activeHorizonSeconds);
+    // Stop policy shapes the prediction horizon; it must not rewrite the
+    // estimator's physical-motion state merely to make the graph look quiet.
+    QVERIFY(nearlyEqual(tight.velocity, loose.velocity));
+}
+
+void MappingCoreTests::adaptiveResponseResetClearsSessionMotionState()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.0001F;
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.0F, configuration, origin);
+    processor.process(0.22F, configuration, origin + std::chrono::milliseconds(4));
+    processor.process(0.12F, configuration, origin + std::chrono::milliseconds(8));
+    processor.process(0.02F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(processor.reversalCount() > 0);
+    processor.reset();
+    const AdaptiveResponseTelemetry restarted = processor.process(
+        0.37F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(nearlyEqual(restarted.estimated, 0.37F));
+    QVERIFY(nearlyEqual(restarted.predicted, 0.37F));
+    QVERIFY(nearlyEqual(restarted.velocity, 0.0F));
+    QCOMPARE(processor.reversalCount(), std::uint64_t{0});
+}
+
+void MappingCoreTests::adaptiveResponseDetectsPositiveNegativeAndCenterCrossingReversals()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.020F;
+    configuration.maximumLead = 0.40F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.0001F;
+    configuration.reversalDetection = 0.020F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const auto reverses = [&configuration, origin](float start, float away, float returnValue) {
+        AdaptiveResponseProcessor processor;
+        processor.process(start, configuration, origin);
+        processor.process(away, configuration, origin + std::chrono::milliseconds(4));
+        processor.process(returnValue, configuration, origin + std::chrono::milliseconds(8));
+        return processor.process(returnValue + (returnValue - away), configuration,
+                                 origin + std::chrono::milliseconds(12));
+    };
+    QVERIFY(reverses(0.45F, 0.85F, 0.62F).reversal);
+    QVERIFY(reverses(-0.45F, -0.85F, -0.62F).reversal);
+    QVERIFY(reverses(-0.20F, 0.30F, -0.12F).reversal);
+}
+
+void MappingCoreTests::adaptiveResponseCancelsStaleLeadAtReversal()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::AlphaBetaGamma;
+    configuration.maximumHorizonSeconds = 0.024F;
+    configuration.maximumLead = 0.35F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.001F;
+    configuration.reversalDetection = 0.020F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.0F, configuration, origin);
+    processor.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    processor.process(0.15F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry reversed = processor.process(
+        0.10F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(reversed.reversal);
+    QVERIFY(reversed.predicted < reversed.physical);
+    QCOMPARE(reversed.state, AdaptiveMotionState::Reversing);
+    QCOMPARE(processor.reversalCount(), std::uint64_t{1});
+}
+
+void MappingCoreTests::adaptiveResponseTapersAndClampsAtEndpoint()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Velocity;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.50F;
+    configuration.motionSensitivity = 0.005F;
+    configuration.noiseRejection = 0.0001F;
+    configuration.endpointTaper = 0.20F;
+
+    AdaptiveResponseProcessor processor;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    processor.process(0.80F, configuration, origin);
+    const AdaptiveResponseTelemetry endpoint = processor.process(
+        1.0F, configuration, origin + std::chrono::milliseconds(4));
+    QCOMPARE(endpoint.predicted, 1.0F);
+    QVERIFY(endpoint.safetyLimited);
+    QVERIFY(processor.safetyClampCount() > 0);
+
+    configuration.enabled = false;
+    const AdaptiveResponseTelemetry disabled = processor.process(
+        0.42F, configuration, origin + std::chrono::milliseconds(8));
+    QVERIFY(nearlyEqual(disabled.predicted, 0.42F));
+}
+
+void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
+{
+    const auto &builtIns = builtInAdaptiveResponsePresets();
+    const auto settingsFor = [&builtIns](size_t index) { return builtIns[index].axes[0].settings; };
+    QCOMPARE(settingsFor(0).sustainedAssist, 0.0F);
+    QCOMPARE(settingsFor(0).horizonExtensionCapMs, 0.0F);
+    QCOMPARE(settingsFor(1).sustainedAssist, 0.12F);
+    QCOMPARE(settingsFor(1).sustainedCap, 0.06F);
+    QCOMPARE(settingsFor(1).horizonExtension, 0.10F);
+    QCOMPARE(settingsFor(1).horizonExtensionCapMs, 4.0F);
+    QCOMPARE(settingsFor(1).turningPointProtection, 0.75F);
+    QCOMPARE(settingsFor(5).sustainedAssist, 0.55F);
+    QCOMPARE(settingsFor(5).sustainedCap, 0.28F);
+    QCOMPARE(settingsFor(5).horizonExtension, 0.65F);
+    QCOMPARE(settingsFor(5).horizonExtensionCapMs, 24.0F);
+    QCOMPARE(settingsFor(5).turningPointProtection, 1.0F);
+    QCOMPARE(settingsFor(5).turningPointMargin, 0.08F);
+
+    AdaptiveResponseSettings malformed;
+    malformed.onsetAssist = std::numeric_limits<float>::infinity();
+    malformed.onsetCap = std::numeric_limits<float>::quiet_NaN();
+    malformed.sustainedAssist = std::numeric_limits<float>::infinity();
+    malformed.sustainedCap = std::numeric_limits<float>::quiet_NaN();
+    malformed.horizonExtension = std::numeric_limits<float>::infinity();
+    malformed.horizonExtensionCapMs = std::numeric_limits<float>::quiet_NaN();
+    malformed.turningPointProtection = std::numeric_limits<float>::infinity();
+    malformed.turningPointMargin = std::numeric_limits<float>::quiet_NaN();
+    const AdaptiveResponseSettings safeFallback = sanitizedAdaptiveResponseSettings(malformed);
+    QCOMPARE(safeFallback.onsetAssist, 0.0F);
+    QCOMPARE(safeFallback.onsetCap, 0.0F);
+    QCOMPARE(safeFallback.sustainedAssist, 0.0F);
+    QCOMPARE(safeFallback.sustainedCap, 0.0F);
+    QCOMPARE(safeFallback.horizonExtension, 0.0F);
+    QCOMPARE(safeFallback.horizonExtensionCapMs, 0.0F);
+    QCOMPARE(safeFallback.turningPointProtection, 0.0F);
+    QCOMPARE(safeFallback.turningPointMargin, 0.0F);
+    malformed.onsetAssist = 2.0F;
+    malformed.onsetCap = 2.0F;
+    malformed.sustainedAssist = 2.0F;
+    malformed.sustainedCap = 2.0F;
+    malformed.horizonExtension = 2.0F;
+    malformed.horizonExtensionCapMs = 40.0F;
+    malformed.turningPointProtection = 2.0F;
+    malformed.turningPointMargin = 2.0F;
+    const AdaptiveResponseSettings clamped = sanitizedAdaptiveResponseSettings(malformed);
+    QCOMPARE(clamped.onsetAssist, 1.0F);
+    QCOMPARE(clamped.onsetCap, 0.40F);
+    QCOMPARE(clamped.sustainedAssist, 1.0F);
+    QCOMPARE(clamped.sustainedCap, 0.35F);
+    QCOMPARE(clamped.horizonExtension, 1.0F);
+    QCOMPARE(clamped.horizonExtensionCapMs, 30.0F);
+    QCOMPARE(clamped.turningPointProtection, 1.0F);
+    QCOMPARE(clamped.turningPointMargin, 0.30F);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    configuration.adaptiveResponseGlobal.axes[0].presetId = QStringLiteral("light");
+    profile.adaptiveResponse.axes[0].properties = AdaptiveResponseMaximumHorizon
+        | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
+        | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
+        | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
+        | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin;
+    profile.adaptiveResponse.axes[0].settings.maximumHorizonMs = 16.0F;
+    profile.adaptiveResponse.axes[0].settings.onsetAssist = 0.72F;
+    profile.adaptiveResponse.axes[0].settings.onsetCap = 0.31F;
+    profile.adaptiveResponse.axes[0].settings.sustainedAssist = 0.62F;
+    profile.adaptiveResponse.axes[0].settings.sustainedCap = 0.27F;
+    profile.adaptiveResponse.axes[0].settings.horizonExtension = 0.71F;
+    profile.adaptiveResponse.axes[0].settings.horizonExtensionCapMs = 21.0F;
+    profile.adaptiveResponse.axes[0].settings.turningPointProtection = 0.87F;
+    profile.adaptiveResponse.axes[0].settings.turningPointMargin = 0.19F;
+
+    AdaptiveResponsePreset custom;
+    custom.id = QStringLiteral("test-response");
+    custom.name = QStringLiteral("Test Response");
+    custom.description = QStringLiteral("Core persistence fixture");
+    custom.axes = configuration.adaptiveResponseGlobal.axes;
+    configuration.adaptiveResponsePresets.push_back(custom);
+
+    const RuntimeAdaptiveResponseConfig effective =
+        resolveAdaptiveResponseConfiguration(configuration, profile, 0);
+    QVERIFY(effective.enabled);
+    QCOMPARE(effective.maximumHorizonSeconds, 0.016F);
+    QCOMPARE(effective.onsetAssist, 0.72F);
+    QCOMPARE(effective.onsetCap, 0.31F);
+    QCOMPARE(effective.sustainedAssist, 0.62F);
+    QCOMPARE(effective.sustainedCap, 0.27F);
+    QCOMPARE(effective.horizonExtension, 0.71F);
+    QCOMPARE(effective.horizonExtensionCapSeconds, 0.021F);
+    QCOMPARE(effective.turningPointProtection, 0.87F);
+    QCOMPARE(effective.turningPointMargin, 0.19F);
+
+    bool valid = false;
+    const QJsonObject json = ConfigStore::toJson(configuration);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
+    QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 1);
+    const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(restored.adaptiveResponseGlobal.axes[0].presetId, QStringLiteral("light"));
+    const RuntimeAdaptiveResponseConfig restoredEffective =
+        resolveAdaptiveResponseConfiguration(restored, activeProfile(restored), 0);
+    QCOMPARE(restoredEffective.maximumHorizonSeconds, 0.016F);
+    QCOMPARE(restoredEffective.onsetAssist, 0.72F);
+    QCOMPARE(restoredEffective.onsetCap, 0.31F);
+    QCOMPARE(restoredEffective.sustainedAssist, 0.62F);
+    QCOMPARE(restoredEffective.sustainedCap, 0.27F);
+    QCOMPARE(restoredEffective.horizonExtension, 0.71F);
+    QCOMPARE(restoredEffective.horizonExtensionCapSeconds, 0.021F);
+    QCOMPARE(restoredEffective.turningPointProtection, 0.87F);
+    QCOMPARE(restoredEffective.turningPointMargin, 0.19F);
+
+    QJsonObject preOnset = json;
+    QJsonObject adaptiveGlobal = preOnset.value(QStringLiteral("adaptiveResponseGlobal")).toObject();
+    QJsonArray globalAxes = adaptiveGlobal.value(QStringLiteral("axes")).toArray();
+    QJsonObject globalAxis = globalAxes.at(0).toObject();
+    QJsonObject globalSettings = globalAxis.value(QStringLiteral("settings")).toObject();
+    globalSettings.remove(QStringLiteral("onsetAssist"));
+    globalSettings.remove(QStringLiteral("onsetCap"));
+    globalSettings.remove(QStringLiteral("sustainedAssist"));
+    globalSettings.remove(QStringLiteral("sustainedCap"));
+    globalSettings.remove(QStringLiteral("horizonExtension"));
+    globalSettings.remove(QStringLiteral("horizonExtensionCapMs"));
+    globalSettings.remove(QStringLiteral("turningPointProtection"));
+    globalSettings.remove(QStringLiteral("turningPointMargin"));
+    globalAxis.insert(QStringLiteral("settings"), globalSettings);
+    globalAxes.replace(0, globalAxis);
+    adaptiveGlobal.insert(QStringLiteral("axes"), globalAxes);
+    preOnset.insert(QStringLiteral("adaptiveResponseGlobal"), adaptiveGlobal);
+    QJsonArray preOnsetProfiles = preOnset.value(QStringLiteral("profiles")).toArray();
+    QJsonObject firstProfile = preOnsetProfiles.at(0).toObject();
+    QJsonObject profileAdaptive = firstProfile.value(QStringLiteral("adaptiveResponse")).toObject();
+    QJsonArray profileAxes = profileAdaptive.value(QStringLiteral("axes")).toArray();
+    QJsonObject profileAxis = profileAxes.at(0).toObject();
+    QJsonObject profileSettings = profileAxis.value(QStringLiteral("settings")).toObject();
+    profileSettings.remove(QStringLiteral("onsetAssist"));
+    profileSettings.remove(QStringLiteral("onsetCap"));
+    profileSettings.remove(QStringLiteral("sustainedAssist"));
+    profileSettings.remove(QStringLiteral("sustainedCap"));
+    profileSettings.remove(QStringLiteral("horizonExtension"));
+    profileSettings.remove(QStringLiteral("horizonExtensionCapMs"));
+    profileSettings.remove(QStringLiteral("turningPointProtection"));
+    profileSettings.remove(QStringLiteral("turningPointMargin"));
+    profileAxis.insert(QStringLiteral("settings"), profileSettings);
+    profileAxes.replace(0, profileAxis);
+    profileAdaptive.insert(QStringLiteral("axes"), profileAxes);
+    firstProfile.insert(QStringLiteral("adaptiveResponse"), profileAdaptive);
+    preOnsetProfiles.replace(0, firstProfile);
+    preOnset.insert(QStringLiteral("profiles"), preOnsetProfiles);
+    const MapperConfiguration restoredPreOnset = ConfigStore::fromJson(preOnset, &valid);
+    QVERIFY(valid);
+    const RuntimeAdaptiveResponseConfig preOnsetEffective =
+        resolveAdaptiveResponseConfiguration(restoredPreOnset, activeProfile(restoredPreOnset), 0);
+    QCOMPARE(preOnsetEffective.onsetAssist, 0.0F);
+    QCOMPARE(preOnsetEffective.onsetCap, 0.0F);
+    QCOMPARE(preOnsetEffective.sustainedAssist, 0.0F);
+    QCOMPARE(preOnsetEffective.sustainedCap, 0.0F);
+    QCOMPARE(preOnsetEffective.horizonExtension, 0.0F);
+    QCOMPARE(preOnsetEffective.horizonExtensionCapSeconds, 0.0F);
+    QCOMPARE(preOnsetEffective.turningPointProtection, 0.0F);
+    QCOMPARE(preOnsetEffective.turningPointMargin, 0.0F);
+
+    QJsonObject legacy = json;
+    legacy.insert(QStringLiteral("version"), 20);
+    legacy.remove(QStringLiteral("adaptiveResponseSchemaVersion"));
+    legacy.remove(QStringLiteral("adaptiveResponseGlobal"));
+    legacy.remove(QStringLiteral("adaptiveResponsePresets"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    QVERIFY(!resolveAdaptiveResponseConfiguration(migrated, activeProfile(migrated), 0).enabled);
+}
+
+void MappingCoreTests::adaptiveResponseRecognizesSlowMotionAcrossSampleRates()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 6> rates{50, 100, 200, 250, 500, 1000};
+    float lowestPeakLead = std::numeric_limits<float>::max();
+    float highestPeakLead = 0.0F;
+
+    for (const int rate : rates) {
+        AdaptiveResponseProcessor processor;
+        processor.process(0.75F, configuration, origin);
+        float peakLead = 0.0F;
+        for (int sample = 1; sample <= rate * 3; ++sample) {
+            const float seconds = static_cast<float>(sample) / static_cast<float>(rate);
+            const float physical = 0.75F - 0.50F * seconds / 3.0F;
+            const AdaptiveResponseTelemetry telemetry = processor.process(physical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            QVERIFY(!telemetry.reversal);
+        }
+        QVERIFY2(peakLead > 0.0002F, "A three-second slow sweep was classified as stationary.");
+        qInfo().nospace() << "Slow sweep rate=" << rate << "Hz peak=" << peakLead;
+        lowestPeakLead = std::min(lowestPeakLead, peakLead);
+        highestPeakLead = std::max(highestPeakLead, peakLead);
+    }
+    qInfo().nospace() << "Slow sweep peak lead range=" << lowestPeakLead << ".." << highestPeakLead;
+    QVERIFY2(highestPeakLead < lowestPeakLead * 2.50F + 0.0005F,
+             "Slow-sweep lead is not sample-rate equivalent.");
+}
+
+void MappingCoreTests::adaptiveResponsePreservesSlowWobbleAcrossSampleRates()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 2> rates{100, 1000};
+
+    for (const int rate : rates) {
+        AdaptiveResponseProcessor processor;
+        processor.process(0.80F, configuration, origin);
+        float peakLead = 0.0F;
+        for (int sample = 1; sample <= rate * 3; ++sample) {
+            const float seconds = static_cast<float>(sample) / static_cast<float>(rate);
+            const float physical = 0.80F - 0.45F * seconds / 3.0F
+                + 0.0015F * std::sin(seconds * 6.0F * 3.14159265F);
+            const AdaptiveResponseTelemetry telemetry = processor.process(physical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            QVERIFY(!telemetry.reversal);
+        }
+        QVERIFY2(peakLead > 0.0002F, "Slow motion with human-sized wobble lost its lead.");
+    }
+}
+
+void MappingCoreTests::adaptiveResponseHandlesSampleAndHoldSourcesThenSettles()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<int, 4> sourceRates{250, 125, 60, 30};
+
+    for (const int sourceRate : sourceRates) {
+        AdaptiveResponseProcessor processor;
+        constexpr int mapperRate = 250;
+        const int sourceDivider = mapperRate / sourceRate;
+        float heldPhysical = 0.65F;
+        processor.process(heldPhysical, configuration, origin);
+        float peakLead = 0.0F;
+        int heldReportsWithLead = 0;
+        AdaptiveResponseTelemetry telemetry;
+        for (int sample = 1; sample <= mapperRate; ++sample) {
+            const float seconds = static_cast<float>(sample) / mapperRate;
+            if (sample % sourceDivider == 0) heldPhysical = 0.65F - 0.35F * seconds;
+            telemetry = processor.process(heldPhysical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+            peakLead = std::max(peakLead, std::abs(telemetry.lead));
+            if (sample % sourceDivider != 0 && seconds > 0.12F && std::abs(telemetry.lead) > 0.0001F) {
+                ++heldReportsWithLead;
+            }
+            QVERIFY(!telemetry.reversal);
+        }
+        qInfo().nospace() << "Hold source=" << sourceRate << "Hz peak=" << peakLead
+                          << " heldReports=" << heldReportsWithLead;
+        QVERIFY2(peakLead > 0.0002F && (sourceDivider == 1 || heldReportsWithLead > 0),
+                 "Expected source holds were treated as a stop.");
+        for (int sample = mapperRate + 1; sample <= mapperRate + 125; ++sample) {
+            const float seconds = static_cast<float>(sample) / mapperRate;
+            telemetry = processor.process(heldPhysical, configuration,
+                origin + std::chrono::microseconds(static_cast<long long>(seconds * 1000000.0F)));
+        }
+        QVERIFY(std::abs(telemetry.lead) < 0.0001F);
+        QVERIFY(std::abs(telemetry.velocity) < 0.0001F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    AdaptiveResponseProcessor jitter;
+    jitter.process(0.30F, configuration, origin);
+    float jitterPeakLead = 0.0F;
+    for (int sample = 1; sample <= 500; ++sample) {
+        const float physical = 0.30F + (sample % 2 == 0 ? 0.005F : -0.005F);
+        const AdaptiveResponseTelemetry telemetry = jitter.process(physical, configuration,
+            origin + std::chrono::milliseconds(sample * 4));
+        jitterPeakLead = std::max(jitterPeakLead, std::abs(telemetry.lead));
+        QVERIFY(!telemetry.reversal);
+    }
+    QVERIFY2(jitterPeakLead < 0.001F, "Stationary jitter amplified into meaningful lead.");
+
+    AdaptiveResponseProcessor spike;
+    spike.process(0.0F, configuration, origin);
+    spike.process(0.08F, configuration, origin + std::chrono::milliseconds(4));
+    spike.process(0.16F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry isolatedOpposite = spike.process(
+        0.11F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(!isolatedOpposite.reversal);
+    QVERIFY(isolatedOpposite.safetyLimited);
+    QVERIFY(std::abs(isolatedOpposite.lead) < 0.0001F);
+    const AdaptiveResponseTelemetry resumed = spike.process(
+        0.24F, configuration, origin + std::chrono::milliseconds(16));
+    QVERIFY(!resumed.reversal);
+    QVERIFY(resumed.predicted > resumed.physical);
+    QCOMPARE(spike.reversalCount(), std::uint64_t{0});
+}
+
+void MappingCoreTests::adaptiveResponseHandlesHardGentleAndRepeatedReversals()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    configuration.reversalResponse = 0.0F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+
+    AdaptiveResponseProcessor hard;
+    hard.process(0.0F, configuration, origin);
+    hard.process(0.20F, configuration, origin + std::chrono::milliseconds(4));
+    hard.process(0.40F, configuration, origin + std::chrono::milliseconds(8));
+    const AdaptiveResponseTelemetry hardCandidate = hard.process(
+        0.20F, configuration, origin + std::chrono::milliseconds(12));
+    QVERIFY(!hardCandidate.reversal);
+    QVERIFY(hardCandidate.safetyLimited);
+    const AdaptiveResponseTelemetry hardReversal = hard.process(
+        0.0F, configuration, origin + std::chrono::milliseconds(16));
+    QVERIFY(hardReversal.reversal);
+    QVERIFY(hardReversal.predicted < hardReversal.physical);
+    QCOMPARE(hard.reversalCount(), std::uint64_t{1});
+
+    AdaptiveResponseProcessor gentle;
+    gentle.process(0.0F, configuration, origin);
+    gentle.process(0.03F, configuration, origin + std::chrono::milliseconds(4));
+    gentle.process(0.06F, configuration, origin + std::chrono::milliseconds(8));
+    bool gentleReversal = false;
+    for (int sample = 1; sample <= 16; ++sample) {
+        const AdaptiveResponseTelemetry telemetry = gentle.process(0.06F - sample * 0.005F, configuration,
+            origin + std::chrono::milliseconds(8 + sample * 4));
+        gentleReversal = gentleReversal || telemetry.reversal;
+    }
+    QVERIFY2(gentleReversal, "Coherent gentle reversal never reacquired its new direction.");
+
+    AdaptiveResponseProcessor repeated;
+    const std::array<float, 7> positions{0.0F, 0.25F, 0.50F, 0.25F, 0.0F, 0.25F, 0.50F};
+    AdaptiveResponseTelemetry finalTelemetry;
+    for (size_t index = 0; index < positions.size(); ++index) {
+        finalTelemetry = repeated.process(positions[index], configuration,
+            origin + std::chrono::milliseconds(static_cast<int>(index) * 4));
+    }
+    QVERIFY(repeated.reversalCount() >= std::uint64_t{2});
+    QVERIFY(finalTelemetry.predicted > finalTelemetry.physical);
+}
+
+void MappingCoreTests::adaptiveResponseConvergesEstimatorsAfterStopAndResume()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.maximumHorizonSeconds = 0.030F;
+    configuration.maximumLead = 0.40F;
+    configuration.velocityResponse = 0.72F;
+    configuration.accelerationResponse = 0.68F;
+    configuration.motionSensitivity = 0.010F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    const auto origin = std::chrono::steady_clock::time_point{};
+    const std::array<AdaptiveResponseModel, 2> models{
+        AdaptiveResponseModel::AlphaBeta, AdaptiveResponseModel::AlphaBetaGamma};
+
+    for (const AdaptiveResponseModel model : models) {
+        configuration.model = model;
+        AdaptiveResponseProcessor processor;
+        processor.process(0.0F, configuration, origin);
+        processor.process(0.15F, configuration, origin + std::chrono::milliseconds(4));
+        processor.process(0.30F, configuration, origin + std::chrono::milliseconds(8));
+        AdaptiveResponseTelemetry settled;
+        for (int sample = 3; sample <= 100; ++sample) {
+            settled = processor.process(0.30F, configuration,
+                origin + std::chrono::milliseconds(sample * 4));
+        }
+        QVERIFY(std::abs(settled.lead) < 0.0001F);
+        QVERIFY(std::abs(settled.velocity) < 0.0001F);
+        QVERIFY(std::abs(settled.estimated - 0.30F) < 0.0001F);
+        const AdaptiveResponseTelemetry resumed = processor.process(
+            0.34F, configuration, origin + std::chrono::milliseconds(404));
+        QVERIFY(resumed.predicted >= resumed.physical - 0.0001F);
+        QVERIFY(std::abs(resumed.estimated - resumed.physical) < 0.20F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseHumanLikeTurningPointShape()
+{
+    const std::vector<float> physical = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Human-Like Rapid Reversal"), -1.0F, 1.0F);
+    const auto origin = std::chrono::steady_clock::time_point{};
+    Q_UNUSED(origin);
+    for (const auto &[name, horizon, maximumLead, velocity, acceleration, onsetAssist, onsetCap] : {
+             std::tuple<const char *, float, float, float, float, float, float>{"Fast", 0.012F, 0.18F, 0.80F, 0.68F, 0.28F, 0.16F},
+             std::tuple<const char *, float, float, float, float, float, float>{"Aggressive", 0.018F, 0.27F, 0.91F, 0.82F, 0.38F, 0.22F},
+             std::tuple<const char *, float, float, float, float, float, float>{"Extreme", 0.030F, 0.40F, 1.00F, 0.95F, 0.50F, 0.30F}}) {
+        RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = true;
+        configuration.model = AdaptiveResponseModel::Auto;
+        configuration.maximumHorizonSeconds = horizon;
+        configuration.maximumLead = maximumLead;
+        configuration.velocityResponse = velocity;
+        configuration.accelerationResponse = acceleration;
+        configuration.motionSensitivity = 0.035F;
+        configuration.noiseRejection = 0.012F;
+        configuration.reversalDetection = 0.075F;
+        configuration.reversalResponse = 1.0F;
+        configuration.decelerationResponse = 0.85F;
+        configuration.settlingResponse = 0.92F;
+        configuration.endpointTaper = 0.16F;
+        configuration.onsetAssist = onsetAssist;
+        configuration.onsetCap = onsetCap;
+        const AdaptiveResponseSimulation simulated = simulateAdaptiveResponse(configuration, physical, 0.004F);
+        constexpr size_t turn = 85; // 340 ms, authored zero-velocity apex.
+        constexpr size_t finalStop = 150; // 600 ms, authored stationary target.
+        float peakBeforeTurn = 0.0F;
+        float halfSpeedLead = 0.0F;
+        float turningLead = 0.0F;
+        float finalStopLead = 0.0F;
+        float stationaryLead = 0.0F;
+        float maximumStep = 0.0F;
+        size_t maximumStepIndex = 0;
+        float maximumPhysicalStep = 0.0F;
+        float maximumPredictedStep = 0.0F;
+        size_t maximumPredictedStepIndex = 0;
+        size_t reversalSample = simulated.size();
+        for (size_t index = 1; index < simulated.size(); ++index) {
+            const float lead = simulated[index].telemetry.lead;
+            if (index < turn) peakBeforeTurn = std::max(peakBeforeTurn, lead);
+            if (index >= 70 && index < turn && std::abs(physical[index] - physical[index - 1])
+                <= 0.5F * std::abs(physical[55] - physical[54])) {
+                halfSpeedLead = std::max(halfSpeedLead, lead);
+            }
+            if (index >= turn - 3 && index <= turn) turningLead = std::max(turningLead, lead);
+            if (index >= finalStop && index < finalStop + 20) finalStopLead = std::min(finalStopLead, lead);
+            if (index >= finalStop + 20) stationaryLead = std::max(stationaryLead, std::abs(lead));
+            const float leadStep = std::abs(lead - simulated[index - 1].telemetry.lead);
+            if (leadStep > maximumStep) {
+                maximumStep = leadStep;
+                maximumStepIndex = index;
+            }
+            maximumPhysicalStep = std::max(maximumPhysicalStep,
+                std::abs(simulated[index].telemetry.physical - simulated[index - 1].telemetry.physical));
+            const float predictedStep = std::abs(simulated[index].telemetry.predicted
+                - simulated[index - 1].telemetry.predicted);
+            if (predictedStep > maximumPredictedStep) {
+                maximumPredictedStep = predictedStep;
+                maximumPredictedStepIndex = index;
+            }
+            if (reversalSample == simulated.size() && simulated[index].telemetry.reversal) reversalSample = index;
+        }
+        qInfo().nospace() << "HumanLike " << name << " peak=" << peakBeforeTurn
+                          << " half_speed=" << halfSpeedLead << " turning_lead=" << turningLead
+                          << " final_stop_lead=" << finalStopLead << " stationary=" << stationaryLead
+                          << " lead_step=" << maximumStep << " physical_step=" << maximumPhysicalStep
+                          << " predicted_step=" << maximumPredictedStep
+                          << " artificial_step=" << std::max(0.0F, maximumPredictedStep - maximumPhysicalStep);
+        qInfo().nospace() << "HumanLike " << name << " predicted_step_index=" << maximumPredictedStepIndex
+                          << " lead_before=" << simulated[maximumPredictedStepIndex - 1].telemetry.lead
+                          << " lead_after=" << simulated[maximumPredictedStepIndex].telemetry.lead
+                          << " reacquire_before=" << simulated[maximumPredictedStepIndex - 1].telemetry.reacquisitionAuthority
+                          << " reacquire_after=" << simulated[maximumPredictedStepIndex].telemetry.reacquisitionAuthority
+                          << " onset_before=" << simulated[maximumPredictedStepIndex - 1].telemetry.onsetAuthority
+                          << " onset_after=" << simulated[maximumPredictedStepIndex].telemetry.onsetAuthority;
+        qInfo().nospace() << "HumanLike " << name << " lead_step_index=" << maximumStepIndex
+                          << " lead_before=" << simulated[maximumStepIndex - 1].telemetry.lead
+                          << " lead_after=" << simulated[maximumStepIndex].telemetry.lead
+                          << " state_before=" << adaptiveMotionStateLabel(simulated[maximumStepIndex - 1].telemetry.state)
+                          << " state_after=" << adaptiveMotionStateLabel(simulated[maximumStepIndex].telemetry.state)
+                          << " reacquire_before=" << simulated[maximumStepIndex - 1].telemetry.reacquisitionAuthority
+                          << " reacquire_after=" << simulated[maximumStepIndex].telemetry.reacquisitionAuthority;
+        QVERIFY2(halfSpeedLead >= peakBeforeTurn * 0.45F,
+                 "Predictive lead collapsed before most of the physical brake was complete.");
+        for (size_t index = 75; index <= turn; ++index) {
+            QVERIFY2(simulated[index].telemetry.lead <= simulated[index - 1].telemetry.lead + 0.0005F,
+                     "Positive turning-point lead developed an artificial secondary pulse.");
+        }
+        for (size_t index = turn + 1; index < reversalSample; ++index) {
+            QVERIFY2(simulated[index].telemetry.lead <= 0.0001F,
+                     "Stale positive lead reappeared after credible opposite motion.");
+        }
+        QVERIFY2(reversalSample <= turn + 15 && simulated[reversalSample].telemetry.lead < -0.0001F,
+                 "Confirmed reversal did not reacquire a clean opposite-direction lead promptly.");
+        for (size_t index = finalStop + 1; index < finalStop + 20; ++index) {
+            QVERIFY2(std::abs(simulated[index].telemetry.lead)
+                         <= std::abs(simulated[index - 1].telemetry.lead) + 0.0005F,
+                     "Final-stop lead rebounded into an isolated pulse.");
+        }
+        QVERIFY(std::abs(finalStopLead) < peakBeforeTurn * 0.30F);
+        QVERIFY(stationaryLead < 0.0001F);
+        QVERIFY(maximumStep < maximumLead * 0.16F);
+        if (QString::fromLatin1(name) == QStringLiteral("Aggressive")) {
+            // The remaining terminal safety cancellation is intentionally
+            // immediate; this bounds it below 2.3% while preserving that
+            // stale-direction safety invariant.
+            QVERIFY2(maximumStep < 0.023F,
+                     "Aggressive Human-Like predictor-only step regressed.");
+        }
+        if (QString::fromLatin1(name) == QStringLiteral("Extreme")) {
+            QVERIFY2(maximumStep < 0.045F,
+                     "Extreme Human-Like predictive reacquisition step regressed.");
+        }
+    }
+}
+
+void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
+{
+    const std::vector<float> physical = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Human-Like Rapid Reversal"), -1.0F, 1.0F);
+    const auto &presets = builtInAdaptiveResponsePresets();
+    for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 3>{
+             {{"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+        const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(
+            presets[presetIndex].axes[0].settings);
+        const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration, physical, 0.004F);
+        const AdaptiveContinuityMetrics metrics = adaptiveContinuityMetrics(simulation, 0.004F);
+        int configuredLeadClampSamples = 0;
+        for (const AdaptiveResponseSimulationSample &sample : simulation) {
+            if (std::abs(sample.telemetry.lead) >= configuration.maximumLead - 0.00001F) {
+                ++configuredLeadClampSamples;
+            }
+        }
+        const float configuredLeadClampDwellMs = static_cast<float>(configuredLeadClampSamples) * 4.0F;
+        std::cout << "adaptive_continuity_trace preset=" << name
+                  << " peak_lead=" << metrics.peakLead
+                  << " median_lead=" << metrics.medianLead
+                  << " mae=" << metrics.meanAbsoluteForecastError
+                  << " rms=" << metrics.rmsForecastError
+                  << " p95=" << metrics.p95ForecastError
+                  << " max_error=" << metrics.maximumForecastError
+                  << " physical_step=" << metrics.maximumPhysicalStep
+                  << " predicted_step=" << metrics.maximumPredictedStep
+                  << " artificial_step=" << metrics.maximumArtificialStep
+                  << " onset_transition=" << metrics.maximumOnsetTransition
+                  << " extension_transition=" << metrics.maximumExtensionTransition
+                  << " turn_transition=" << metrics.maximumTurnTransition
+                  << " turn_limit_transition=" << metrics.maximumHorizonLimitTransition
+                  << " reacquire_transition=" << metrics.maximumReacquisitionTransition
+                  << " turn_activations=" << metrics.turnActivations
+                  << " discontinuities_0_5_1_2=" << metrics.artificialStepsOverHalfPercent
+                  << '/' << metrics.artificialStepsOverOnePercent
+                  << '/' << metrics.artificialStepsOverTwoPercent
+                  << " non_safety_predictor_steps_pos_neg_pos_rampdown_neg_rampdown="
+                  << metrics.maximumNonSafetyPositivePredictorStep << '/'
+                  << metrics.maximumNonSafetyNegativePredictorStep << '/'
+                  << metrics.maximumNonSafetyPositiveRampDownStep << '/'
+                  << metrics.maximumNonSafetyNegativeRampDownStep
+                  << " non_safety_discontinuities_0_25_0_5_1_2="
+                  << metrics.nonSafetyArtificialStepsOverQuarterPercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverHalfPercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverOnePercent << '/'
+                  << metrics.nonSafetyArtificialStepsOverTwoPercent
+                  << " configured_lead_clamp_dwell_ms=" << configuredLeadClampDwellMs
+                  << " stationary_lead=" << metrics.stationaryLead << '\n';
+        for (size_t lobe = 0; lobe < metrics.lobes.size(); ++lobe) {
+            const AdaptiveLobeMetrics &lobeMetrics = metrics.lobes[lobe];
+            std::cout << "adaptive_continuity_lobe preset=" << name << " lobe=" << lobe
+                      << " start=" << lobeMetrics.movementStartSeconds
+                      << " end=" << lobeMetrics.movementEndSeconds
+                      << " midpoint=" << lobeMetrics.midpointSeconds
+                      << " peak_speed=" << lobeMetrics.peakPhysicalSpeedSeconds
+                      << " peak_lead=" << lobeMetrics.peakLeadSeconds
+                      << " centroid=" << lobeMetrics.leadCentroidSeconds
+                      << " first_fraction=" << lobeMetrics.firstHalfLeadFraction
+                      << " second_fraction=" << lobeMetrics.secondHalfLeadFraction << '\n';
+        }
+        bool launchWasActive = false;
+        bool onsetTargetWasActive = false;
+        bool onsetWasActive = false;
+        bool meaningfulWasActive = false;
+        bool sustainedEvidenceWasActive = false;
+        bool sustainedWasActive = false;
+        bool brakingWasActive = false;
+        bool turningWasActive = false;
+        float priorExtensionTarget = 0.0F;
+        float priorExtensionAuthority = 0.0F;
+        float priorRawTurnHorizon = 0.0F;
+        float priorAppliedTurnHorizon = 0.060F;
+        float priorRawTurnLead = 0.0F;
+        float priorAppliedTurnLead = 0.50F;
+        float priorReacquisition = 1.0F;
+        float priorSourceDecayEvidence = 0.0F;
+        for (size_t index = 0; index < simulation.size(); ++index) {
+            const AdaptiveResponseTelemetry &current = simulation[index].telemetry;
+            const bool launchActive = current.launchIntent > 0.00001F;
+            const bool onsetTargetActive = current.onsetTarget > 0.00001F;
+            const bool onsetActive = current.onsetAuthority > 0.00001F;
+            const bool sustainedEvidenceActive = current.sustainedEvidence > 0.00001F;
+            const bool sustainedActive = current.sustainedAuthority > 0.00001F;
+            const bool turningActive = current.turningPointConfidence > 0.00001F;
+            const bool event = launchActive != launchWasActive
+                || onsetTargetActive != onsetTargetWasActive || onsetActive != onsetWasActive
+                || current.meaningfulMeasurement != meaningfulWasActive
+                || sustainedEvidenceActive != sustainedEvidenceWasActive
+                || sustainedActive != sustainedWasActive || current.braking != brakingWasActive
+                || turningActive != turningWasActive || current.reversal || current.safetyCancelled
+                || current.sourceDecayEvidence != priorSourceDecayEvidence
+                || std::abs(current.horizonExtensionTarget - priorExtensionTarget) > 0.010F
+                || std::abs(current.horizonExtensionEligibility - priorExtensionAuthority) > 0.010F
+                || std::abs(current.rawTurningPointHorizonLimitSeconds - priorRawTurnHorizon) > 0.002F
+                || std::abs(current.appliedTurningPointHorizonLimitSeconds - priorAppliedTurnHorizon) > 0.002F
+                || std::abs(current.rawTurningPointLeadLimit - priorRawTurnLead) > 0.010F
+                || std::abs(current.appliedTurningPointLeadLimit - priorAppliedTurnLead) > 0.010F
+                || std::abs(current.reacquisitionAuthority - priorReacquisition) > 0.050F;
+            if (event) {
+                std::cout << "adaptive_continuity_event preset=" << name << " time="
+                          << simulation[index].timeSeconds << " launch=" << current.launchIntent
+                          << " onset_target=" << current.onsetTarget
+                          << " onset=" << current.onsetAuthority
+                          << " meaningful=" << current.meaningfulMeasurement
+                          << " sustained_evidence=" << current.sustainedEvidence
+                          << " sustained=" << current.sustainedAuthority
+                          << " braking=" << current.braking
+                          << " extension_target=" << current.horizonExtensionTarget
+                          << " extension=" << current.horizonExtensionEligibility
+                          << " source_decay_evidence=" << current.sourceDecayEvidence
+                          << " braking_maturity=" << current.brakingReductionFactor
+                          << " turn_active=" << current.turningPointConfidence
+                          << " raw_turn_horizon=" << current.rawTurningPointHorizonLimitSeconds
+                          << " applied_turn_horizon=" << current.appliedTurningPointHorizonLimitSeconds
+                          << " raw_turn_lead=" << current.rawTurningPointLeadLimit
+                          << " applied_turn_lead=" << current.appliedTurningPointLeadLimit
+                          << " reversal=" << current.reversal
+                          << " safety=" << current.safetyCancelled
+                          << " reacquire=" << current.reacquisitionAuthority << '\n';
+            }
+            launchWasActive = launchActive;
+            onsetTargetWasActive = onsetTargetActive;
+            onsetWasActive = onsetActive;
+            meaningfulWasActive = current.meaningfulMeasurement;
+            sustainedEvidenceWasActive = sustainedEvidenceActive;
+            sustainedWasActive = sustainedActive;
+            brakingWasActive = current.braking;
+            turningWasActive = turningActive;
+            priorExtensionTarget = current.horizonExtensionTarget;
+            priorExtensionAuthority = current.horizonExtensionEligibility;
+            priorRawTurnHorizon = current.rawTurningPointHorizonLimitSeconds;
+            priorAppliedTurnHorizon = current.appliedTurningPointHorizonLimitSeconds;
+            priorRawTurnLead = current.rawTurningPointLeadLimit;
+            priorAppliedTurnLead = current.appliedTurningPointLeadLimit;
+            priorReacquisition = current.reacquisitionAuthority;
+            priorSourceDecayEvidence = current.sourceDecayEvidence;
+        }
+        for (size_t index = 1; index < simulation.size(); ++index) {
+            const AdaptiveResponseTelemetry &previous = simulation[index - 1].telemetry;
+            const AdaptiveResponseTelemetry &current = simulation[index].telemetry;
+            const float artificialStep = std::max(0.0F, std::abs(current.predicted - previous.predicted)
+                - std::abs(current.physical - previous.physical));
+            if (artificialStep <= 0.005F) continue;
+            std::cout << "adaptive_continuity_step preset=" << name << " index=" << index
+                      << " time=" << simulation[index].timeSeconds
+                      << " artificial=" << artificialStep
+                      << " onset_delta=" << current.onsetAuthority - previous.onsetAuthority
+                      << " extension_delta=" << current.horizonExtensionEligibility
+                          - previous.horizonExtensionEligibility
+                      << " turn_delta=" << current.turningPointConfidence - previous.turningPointConfidence
+                      << " horizon_limit_delta=" << current.turningPointHorizonLimitSeconds
+                          - previous.turningPointHorizonLimitSeconds
+                      << " reacquire_delta=" << current.reacquisitionAuthority
+                          - previous.reacquisitionAuthority
+                      << " safety=" << current.safetyLimited
+                      << " reversal=" << current.reversal << '\n';
+        }
+        QVERIFY(metrics.stationaryLead < 0.0001F);
+        QVERIFY(metrics.lobes[0].firstHalfLeadFraction > 0.0F);
+        QVERIFY(metrics.lobes[1].secondHalfLeadFraction > 0.0F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseHoldoutGeneralizationCorpus()
+{
+    constexpr std::uint32_t kHoldoutSeed = 0x23A11D0U;
+    constexpr int kHoldoutCases = 48;
+    constexpr std::array<float, 4> kSourceRates{30.0F, 60.0F, 125.0F, 250.0F};
+    const auto &presets = builtInAdaptiveResponsePresets();
+    struct Aggregate {
+        AdaptiveDistribution mae;
+        AdaptiveDistribution rms;
+        AdaptiveDistribution p95;
+        AdaptiveDistribution maximumError;
+        AdaptiveDistribution artificialStep;
+        AdaptiveDistribution overshoot;
+        AdaptiveDistribution horizonUtilization;
+        AdaptiveDistribution onset;
+        AdaptiveDistribution sustained;
+        AdaptiveDistribution extension;
+        AdaptiveDistribution turnActivations;
+        int falseReversals = 0;
+    } overall;
+    struct WorstCase {
+        float value = -1.0F;
+        int id = -1;
+        float rate = 0.0F;
+        const char *preset = "";
+    } worstForecastError, worstArtificialStep, worstTurningOvershoot, worstOnset, worstExtension;
+    std::array<AdaptiveDistribution, 5> speedBandErrors;
+    std::array<AdaptiveDistribution, 5> amplitudeBandErrors;
+
+    for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 5>{
+             {{"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+        const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(
+            presets[presetIndex].axes[0].settings);
+        for (const float rate : kSourceRates) {
+            const float period = 1.0F / rate;
+            AdaptiveDistribution rateErrors;
+            AdaptiveDistribution rateSteps;
+            AdaptiveDistribution rateOvershoot;
+            for (int id = 0; id < kHoldoutCases; ++id) {
+                const AdaptiveHoldoutCase holdout = makeAdaptiveHoldoutCase(kHoldoutSeed, id, period);
+                const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(
+                    configuration, holdout.physical, period);
+                QVERIFY(!simulation.empty());
+                float maximumSustained = 0.0F;
+                float maximumExtension = 0.0F;
+                float maximumOnset = 0.0F;
+                bool reversed = false;
+                for (const AdaptiveResponseSimulationSample &sample : simulation) {
+                    const AdaptiveResponseTelemetry &telemetry = sample.telemetry;
+                    QVERIFY(std::isfinite(telemetry.physical));
+                    QVERIFY(std::isfinite(telemetry.estimated));
+                    QVERIFY(std::isfinite(telemetry.predicted));
+                    QVERIFY(std::isfinite(telemetry.lead));
+                    QVERIFY(std::isfinite(telemetry.activeHorizonSeconds));
+                    QVERIFY(std::isfinite(telemetry.allowedMaximumHorizonSeconds));
+                    QVERIFY(telemetry.predicted >= configuration.domainMinimum - 0.00001F);
+                    QVERIFY(telemetry.predicted <= configuration.domainMaximum + 0.00001F);
+                    QVERIFY(std::abs(telemetry.lead) <= configuration.maximumLead + 0.00001F);
+                    QVERIFY(telemetry.activeHorizonSeconds <= 0.06001F);
+                    QVERIFY(telemetry.allowedMaximumHorizonSeconds <= 0.06001F);
+                    QVERIFY(telemetry.allowedMaximumHorizonSeconds <= configuration.maximumHorizonSeconds
+                        + configuration.horizonExtensionCapSeconds + 0.00001F);
+                    maximumSustained = std::max(maximumSustained, telemetry.sustainedAuthority);
+                    maximumExtension = std::max(maximumExtension, telemetry.horizonExtensionEligibility);
+                    maximumOnset = std::max(maximumOnset, telemetry.onsetAuthority);
+                    if (telemetry.reversal) {
+                        reversed = true;
+                        QVERIFY(std::abs(telemetry.onsetAuthority) < 0.00001F);
+                        QVERIFY(std::abs(telemetry.sustainedAuthority) < 0.00001F);
+                        QVERIFY(std::abs(telemetry.horizonExtensionEligibility) < 0.00001F);
+                    }
+                    if (telemetry.safetyCancelled || telemetry.quietDurationSeconds > 0.200F) {
+                        QVERIFY(std::abs(telemetry.lead) < 0.00001F);
+                        QVERIFY(std::abs(telemetry.onsetAuthority) < 0.00001F);
+                        QVERIFY(std::abs(telemetry.sustainedAuthority) < 0.00001F);
+                        QVERIFY(std::abs(telemetry.horizonExtensionEligibility) < 0.00001F);
+                    }
+                }
+                if (holdout.sampleAndHold) {
+                    for (size_t index = 1; index < simulation.size(); ++index) {
+                        if (std::abs(holdout.physical[index] - holdout.physical[index - 1]) < 0.000001F) {
+                            QVERIFY(simulation[index].telemetry.horizonExtensionEligibility
+                                <= simulation[index - 1].telemetry.horizonExtensionEligibility + 0.000001F);
+                        }
+                    }
+                }
+                const AdaptiveContinuityMetrics metrics = adaptiveContinuityMetrics(simulation, period);
+                const float overshoot = maximumTurningOvershoot(simulation);
+                QVERIFY(metrics.stationaryLead < 0.0005F);
+                if (holdout.stationaryNoise) {
+                    QVERIFY(maximumOnset < 0.00001F);
+                    QVERIFY(maximumSustained < 0.00001F);
+                    QVERIFY(maximumExtension < 0.00001F);
+                    QVERIFY(!reversed);
+                }
+                rateErrors.add(metrics.meanAbsoluteForecastError);
+                rateSteps.add(metrics.maximumArtificialStep);
+                rateOvershoot.add(overshoot);
+                overall.mae.add(metrics.meanAbsoluteForecastError);
+                overall.rms.add(metrics.rmsForecastError);
+                overall.p95.add(metrics.p95ForecastError);
+                overall.maximumError.add(metrics.maximumForecastError);
+                overall.artificialStep.add(metrics.maximumArtificialStep);
+                overall.overshoot.add(overshoot);
+                overall.horizonUtilization.add(configuration.maximumHorizonSeconds > 0.0F
+                    ? maximumExtension : 0.0F);
+                overall.onset.add(maximumOnset);
+                overall.sustained.add(maximumSustained);
+                overall.extension.add(maximumExtension);
+                overall.turnActivations.add(static_cast<float>(metrics.turnActivations));
+                speedBandErrors[static_cast<size_t>(holdout.speedBand)].add(metrics.meanAbsoluteForecastError);
+                amplitudeBandErrors[static_cast<size_t>(holdout.amplitudeBand)].add(metrics.meanAbsoluteForecastError);
+                const auto noteWorst = [id, rate, name](WorstCase &worst, float value) {
+                    if (value > worst.value) worst = {value, id, rate, name};
+                };
+                noteWorst(worstForecastError, metrics.maximumForecastError);
+                noteWorst(worstArtificialStep, metrics.maximumArtificialStep);
+                noteWorst(worstTurningOvershoot, overshoot);
+                noteWorst(worstOnset, maximumOnset);
+                noteWorst(worstExtension, maximumExtension);
+                if (holdout.stationaryNoise && reversed) ++overall.falseReversals;
+            }
+            std::cout << "adaptive_holdout_rate preset=" << name << " hz=" << rate
+                      << " cases=" << kHoldoutCases
+                      << " mae_median=" << rateErrors.percentile(0.50F)
+                      << " mae_p95=" << rateErrors.percentile(0.95F)
+                      << " step_p95=" << rateSteps.percentile(0.95F)
+                      << " overshoot_worst=" << rateOvershoot.percentile(1.0F) << '\n';
+        }
+    }
+
+    struct Ablation {
+        const char *name;
+        bool onset;
+        bool sustained;
+        bool extension;
+        bool turning;
+    };
+    constexpr std::array<Ablation, 6> ablations{{
+        {"baseline", false, false, false, false},
+        {"onset", true, false, false, false},
+        {"sustained", false, true, false, false},
+        {"horizon", false, true, true, false},
+        {"turning", false, false, false, true},
+        {"full", true, true, true, true},
+    }};
+    for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 5>{
+             {{"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+        const RuntimeAdaptiveResponseConfig full = runtimeForAdaptiveSettings(
+            presets[presetIndex].axes[0].settings);
+        for (const Ablation &ablation : ablations) {
+            RuntimeAdaptiveResponseConfig configuration = full;
+            if (!ablation.onset) { configuration.onsetAssist = 0.0F; configuration.onsetCap = 0.0F; }
+            if (!ablation.sustained) { configuration.sustainedAssist = 0.0F; configuration.sustainedCap = 0.0F; }
+            if (!ablation.extension) { configuration.horizonExtension = 0.0F; configuration.horizonExtensionCapSeconds = 0.0F; }
+            if (!ablation.turning) { configuration.turningPointProtection = 0.0F; }
+            AdaptiveDistribution errors;
+            AdaptiveDistribution steps;
+            for (int id = 0; id < kHoldoutCases; id += 4) {
+                const AdaptiveHoldoutCase holdout = makeAdaptiveHoldoutCase(kHoldoutSeed, id, 0.008F);
+                const AdaptiveContinuityMetrics metrics = adaptiveContinuityMetrics(
+                    simulateAdaptiveResponse(configuration, holdout.physical, 0.008F), 0.008F);
+                errors.add(metrics.meanAbsoluteForecastError);
+                steps.add(metrics.maximumArtificialStep);
+            }
+            std::cout << "adaptive_holdout_ablation preset=" << name << " feature=" << ablation.name
+                      << " cases=" << errors.values.size() << " mae_median=" << errors.percentile(0.50F)
+                      << " mae_p95=" << errors.percentile(0.95F)
+                      << " artificial_step_p95=" << steps.percentile(0.95F)
+                      << " artificial_step_worst=" << steps.percentile(1.0F) << '\n';
+        }
+    }
+
+    std::cout << "adaptive_holdout_summary seed=" << kHoldoutSeed
+              << " cases=" << kHoldoutCases << " traces=" << overall.mae.values.size()
+              << " mae_median_p95_p99_worst=" << overall.mae.percentile(0.50F) << '/'
+              << overall.mae.percentile(0.95F) << '/' << overall.mae.percentile(0.99F) << '/'
+              << overall.mae.percentile(1.0F)
+              << " rms_median_p95_p99_worst=" << overall.rms.percentile(0.50F) << '/'
+              << overall.rms.percentile(0.95F) << '/' << overall.rms.percentile(0.99F) << '/'
+              << overall.rms.percentile(1.0F)
+              << " forecast_p95_median_p95_p99_worst=" << overall.p95.percentile(0.50F) << '/'
+              << overall.p95.percentile(0.95F) << '/' << overall.p95.percentile(0.99F) << '/'
+              << overall.p95.percentile(1.0F)
+              << " artificial_step_median_p95_p99_worst=" << overall.artificialStep.percentile(0.50F) << '/'
+              << overall.artificialStep.percentile(0.95F) << '/'
+              << overall.artificialStep.percentile(0.99F) << '/' << overall.artificialStep.percentile(1.0F)
+              << " overshoot_median_p95_p99_worst=" << overall.overshoot.percentile(0.50F) << '/'
+              << overall.overshoot.percentile(0.95F) << '/' << overall.overshoot.percentile(0.99F)
+              << '/' << overall.overshoot.percentile(1.0F)
+              << " false_stationary_reversals=" << overall.falseReversals << '\n';
+    std::cout << "adaptive_holdout_worst seed=" << kHoldoutSeed
+              << " forecast_error=" << worstForecastError.value << " case=" << worstForecastError.id
+              << " preset=" << worstForecastError.preset << " hz=" << worstForecastError.rate
+              << " artificial_step=" << worstArtificialStep.value << " case=" << worstArtificialStep.id
+              << " preset=" << worstArtificialStep.preset << " hz=" << worstArtificialStep.rate
+              << " turning_overshoot=" << worstTurningOvershoot.value << " case=" << worstTurningOvershoot.id
+              << " preset=" << worstTurningOvershoot.preset << " hz=" << worstTurningOvershoot.rate
+              << " onset=" << worstOnset.value << " case=" << worstOnset.id
+              << " preset=" << worstOnset.preset << " hz=" << worstOnset.rate
+              << " extension=" << worstExtension.value << " case=" << worstExtension.id
+              << " preset=" << worstExtension.preset << " hz=" << worstExtension.rate << '\n';
+    for (size_t band = 0; band < speedBandErrors.size(); ++band) {
+        std::cout << "adaptive_holdout_speed_band band=" << band
+                  << " mae_median=" << speedBandErrors[band].percentile(0.50F)
+                  << " mae_p95=" << speedBandErrors[band].percentile(0.95F) << '\n';
+        std::cout << "adaptive_holdout_amplitude_band band=" << band
+                  << " mae_median=" << amplitudeBandErrors[band].percentile(0.50F)
+                  << " mae_p95=" << amplitudeBandErrors[band].percentile(0.95F) << '\n';
+    }
+    QVERIFY(overall.falseReversals == 0);
+}
+
+void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
+{
+    struct TraceDescriptor { const char *id; const char *classification; };
+    // Classifications were assigned from the preserved physical/timing data:
+    // trace names are identifiers only, while the categories describe the
+    // observed direction changes, pauses, magnitude, cadence, and noise.
+    constexpr std::array<TraceDescriptor, 15> traces{{
+        {"center-crossing-reversal-1", "center crossing; reversal; mixed movement"},
+        {"evasive-left-right-1", "rapid reversal; asymmetric oscillation; mixed movement"},
+        {"fast-abrupt-stop-1", "fast sweep; braking/stop; large correction"},
+        {"fast-full-sweep-1", "fast sweep; near-full travel; center crossing"},
+        {"fast-reversal-1", "fast sweep; reversal; braking"},
+        {"gentle-reversal-1", "slow coherent motion; smooth reversal; pauses"},
+        {"medium-full-sweep-1", "moderate sweep; large movement; center crossing"},
+        {"negative-side-reversal-1", "off-center negative-side reversal; small correction"},
+        {"positive-side-reversal-1", "off-center positive-side reversal; small correction"},
+        {"precision-corrections-1", "small corrections; noisy/micro movement; pauses"},
+        {"slow-full-sweep-1", "slow coherent motion; large sweep; braking"},
+        {"slow-stop-1", "slow coherent motion; braking/stop; pause"},
+        {"stationary-jitter-1", "initial reposition; stationary noise; quantized micro movement; sample-and-hold"},
+        {"very-fast-full-sweep-1", "extremely fast sweep; near-full travel; center crossing"},
+        {"very-fast-reversal-1", "extremely fast reversal; large movement; braking"},
+    }};
+    std::array<RecordedRealTrace, traces.size()> corpus;
+    for (size_t index = 0; index < traces.size(); ++index) {
+        QString error;
+        QVERIFY2(readRecordedRealTrace(QString::fromLatin1(traces[index].id),
+            QString::fromLatin1(traces[index].classification), &corpus[index], &error),
+            qPrintable(error));
+    }
+
+    const auto &presets = builtInAdaptiveResponsePresets();
+    const std::array<std::pair<const char *, size_t>, 5> presetMatrix{{
+        {"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5},
+    }};
+    AdaptiveDistribution aggregateErrors;
+    AdaptiveDistribution aggregateSteps;
+    float worstError = -1.0F;
+    QString worstErrorTrace;
+    float worstErrorTimestampMs = 0.0F;
+    float worstStep = -1.0F;
+    QString worstStepTrace;
+    float worstStepTimestampMs = 0.0F;
+    float worstCancellation = -1.0F;
+    QString worstCancellationTrace;
+    float worstCancellationTimestampMs = 0.0F;
+    float worstTurningOvershoot = -1.0F;
+    QString worstTurningOvershootTrace;
+    float worstTurningOvershootTimestampMs = 0.0F;
+    float worstSettling = -1.0F;
+    QString worstSettlingTrace;
+    float worstSettlingTimestampMs = 0.0F;
+    float worstExtension = -1.0F;
+    QString worstExtensionTrace;
+    float worstExtensionTimestampMs = 0.0F;
+    float worstSustained = -1.0F;
+    QString worstSustainedTrace;
+    float worstSustainedTimestampMs = 0.0F;
+    float worstOnset = -1.0F;
+    QString worstOnsetTrace;
+    float worstOnsetTimestampMs = 0.0F;
+
+    for (const auto &[presetName, presetIndex] : presetMatrix) {
+        const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(
+            presets[presetIndex].axes[0].settings);
+        for (const RecordedRealTrace &trace : corpus) {
+            const AdaptiveResponseSimulation simulation = replayRecordedRealTrace(configuration, trace);
+            QVERIFY(simulation.size() == trace.physical.size());
+            for (size_t sampleIndex = 0; sampleIndex < simulation.size(); ++sampleIndex) {
+                const AdaptiveResponseTelemetry &telemetry = simulation[sampleIndex].telemetry;
+                QVERIFY(std::isfinite(telemetry.predicted));
+                QVERIFY(std::isfinite(telemetry.lead));
+                QVERIFY(std::isfinite(telemetry.activeHorizonSeconds));
+                QVERIFY(telemetry.predicted >= configuration.domainMinimum - 0.00001F);
+                QVERIFY(telemetry.predicted <= configuration.domainMaximum + 0.00001F);
+                QVERIFY(std::abs(telemetry.lead) <= configuration.maximumLead + 0.00001F);
+                QVERIFY(telemetry.activeHorizonSeconds <= 0.06001F);
+                QVERIFY(telemetry.allowedMaximumHorizonSeconds <= 0.06001F);
+                QVERIFY(telemetry.allowedMaximumHorizonSeconds <= configuration.maximumHorizonSeconds
+                    + configuration.horizonExtensionCapSeconds + 0.00001F);
+                if (telemetry.reversal || telemetry.safetyCancelled || telemetry.quietDurationSeconds > 0.250F) {
+                    QVERIFY(std::abs(telemetry.onsetAuthority) < 0.00001F);
+                    QVERIFY(std::abs(telemetry.sustainedAuthority) < 0.00001F);
+                    QVERIFY(std::abs(telemetry.horizonExtensionEligibility) < 0.00001F);
+                }
+                if (sampleIndex > 0 && trace.physical[sampleIndex] == trace.physical[sampleIndex - 1]) {
+                    QVERIFY(telemetry.horizonExtensionEligibility
+                        <= simulation[sampleIndex - 1].telemetry.horizonExtensionEligibility + 0.00001F);
+                }
+            }
+            const RecordedRealTraceMetrics metrics = metricsForRecordedRealTrace(trace, simulation, configuration);
+            if (QString::fromLatin1(presetName) == QStringLiteral("Fast")) {
+                std::cout << "adaptive_real_trace trace=" << trace.id.toStdString()
+                          << " classification=\"" << trace.classification.toStdString() << "\""
+                          << " samples=" << trace.physical.size()
+                          << " peak_lead=" << metrics.peakLead
+                          << " median_lead=" << metrics.medianLead
+                          << " horizon_median_p95=" << metrics.horizons.percentile(0.50F) << '/'
+                          << metrics.horizons.percentile(0.95F)
+                          << " authority_median_p95=" << metrics.authority.percentile(0.50F) << '/'
+                          << metrics.authority.percentile(0.95F)
+                          << " onset_sustained_extension_turn=" << metrics.onsetActivations << '/'
+                          << metrics.sustainedActivations << '/' << metrics.extensionActivations << '/'
+                          << metrics.turningActivations
+                          << " reversals=" << metrics.reversalCount
+                          << " ambiguous_safety=" << metrics.ambiguousSafetyCancellations
+                          << " stale_cancel_ms=" << metrics.staleCancellationMs
+                          << " settling_ms=" << metrics.settlingMs
+                          << " stationary_lead=" << metrics.stationaryLead
+                          << " forecast_mae_rms_p95_max=" << metrics.forecastMae << '/'
+                          << metrics.forecastRms << '/' << metrics.forecastP95 << '/' << metrics.forecastMax
+                          << " artificial_step=" << metrics.artificialStep
+                          << " artificial_step_at_ms=" << metrics.artificialStepTimestampMs
+                          << " output_step=" << metrics.maximumOutputStep
+                          << " max_extension_ms_at=" << metrics.maximumHorizonExtensionMs << '@'
+                          << metrics.maximumHorizonExtensionTimestampMs
+                          << " max_sustained_at=" << metrics.maximumSustainedAuthority << '@'
+                          << metrics.maximumSustainedAuthorityTimestampMs
+                          << " max_onset_at=" << metrics.maximumOnsetAuthority << '@'
+                          << metrics.maximumOnsetTimestampMs
+                          << " turning_overshoot_at=" << metrics.turningOvershoot << '@'
+                          << metrics.turningOvershootTimestampMs
+                          << " max_lead_saturations=" << metrics.maximumLeadSaturations << '\n';
+                aggregateErrors.add(metrics.forecastMae);
+                aggregateSteps.add(metrics.artificialStep);
+                if (metrics.forecastMax > worstError) {
+                    worstError = metrics.forecastMax;
+                    worstErrorTrace = trace.id;
+                    worstErrorTimestampMs = metrics.forecastMaxTimestampMs;
+                }
+                if (metrics.artificialStep > worstStep) {
+                    worstStep = metrics.artificialStep;
+                    worstStepTrace = trace.id;
+                    worstStepTimestampMs = metrics.artificialStepTimestampMs;
+                }
+                if (metrics.staleCancellationMs > worstCancellation) {
+                    worstCancellation = metrics.staleCancellationMs;
+                    worstCancellationTrace = trace.id;
+                    worstCancellationTimestampMs = metrics.staleCancellationTimestampMs;
+                }
+                if (metrics.turningOvershoot > worstTurningOvershoot) {
+                    worstTurningOvershoot = metrics.turningOvershoot;
+                    worstTurningOvershootTrace = trace.id;
+                    worstTurningOvershootTimestampMs = metrics.turningOvershootTimestampMs;
+                }
+                if (metrics.settlingMs > worstSettling) {
+                    worstSettling = metrics.settlingMs;
+                    worstSettlingTrace = trace.id;
+                    worstSettlingTimestampMs = metrics.settlingTimestampMs;
+                }
+                if (metrics.maximumHorizonExtensionMs > worstExtension) {
+                    worstExtension = metrics.maximumHorizonExtensionMs;
+                    worstExtensionTrace = trace.id;
+                    worstExtensionTimestampMs = metrics.maximumHorizonExtensionTimestampMs;
+                }
+                if (metrics.maximumSustainedAuthority > worstSustained) {
+                    worstSustained = metrics.maximumSustainedAuthority;
+                    worstSustainedTrace = trace.id;
+                    worstSustainedTimestampMs = metrics.maximumSustainedAuthorityTimestampMs;
+                }
+                if (metrics.maximumOnsetAuthority > worstOnset) {
+                    worstOnset = metrics.maximumOnsetAuthority;
+                    worstOnsetTrace = trace.id;
+                    worstOnsetTimestampMs = metrics.maximumOnsetTimestampMs;
+                }
+            }
+        }
+    }
+    std::cout << "adaptive_real_summary corpus=15 preset_matrix=Light,Balanced,Fast,Aggressive,Extreme"
+              << " fast_forecast_mae_median_p95_worst=" << aggregateErrors.percentile(0.50F) << '/'
+              << aggregateErrors.percentile(0.95F) << '/' << aggregateErrors.percentile(1.0F)
+              << " fast_artificial_step_median_p95_worst=" << aggregateSteps.percentile(0.50F) << '/'
+              << aggregateSteps.percentile(0.95F) << '/' << aggregateSteps.percentile(1.0F) << '\n';
+    std::cout << "adaptive_real_worst forecast_error_trace=" << worstErrorTrace.toStdString()
+              << " error=" << worstError << " timestamp_ms=" << worstErrorTimestampMs
+              << " artificial_step_trace=" << worstStepTrace.toStdString()
+              << " artificial_step=" << worstStep << " timestamp_ms=" << worstStepTimestampMs
+              << " stale_cancellation_trace=" << worstCancellationTrace.toStdString()
+              << " stale_cancellation_ms=" << worstCancellation
+              << " timestamp_ms=" << worstCancellationTimestampMs
+              << " turning_overshoot_trace=" << worstTurningOvershootTrace.toStdString()
+              << " turning_overshoot=" << worstTurningOvershoot
+              << " timestamp_ms=" << worstTurningOvershootTimestampMs
+              << " settling_trace=" << worstSettlingTrace.toStdString()
+              << " settling_ms=" << worstSettling
+              << " timestamp_ms=" << worstSettlingTimestampMs
+              << " extension_trace=" << worstExtensionTrace.toStdString()
+              << " extension_ms=" << worstExtension
+              << " timestamp_ms=" << worstExtensionTimestampMs
+              << " sustained_trace=" << worstSustainedTrace.toStdString()
+              << " sustained_authority=" << worstSustained
+              << " timestamp_ms=" << worstSustainedTimestampMs
+              << " onset_trace=" << worstOnsetTrace.toStdString()
+              << " onset_authority=" << worstOnset
+              << " timestamp_ms=" << worstOnsetTimestampMs << '\n';
+    QVERIFY(aggregateErrors.values.size() == traces.size());
+    QVERIFY(aggregateSteps.values.size() == traces.size());
+}
+
+void MappingCoreTests::adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet()
+{
+    RuntimeAdaptiveResponseConfig configuration;
+    configuration.enabled = true;
+    configuration.model = AdaptiveResponseModel::Auto;
+    configuration.maximumHorizonSeconds = 0.018F;
+    configuration.maximumLead = 0.27F;
+    configuration.velocityResponse = 0.91F;
+    configuration.accelerationResponse = 0.82F;
+    configuration.motionSensitivity = 0.035F;
+    configuration.noiseRejection = 0.012F;
+    configuration.reversalDetection = 0.075F;
+    configuration.reversalResponse = 1.0F;
+    configuration.decelerationResponse = 0.85F;
+    configuration.settlingResponse = 0.92F;
+    configuration.endpointTaper = 0.16F;
+    std::vector<float> accelerating(96, -0.55F);
+    for (size_t index = 12; index < 56; ++index) {
+        const float progress = static_cast<float>(index - 12) / 43.0F;
+        // Small, fast correction: strong coherent acceleration but a modest
+        // eventual speed, precisely where unused velocity authority exists.
+        accelerating[index] = -0.55F + 0.28F * progress * progress;
+    }
+    for (size_t index = 56; index < accelerating.size(); ++index) accelerating[index] = -0.27F;
+    const AdaptiveResponseSimulation withoutOnset = simulateAdaptiveResponse(configuration, accelerating, 0.004F);
+    configuration.onsetAssist = 1.0F;
+    configuration.onsetCap = 0.40F;
+    const AdaptiveResponseSimulation withOnset = simulateAdaptiveResponse(configuration, accelerating, 0.004F);
+    float earlyWithout = 0.0F;
+    float earlyWith = 0.0F;
+    float maximumOnset = 0.0F;
+    float maximumGain = 0.0F;
+    float maximumEarlyGain = 0.0F;
+    size_t maximumGainIndex = 0;
+    size_t firstOnsetIndex = withOnset.size();
+    size_t firstMeaningfulIndex = withOnset.size();
+    float preMeaningfulOnset = 0.0F;
+    for (size_t index = 12; index < withOnset.size(); ++index) {
+        earlyWithout = index < 36 ? std::max(earlyWithout, std::abs(withoutOnset[index].telemetry.lead)) : earlyWithout;
+        earlyWith = index < 36 ? std::max(earlyWith, std::abs(withOnset[index].telemetry.lead)) : earlyWith;
+        maximumOnset = std::max(maximumOnset, withOnset[index].telemetry.onsetAuthority);
+        if (withOnset[index].telemetry.onsetAuthority > 0.00001F && firstOnsetIndex == withOnset.size()) {
+            firstOnsetIndex = index;
+        }
+        if (withOnset[index].telemetry.meaningfulMeasurement
+            && firstMeaningfulIndex == withOnset.size()) {
+            firstMeaningfulIndex = index;
+        }
+        if (!withOnset[index].telemetry.meaningfulMeasurement) {
+            preMeaningfulOnset = std::max(preMeaningfulOnset,
+                withOnset[index].telemetry.onsetAuthority);
+        }
+        const float gain = std::abs(withOnset[index].telemetry.lead)
+            - std::abs(withoutOnset[index].telemetry.lead);
+        if (gain > maximumGain) { maximumGain = gain; maximumGainIndex = index; }
+        if (index < 36) maximumEarlyGain = std::max(maximumEarlyGain, gain);
+        QVERIFY(withOnset[index].telemetry.motionUrgency >= -0.00001F);
+        QVERIFY(withOnset[index].telemetry.motionUrgency <= 1.00001F);
+        QVERIFY(withOnset[index].telemetry.activeHorizonSeconds
+                 <= configuration.maximumHorizonSeconds + 0.00001F);
+        QVERIFY(std::abs(withOnset[index].telemetry.lead)
+                 <= configuration.maximumLead + 0.00001F);
+    }
+    qInfo().nospace() << "Onset accelerating early_off=" << earlyWithout
+                      << " early_on=" << earlyWith << " maximum_authority=" << maximumOnset
+                      << " first_onset=" << firstOnsetIndex
+                      << " first_meaningful=" << firstMeaningfulIndex
+                      << " pre_meaningful_onset=" << preMeaningfulOnset
+                      << " max_gain=" << maximumGain
+                      << " max_gain_index=" << maximumGainIndex
+                      << " early_gain=" << maximumEarlyGain;
+    QVERIFY(maximumOnset > 0.0005F);
+    QVERIFY(maximumEarlyGain > 0.0002F);
+    QVERIFY(firstOnsetIndex < firstMeaningfulIndex);
+    QVERIFY(preMeaningfulOnset > 0.00001F);
+
+    std::vector<float> mirrored;
+    mirrored.reserve(accelerating.size());
+    for (const float value : accelerating) mirrored.push_back(-value);
+    const AdaptiveResponseSimulation negative = simulateAdaptiveResponse(configuration, mirrored, 0.004F);
+    QVERIFY(negative.size() == withOnset.size());
+    for (size_t index = 0; index < withOnset.size(); ++index) {
+        QVERIFY(std::abs(withOnset[index].telemetry.lead + negative[index].telemetry.lead) < 0.0002F);
+        QVERIFY(std::abs(withOnset[index].telemetry.motionUrgency
+                         - negative[index].telemetry.motionUrgency) < 0.0002F);
+        QVERIFY(std::abs(withOnset[index].telemetry.onsetAuthority
+                         - negative[index].telemetry.onsetAuthority) < 0.0002F);
+    }
+
+    std::vector<float> jitter(120, 0.0F);
+    for (size_t index = 1; index < jitter.size(); ++index) {
+        jitter[index] = index % 2 == 0 ? 0.0015F : -0.0015F;
+    }
+    const AdaptiveResponseSimulation noisy = simulateAdaptiveResponse(configuration, jitter, 0.004F);
+    for (const AdaptiveResponseSimulationSample &sample : noisy) {
+        QVERIFY(sample.telemetry.onsetAuthority < 0.00001F);
+        QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
+    }
+
+    // One sub-meaningful source update may create evidence, but cannot apply
+    // onset: the early path requires a second coherent speed-growth report.
+    std::vector<float> singleReport(64, 0.0F);
+    for (size_t index = 12; index < singleReport.size(); ++index) singleReport[index] = 0.004F;
+    const AdaptiveResponseSimulation oneReport = simulateAdaptiveResponse(
+        configuration, singleReport, 0.004F);
+    for (const AdaptiveResponseSimulationSample &sample : oneReport) {
+        QVERIFY(sample.telemetry.onsetAuthority < 0.00001F);
+        QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
+    }
+
+    const std::vector<float> human = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Human-Like Rapid Reversal"), -1.0F, 1.0F);
+    const AdaptiveResponseSimulation braking = simulateAdaptiveResponse(configuration, human, 0.004F);
+    for (size_t index = 70; index <= 85; ++index) {
+        QVERIFY2(braking[index].telemetry.onsetAuthority < 0.00001F,
+                 "Onset authority must be absent while the source is braking toward the turn.");
+    }
+    for (size_t index = 170; index < braking.size(); ++index) {
+        QVERIFY(std::abs(braking[index].telemetry.lead) < 0.0001F);
+        QVERIFY(braking[index].telemetry.onsetAuthority < 0.00001F);
+    }
+}
+
+void MappingCoreTests::adaptiveResponseSustainedHorizonAndTurningProtection()
+{
+    const auto aggressiveConfiguration = [] {
+        RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = true;
+        configuration.model = AdaptiveResponseModel::Auto;
+        configuration.maximumHorizonSeconds = 0.018F;
+        configuration.maximumLead = 0.27F;
+        configuration.velocityResponse = 0.91F;
+        configuration.accelerationResponse = 0.82F;
+        configuration.motionSensitivity = 0.035F;
+        configuration.noiseRejection = 0.012F;
+        configuration.reversalDetection = 0.075F;
+        configuration.reversalResponse = 1.0F;
+        configuration.decelerationResponse = 0.85F;
+        configuration.settlingResponse = 0.92F;
+        configuration.endpointTaper = 0.16F;
+        configuration.onsetAssist = 0.38F;
+        configuration.onsetCap = 0.22F;
+        configuration.sustainedAssist = 0.42F;
+        configuration.sustainedCap = 0.20F;
+        configuration.horizonExtension = 0.48F;
+        configuration.horizonExtensionCapSeconds = 0.018F;
+        configuration.turningPointProtection = 0.94F;
+        configuration.turningPointMargin = 0.10F;
+        return configuration;
+    };
+    const auto maximum = [](const AdaptiveResponseSimulation &simulation, auto selector) {
+        float result = 0.0F;
+        for (const AdaptiveResponseSimulationSample &sample : simulation) result = std::max(result, selector(sample.telemetry));
+        return result;
+    };
+    const std::vector<float> waggle = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Slow Coherent Waggle"), -1.0F, 1.0F);
+    RuntimeAdaptiveResponseConfig disabledSustained = aggressiveConfiguration();
+    disabledSustained.sustainedAssist = 0.0F;
+    disabledSustained.sustainedCap = 0.0F;
+    disabledSustained.horizonExtension = 0.0F;
+    disabledSustained.horizonExtensionCapSeconds = 0.0F;
+    const RuntimeAdaptiveResponseConfig sustained = aggressiveConfiguration();
+    const AdaptiveResponseSimulation waggleOff = simulateAdaptiveResponse(disabledSustained, waggle, 0.004F);
+    const AdaptiveResponseSimulation waggleOn = simulateAdaptiveResponse(sustained, waggle, 0.004F);
+    const float maxSustainedEvidence = maximum(waggleOn, [](const auto &t) { return t.sustainedEvidence; });
+    const float maxSustainedAuthority = maximum(waggleOn, [](const auto &t) { return t.sustainedAuthority; });
+    const float maxExtensionEligibility = maximum(waggleOn, [](const auto &t) { return t.horizonExtensionEligibility; });
+    const float maxAllowedHorizon = maximum(waggleOn, [](const auto &t) { return t.allowedMaximumHorizonSeconds; });
+    const float maxActiveHorizonOff = maximum(waggleOff, [](const auto &t) { return t.activeHorizonSeconds; });
+    const float maxActiveHorizonOn = maximum(waggleOn, [](const auto &t) { return t.activeHorizonSeconds; });
+    qInfo().nospace() << "Sustained waggle evidence=" << maxSustainedEvidence
+                      << " authority=" << maxSustainedAuthority << " extension_eligibility="
+                      << maxExtensionEligibility << " normal_ms="
+                      << sustained.maximumHorizonSeconds * 1000.0F << " allowed_ms="
+                      << maxAllowedHorizon * 1000.0F << " active_off_ms="
+                      << maxActiveHorizonOff * 1000.0F << " active_on_ms="
+                      << maxActiveHorizonOn * 1000.0F;
+    QVERIFY(maxSustainedEvidence > 0.20F);
+    QVERIFY(maxSustainedAuthority > 0.002F);
+    QVERIFY(maxExtensionEligibility > 0.001F);
+    QVERIFY(maxAllowedHorizon > sustained.maximumHorizonSeconds + 0.00001F);
+    QVERIFY(maxAllowedHorizon <= 0.06001F);
+    QVERIFY(maxActiveHorizonOn >= maxActiveHorizonOff - 0.00001F);
+    for (const AdaptiveResponseSimulationSample &sample : waggleOn) {
+        QVERIFY(std::isfinite(sample.telemetry.activeHorizonSeconds));
+        QVERIFY(sample.telemetry.activeHorizonSeconds <= sample.telemetry.allowedMaximumHorizonSeconds + 0.00001F);
+        QVERIFY(sample.telemetry.allowedMaximumHorizonSeconds <= 0.06001F);
+        QVERIFY(sample.telemetry.motionUrgency >= -0.00001F && sample.telemetry.motionUrgency <= 1.00001F);
+    }
+
+    std::vector<float> mirroredWaggle;
+    mirroredWaggle.reserve(waggle.size());
+    for (const float value : waggle) mirroredWaggle.push_back(-value);
+    const AdaptiveResponseSimulation mirrored = simulateAdaptiveResponse(sustained, mirroredWaggle, 0.004F);
+    QVERIFY(mirrored.size() == waggleOn.size());
+    for (size_t index = 0; index < waggleOn.size(); ++index) {
+        QVERIFY(std::abs(waggleOn[index].telemetry.lead + mirrored[index].telemetry.lead) < 0.00025F);
+        QVERIFY(std::abs(waggleOn[index].telemetry.sustainedEvidence
+                         - mirrored[index].telemetry.sustainedEvidence) < 0.00025F);
+        QVERIFY(std::abs(waggleOn[index].telemetry.horizonExtensionEligibility
+                         - mirrored[index].telemetry.horizonExtensionEligibility) < 0.00025F);
+    }
+
+    const std::vector<float> slowSweep = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Slow One-Way Sweep"), -1.0F, 1.0F);
+    const AdaptiveResponseSimulation slowSweepOff = simulateAdaptiveResponse(disabledSustained, slowSweep, 0.004F);
+    const AdaptiveResponseSimulation slowSweepOn = simulateAdaptiveResponse(sustained, slowSweep, 0.004F);
+    const float sweepAllowedHorizon = maximum(slowSweepOn, [](const auto &t) { return t.allowedMaximumHorizonSeconds; });
+    const float sweepActiveOff = maximum(slowSweepOff, [](const auto &t) { return t.activeHorizonSeconds; });
+    const float sweepActiveOn = maximum(slowSweepOn, [](const auto &t) { return t.activeHorizonSeconds; });
+    float sweepMaximumLeadGain = 0.0F;
+    for (size_t index = 0; index < slowSweepOn.size(); ++index) {
+        sweepMaximumLeadGain = std::max(sweepMaximumLeadGain, std::abs(slowSweepOn[index].telemetry.lead)
+            - std::abs(slowSweepOff[index].telemetry.lead));
+    }
+    qInfo().nospace() << "Sustained slow_sweep allowed_ms=" << sweepAllowedHorizon * 1000.0F
+                      << " active_off_ms=" << sweepActiveOff * 1000.0F
+                      << " active_on_ms=" << sweepActiveOn * 1000.0F
+                      << " max_lead_gain=" << sweepMaximumLeadGain;
+    QVERIFY(sweepAllowedHorizon > sustained.maximumHorizonSeconds + 0.00001F);
+    QVERIFY(sweepActiveOn >= sweepActiveOff - 0.00001F);
+    QVERIFY(sweepMaximumLeadGain > 0.00005F);
+
+    const std::vector<float> fastSweep = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Fast Sweep"), -1.0F, 1.0F);
+    const AdaptiveResponseSimulation fastOff = simulateAdaptiveResponse(disabledSustained, fastSweep, 0.004F);
+    const AdaptiveResponseSimulation fastOn = simulateAdaptiveResponse(sustained, fastSweep, 0.004F);
+    float fastMaximumDifference = 0.0F;
+    for (size_t index = 0; index < fastOn.size(); ++index) {
+        fastMaximumDifference = std::max(fastMaximumDifference, std::abs(fastOn[index].telemetry.lead
+            - fastOff[index].telemetry.lead));
+        QVERIFY(fastOn[index].telemetry.horizonExtensionEligibility < 0.0001F);
+        QVERIFY(fastOn[index].telemetry.allowedMaximumHorizonSeconds
+                 <= sustained.maximumHorizonSeconds + 0.00001F);
+    }
+    qInfo().nospace() << "Sustained fast_noninterference max_lead_difference=" << fastMaximumDifference;
+    QVERIFY(fastMaximumDifference < 0.003F);
+
+    const std::vector<float> correction = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Small Slow Correction"), -1.0F, 1.0F);
+    const AdaptiveResponseSimulation precision = simulateAdaptiveResponse(sustained, correction, 0.004F);
+    QVERIFY(maximum(precision, [](const auto &t) { return std::abs(t.lead); }) < 0.020F);
+    std::vector<float> jitter(220, 0.0F);
+    for (size_t index = 1; index < jitter.size(); ++index) jitter[index] = index % 2 == 0 ? 0.0015F : -0.0015F;
+    const AdaptiveResponseSimulation noise = simulateAdaptiveResponse(sustained, jitter, 0.004F);
+    for (const AdaptiveResponseSimulationSample &sample : noise) {
+        QVERIFY(sample.telemetry.sustainedEvidence < 0.0001F);
+        QVERIFY(sample.telemetry.horizonExtensionEligibility < 0.0001F);
+    }
+
+    // Hold deterministic 250 Hz processing samples at each simulated source
+    // rate. This proves neither sustained evidence nor extension comes from
+    // repeated values alone, while preserving the learned cadence path.
+    for (const int sourceHz : {30, 60, 125, 250}) {
+        std::vector<float> held;
+        held.reserve(waggle.size());
+        const int sourceStride = std::max(1, static_cast<int>(std::lround(250.0 / sourceHz)));
+        for (size_t index = 0; index < waggle.size(); ++index) held.push_back(
+            waggle[(index / static_cast<size_t>(sourceStride)) * static_cast<size_t>(sourceStride)]);
+        const AdaptiveResponseSimulation rateSimulation = simulateAdaptiveResponse(sustained, held, 0.004F);
+        for (const AdaptiveResponseSimulationSample &sample : rateSimulation) {
+            QVERIFY(std::isfinite(sample.telemetry.lead));
+            QVERIFY(sample.telemetry.allowedMaximumHorizonSeconds <= 0.06001F);
+        }
+    }
+
+    RuntimeAdaptiveResponseConfig extreme = aggressiveConfiguration();
+    extreme.maximumHorizonSeconds = 0.030F;
+    extreme.maximumLead = 0.40F;
+    extreme.velocityResponse = 1.0F;
+    extreme.accelerationResponse = 0.95F;
+    extreme.onsetAssist = 0.50F;
+    extreme.onsetCap = 0.30F;
+    extreme.sustainedAssist = 0.55F;
+    extreme.sustainedCap = 0.28F;
+    extreme.horizonExtension = 0.65F;
+    extreme.horizonExtensionCapSeconds = 0.024F;
+    extreme.turningPointProtection = 1.0F;
+    extreme.turningPointMargin = 0.08F;
+    const std::vector<float> torture = adaptiveResponseScenarioPhysicalSamples(
+        QStringLiteral("Extreme Turning-Point Torture"), -1.0F, 1.0F);
+    const AdaptiveResponseSimulation protectedTorture = simulateAdaptiveResponse(extreme, torture, 0.004F);
+    float physicalApex = -1.0F;
+    float predictedApex = -1.0F;
+    float maximumTurnConfidence = 0.0F;
+    float maximumTurnLeadLimit = 0.0F;
+    AdaptiveResponseTelemetry predictedApexTelemetry;
+    float predictedApexPhysical = 0.0F;
+    for (size_t index = 1; index < protectedTorture.size(); ++index) {
+        if (index < 101) { // authored 400 ms apex
+            physicalApex = std::max(physicalApex, protectedTorture[index].telemetry.physical);
+            if (protectedTorture[index].telemetry.predicted > predictedApex) {
+                predictedApex = protectedTorture[index].telemetry.predicted;
+                predictedApexTelemetry = protectedTorture[index].telemetry;
+                predictedApexPhysical = protectedTorture[index].telemetry.physical;
+            }
+        }
+        maximumTurnConfidence = std::max(maximumTurnConfidence,
+            protectedTorture[index].telemetry.turningPointConfidence);
+        maximumTurnLeadLimit = std::max(maximumTurnLeadLimit,
+            protectedTorture[index].telemetry.turningPointLeadLimit);
+    }
+    const float turningOvershoot = std::max(0.0F, predictedApex - physicalApex);
+    qInfo().nospace() << "Turning torture physical_apex=" << physicalApex
+                      << " predicted_apex=" << predictedApex << " overshoot=" << turningOvershoot
+                      << " apex_physical=" << predictedApexPhysical
+                      << " turn_confidence=" << maximumTurnConfidence
+                      << " turn_lead_limit=" << maximumTurnLeadLimit
+                      << " apex_active_ms=" << predictedApexTelemetry.activeHorizonSeconds * 1000.0F
+                      << " apex_turn_confidence=" << predictedApexTelemetry.turningPointConfidence
+                      << " apex_turn_ms=" << predictedApexTelemetry.estimatedTimeToTurnSeconds * 1000.0F
+                      << " apex_limit_ms=" << predictedApexTelemetry.turningPointHorizonLimitSeconds * 1000.0F
+                      << " apex_lead_limit=" << predictedApexTelemetry.turningPointLeadLimit;
+    QVERIFY(maximumTurnConfidence > 0.01F);
+    QVERIFY(maximumTurnLeadLimit > 0.0F);
+    QVERIFY(turningOvershoot <= 0.0201F);
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
@@ -1842,6 +4107,28 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(createProfileInCategory(source, QStringLiteral("Vehicle"), categoryId,
                                     normalProfileId(), &profileId));
     findProfileCategory(source, categoryId)->executableRules = {QStringLiteral("bf6.exe")};
+    AdaptiveResponsePreset responsePreset;
+    responsePreset.id = QStringLiteral("pack-response");
+    responsePreset.name = QStringLiteral("Pack Response");
+    responsePreset.description = QStringLiteral("Portable Adaptive Response dependency");
+    for (AdaptiveResponseAxisOverride &axis : responsePreset.axes) {
+        axis.properties = kAdaptiveResponseAllProperties;
+        axis.settings.enabled = true;
+        axis.settings.maximumHorizonMs = 12.0F;
+    }
+    source.adaptiveResponsePresets.push_back(responsePreset);
+    findProfileCategory(source, categoryId)->adaptiveResponse.axes[0].presetId = responsePreset.id;
+    AutomationDefinition responseAutomation;
+    responseAutomation.id = QStringLiteral("pack-response-automation");
+    responseAutomation.name = QStringLiteral("Pack Response Automation");
+    responseAutomation.conditions.push_back({AutomationConditionType::BaseProfileIs, 0, 0.0F,
+        0.0F, 0.0F, 1, 1, PovDirection::Up, profileId});
+    AutomationActionDefinition responseAction;
+    responseAction.type = AutomationActionType::AdaptiveResponsePreset;
+    responseAction.targetAxis = static_cast<int>(PhysicalAxis::X);
+    responseAction.adaptiveResponsePresetId = responsePreset.id;
+    responseAutomation.actions.push_back(responseAction);
+    source.automations.push_back(responseAutomation);
     source.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum = -0.91F;
 
     const QString fileName = temporary.filePath(QStringLiteral("bf6.hbf6pack"));
@@ -1857,6 +4144,8 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(!bundle.includesCalibration);
     QCOMPARE(bundle.categories.size(), size_t{1});
     QCOMPARE(bundle.profiles.size(), size_t{1});
+    QCOMPARE(bundle.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(bundle.automations.size(), size_t{1});
 
     MapperConfiguration target = defaultConfiguration();
     const float originalMinimum = target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum;
@@ -1866,6 +4155,9 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
         [](const ProfileCategory &item) { return item.name == QStringLiteral("Battlefield 6"); });
     QVERIFY(category != target.profileCategories.cend());
     QCOMPARE(category->executableRules, QStringList{QStringLiteral("bf6.exe")});
+    QVERIFY(findAdaptiveResponsePreset(target, QStringLiteral("pack-response")));
+    QVERIFY(std::any_of(target.automations.cbegin(), target.automations.cend(),
+        [](const AutomationDefinition &item) { return item.name == QStringLiteral("Pack Response Automation"); }));
     QCOMPARE(target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum, originalMinimum);
 }
 
@@ -1942,6 +4234,67 @@ void MappingCoreTests::portablePackSelectionsConflictsAndDependenciesAreSafe()
     const ProfileCategory *replaced = findProfileCategory(replaceTarget, replaceCategory);
     QVERIFY(replaced);
     QCOMPARE(replaced->profileIds.size(), size_t{2});
+
+    // Pack exports include only the custom Response Presets actually reached
+    // from selected content.  Import conflicts intentionally provide three
+    // deterministic choices: retain the local preset, replace it, or copy and
+    // remap every imported reference.
+    AdaptiveResponsePreset responsePreset;
+    responsePreset.id = QStringLiteral("pack-response");
+    responsePreset.name = QStringLiteral("Pack Response");
+    responsePreset.description = QStringLiteral("Pack-only dependency");
+    responsePreset.axes[static_cast<size_t>(PhysicalAxis::X)].properties = kAdaptiveResponseAllProperties;
+    responsePreset.axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs = 24.0F;
+    source.adaptiveResponsePresets.push_back(responsePreset);
+    ground = findProfile(source, groundId);
+    QVERIFY(ground);
+    ground->adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].presetId = responsePreset.id;
+
+    const QString responsePack = temporary.filePath(QStringLiteral("response-dependency.hbf6pack"));
+    QVERIFY2(ProfilePortability::exportPack(source, {categoryId}, {}, QStringLiteral("Response dependency"), {},
+                                             false, false, true, true, true, responsePack, &error), qPrintable(error));
+    PortableConfigurationBundle responseBundle;
+    QVERIFY2(ProfilePortability::inspect(responsePack, &responseBundle, &error), qPrintable(error));
+    QCOMPARE(responseBundle.adaptiveResponsePresets.size(), size_t{1});
+    QCOMPARE(responseBundle.adaptiveResponsePresets.front().id, responsePreset.id);
+
+    AdaptiveResponsePreset localPreset = responsePreset;
+    localPreset.name = QStringLiteral("Local Response");
+    localPreset.axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs = 5.0F;
+    const auto horizonFor = [](const MapperConfiguration &configuration, const QString &presetId) {
+        const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(configuration, presetId);
+        return preset ? preset->axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs : -1.0F;
+    };
+
+    MapperConfiguration keepLocalTarget = defaultConfiguration();
+    keepLocalTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions keepLocal;
+    keepLocal.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::KeepLocal;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&keepLocalTarget, responseBundle, keepLocal, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(keepLocalTarget, responsePreset.id), 5.0F);
+
+    MapperConfiguration replacePresetTarget = defaultConfiguration();
+    replacePresetTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions replacePreset;
+    replacePreset.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::Replace;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&replacePresetTarget, responseBundle, replacePreset, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(replacePresetTarget, responsePreset.id), 24.0F);
+
+    MapperConfiguration copyPresetTarget = defaultConfiguration();
+    copyPresetTarget.adaptiveResponsePresets.push_back(localPreset);
+    PortableImportOptions copyPreset;
+    copyPreset.adaptiveResponsePresetConflictMode = PortableAdaptiveResponsePresetConflictMode::ImportAsCopy;
+    warnings.clear();
+    QVERIFY2(ProfilePortability::apply(&copyPresetTarget, responseBundle, copyPreset, &warnings, &error), qPrintable(error));
+    QCOMPARE(horizonFor(copyPresetTarget, responsePreset.id), 5.0F);
+    const auto copiedGround = std::find_if(copyPresetTarget.profiles.cbegin(), copyPresetTarget.profiles.cend(),
+        [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Ground"); });
+    QVERIFY(copiedGround != copyPresetTarget.profiles.cend());
+    const QString remappedPresetId = copiedGround->adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].presetId;
+    QVERIFY(remappedPresetId != responsePreset.id);
+    QCOMPARE(horizonFor(copyPresetTarget, remappedPresetId), 24.0F);
 }
 
 void MappingCoreTests::portableDeviceMatchingAndCalibrationRequireExplicitIntent()
@@ -2254,7 +4607,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -2497,7 +4850,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 20);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

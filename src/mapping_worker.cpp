@@ -1,5 +1,6 @@
 #include "mapping_worker.h"
 
+#include "adaptive_response.h"
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
 #include "automation_engine.h"
@@ -47,6 +48,27 @@ constexpr int kVjoyStatusBusy = 2;
 constexpr int kVjoyStatusMissing = 3;
 constexpr int kVjoyStatusUnknown = 4;
 constexpr DWORD kPhysicalPollIntervalMs = 4; // 250 Hz bounded worker cadence.
+
+bool sameAdaptiveResponseOverlay(const RuntimeAdaptiveResponseOverride &left,
+                                 const RuntimeAdaptiveResponseOverride &right)
+{
+    if (left.active != right.active || left.properties != right.properties) return false;
+    if (!left.active && !right.active) return true;
+    const AdaptiveResponseSettings &a = left.settings;
+    const AdaptiveResponseSettings &b = right.settings;
+    return a.enabled == b.enabled && a.model == b.model
+        && a.maximumHorizonMs == b.maximumHorizonMs && a.maximumLead == b.maximumLead
+        && a.velocityResponse == b.velocityResponse && a.accelerationResponse == b.accelerationResponse
+        && a.motionSensitivity == b.motionSensitivity && a.noiseRejection == b.noiseRejection
+        && a.reversalDetection == b.reversalDetection && a.reversalResponse == b.reversalResponse
+        && a.decelerationResponse == b.decelerationResponse && a.settlingResponse == b.settlingResponse
+        && a.endpointTaper == b.endpointTaper && a.onsetAssist == b.onsetAssist
+        && a.onsetCap == b.onsetCap && a.sustainedAssist == b.sustainedAssist
+        && a.sustainedCap == b.sustainedCap && a.horizonExtension == b.horizonExtension
+        && a.horizonExtensionCapMs == b.horizonExtensionCapMs
+        && a.turningPointProtection == b.turningPointProtection
+        && a.turningPointMargin == b.turningPointMargin;
+}
 
 int axisIndexForOffset(DWORD offset)
 {
@@ -502,6 +524,34 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.afterInversion[index] = 0.0F;
         m_runtime.curveResponse[index] = 0.0F;
         m_runtime.transformed[index] = 0.0F;
+        m_runtime.adaptiveEstimated[index] = 0.0F;
+        m_runtime.adaptivePredicted[index] = 0.0F;
+        m_runtime.adaptiveVelocity[index] = 0.0F;
+        m_runtime.adaptiveAcceleration[index] = 0.0F;
+        m_runtime.adaptiveHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveLead[index] = 0.0F;
+        m_runtime.adaptiveConfidence[index] = 0.0F;
+        m_runtime.adaptiveMotionIntensity[index] = 0.0F;
+        m_runtime.adaptiveVelocityAuthority[index] = 0.0F;
+        m_runtime.adaptiveAccelerationIntent[index] = 0.0F;
+        m_runtime.adaptiveOnsetAuthority[index] = 0.0F;
+        m_runtime.adaptiveSustainedEvidence[index] = 0.0F;
+        m_runtime.adaptiveSustainedAuthority[index] = 0.0F;
+        m_runtime.adaptiveMotionUrgency[index] = 0.0F;
+        m_runtime.adaptiveHorizonExtensionEligibility[index] = 0.0F;
+        m_runtime.adaptiveNormalMaximumHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveAllowedMaximumHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveTurningPointConfidence[index] = 0.0F;
+        m_runtime.adaptiveEstimatedTimeToTurnSeconds[index] = 0.0F;
+        m_runtime.adaptiveEstimatedRemainingTravel[index] = 0.0F;
+        m_runtime.adaptiveTurningPointHorizonLimitSeconds[index] = 0.0F;
+        m_runtime.adaptiveTurningPointLeadLimit[index] = 0.0F;
+        m_runtime.adaptiveReacquisitionAuthority[index] = 0.0F;
+        m_runtime.adaptiveMotionState[index] = static_cast<int>(AdaptiveMotionState::Stable);
+        m_runtime.adaptiveReversing[index] = false;
+        m_runtime.adaptiveSafetyLimited[index] = false;
+        m_runtime.adaptiveReversalCount[index] = 0;
+        m_runtime.adaptiveSafetyClampCount[index] = 0;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
         m_runtime.axisActivity[index] = static_cast<int>(m_configuration.axisActivity[index]);
@@ -776,6 +826,12 @@ void MappingWorker::run()
     std::array<int, kVirtualAxisSlotCount> virtualAxisSources{};
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
+    std::array<AdaptiveResponseProcessor, kPhysicalAxisCount> adaptiveProcessors{};
+    // Persistent hierarchy is precompiled in RuntimeAxisMapping. Automation
+    // overlays are flattened only when their active property set changes, so
+    // the report loop reads this fixed primitive table directly.
+    std::array<RuntimeAdaptiveResponseConfig, kPhysicalAxisCount> effectiveAdaptiveConfigurations{};
+    std::array<RuntimeAdaptiveResponseOverride, kPhysicalAxisCount> activeAdaptiveOverlays{};
     PhysicalButtonStates latestPhysicalButtons{};
     PhysicalPovValues latestPovValues{};
     latestPovValues.fill(-1);
@@ -834,6 +890,21 @@ void MappingWorker::run()
             activeProfileCache->povProfileTriggers);
     };
 
+    const auto refreshEffectiveAdaptiveConfigurations = [&] {
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            RuntimeAdaptiveResponseConfig effective = activeMapping->axes[static_cast<size_t>(axis)]
+                .adaptiveResponse;
+            const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[
+                static_cast<size_t>(axis)];
+            if (overlay.active) {
+                effective = applyAdaptiveResponseRuntimeOverride(effective, overlay);
+            }
+            effectiveAdaptiveConfigurations[static_cast<size_t>(axis)] = effective;
+            adaptiveProcessors[static_cast<size_t>(axis)].reset();
+        }
+    };
+    refreshEffectiveAdaptiveConfigurations();
+
     const auto selectEffectiveProfile = [&](const EffectiveProfileSelection &selection,
                                             bool countSwitch) {
         const int selectedIndex = std::clamp(selection.profileIndex, 0,
@@ -867,6 +938,7 @@ void MappingWorker::run()
         lastNativePovValues.fill(-2);
         clearVirtualAxisSnapshot();
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        refreshEffectiveAdaptiveConfigurations();
         rebuildButtonTargets();
         if (countSwitch) {
             ++m_runtime.profileSwitchCount;
@@ -903,6 +975,7 @@ void MappingWorker::run()
         clearVirtualButtonSnapshot();
         for (std::atomic<float> &value : m_runtime.virtualValues) value = 0.0F;
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         m_runtime.mappingActive = false;
         m_runtime.outputNeutralized = true;
     };
@@ -940,6 +1013,7 @@ void MappingWorker::run()
         for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
         selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                 0, -1, ProfileTriggerMode::Disabled}, false);
+        for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         m_runtime.physicalConnected = false;
         m_runtime.physicalReportsSinceAcquisition = 0;
         m_runtime.mappingEffectiveState = m_mappingRequested.load()
@@ -990,6 +1064,7 @@ void MappingWorker::run()
             return;
         }
         physicalMonitor.configure(availableAxes, availableButtons, objects.povCount);
+        for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             m_runtime.axisAvailable[index] = availableAxes[index];
         }
@@ -1101,6 +1176,7 @@ void MappingWorker::run()
         // Settings/profile updates receive a fully compiled table and begin a
         // new hysteresis acceptance window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         appliedVersion = currentVersion;
         buttonDefaultsPending = false;
         const bool manualBaseChanged = configuration.activeProfileId != previousProfileId;
@@ -1115,6 +1191,8 @@ void MappingWorker::run()
         // A profile edit can replace the compiled state at the same index.
         // Rebind the pointer and force a current-state axis reconciliation.
         activeMapping = &activeProfileCache->profiles[static_cast<size_t>(effectiveProfileIndex)];
+        activeAdaptiveOverlays = {};
+        refreshEffectiveAdaptiveConfigurations();
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         clearVirtualAxisSnapshot();
         rebuildButtonTargets();
@@ -1161,6 +1239,7 @@ void MappingWorker::run()
             for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
             selectEffectiveProfile({activeProfileCache->baseProfileIndex, 0,
                                     0, -1, ProfileTriggerMode::Disabled}, false);
+            for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
             quiesceVirtualController();
             m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
             emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
@@ -1332,6 +1411,7 @@ void MappingWorker::run()
             const bool changed = selectEffectiveProfile(selection, true);
             if (changed) {
                 pendingProfileSwitchStarted = profileSwitchStarted;
+                for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
             }
 
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -1359,7 +1439,10 @@ void MappingWorker::run()
                 static_cast<int>(activeProfileCache->profiles.size()));
             const EffectiveProfileSelection automationSelection = profileTriggers.effectiveProfile(*activeProfileCache);
             const bool automationProfileChanged = selectEffectiveProfile(automationSelection, true);
-            if (automationProfileChanged) pendingProfileSwitchStarted = automationStarted;
+            if (automationProfileChanged) {
+                pendingProfileSwitchStarted = automationStarted;
+                for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
+            }
             m_runtime.automationActiveRuleCount = automationEffects->activeRuleCount;
             for (int rule = 0; rule < kMaximumAutomationRules; ++rule) {
                 const bool active = automationEffects->activeRules[static_cast<size_t>(rule)];
@@ -1401,20 +1484,96 @@ void MappingWorker::run()
 
         std::array<float, kPhysicalAxisCount> transformedAxes{};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            const RuntimeAdaptiveResponseOverride nextOverlay = automationEffects
+                ? automationEffects->adaptiveResponseOverlays[static_cast<size_t>(index)]
+                : RuntimeAdaptiveResponseOverride{};
+            RuntimeAdaptiveResponseOverride &activeOverlay = activeAdaptiveOverlays[
+                static_cast<size_t>(index)];
+            if (!sameAdaptiveResponseOverlay(activeOverlay, nextOverlay)) {
+                activeOverlay = nextOverlay;
+                RuntimeAdaptiveResponseConfig effective = activeMapping->axes[static_cast<size_t>(index)]
+                    .adaptiveResponse;
+                if (activeOverlay.active) {
+                    effective = applyAdaptiveResponseRuntimeOverride(effective, activeOverlay);
+                }
+                effectiveAdaptiveConfigurations[static_cast<size_t>(index)] = effective;
+                adaptiveProcessors[static_cast<size_t>(index)].reset();
+            }
+        }
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
             if (!availableAxes[index]) continue;
             const float raw = physicalSnapshot.axes[index];
             m_runtime.raw[index] = raw;
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
+            const float physicalNormalized = normalizeCalibrated(raw, mapping.calibration);
+            const RuntimeAdaptiveResponseConfig &adaptiveConfiguration =
+                effectiveAdaptiveConfigurations[static_cast<size_t>(index)];
+            const AdaptiveResponseTelemetry adaptive = adaptiveProcessors[static_cast<size_t>(index)].process(
+                physicalNormalized, adaptiveConfiguration, started);
             float curveResponse = 0.0F;
             AxisSignalPath signalPath;
-            const float transformed = transformAxisLive(raw, mapping, hysteresisStates[index],
-                &curveResponse, &signalPath);
-            m_runtime.normalized[index] = signalPath.normalized;
+            const float transformed = transformNormalizedAxisLive(adaptive.predicted, mapping,
+                hysteresisStates[index], &curveResponse, &signalPath);
+            // Existing diagnostics retain the measured physical normalisation.
+            // Predictor stages are exposed by their dedicated telemetry fields.
+            m_runtime.normalized[index] = physicalNormalized;
             m_runtime.afterDeadzone[index] = signalPath.afterDeadzone;
             m_runtime.afterHysteresis[index] = signalPath.afterHysteresis;
             m_runtime.afterInversion[index] = signalPath.afterInversion;
             m_runtime.curveResponse[index] = curveResponse;
             m_runtime.transformed[index] = transformed;
+            m_runtime.adaptiveEstimated[index] = adaptive.estimated;
+            m_runtime.adaptivePredicted[index] = adaptive.predicted;
+            m_runtime.adaptiveVelocity[index] = adaptive.velocity;
+            m_runtime.adaptiveAcceleration[index] = adaptive.acceleration;
+            m_runtime.adaptiveHorizonSeconds[index] = adaptive.activeHorizonSeconds;
+            m_runtime.adaptiveLead[index] = adaptive.lead;
+            m_runtime.adaptiveConfidence[index] = adaptive.confidence;
+            m_runtime.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
+            m_runtime.adaptiveVelocityAuthority[index].store(adaptive.velocityAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveAccelerationIntent[index].store(adaptive.accelerationIntent, std::memory_order_relaxed);
+            m_runtime.adaptiveOnsetAuthority[index].store(adaptive.onsetAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveSustainedEvidence[index].store(adaptive.sustainedEvidence, std::memory_order_relaxed);
+            m_runtime.adaptiveSustainedAuthority[index].store(adaptive.sustainedAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveMotionUrgency[index].store(adaptive.motionUrgency, std::memory_order_relaxed);
+            m_runtime.adaptiveHorizonExtensionEligibility[index].store(adaptive.horizonExtensionEligibility, std::memory_order_relaxed);
+            m_runtime.adaptiveNormalMaximumHorizonSeconds[index].store(adaptive.normalMaximumHorizonSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveAllowedMaximumHorizonSeconds[index].store(adaptive.allowedMaximumHorizonSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointConfidence[index].store(adaptive.turningPointConfidence, std::memory_order_relaxed);
+            m_runtime.adaptiveEstimatedTimeToTurnSeconds[index].store(adaptive.estimatedTimeToTurnSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveEstimatedRemainingTravel[index].store(adaptive.estimatedRemainingTravel, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointHorizonLimitSeconds[index].store(adaptive.turningPointHorizonLimitSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveTurningPointLeadLimit[index].store(adaptive.turningPointLeadLimit, std::memory_order_relaxed);
+            m_runtime.adaptiveReacquisitionAuthority[index].store(adaptive.reacquisitionAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveMotionState[index] = static_cast<int>(adaptive.state);
+            m_runtime.adaptiveReversing[index] = adaptive.reversal;
+            m_runtime.adaptiveSafetyLimited[index] = adaptive.safetyLimited;
+            m_runtime.adaptiveReversalCount[index] = adaptiveProcessors[static_cast<size_t>(index)].reversalCount();
+            m_runtime.adaptiveSafetyClampCount[index] = adaptiveProcessors[static_cast<size_t>(index)].safetyClampCount();
+            m_runtime.adaptiveRuntimeEnabled[index] = adaptiveConfiguration.enabled;
+            m_runtime.adaptiveRuntimeModel[index] = static_cast<int>(adaptiveConfiguration.model);
+            m_runtime.adaptiveRuntimeMaximumHorizonSeconds[index] = adaptiveConfiguration.maximumHorizonSeconds;
+            m_runtime.adaptiveRuntimeMaximumLead[index] = adaptiveConfiguration.maximumLead;
+            m_runtime.adaptiveRuntimeVelocityResponse[index] = adaptiveConfiguration.velocityResponse;
+            m_runtime.adaptiveRuntimeAccelerationResponse[index] = adaptiveConfiguration.accelerationResponse;
+            m_runtime.adaptiveRuntimeMotionSensitivity[index] = adaptiveConfiguration.motionSensitivity;
+            m_runtime.adaptiveRuntimeNoiseRejection[index] = adaptiveConfiguration.noiseRejection;
+            m_runtime.adaptiveRuntimeReversalDetection[index] = adaptiveConfiguration.reversalDetection;
+            m_runtime.adaptiveRuntimeReversalResponse[index] = adaptiveConfiguration.reversalResponse;
+            m_runtime.adaptiveRuntimeDecelerationResponse[index] = adaptiveConfiguration.decelerationResponse;
+            m_runtime.adaptiveRuntimeSettlingResponse[index] = adaptiveConfiguration.settlingResponse;
+            m_runtime.adaptiveRuntimeEndpointTaper[index] = adaptiveConfiguration.endpointTaper;
+            m_runtime.adaptiveRuntimeOnsetAssist[index].store(adaptiveConfiguration.onsetAssist, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeOnsetCap[index].store(adaptiveConfiguration.onsetCap, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeSustainedAssist[index].store(adaptiveConfiguration.sustainedAssist, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeSustainedCap[index].store(adaptiveConfiguration.sustainedCap, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeHorizonExtension[index].store(adaptiveConfiguration.horizonExtension, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeHorizonExtensionCapSeconds[index].store(adaptiveConfiguration.horizonExtensionCapSeconds, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeTurningPointProtection[index].store(adaptiveConfiguration.turningPointProtection, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeTurningPointMargin[index].store(adaptiveConfiguration.turningPointMargin, std::memory_order_relaxed);
+            const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[static_cast<size_t>(index)];
+            m_runtime.adaptiveAutomationOverlayActive[index] = overlay.active;
+            m_runtime.adaptiveAutomationOverlayProperties[index] = overlay.properties;
             transformedAxes[static_cast<size_t>(index)] = transformed;
         }
         if (automationEffects) {

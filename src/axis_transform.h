@@ -68,6 +68,14 @@ float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &sta
 float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping,
                                  float *curveResponse = nullptr,
                                  AxisSignalPath *signalPath = nullptr);
+// Adaptive Response supplies a bounded normalized physical prediction at this
+// point in the path. Calibration has already happened, while deadzone,
+// hysteresis, inversion, curve, and output limits retain their established
+// ordering and semantics.
+float transformNormalizedAxisLive(float normalized, const RuntimeAxisMapping &mapping,
+                                  AxisHysteresisState &hysteresisState,
+                                  float *curveResponse = nullptr,
+                                  AxisSignalPath *signalPath = nullptr);
 float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
                         AxisHysteresisState &hysteresisState,
                         float *curveResponse = nullptr, AxisSignalPath *signalPath = nullptr);

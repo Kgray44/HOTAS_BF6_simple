@@ -1,5 +1,7 @@
 #include "automation_engine.h"
 
+#include "adaptive_response.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -37,6 +39,35 @@ bool isEventCondition(AutomationConditionType type)
         || type == AutomationConditionType::ButtonLongPress
         || type == AutomationConditionType::AxisCrossesAbove
         || type == AutomationConditionType::AxisCrossesBelow;
+}
+
+void copyAdaptiveResponseProperty(AdaptiveResponseSettings &target,
+                                  const AdaptiveResponseSettings &source,
+                                  std::uint32_t property)
+{
+    switch (static_cast<AdaptiveResponseProperty>(property)) {
+    case AdaptiveResponseEnabled: target.enabled = source.enabled; break;
+    case AdaptiveResponseModelProperty: target.model = source.model; break;
+    case AdaptiveResponseMaximumHorizon: target.maximumHorizonMs = source.maximumHorizonMs; break;
+    case AdaptiveResponseMaximumLead: target.maximumLead = source.maximumLead; break;
+    case AdaptiveResponseVelocityResponse: target.velocityResponse = source.velocityResponse; break;
+    case AdaptiveResponseAccelerationResponse: target.accelerationResponse = source.accelerationResponse; break;
+    case AdaptiveResponseMotionSensitivity: target.motionSensitivity = source.motionSensitivity; break;
+    case AdaptiveResponseNoiseRejection: target.noiseRejection = source.noiseRejection; break;
+    case AdaptiveResponseReversalDetection: target.reversalDetection = source.reversalDetection; break;
+    case AdaptiveResponseReversalResponse: target.reversalResponse = source.reversalResponse; break;
+    case AdaptiveResponseDecelerationResponse: target.decelerationResponse = source.decelerationResponse; break;
+    case AdaptiveResponseSettlingResponse: target.settlingResponse = source.settlingResponse; break;
+    case AdaptiveResponseEndpointTaper: target.endpointTaper = source.endpointTaper; break;
+    case AdaptiveResponseOnsetAssist: target.onsetAssist = source.onsetAssist; break;
+    case AdaptiveResponseOnsetCap: target.onsetCap = source.onsetCap; break;
+    case AdaptiveResponseSustainedAssist: target.sustainedAssist = source.sustainedAssist; break;
+    case AdaptiveResponseSustainedCap: target.sustainedCap = source.sustainedCap; break;
+    case AdaptiveResponseHorizonExtension: target.horizonExtension = source.horizonExtension; break;
+    case AdaptiveResponseHorizonExtensionCap: target.horizonExtensionCapMs = source.horizonExtensionCapMs; break;
+    case AdaptiveResponseTurningPointProtection: target.turningPointProtection = source.turningPointProtection; break;
+    case AdaptiveResponseTurningPointMargin: target.turningPointMargin = source.turningPointMargin; break;
+    }
 }
 
 MappingControlAction mappingControlForAutomationAction(AutomationActionType type)
@@ -287,6 +318,40 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
                 // No game-output payload: the worker consumes this compact
                 // action at a state boundary.
                 break;
+            case AutomationActionType::AdaptiveResponseEnable:
+            case AutomationActionType::AdaptiveResponseDisable:
+                if (!validAxis(source.targetAxis)) {
+                    invalidate(*result, index, u"Adaptive Response target axis is invalid."_qs);
+                    valid = false;
+                    break;
+                }
+                target.target = source.targetAxis;
+                target.adaptiveResponse.active = true;
+                target.adaptiveResponse.properties = AdaptiveResponseEnabled;
+                target.adaptiveResponse.settings.enabled =
+                    source.type == AutomationActionType::AdaptiveResponseEnable;
+                break;
+            case AutomationActionType::AdaptiveResponsePreset: {
+                if (!validAxis(source.targetAxis)) {
+                    invalidate(*result, index, u"Adaptive Response target axis is invalid."_qs);
+                    valid = false;
+                    break;
+                }
+                const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(
+                    configuration, source.adaptiveResponsePresetId);
+                if (!preset) {
+                    invalidate(*result, index, u"Adaptive Response preset no longer exists."_qs);
+                    valid = false;
+                    break;
+                }
+                target.target = source.targetAxis;
+                const AdaptiveResponseAxisOverride &presetAxis = preset->axes[
+                    static_cast<size_t>(source.targetAxis)];
+                target.adaptiveResponse.active = true;
+                target.adaptiveResponse.properties = presetAxis.properties;
+                target.adaptiveResponse.settings = presetAxis.settings;
+                break;
+            }
             }
             if (!valid) break;
         }
@@ -602,6 +667,7 @@ const AutomationEvaluationResult &AutomationRuntime::evaluateLevelOnly(
             }
         }
     }
+    composeAdaptiveResponseOverlays();
     m_result.toggledButtons = m_toggledButtons;
     return m_result;
 }
@@ -744,8 +810,46 @@ const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationIn
             }
         }
     }
+    composeAdaptiveResponseOverlays();
     m_result.toggledButtons = m_toggledButtons;
     return m_result;
+}
+
+void AutomationRuntime::composeAdaptiveResponseOverlays()
+{
+    // Adaptive Response setters compose independently by property. A high
+    // priority Enable action therefore cannot erase a lower priority preset's
+    // horizon/lead/motion values unless it explicitly sets those properties.
+    std::array<std::array<int, 13>, kPhysicalAxisCount> winnerPriority{};
+    std::array<std::array<int, 13>, kPhysicalAxisCount> winnerOrder{};
+    for (auto &axis : winnerPriority) axis.fill(-1);
+    for (auto &axis : winnerOrder) axis.fill(kMaximumAutomationRules + 1);
+    for (int ruleIndex = 0; ruleIndex < m_compiled->ruleCount; ++ruleIndex) {
+        const CompiledAutomationRule &rule = m_compiled->rules[static_cast<size_t>(ruleIndex)];
+        if (!m_result.activeRules[static_cast<size_t>(ruleIndex)]) continue;
+        for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
+            const CompiledAutomationAction &action = rule.actions[static_cast<size_t>(actionIndex)];
+            if (!action.adaptiveResponse.active || !validAxis(action.target)) continue;
+            const size_t axis = static_cast<size_t>(action.target);
+            RuntimeAdaptiveResponseOverride &overlay = m_result.adaptiveResponseOverlays[axis];
+            const std::uint32_t properties = action.adaptiveResponse.properties
+                & kAdaptiveResponseAllProperties;
+            for (int bit = 0; bit < 13; ++bit) {
+                const std::uint32_t property = 1U << bit;
+                if ((properties & property) == 0) continue;
+                if (rule.priority < winnerPriority[axis][static_cast<size_t>(bit)]
+                    || (rule.priority == winnerPriority[axis][static_cast<size_t>(bit)]
+                        && rule.sourceOrder >= winnerOrder[axis][static_cast<size_t>(bit)])) {
+                    continue;
+                }
+                winnerPriority[axis][static_cast<size_t>(bit)] = rule.priority;
+                winnerOrder[axis][static_cast<size_t>(bit)] = rule.sourceOrder;
+                copyAdaptiveResponseProperty(overlay.settings, action.adaptiveResponse.settings, property);
+                overlay.properties |= property;
+                overlay.active = true;
+            }
+        }
+    }
 }
 
 void AutomationRuntime::applyAxisActions(const AutomationInputSnapshot &input,

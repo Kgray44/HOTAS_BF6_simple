@@ -20,6 +20,7 @@ Flickable {
     property var selectedPackCategoryIds: []
     property var selectedPackProfileIds: []
     property string categoryConflictMode: "merge"
+    property string adaptivePresetConflictMode: "copy"
     property bool applyImportedCalibration: false
     property bool replaceCategoryConfirmed: false
     property bool replaceProfilesConfirmed: false
@@ -76,6 +77,7 @@ Flickable {
         selectedPackCategoryIds = copyValue(saved.selectedPackCategoryIds || [])
         selectedPackProfileIds = copyValue(saved.selectedPackProfileIds || [])
         categoryConflictMode = saved.categoryConflictMode || "merge"
+        adaptivePresetConflictMode = saved.adaptivePresetConflictMode || "copy"
         applyImportedCalibration = !!saved.applyImportedCalibration
         replaceCategoryConfirmed = !!saved.replaceCategoryConfirmed
         replaceProfilesConfirmed = !!saved.replaceProfilesConfirmed
@@ -95,6 +97,7 @@ Flickable {
             selectedPackCategoryIds: copyValue(selectedPackCategoryIds),
             selectedPackProfileIds: copyValue(selectedPackProfileIds),
             categoryConflictMode: categoryConflictMode,
+            adaptivePresetConflictMode: adaptivePresetConflictMode,
             applyImportedCalibration: applyImportedCalibration,
             replaceCategoryConfirmed: replaceCategoryConfirmed,
             replaceProfilesConfirmed: replaceProfilesConfirmed,
@@ -112,7 +115,7 @@ Flickable {
         transferProfileId = profileId || ""; transferCategoryId = categoryId || ""
         selectedPackCategoryIds = categoryId ? [categoryId] : []
         selectedPackProfileIds = profileId ? [profileId] : []
-        categoryConflictMode = "merge"; applyImportedCalibration = false
+        categoryConflictMode = "merge"; adaptivePresetConflictMode = "copy"; applyImportedCalibration = false
         replaceCategoryConfirmed = false; replaceProfilesConfirmed = false
         transferDialog.open()
     }
@@ -191,7 +194,7 @@ Flickable {
         selectedPackProfileIds = values
     }
     function commitPortableImport() {
-        if (backendObject.applyPortableImport(backendObject.portableImportPreview.categoryCount === 1 ? importDestinationCategory.currentValue : "", replaceImportedProfiles.checked, root.categoryConflictMode, root.applyImportedCalibration)) transferDialog.close()
+        if (backendObject.applyPortableImport(backendObject.portableImportPreview.categoryCount === 1 ? importDestinationCategory.currentValue : "", replaceImportedProfiles.checked, root.categoryConflictMode, root.applyImportedCalibration, root.adaptivePresetConflictMode)) transferDialog.close()
     }
     function requestPortableImport() {
         if (root.categoryConflictMode === "replace" && !root.replaceCategoryConfirmed) {
@@ -744,6 +747,19 @@ Flickable {
                     }
                     Text { text: "Required custom curves and vJoy requirements are always included so a selected profile never exports broken behavior."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
+                ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
+                    Text { text: "ADAPTIVE RESPONSE"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        SelectionToggle { label: "ADAPTIVE RESPONSE"; checked: true; actionEnabled: false }
+                        SelectionToggle { label: "GLOBAL DEFAULTS"; checked: true; actionEnabled: false }
+                        SelectionToggle { label: "CATEGORY OVERRIDES"; checked: true; actionEnabled: false }
+                        SelectionToggle { label: "PROFILE OVERRIDES"; checked: true; actionEnabled: false }
+                    }
+                    RowLayout { Layout.fillWidth: true
+                        SelectionToggle { label: "REQUIRED PRESET DEPENDENCIES"; checked: true; actionEnabled: false }
+                        Text { text: "Only presets referenced by the selected Global, Categories, Profiles, or included Automations are exported. Unrelated custom presets stay local."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                }
             }
             Card { visible: root.transferMode === "import" && backendObject.portableImportPreview && backendObject.portableImportPreview.profileCount > 0; Layout.fillWidth: true; cardAccent: root.good
                 Text { text: "IMPORT PREVIEW  ·  " + backendObject.portableImportPreview.kind + "  ·  " + backendObject.portableImportPreview.name; color: root.text; font.pixelSize: 12; font.bold: true }
@@ -760,6 +776,13 @@ Flickable {
                 RowLayout { visible: (backendObject.portableImportPreview.categories || []).some(function(c) { return c.exists }); Layout.fillWidth: true
                     Text { text: "EXISTING CATEGORY:"; color: root.muted; font.pixelSize: 8; font.bold: true }
                     Repeater { model: [{label:"MERGE", value:"merge"}, {label:"IMPORT AS NEW", value:"new"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.categoryConflictMode !== modelData.value; onTriggered: { root.categoryConflictMode = modelData.value; root.replaceCategoryConfirmed = false } } }
+                }
+                ColumnLayout { visible: Number(backendObject.portableImportPreview.adaptiveResponsePresetCount || 0) > 0; Layout.fillWidth: true; spacing: 4
+                    Text { text: "ADAPTIVE RESPONSE PRESETS  ·  " + backendObject.portableImportPreview.adaptiveResponsePresetCount + " REQUIRED DEPENDENC" + (Number(backendObject.portableImportPreview.adaptiveResponsePresetCount) === 1 ? "Y" : "IES"); color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "When an imported Response Preset id already exists locally with different values, choose the conflict behavior before importing."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    RowLayout { Layout.fillWidth: true
+                        Repeater { model: [{label:"KEEP LOCAL", value:"keep"}, {label:"IMPORT AS COPY", value:"copy"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.adaptivePresetConflictMode !== modelData.value; onTriggered: root.adaptivePresetConflictMode = modelData.value } }
+                    }
                 }
                 Repeater { model: backendObject.portableImportPreview.devices || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
                     Text { text: "DEVICE: " + modelData.name + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.state; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }

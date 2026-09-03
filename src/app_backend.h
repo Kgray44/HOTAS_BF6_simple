@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "adaptive_response.h"
 #include "input_learning.h"
 #include "mapping_worker.h"
 
@@ -21,6 +22,7 @@
 #include <QWindow>
 
 #include <array>
+#include <vector>
 
 class QAction;
 class QMenu;
@@ -53,6 +55,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap adaptiveResponseState READ adaptiveResponseState NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList adaptiveResponsePresets READ adaptiveResponsePresets NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap adaptiveResponseTelemetry READ adaptiveResponseTelemetry NOTIFY inputTelemetryChanged)
     // Button configuration is cached separately from its small live pressed
     // state. Axis updates must never force QML to rebuild up to 128 cards.
     Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)
@@ -194,6 +199,14 @@ public:
     QVariantList curveComparisonChoices() const;
     QVariantList curvePreviewChoices() const;
     QVariantList curveCopyChoices() const;
+    QVariantMap adaptiveResponseState() const;
+    QVariantList adaptiveResponsePresets() const;
+    QVariantMap adaptiveResponseTelemetry() const;
+    Q_INVOKABLE QVariantList adaptiveResponseHistory(int seconds) const;
+    // Incremental control-plane retrieval keeps QML from rebuilding the whole
+    // telemetry ring for every graph frame. MappingWorker never sees this.
+    Q_INVOKABLE QVariantMap adaptiveResponseHistorySince(qint64 lastSequence,
+                                                          int seconds) const;
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -360,6 +373,57 @@ public:
     Q_INVOKABLE void previewCurvePreset(const QString &presetId);
     Q_INVOKABLE void clearCurvePreview();
     Q_INVOKABLE bool applyCurvePreview();
+    Q_INVOKABLE bool setAdaptiveResponsePreset(const QString &scope, int physicalAxis,
+                                               const QString &presetId);
+    Q_INVOKABLE bool setAdaptiveResponsePresetAtContext(const QString &scope,
+                                                        const QString &targetId, int physicalAxis,
+                                                        const QString &presetId);
+    Q_INVOKABLE bool setAdaptiveResponseProperty(const QString &scope, int physicalAxis,
+                                                 const QString &property, const QVariant &value,
+                                                 bool inherit = false);
+    Q_INVOKABLE bool setAdaptiveResponsePropertyAtContext(const QString &scope,
+                                                          const QString &targetId, int physicalAxis,
+                                                          const QString &property, const QVariant &value,
+                                                          bool inherit = false);
+    Q_INVOKABLE bool resetAdaptiveResponseAxis(const QString &scope, int physicalAxis);
+    Q_INVOKABLE bool resetAdaptiveResponseAxisAtContext(const QString &scope,
+                                                        const QString &targetId, int physicalAxis);
+    Q_INVOKABLE bool saveAdaptiveResponsePreset(const QString &name, const QString &description);
+    Q_INVOKABLE bool duplicateAdaptiveResponsePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE bool renameAdaptiveResponsePreset(const QString &presetId, const QString &name);
+    Q_INVOKABLE QVariantList adaptiveResponsePresetDependencies(const QString &presetId) const;
+    Q_INVOKABLE bool deleteAdaptiveResponsePreset(const QString &presetId);
+    Q_INVOKABLE QVariantList adaptiveResponsePreview(const QString &scenario) const;
+    Q_INVOKABLE QVariantMap adaptiveResponseTestLab(const QString &scenario) const;
+    // Context inspection is deliberately control-plane work. It lets an
+    // inactive Category, Profile, or custom Response Preset display its own
+    // resolved values without changing the mapper's live selected profile.
+    Q_INVOKABLE QVariantMap adaptiveResponseContextState(const QString &scope,
+                                                         const QString &targetId,
+                                                         int physicalAxis) const;
+    Q_INVOKABLE QVariantList adaptiveResponsePreviewAtContext(const QString &scenario,
+                                                               const QString &scope,
+                                                               const QString &targetId,
+                                                               int physicalAxis) const;
+    Q_INVOKABLE QVariantMap adaptiveResponseTestLabAtContext(const QString &scenario,
+                                                              const QString &scope,
+                                                              const QString &targetId,
+                                                              int physicalAxis) const;
+    // The simulator is a UI-thread-only control-plane instrument. It has its
+    // own production processor instance and bounded sample/recording rings;
+    // neither path reads or writes the mapper's live adaptive state.
+    Q_INVOKABLE void adaptiveResponseSimulatorStepAtContext(double physical,
+                                                             const QString &scope,
+                                                             const QString &targetId,
+                                                             int physicalAxis,
+                                                             int sourceRateHz);
+    Q_INVOKABLE QVariantList adaptiveResponseSimulatorHistory() const;
+    Q_INVOKABLE QVariantMap adaptiveResponseSimulatorHistorySince(qint64 lastSequence) const;
+    Q_INVOKABLE void adaptiveResponseSimulatorClear();
+    Q_INVOKABLE void adaptiveResponseSimulatorStartRecording();
+    Q_INVOKABLE void adaptiveResponseSimulatorStopRecording();
+    Q_INVOKABLE bool adaptiveResponseSimulatorRecordingActive() const;
+    Q_INVOKABLE QVariantList adaptiveResponseSimulatorRecording() const;
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
     Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
                                               const QString &resolution);
@@ -408,7 +472,8 @@ public:
     Q_INVOKABLE bool applyPortableImport(const QString &destinationCategoryId = {},
                                          bool replaceMatchingProfiles = false,
                                          const QString &categoryConflictMode = u"merge"_qs,
-                                         bool applyImportedCalibration = false);
+                                         bool applyImportedCalibration = false,
+                                         const QString &adaptivePresetConflictMode = u"copy"_qs);
     Q_INVOKABLE bool selectPortableImportDevice(int descriptorIndex,
                                                 const QString &savedControllerId);
     Q_INVOKABLE void beginCalibration();
@@ -524,7 +589,85 @@ private:
         }()};
     };
 
+    // UI-thread-only bounded history. The mapper publishes atomics; this
+    // ring is sampled from the existing presentation timer and is never read
+    // or written from the DirectInput-to-vJoy report path.
+    struct AdaptiveResponseHistorySample {
+        qint64 sequence = 0;
+        qint64 elapsedMs = 0;
+        int axis = 0;
+        float physical = 0.0F;
+        float estimated = 0.0F;
+        float predicted = 0.0F;
+        float virtualOutput = 0.0F;
+        float velocity = 0.0F;
+        float acceleration = 0.0F;
+        float activeHorizonSeconds = 0.0F;
+        float maximumHorizonSeconds = 0.0F;
+        float lead = 0.0F;
+        float confidence = 0.0F;
+        float motionIntensity = 0.0F;
+        float velocityAuthority = 0.0F;
+        float accelerationIntent = 0.0F;
+        float onsetAuthority = 0.0F;
+        float sustainedEvidence = 0.0F;
+        float sustainedAuthority = 0.0F;
+        float motionUrgency = 0.0F;
+        float horizonExtensionEligibility = 0.0F;
+        float normalMaximumHorizonSeconds = 0.0F;
+        float allowedMaximumHorizonSeconds = 0.0F;
+        float turningPointConfidence = 0.0F;
+        float estimatedTimeToTurnSeconds = 0.0F;
+        float estimatedRemainingTravel = 0.0F;
+        float turningPointHorizonLimitSeconds = 0.0F;
+        float turningPointLeadLimit = 0.0F;
+        float reacquisitionAuthority = 0.0F;
+        int motionState = 0;
+    };
+
+    struct AdaptiveResponseSimulatorSample {
+        qint64 sequence = 0;
+        qint64 elapsedMs = 0;
+        float physical = 0.0F;
+        float estimated = 0.0F;
+        float predicted = 0.0F;
+        float virtualOutput = 0.0F;
+        float velocity = 0.0F;
+        float acceleration = 0.0F;
+        float activeHorizonSeconds = 0.0F;
+        float maximumHorizonSeconds = 0.0F;
+        float maximumLead = 0.0F;
+        float lead = 0.0F;
+        float confidence = 0.0F;
+        float motionIntensity = 0.0F;
+        float velocityAuthority = 0.0F;
+        float accelerationIntent = 0.0F;
+        float onsetAuthority = 0.0F;
+        float sustainedEvidence = 0.0F;
+        float sustainedAuthority = 0.0F;
+        float motionUrgency = 0.0F;
+        float horizonExtensionEligibility = 0.0F;
+        float normalMaximumHorizonSeconds = 0.0F;
+        float allowedMaximumHorizonSeconds = 0.0F;
+        float turningPointConfidence = 0.0F;
+        float estimatedTimeToTurnSeconds = 0.0F;
+        float estimatedRemainingTravel = 0.0F;
+        float turningPointHorizonLimitSeconds = 0.0F;
+        float turningPointLeadLimit = 0.0F;
+        float reacquisitionAuthority = 0.0F;
+        int motionState = 0;
+    };
+
     void persistAndApply();
+    void sampleAdaptiveResponseHistory();
+    void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
+    void advanceAdaptiveResponseSimulator(float manualInput, const QString &scope,
+                                          const QString &targetId, int physicalAxis,
+                                          int sourceRateHz, qint64 nowMs);
+    RuntimeAdaptiveResponseConfig adaptiveResponseConfigurationAtContext(
+        const QString &scope, const QString &targetId, int physicalAxis,
+        AdaptiveResponseAxisOverride *contextOverride = nullptr,
+        QString *source = nullptr, RuntimeAxisMapping *staticMapping = nullptr) const;
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
@@ -556,6 +699,9 @@ private:
     bool fallBackToAvailableAxis();
     AxisMapping *selectedAxisMapping();
     const AxisMapping *selectedAxisMapping() const;
+    AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
+    const AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope,
+                                                       const QString &targetId = {}) const;
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     bool axisIsOneSided(int physicalAxis) const;
@@ -629,6 +775,7 @@ private:
     bool m_gameDetectionInProgress = false;
     QTimer m_snapshotTimer;
     QTimer m_numericTelemetryTimer;
+    QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
     QStringList m_lastDetectedExecutables;
@@ -640,6 +787,31 @@ private:
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
     QElapsedTimer m_overviewMetricsClock;
+    QElapsedTimer m_adaptiveResponseHistoryClock;
+    std::array<AdaptiveResponseHistorySample, 3000> m_adaptiveResponseHistory{};
+    int m_adaptiveResponseHistoryNext = 0;
+    int m_adaptiveResponseHistoryCount = 0;
+    qint64 m_adaptiveResponseHistorySequence = 0;
+    QElapsedTimer m_adaptiveResponseSimulatorClock;
+    AdaptiveResponseProcessor m_adaptiveResponseSimulator;
+    // These deliberately live on the heap: AppBackend is constructed on the
+    // stack by its QML startup test, while the fixed bounds still ensure the
+    // control-plane simulator cannot grow without limit.
+    std::vector<AdaptiveResponseSimulatorSample> m_adaptiveResponseSimulatorHistory;
+    std::vector<AdaptiveResponseSimulatorSample> m_adaptiveResponseSimulatorRecording;
+    int m_adaptiveResponseSimulatorHistoryNext = 0;
+    int m_adaptiveResponseSimulatorHistoryCount = 0;
+    int m_adaptiveResponseSimulatorRecordingCount = 0;
+    int m_adaptiveResponseSimulatorRecordingNext = 0;
+    double m_adaptiveResponseSimulatorLastSourceMs = -1.0;
+    qint64 m_adaptiveResponseSimulatorLastTickMs = -1;
+    qint64 m_adaptiveResponseSimulatorLastManualInputMs = -1;
+    qint64 m_adaptiveResponseSimulatorSequence = 0;
+    int m_adaptiveResponseSimulatorSourceRate = 250;
+    float m_adaptiveResponseSimulatorLastManualInput = 0.0F;
+    float m_adaptiveResponseSimulatorHeldInput = 0.0F;
+    bool m_adaptiveResponseSimulatorHasManualInput = false;
+    bool m_adaptiveResponseSimulatorRecordingActive = false;
     QElapsedTimer m_calibrationFinalizationClock;
     QTimer m_uiEventLoopHeartbeatTimer;
     QElapsedTimer m_uiEventLoopHeartbeatClock;

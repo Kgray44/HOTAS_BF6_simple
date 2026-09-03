@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.2.0**
+**Current release: v2.3.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.2.0 adds bumpless Curve Transition Smoothing: mapping changes anchor to the current virtual output, apply the new mapping immediately, then decay only the correction offset so physical stick movement remains direct. Global and per-profile controls, schema-20 migration, and all three themes retain the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.3.0 adds Adaptive Response: a per-axis, short-horizon predictive phase lead driven only by normalized physical input. Its global, category, profile, and temporary Automation layers compile before report processing; estimator telemetry, safety clamping, presets, portable dependencies, and schema-21 migration retain the allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 

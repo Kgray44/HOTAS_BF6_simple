@@ -241,10 +241,18 @@ Flickable {
                     onTriggered: { const id = root.nextOutputDeviceId(); backend.createFiveAxisOutputLayout("5-Axis Output " + id, id) } }
             }
             RowLayout { Layout.fillWidth: true; spacing: 8
-                ComboBox { id: visibilityLayoutSelector; Layout.preferredWidth: 175; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
+                ComboBox { id: visibilityLayoutSelector; Layout.preferredWidth: 175; implicitHeight: 30; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
                     contentItem: Text { leftPadding: 8; rightPadding: 22; text: visibilityLayoutSelector.displayText; color: root.textColor; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-                    background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    background: Rectangle { color: visibilityLayoutSelector.enabled ? (visibilityLayoutSelector.hovered ? theme.controlHover : root.panelColor) : theme.controlDisabled; border.color: visibilityLayoutSelector.activeFocus ? root.accentColor : visibilityLayoutSelector.hovered ? theme.borderStrong : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                     indicator: Text { x: visibilityLayoutSelector.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 11 }
+                    delegate: ItemDelegate { id: visibilityLayoutChoice; width: visibilityLayoutSelector.width; implicitHeight: 30; highlighted: visibilityLayoutSelector.highlightedIndex === index
+                        contentItem: Text { leftPadding: 9; rightPadding: 9; text: visibilityLayoutSelector.textAt(index); color: visibilityLayoutChoice.highlighted ? root.textColor : root.mutedColor; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                        background: Rectangle { radius: theme.topGun ? 1 : theme.controlRadius; color: visibilityLayoutChoice.highlighted ? theme.selection : "transparent"; border.color: visibilityLayoutChoice.highlighted ? root.accentColor : "transparent" }
+                    }
+                    popup: Popup { y: visibilityLayoutSelector.height + 4; width: visibilityLayoutSelector.width; topPadding: 5; bottomPadding: 5; leftPadding: 5; rightPadding: 5; implicitHeight: Math.min(248, visibilityChoices.contentHeight + topPadding + bottomPadding)
+                        contentItem: ListView { id: visibilityChoices; clip: true; implicitHeight: contentHeight; model: visibilityLayoutSelector.delegateModel; currentIndex: visibilityLayoutSelector.highlightedIndex; ScrollIndicator.vertical: ScrollIndicator { } }
+                        background: Rectangle { color: theme.tooltip; border.color: theme.borderStrong; radius: theme.topGun ? 1 : theme.controlRadius }
+                    }
                 }
                 TextField { id: virtualOutputIdentity; Layout.fillWidth: true; implicitHeight: 30; placeholderText: "Exact vJoy HID instance from HidHide"; selectByMouse: true; color: root.textColor; font.pixelSize: 9
                     background: Rectangle { color: root.panelColor; border.color: virtualOutputIdentity.activeFocus ? root.accentColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }

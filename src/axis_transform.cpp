@@ -175,8 +175,15 @@ float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
                         AxisSignalPath *signalPath)
 {
     const float calibrated = normalizeCalibrated(raw, mapping.calibration);
+    return transformNormalizedAxisLive(calibrated, mapping, hysteresisState, curveResponse, signalPath);
+}
+
+float transformNormalizedAxisLive(float normalized, const RuntimeAxisMapping &mapping,
+                                  AxisHysteresisState &hysteresisState, float *curveResponse,
+                                  AxisSignalPath *signalPath)
+{
     const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
-    const float normalized = oneSided ? std::max(0.0F, calibrated) : calibrated;
+    normalized = oneSided ? std::clamp(normalized, 0.0F, 1.0F) : clampUnit(normalized);
     const float afterDeadzone = oneSided
         ? applyRescaledUnipolarDeadzone(normalized, mapping.profile.deadzone)
         : applyRescaledDeadzone(normalized, mapping.profile.deadzone);

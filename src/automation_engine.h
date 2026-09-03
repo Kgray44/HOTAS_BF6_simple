@@ -34,6 +34,7 @@ struct CompiledAutomationAction {
     float minimum = -1.0F;
     float maximum = 1.0F;
     int tapDurationMs = 80;
+    RuntimeAdaptiveResponseOverride adaptiveResponse;
 };
 
 struct CompiledAutomationRule {
@@ -97,6 +98,8 @@ struct AutomationEvaluationResult {
     std::array<bool, kMaximumVirtualButtons + 1> heldButtons{};
     std::array<bool, kMaximumVirtualButtons + 1> toggledButtons{};
     std::array<bool, kMaximumVirtualButtons + 1> pulsedButtons{};
+    std::array<RuntimeAdaptiveResponseOverride, kPhysicalAxisCount>
+        adaptiveResponseOverlays{};
     std::array<AutomationProfileContribution, kMaximumAutomationProfileContributors>
         profileContributions{};
     int profileContributionCount = 0;
@@ -150,6 +153,7 @@ private:
                                const AutomationInputSnapshot &input,
                                ConditionRuntimeState &state);
     const AutomationEvaluationResult &evaluateLevelOnly(const AutomationInputSnapshot &input);
+    void composeAdaptiveResponseOverlays();
 
     const CompiledAutomationSet *m_compiled = nullptr;
     std::array<std::array<ConditionRuntimeState, kMaximumAutomationConditions>,

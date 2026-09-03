@@ -25,6 +25,9 @@ struct PortableConfigurationBundle {
     std::vector<ProfileCategory> categories;
     std::vector<ControllerProfile> profiles;
     std::vector<PersonalCurvePreset> curves;
+    std::vector<AdaptiveResponsePreset> adaptiveResponsePresets;
+    AdaptiveResponseLayer adaptiveResponseGlobal;
+    bool includesAdaptiveResponseGlobal = false;
     std::vector<AutomationDefinition> automations;
     std::vector<VirtualOutputLayout> outputLayouts;
     ProfileTriggerBindings profileTriggers;
@@ -40,6 +43,12 @@ enum class PortableCategoryConflictMode {
     Replace,
 };
 
+enum class PortableAdaptiveResponsePresetConflictMode {
+    KeepLocal,
+    Replace,
+    ImportAsCopy,
+};
+
 struct PortableImportOptions {
     QString destinationCategoryId;
     bool replaceMatchingProfiles = false;
@@ -51,6 +60,10 @@ struct PortableImportOptions {
     // IDs never leave this control-plane import plan.
     QHash<int, QString> deviceSelections;
     bool applyImportedCalibration = false;
+    // A same-ID preset with different content is never silently reused.
+    // ImportAsCopy is the safe default and remaps imported references.
+    PortableAdaptiveResponsePresetConflictMode adaptiveResponsePresetConflictMode =
+        PortableAdaptiveResponsePresetConflictMode::ImportAsCopy;
 };
 
 class ProfilePortability final {

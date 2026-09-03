@@ -87,7 +87,7 @@ try {
     Invoke-Installer $candidate $upgradeInstall
     Assert-InstalledVersion $upgradeInstall
     Invoke-MapperStartupSmoke $upgradeInstall
-    & $fixture --assert-v20
+    & $fixture --assert-v21
     if ($LASTEXITCODE -ne 0) { throw 'v1.9.3 upgrade did not preserve and migrate the acceptance fixture.' }
 
     # A v2.0.0 tray crash can leave the exact same program location with a
@@ -100,7 +100,7 @@ try {
     Invoke-Installer $candidate $recoveryInstall
     Assert-InstalledVersion $recoveryInstall
     Invoke-MapperStartupSmoke $recoveryInstall
-    & $fixture --assert-v20
+    & $fixture --assert-v21
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
     Write-Host "Installer acceptance passed: clean install, v1.9.3 -> v$ExpectedVersion, and v2.0.0 recovery."

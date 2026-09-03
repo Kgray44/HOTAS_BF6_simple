@@ -44,6 +44,7 @@ constexpr int kPovDirectionCount = 8;
 constexpr int kCurveTransitionMinimumDurationMs = 0;
 constexpr int kCurveTransitionMaximumDurationMs = 1000;
 constexpr int kDefaultCurveTransitionDurationMs = 100;
+constexpr int kAdaptiveResponseSchemaVersion = 1;
 
 enum class PhysicalAxis : int {
     X = 0,
@@ -71,6 +72,141 @@ enum class VirtualAxis : int {
 enum class AxisRangeMode : int {
     Centered = 0,
     OneSided,
+};
+
+// Adaptive Response is a short-horizon phase-lead estimator. These durable
+// records intentionally contain no history: at a configuration boundary they
+// are resolved into RuntimeAdaptiveResponseConfig, which is all the report
+// loop ever reads.
+enum class AdaptiveResponseModel : int {
+    Auto = 0,
+    Velocity,
+    AlphaBeta,
+    AlphaBetaGamma,
+};
+
+enum AdaptiveResponseProperty : std::uint32_t {
+    AdaptiveResponseEnabled = 1U << 0,
+    AdaptiveResponseModelProperty = 1U << 1,
+    AdaptiveResponseMaximumHorizon = 1U << 2,
+    AdaptiveResponseMaximumLead = 1U << 3,
+    AdaptiveResponseVelocityResponse = 1U << 4,
+    AdaptiveResponseAccelerationResponse = 1U << 5,
+    AdaptiveResponseMotionSensitivity = 1U << 6,
+    AdaptiveResponseNoiseRejection = 1U << 7,
+    AdaptiveResponseReversalDetection = 1U << 8,
+    AdaptiveResponseReversalResponse = 1U << 9,
+    AdaptiveResponseDecelerationResponse = 1U << 10,
+    AdaptiveResponseSettlingResponse = 1U << 11,
+    AdaptiveResponseEndpointTaper = 1U << 12,
+    // Append-only: these numeric flags are persisted in user configuration.
+    // Do not reorder earlier Adaptive Response properties.
+    AdaptiveResponseOnsetAssist = 1U << 13,
+    AdaptiveResponseOnsetCap = 1U << 14,
+    AdaptiveResponseSustainedAssist = 1U << 15,
+    AdaptiveResponseSustainedCap = 1U << 16,
+    AdaptiveResponseHorizonExtension = 1U << 17,
+    AdaptiveResponseHorizonExtensionCap = 1U << 18,
+    AdaptiveResponseTurningPointProtection = 1U << 19,
+    AdaptiveResponseTurningPointMargin = 1U << 20,
+};
+
+constexpr std::uint32_t kAdaptiveResponseAllProperties =
+    AdaptiveResponseEnabled | AdaptiveResponseModelProperty | AdaptiveResponseMaximumHorizon
+    | AdaptiveResponseMaximumLead | AdaptiveResponseVelocityResponse
+    | AdaptiveResponseAccelerationResponse | AdaptiveResponseMotionSensitivity
+    | AdaptiveResponseNoiseRejection | AdaptiveResponseReversalDetection
+    | AdaptiveResponseReversalResponse | AdaptiveResponseDecelerationResponse
+    | AdaptiveResponseSettlingResponse | AdaptiveResponseEndpointTaper
+    | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
+    | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
+    | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
+    | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin;
+
+struct AdaptiveResponseSettings {
+    bool enabled = false;
+    AdaptiveResponseModel model = AdaptiveResponseModel::Auto;
+    float maximumHorizonMs = 8.0F;
+    float maximumLead = 0.12F;
+    float velocityResponse = 0.72F;
+    float accelerationResponse = 0.58F;
+    float motionSensitivity = 0.035F;
+    float noiseRejection = 0.012F;
+    float reversalDetection = 0.075F;
+    float reversalResponse = 1.0F;
+    float decelerationResponse = 0.85F;
+    float settlingResponse = 0.92F;
+    float endpointTaper = 0.16F;
+    // Acceleration can fill only unused velocity-derived predictive authority.
+    // Defaults preserve pre-onset-assist configuration behavior exactly.
+    float onsetAssist = 0.0F;
+    float onsetCap = 0.0F;
+    // Sustained/horizon/turning defaults retain the pre-V2.3.0 predictor
+    // unless the owning preset or layer explicitly enables them.
+    float sustainedAssist = 0.0F;
+    float sustainedCap = 0.0F;
+    float horizonExtension = 0.0F;
+    float horizonExtensionCapMs = 0.0F;
+    float turningPointProtection = 0.0F;
+    float turningPointMargin = 0.0F;
+};
+
+// A zero mask means "inherit every property". A layer can select a reusable
+// preset then override only chosen fields, avoiding duplicate configuration
+// blobs while retaining deterministic Global -> Category -> Profile precedence.
+struct AdaptiveResponseAxisOverride {
+    std::uint32_t properties = 0;
+    QString presetId;
+    AdaptiveResponseSettings settings;
+};
+
+struct AdaptiveResponseLayer {
+    std::array<AdaptiveResponseAxisOverride, kPhysicalAxisCount> axes{};
+};
+
+struct AdaptiveResponsePreset {
+    QString id;
+    QString name;
+    QString description;
+    bool builtIn = false;
+    std::array<AdaptiveResponseAxisOverride, kPhysicalAxisCount> axes{};
+};
+
+// Fully flattened, trivial runtime data. This is purposely not a pointer to
+// persistence data and cannot cause hierarchy/preset/QString work per report.
+struct RuntimeAdaptiveResponseConfig {
+    bool enabled = false;
+    AdaptiveResponseModel model = AdaptiveResponseModel::Auto;
+    float maximumHorizonSeconds = 0.008F;
+    float maximumLead = 0.12F;
+    float velocityResponse = 0.72F;
+    float accelerationResponse = 0.58F;
+    float motionSensitivity = 0.035F;
+    float noiseRejection = 0.012F;
+    float reversalDetection = 0.075F;
+    float reversalResponse = 1.0F;
+    float decelerationResponse = 0.85F;
+    float settlingResponse = 0.92F;
+    float endpointTaper = 0.16F;
+    float onsetAssist = 0.0F;
+    float onsetCap = 0.0F;
+    float sustainedAssist = 0.0F;
+    float sustainedCap = 0.0F;
+    float horizonExtension = 0.0F;
+    float horizonExtensionCapSeconds = 0.0F;
+    float turningPointProtection = 0.0F;
+    float turningPointMargin = 0.0F;
+    float domainMinimum = -1.0F;
+    float domainMaximum = 1.0F;
+};
+
+// Automation compiles temporary response overlays into this primitive-only
+// record. It is intentionally separate from the durable QString preset
+// selector so report processing never resolves names or persistence layers.
+struct RuntimeAdaptiveResponseOverride {
+    bool active = false;
+    std::uint32_t properties = 0;
+    AdaptiveResponseSettings settings;
 };
 
 // DirectInput descriptors can contain placeholder objects that never move.
@@ -209,6 +345,7 @@ struct RuntimeAxisMapping {
     AxisMapping profile;
     Calibration calibration;
     std::shared_ptr<const CompiledResponseCurve> responseCurve;
+    RuntimeAdaptiveResponseConfig adaptiveResponse;
 };
 
 // v1.1 intentionally supports just one action. Keeping the type separate
@@ -388,6 +525,9 @@ enum class AutomationActionType : int {
     MappingOn,
     MappingOff,
     ToggleMapping,
+    AdaptiveResponseEnable,
+    AdaptiveResponseDisable,
+    AdaptiveResponsePreset,
 };
 
 enum class AutomationAxisSourceStage : int {
@@ -420,6 +560,7 @@ struct AutomationActionDefinition {
     AutomationActionType type = AutomationActionType::VJoyButtonHold;
     int virtualButton = 1; // One-based vJoy button.
     QString profileId;
+    QString adaptiveResponsePresetId;
     int targetAxis = static_cast<int>(PhysicalAxis::X);
     int sourceAxis = static_cast<int>(PhysicalAxis::X);
     AutomationAxisSourceStage sourceStage = AutomationAxisSourceStage::Processed;
@@ -464,6 +605,7 @@ struct ControllerProfile {
     // explicit advanced override is selected.
     bool curveTransitionSmoothingOverride = false;
     CurveTransitionSmoothingSettings curveTransitionSmoothing;
+    AdaptiveResponseLayer adaptiveResponse;
     AxisMappings axes{};
     ButtonBindings buttons;
     // Missing entries mean safely disabled hats. A saved controller can have
@@ -488,6 +630,7 @@ struct ProfileCategory {
     QString lastActiveProfileId;
     bool enabled = true;
     bool restoreLastProfile = true;
+    AdaptiveResponseLayer adaptiveResponse;
 };
 
 // Controller identity lives with the durable configuration rather than the
@@ -580,6 +723,9 @@ struct MapperConfiguration {
     // Global default for event-driven mapping transitions. This never enables
     // continuous physical-axis filtering.
     CurveTransitionSmoothingSettings curveTransitionSmoothing;
+    int adaptiveResponseSchemaVersion = kAdaptiveResponseSchemaVersion;
+    AdaptiveResponseLayer adaptiveResponseGlobal;
+    std::vector<AdaptiveResponsePreset> adaptiveResponsePresets;
     // UI-only selection. It never determines which axes the worker maps.
     int selectedAxisIndex = static_cast<int>(PhysicalAxis::X);
     std::array<Calibration, kPhysicalAxisCount> calibration{};

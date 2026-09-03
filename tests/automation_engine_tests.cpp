@@ -1,4 +1,5 @@
 #include "automation_engine.h"
+#include "adaptive_response.h"
 #include "config_store.h"
 #include "profile_trigger_runtime.h"
 
@@ -74,6 +75,8 @@ private slots:
     void v183AutomationMigratesWithSafeTemporalDefaults();
     void temporalStateResetsOnStopDisconnectAndConfigurationSwap();
     void mappingControlsPublishOnlyOnActivationEdges();
+    void adaptiveResponseOverlaysAreCompiledAndPriorityResolved();
+    void adaptiveResponseOverlaysComposeByProperty();
 };
 
 void AutomationEngineTests::axisThresholdHysteresis()
@@ -746,6 +749,78 @@ void AutomationEngineTests::mappingControlsPublishOnlyOnActivationEdges()
     const AutomationEvaluationResult &controlOnly = runtime.evaluateMappingControls(snapshot);
     QCOMPARE(controlOnly.mappingControlAction, MappingControlAction::ToggleMapping);
     QVERIFY(!controlOnly.heldButtons[1]);
+}
+
+void AutomationEngineTests::adaptiveResponseOverlaysAreCompiledAndPriorityResolved()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationActionDefinition enable;
+    enable.type = AutomationActionType::AdaptiveResponseEnable;
+    enable.targetAxis = static_cast<int>(PhysicalAxis::X);
+    AutomationDefinition lowPriority = rule(u"Response enabled"_qs, always(), enable);
+    lowPriority.priority = 20;
+
+    AutomationActionDefinition preset;
+    preset.type = AutomationActionType::AdaptiveResponsePreset;
+    preset.targetAxis = static_cast<int>(PhysicalAxis::X);
+    preset.adaptiveResponsePresetId = QStringLiteral("fast");
+    AutomationDefinition highPriority = rule(u"Response fast"_qs, always(), preset);
+    highPriority.priority = 80;
+    configuration.automations = {lowPriority, highPriority};
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.automation->publishable);
+    AutomationRuntime runtime;
+    const AutomationEvaluationResult &result = evaluate(runtime, cache, input());
+    const RuntimeAdaptiveResponseOverride &overlay = result.adaptiveResponseOverlays[
+        static_cast<size_t>(PhysicalAxis::X)];
+    QVERIFY(overlay.active);
+    QVERIFY((overlay.properties & AdaptiveResponseMaximumHorizon) != 0);
+    QCOMPARE(overlay.settings.maximumHorizonMs, 12.0F);
+
+    RuntimeAdaptiveResponseConfig base;
+    const RuntimeAdaptiveResponseConfig effective = applyAdaptiveResponseRuntimeOverride(base, overlay);
+    QVERIFY(effective.enabled);
+    QCOMPARE(effective.maximumHorizonSeconds, 0.012F);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.automations[1].actions[0].adaptiveResponsePresetId, QStringLiteral("fast"));
+}
+
+void AutomationEngineTests::adaptiveResponseOverlaysComposeByProperty()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationActionDefinition preset;
+    preset.type = AutomationActionType::AdaptiveResponsePreset;
+    preset.targetAxis = static_cast<int>(PhysicalAxis::X);
+    preset.adaptiveResponsePresetId = QStringLiteral("fast");
+    AutomationDefinition lower = rule(u"Fast motion values"_qs, always(), preset);
+    lower.priority = 20;
+
+    AutomationActionDefinition disable;
+    disable.type = AutomationActionType::AdaptiveResponseDisable;
+    disable.targetAxis = static_cast<int>(PhysicalAxis::X);
+    AutomationDefinition higher = rule(u"Explicit disable"_qs, always(), disable);
+    higher.priority = 80;
+    configuration.automations = {lower, higher};
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.automation->publishable);
+    AutomationRuntime runtime;
+    const RuntimeAdaptiveResponseOverride &overlay = evaluate(runtime, cache, input())
+        .adaptiveResponseOverlays[static_cast<size_t>(PhysicalAxis::X)];
+    QVERIFY(overlay.active);
+    QVERIFY((overlay.properties & AdaptiveResponseEnabled) != 0);
+    QVERIFY((overlay.properties & AdaptiveResponseMaximumHorizon) != 0);
+    QVERIFY(!overlay.settings.enabled); // Higher priority wins this property only.
+    QCOMPARE(overlay.settings.maximumHorizonMs, 12.0F); // Lower preset still contributes it.
+
+    RuntimeAdaptiveResponseConfig base;
+    const RuntimeAdaptiveResponseConfig effective = applyAdaptiveResponseRuntimeOverride(base, overlay);
+    QVERIFY(!effective.enabled);
+    QCOMPARE(effective.maximumHorizonSeconds, 0.012F);
 }
 
 } // namespace

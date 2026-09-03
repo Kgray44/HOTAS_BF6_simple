@@ -6,10 +6,11 @@ The JSON files in this directory are the authoritative source for historical Git
 
 | Release | Status | Guidance |
 | --- | --- | --- |
-| v2.2.0 | Current | Bumpless Curve / Mapping Transition Smoothing; recommended published release |
-| v2.1.6 | Historical stable | Input Learning & Quick Map correction baseline; use v2.2.0 for the current release |
-| v2.1.5 | Historical stable | Input Learning, Quick Assign & vJoy capacity correction baseline; use v2.2.0 for the current release |
-| v2.1.4 | Historical stable | Runtime Responsiveness, GUI Efficiency & unloadable page lifecycle baseline; use v2.2.0 for the current release |
+| v2.3.0 | Current | Adaptive Response; recommended published release once the protected release gates complete |
+| v2.2.0 | Historical stable | Bumpless Curve / Mapping Transition Smoothing baseline; use v2.3.0 for the current release |
+| v2.1.6 | Historical stable | Input Learning & Quick Map correction baseline; use v2.3.0 for the current release |
+| v2.1.5 | Historical stable | Input Learning, Quick Assign & vJoy capacity correction baseline; use v2.3.0 for the current release |
+| v2.1.4 | Historical stable | Runtime Responsiveness, GUI Efficiency & unloadable page lifecycle baseline; use v2.3.0 for the current release |
 | v2.1.3 | Superseded | Profiles, Categories & Game Detection UX; upgrade to v2.1.4 for asynchronous discovery and lower-churn presentation |
 | v2.1.2 | Superseded | Deep Tray & Runtime Efficiency; upgrade to v2.1.4 for the responsive control-plane follow-through |
 | v2.1.1 | Superseded | Profile Library Completion & Portable Pack Safety; upgrade to v2.1.4 for the current responsive runtime |

@@ -32,6 +32,9 @@ private slots:
     void installerUpgradeAcceptanceTracksSchema20();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
+    void allThemeSelectorsUseSkinnedDarkPopups();
+    void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
+    void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -317,6 +320,104 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(portability.contains(QStringLiteral("USER SELECTION REQUIRED")));
 }
 
+void UiReleaseContractTests::allThemeSelectorsUseSkinnedDarkPopups()
+{
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString library = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
+    const QString automation = sourceFile(QStringLiteral("qml/AutomationPage.qml"));
+    const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
+    const QString legacyCurve = sourceFile(QStringLiteral("qml/LegacyCurveEditor.qml"));
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+
+    for (const QString &page : {standard, legacy, settings, library, automation, curve, legacyCurve, adaptive}) {
+        QVERIFY2(page.contains(QStringLiteral("popup: Popup")),
+                 "Every selector must own a skinned Popup rather than use a native dropdown.");
+        QVERIFY(page.contains(QStringLiteral("background: Rectangle")));
+    }
+    QVERIFY(standard.contains(QStringLiteral("component FlightComboBox")));
+    QVERIFY(standard.contains(QStringLiteral("color: theme.tooltip")));
+    QVERIFY(legacy.contains(QStringLiteral("component FlightComboBox")));
+    QVERIFY(legacy.contains(QStringLiteral("color: \"#151e23\"")));
+    QVERIFY(settings.contains(QStringLiteral("id: appearance")));
+    QVERIFY(settings.contains(QStringLiteral("color: root.panelColor")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ResponseCombo")));
+    QVERIFY(adaptive.contains(QStringLiteral("color: root.themeTokens.tooltip")));
+    QVERIFY(curve.contains(QStringLiteral("component AviationMenuItem")));
+    QVERIFY(legacyCurve.contains(QStringLiteral("component AviationMenuItem")));
+}
+
+void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMetrics()
+{
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    QVERIFY(adaptive.contains(QStringLiteral("function numericOr(value, fallback)")));
+    QVERIFY(adaptive.contains(QStringLiteral("adaptiveResponseHistorySince")));
+    QVERIFY(adaptive.contains(QStringLiteral("Timer { interval: 33")));
+    QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().motionSensitivity, 0.035)")));
+    QVERIFY(adaptive.contains(QStringLiteral("value: root.numericOr(effective().noiseRejection, 0.012)")));
+    QVERIFY(adaptive.contains(QStringLiteral("Safety cancellation is always active")));
+    for (const QString &metric : {QStringLiteral("MEDIAN LEAD"), QStringLiteral("MEAN ABS PREDICTION ERROR"),
+                                   QStringLiteral("REVERSAL DETECTION LATENCY"), QStringLiteral("FALSE REVERSALS"),
+                                   QStringLiteral("STATIONARY LEAD")}) {
+        QVERIFY(adaptive.contains(metric));
+    }
+    QVERIFY(backend.contains(QStringLiteral("const auto physicalAt")));
+    QVERIFY(backend.contains(QStringLiteral("meanAbsolutePredictionError")));
+    QVERIFY(backend.contains(QStringLiteral("targetOvershoot")));
+    QVERIFY(!backend.contains(QStringLiteral("std::abs(predicted) - 1.0F")));
+}
+
+void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane()
+{
+    const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    QVERIFY(adaptive.contains(QStringLiteral("function axisModelIndex(physicalAxis)")));
+    QVERIFY(adaptive.contains(QStringLiteral("function selectAxisModelIndex(modelIndex)")));
+    QVERIFY(adaptive.contains(QStringLiteral("objectName: \"adaptiveAxisSelector\"")));
+    QVERIFY(adaptive.contains(QStringLiteral("property string staticPreviewView: \"predictor\"")));
+    QVERIFY(adaptive.contains(QStringLiteral("property bool showFinalTrace: false")));
+    QVERIFY(adaptive.contains(QStringLiteral("STATIC PIPELINE")));
+    QVERIFY(adaptive.contains(QStringLiteral("Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded.")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAPPED OUTPUT")));
+    QVERIFY(adaptive.contains(QStringLiteral("ONSET / MOTION ACQUISITION")));
+    QVERIFY(adaptive.contains(QStringLiteral("Uses coherent acceleration to build predictive response sooner while motion is still gaining speed.")));
+    QVERIFY(adaptive.contains(QStringLiteral("Limits how much acceleration may add to predictive authority. Maximum Horizon and Maximum Lead remain absolute limits.")));
+    QVERIFY(adaptive.contains(QStringLiteral("SUSTAINED MOTION")));
+    QVERIFY(adaptive.contains(QStringLiteral("Builds additional predictive response during continuous, predictable movement, including slower sustained control inputs.")));
+    QVERIFY(adaptive.contains(QStringLiteral("Permits longer temporal prediction only when slow, coherent sustained movement supports it.")));
+    QVERIFY(adaptive.contains(QStringLiteral("TURNING / REVERSAL")));
+    QVERIFY(adaptive.contains(QStringLiteral("Prevents prediction from extending beyond a credible imminent stop or reversal; a correctness floor remains at 0%.")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED PREDICTION LEAD")));
+    QVERIFY(adaptive.contains(QStringLiteral("Scale is the configured maximum lead")));
+    QVERIFY(adaptive.contains(QStringLiteral("piecewise-linear resampling")));
+    QVERIFY(adaptive.contains(QStringLiteral("function staticTimeTickLabels()")));
+    QVERIFY(adaptive.contains(QStringLiteral("Human-Like Rapid Reversal")));
+    QVERIFY(adaptive.contains(QStringLiteral("INSTANTANEOUS REVERSAL — worst-case synthetic torture test")));
+    QVERIFY(adaptive.contains(QStringLiteral("Interactive simulator")));
+    QVERIFY(adaptive.contains(QStringLiteral("SLOW-MOTION PLAYBACK")));
+    QVERIFY(adaptive.contains(QStringLiteral("Replay speed")));
+    QVERIFY(adaptive.contains(QStringLiteral("CHRONOLOGICAL · NEWEST AT RIGHT")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ThemedSlider")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ThemedSwitch")));
+    for (const QString &metric : {QStringLiteral("PRE-REVERSAL LEAD"),
+                                  QStringLiteral("LEAD COLLAPSE"),
+                                  QStringLiteral("PREDICTOR-ONLY STEP"),
+                                  QStringLiteral("VIRTUAL OUTPUT STEP")}) {
+        QVERIFY(adaptive.contains(metric));
+    }
+    QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorStepAtContext")));
+    QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorHistorySince")));
+    QVERIFY(header.contains(QStringLiteral("AdaptiveResponseSimulatorSample")));
+    QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulator.process")));
+    QVERIFY(backend.contains(QStringLiteral("reconstructs the\n    // physical gesture between QML pointer events")));
+    QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulatorRecording")));
+    QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(
+        QStringLiteral("adaptiveResponseSimulator")));
+}
+
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
 {
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
@@ -407,11 +508,11 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema20()
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 20")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v20")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 21")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v21")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v20")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v20")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v21")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v21")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()

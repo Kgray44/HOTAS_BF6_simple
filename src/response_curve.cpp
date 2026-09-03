@@ -1,4 +1,6 @@
 #include "response_curve.h"
+
+#include "adaptive_response.h"
 #include "automation_engine.h"
 
 #include <QJsonArray>
@@ -938,6 +940,8 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
         runtime.axes[index].calibration = configuration.calibration[index];
         runtime.axes[index].responseCurve = compileResponseCurve(profile.axes[index].curve,
             profile.axes[index].rangeMode == AxisRangeMode::OneSided);
+        runtime.axes[index].adaptiveResponse = resolveAdaptiveResponseConfiguration(configuration,
+                                                                                     profile, index);
     }
     runtime.buttons = profile.buttons;
     runtime.povs = profile.povs;
@@ -962,6 +966,8 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             runtime.axes[static_cast<size_t>(axis)].responseCurve = compileResponseCurve(
                 profile.axes[static_cast<size_t>(axis)].curve,
                 profile.axes[static_cast<size_t>(axis)].rangeMode == AxisRangeMode::OneSided);
+            runtime.axes[static_cast<size_t>(axis)].adaptiveResponse =
+                resolveAdaptiveResponseConfiguration(configuration, profile, axis);
         }
         runtime.buttons = profile.buttons;
         runtime.povs = profile.povs;
