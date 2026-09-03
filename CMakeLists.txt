@@ -471,22 +471,34 @@ endif()
 # production estimator but is never part of the mapper target or installer.
 option(HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION
     "Build the deterministic Adaptive Response verification campaign runner" ON)
+set(HOTAS_VERIFICATION_SOURCE_COMMIT_OVERRIDE "" CACHE STRING
+    "Optional exact production-source SHA recorded by the offline verification runner")
+set(HOTAS_VERIFICATION_SOURCE_BRANCH_OVERRIDE "" CACHE STRING
+    "Optional production-source identity recorded by the offline verification runner")
 if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
     execute_process(COMMAND git rev-parse HEAD
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         OUTPUT_VARIABLE HOTAS_VERIFICATION_HARNESS_COMMIT
         OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    execute_process(COMMAND git rev-parse origin/codex/v2.3.0-adaptive-response
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_COMMIT
-        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if (HOTAS_VERIFICATION_SOURCE_COMMIT_OVERRIDE)
+        set(HOTAS_VERIFICATION_SOURCE_COMMIT "${HOTAS_VERIFICATION_SOURCE_COMMIT_OVERRIDE}")
+    else()
+        execute_process(COMMAND git rev-parse origin/codex/v2.3.0-adaptive-response
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE HOTAS_VERIFICATION_SOURCE_COMMIT
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
     if (NOT HOTAS_VERIFICATION_HARNESS_COMMIT)
         set(HOTAS_VERIFICATION_HARNESS_COMMIT "unknown")
     endif()
     if (NOT HOTAS_VERIFICATION_SOURCE_COMMIT)
         set(HOTAS_VERIFICATION_SOURCE_COMMIT "unknown")
     endif()
-    set(HOTAS_VERIFICATION_SOURCE_BRANCH "codex/v2.3.0-adaptive-response")
+    if (HOTAS_VERIFICATION_SOURCE_BRANCH_OVERRIDE)
+        set(HOTAS_VERIFICATION_SOURCE_BRANCH "${HOTAS_VERIFICATION_SOURCE_BRANCH_OVERRIDE}")
+    else()
+        set(HOTAS_VERIFICATION_SOURCE_BRANCH "codex/v2.3.0-adaptive-response")
+    endif()
 
     set(HOTAS_ADAPTIVE_VERIFICATION_SOURCES
         tests/adaptive_response/verification_harness.h
