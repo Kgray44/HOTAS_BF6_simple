@@ -1936,6 +1936,13 @@ void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
             presets[presetIndex].axes[0].settings);
         const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration, physical, 0.004F);
         const AdaptiveContinuityMetrics metrics = adaptiveContinuityMetrics(simulation, 0.004F);
+        int configuredLeadClampSamples = 0;
+        for (const AdaptiveResponseSimulationSample &sample : simulation) {
+            if (std::abs(sample.telemetry.lead) >= configuration.maximumLead - 0.00001F) {
+                ++configuredLeadClampSamples;
+            }
+        }
+        const float configuredLeadClampDwellMs = static_cast<float>(configuredLeadClampSamples) * 4.0F;
         std::cout << "adaptive_continuity_trace preset=" << name
                   << " peak_lead=" << metrics.peakLead
                   << " median_lead=" << metrics.medianLead
@@ -1965,6 +1972,7 @@ void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
                   << metrics.nonSafetyArtificialStepsOverHalfPercent << '/'
                   << metrics.nonSafetyArtificialStepsOverOnePercent << '/'
                   << metrics.nonSafetyArtificialStepsOverTwoPercent
+                  << " configured_lead_clamp_dwell_ms=" << configuredLeadClampDwellMs
                   << " stationary_lead=" << metrics.stationaryLead << '\n';
         for (size_t lobe = 0; lobe < metrics.lobes.size(); ++lobe) {
             const AdaptiveLobeMetrics &lobeMetrics = metrics.lobes[lobe];
