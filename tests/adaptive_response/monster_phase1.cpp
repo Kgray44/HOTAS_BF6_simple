@@ -82,6 +82,21 @@ struct RunRow {
     double meanLead = 0.0;
     double p95Lead = 0.0;
     double peakLead = 0.0;
+    double meanOnsetAuthority = 0.0;
+    double peakOnsetAuthority = 0.0;
+    double meanSustainedEvidence = 0.0;
+    double meanSustainedAuthority = 0.0;
+    double peakSustainedAuthority = 0.0;
+    double meanExtensionMs = 0.0;
+    double peakExtensionMs = 0.0;
+    double extensionDwellMs = 0.0;
+    double maximumContinuousExtensionDwellMs = 0.0;
+    double extensionDuringBrakingMs = 0.0;
+    double peakTurningPointConfidence = 0.0;
+    double minimumTurningHorizonLimitMs = 0.0;
+    double minimumTurningLeadLimit = 0.0;
+    double leadClampDwellMs = 0.0;
+    double maximumContinuousLeadClampDwellMs = 0.0;
     double wrongDirectionLeadArea = 0.0;
     double reversalReacquisitionMs = -1.0;
     double leadAtStop = 0.0;
@@ -241,6 +256,16 @@ NamedConfiguration experimentalConfiguration(int horizonMs, double maximumLead)
             "experimental"};
 }
 
+NamedConfiguration extensionConfiguration(const NamedConfiguration &reference, int baseHorizonMs,
+                                          int extensionCapMs)
+{
+    RuntimeAdaptiveResponseConfig config = reference.value;
+    config.maximumHorizonSeconds = static_cast<float>(baseHorizonMs) / 1000.0F;
+    config.horizonExtensionCapSeconds = static_cast<float>(extensionCapMs) / 1000.0F;
+    return {"Balanced-BaseH" + std::to_string(baseHorizonMs) + "-ExtCap" + std::to_string(extensionCapMs),
+            config, "phase1r-extension"};
+}
+
 ScenarioDefinition scenario(std::string id, std::string family, std::vector<ControlPoint> points,
                             int rate, std::uint32_t seed)
 {
@@ -370,8 +395,12 @@ RunRow analyze(const std::string &stage, const std::string &partition, const std
     row.sourceRateHz = sourceRate;
     row.samples = std::min(trace.size(), telemetry.size());
     row.durationMs = trace.empty() ? 0.0 : trace.back().timeSeconds * 1000.0;
-    std::vector<double> errors, horizons, leads, stationaryLeads;
+    std::vector<double> errors, horizons, leads, stationaryLeads, onsetAuthorities, sustainedEvidence,
+        sustainedAuthorities, extensions;
     double squared = 0.0, covariance = 0.0, predictedEnergy = 0.0, futureEnergy = 0.0;
+    double continuousExtensionDwellMs = 0.0;
+    double continuousClampDwellMs = 0.0;
+    bool turningConstraintObserved = false;
     for (size_t i = 0; i < row.samples; ++i) {
         const auto future = futureValue(trace, trace[i].timeSeconds + telemetry[i].activeHorizonSeconds);
         if (future) {
@@ -384,6 +413,46 @@ RunRow analyze(const std::string &stage, const std::string &partition, const std
         }
         horizons.push_back(telemetry[i].activeHorizonSeconds * 1000.0);
         leads.push_back(std::abs(telemetry[i].lead));
+        onsetAuthorities.push_back(telemetry[i].onsetAuthority);
+        sustainedEvidence.push_back(telemetry[i].sustainedEvidence);
+        sustainedAuthorities.push_back(telemetry[i].sustainedAuthority);
+        const double extensionMs = std::max(0.0, static_cast<double>(telemetry[i].activeHorizonSeconds
+            - telemetry[i].normalMaximumHorizonSeconds) * 1000.0);
+        extensions.push_back(extensionMs);
+        const double dtMs = std::max(0.0, static_cast<double>(trace[i].dtSeconds) * 1000.0);
+        if (extensionMs > 0.001) {
+            row.extensionDwellMs += dtMs;
+            continuousExtensionDwellMs += dtMs;
+            row.maximumContinuousExtensionDwellMs = std::max(row.maximumContinuousExtensionDwellMs,
+                continuousExtensionDwellMs);
+            if (telemetry[i].sourceBrakingDetected) row.extensionDuringBrakingMs += dtMs;
+        } else {
+            continuousExtensionDwellMs = 0.0;
+        }
+        const bool leadClamped = configuration.value.maximumLead > 0.0F
+            && std::abs(telemetry[i].lead) >= configuration.value.maximumLead - 0.00001F;
+        if (leadClamped) {
+            row.leadClampDwellMs += dtMs;
+            continuousClampDwellMs += dtMs;
+            row.maximumContinuousLeadClampDwellMs = std::max(row.maximumContinuousLeadClampDwellMs,
+                continuousClampDwellMs);
+        } else {
+            continuousClampDwellMs = 0.0;
+        }
+        row.peakTurningPointConfidence = std::max(row.peakTurningPointConfidence,
+            static_cast<double>(telemetry[i].turningPointConfidence));
+        if (telemetry[i].turningPointConfidence > 0.0001F) {
+            const double horizonLimitMs = telemetry[i].turningPointHorizonLimitSeconds * 1000.0;
+            if (!turningConstraintObserved) {
+                row.minimumTurningHorizonLimitMs = horizonLimitMs;
+                row.minimumTurningLeadLimit = telemetry[i].turningPointLeadLimit;
+                turningConstraintObserved = true;
+            } else {
+                row.minimumTurningHorizonLimitMs = std::min(row.minimumTurningHorizonLimitMs, horizonLimitMs);
+                row.minimumTurningLeadLimit = std::min(row.minimumTurningLeadLimit,
+                    static_cast<double>(telemetry[i].turningPointLeadLimit));
+            }
+        }
         if (family == "noise" || family == "stationary-center" || family == "stationary-off-center") stationaryLeads.push_back(telemetry[i].lead);
         if (!std::isfinite(telemetry[i].predicted) || !std::isfinite(telemetry[i].lead)) ++row.nonFinite;
         if (telemetry[i].predicted < -1.0001F || telemetry[i].predicted > 1.0001F) ++row.illegalOutput;
@@ -405,6 +474,19 @@ RunRow analyze(const std::string &stage, const std::string &partition, const std
     row.meanLead = leads.empty() ? 0.0 : std::accumulate(leads.begin(), leads.end(), 0.0) / leads.size();
     row.p95Lead = percentile(leads, .95);
     row.peakLead = leads.empty() ? 0.0 : *std::max_element(leads.begin(), leads.end());
+    row.meanOnsetAuthority = onsetAuthorities.empty() ? 0.0
+        : std::accumulate(onsetAuthorities.begin(), onsetAuthorities.end(), 0.0) / onsetAuthorities.size();
+    row.peakOnsetAuthority = onsetAuthorities.empty() ? 0.0
+        : *std::max_element(onsetAuthorities.begin(), onsetAuthorities.end());
+    row.meanSustainedEvidence = sustainedEvidence.empty() ? 0.0
+        : std::accumulate(sustainedEvidence.begin(), sustainedEvidence.end(), 0.0) / sustainedEvidence.size();
+    row.meanSustainedAuthority = sustainedAuthorities.empty() ? 0.0
+        : std::accumulate(sustainedAuthorities.begin(), sustainedAuthorities.end(), 0.0) / sustainedAuthorities.size();
+    row.peakSustainedAuthority = sustainedAuthorities.empty() ? 0.0
+        : *std::max_element(sustainedAuthorities.begin(), sustainedAuthorities.end());
+    row.meanExtensionMs = extensions.empty() ? 0.0
+        : std::accumulate(extensions.begin(), extensions.end(), 0.0) / extensions.size();
+    row.peakExtensionMs = extensions.empty() ? 0.0 : *std::max_element(extensions.begin(), extensions.end());
     if (!stationaryLeads.empty()) {
         double sum = 0.0;
         for (const double lead : stationaryLeads) sum += lead * lead;
@@ -579,13 +661,20 @@ void writeRows(const QString &path, const std::vector<RunRow> &rows)
     QTextStream out(&contents);
     out.setRealNumberNotation(QTextStream::FixedNotation);
     out.setRealNumberPrecision(6);
-    out << "stage,partition,scenario_id,family,configuration,configured_horizon_ms,configured_maximum_lead,source_rate_hz,samples,duration_ms,mae,rmse,p95_error,p99_error,peak_error,fidelity,mean_active_horizon_ms,p95_active_horizon_ms,max_active_horizon_ms,mean_lead,p95_lead,max_lead,wrong_direction_lead_area,reversal_reacquisition_ms,lead_at_stop,settling_ms,stationary_lead_rms,noise_amplification,max_predictor_only_step,false_reversals,non_finite,illegal_output,stationary_drift,consequence\n";
+    out << "stage,partition,scenario_id,family,configuration,configured_horizon_ms,configured_maximum_lead,source_rate_hz,samples,duration_ms,mae,rmse,p95_error,p99_error,peak_error,fidelity,mean_active_horizon_ms,p95_active_horizon_ms,max_active_horizon_ms,mean_lead,p95_lead,max_lead,mean_onset_authority,peak_onset_authority,mean_sustained_evidence,mean_sustained_authority,peak_sustained_authority,mean_extension_ms,peak_extension_ms,extension_dwell_ms,max_continuous_extension_dwell_ms,extension_during_braking_ms,peak_turning_point_confidence,min_turning_horizon_limit_ms,min_turning_lead_limit,lead_clamp_dwell_ms,max_continuous_lead_clamp_dwell_ms,wrong_direction_lead_area,reversal_reacquisition_ms,lead_at_stop,settling_ms,stationary_lead_rms,noise_amplification,max_predictor_only_step,false_reversals,non_finite,illegal_output,stationary_drift,consequence\n";
     for (const RunRow &row : rows) {
         out << csv(row.stage) << ',' << csv(row.partition) << ',' << csv(row.scenarioId) << ',' << csv(row.family) << ','
             << csv(row.configuration) << ',' << row.configuredHorizonMs << ',' << row.configuredLead << ',' << row.sourceRateHz << ','
             << row.samples << ',' << row.durationMs << ',' << row.mae << ',' << row.rmse << ',' << row.p95 << ',' << row.p99 << ','
             << row.peak << ',' << row.fidelity << ',' << row.meanHorizonMs << ',' << row.p95HorizonMs << ',' << row.peakHorizonMs << ','
-            << row.meanLead << ',' << row.p95Lead << ',' << row.peakLead << ',' << row.wrongDirectionLeadArea << ','
+            << row.meanLead << ',' << row.p95Lead << ',' << row.peakLead << ','
+            << row.meanOnsetAuthority << ',' << row.peakOnsetAuthority << ','
+            << row.meanSustainedEvidence << ',' << row.meanSustainedAuthority << ',' << row.peakSustainedAuthority << ','
+            << row.meanExtensionMs << ',' << row.peakExtensionMs << ',' << row.extensionDwellMs << ','
+            << row.maximumContinuousExtensionDwellMs << ',' << row.extensionDuringBrakingMs << ','
+            << row.peakTurningPointConfidence << ',' << row.minimumTurningHorizonLimitMs << ',' << row.minimumTurningLeadLimit << ','
+            << row.leadClampDwellMs << ',' << row.maximumContinuousLeadClampDwellMs << ','
+            << row.wrongDirectionLeadArea << ','
             << row.reversalReacquisitionMs << ',' << row.leadAtStop << ',' << row.settlingMs << ',' << row.stationaryLeadRms << ','
             << row.noiseAmplification << ',' << row.maximumOutputStep << ',' << row.falseReversals << ',' << row.nonFinite << ','
             << row.illegalOutput << ',' << row.stationaryDrift << ',' << csv(row.consequence) << '\n';
@@ -678,7 +767,14 @@ int main(int argc, char *argv[])
         QTextStream(stderr) << "Expected Off, five production presets, and four model controls; got " << production.size() << ".\n";
         return 3;
     }
-    std::vector<RunRow> coarse, focused, randomized, physicalRows;
+    const auto balanced = std::find_if(production.cbegin(), production.cend(), [](const NamedConfiguration &item) {
+        return item.name == "Balanced";
+    });
+    if (balanced == production.cend()) {
+        QTextStream(stderr) << "Balanced production preset is unavailable for the Phase 1R extension matrix.\n";
+        return 3;
+    }
+    std::vector<RunRow> coarse, focused, randomized, physicalRows, authorityRows;
     std::vector<NamedConfiguration> coarseConfigurations;
     for (const int horizon : {0, 2, 4, 6, 8, 10, 12, 15, 18, 20, 24, 30, 35, 40, 50}) coarseConfigurations.push_back(experimentalConfiguration(horizon, .20));
     appendGrid(coarse, "coarse-horizon-rate", "characterization", characterization, coarseConfigurations);
@@ -706,18 +802,31 @@ int main(int argc, char *argv[])
     std::vector<NamedConfiguration> validationConfigurations;
     for (const int horizon : {8, 18, 24, 30, 35, 40}) validationConfigurations.push_back(experimentalConfiguration(horizon, .20));
     appendGrid(focused, "independent-validation", "validation", validation, validationConfigurations);
+    std::vector<NamedConfiguration> extensionConfigurations;
+    for (const int baseHorizon : {0, 4, 12, 20, 30}) {
+        for (const int extensionCap : {0, 4, 8, 12, 18, 24, 30}) {
+            extensionConfigurations.push_back(extensionConfiguration(*balanced, baseHorizon, extensionCap));
+        }
+    }
+    appendGrid(authorityRows, "phase1r-extension-matrix", "characterization", characterization,
+        extensionConfigurations);
     std::vector<NamedConfiguration> physicalConfigurations = production;
     for (const int horizon : {0, 2, 4, 6, 8, 10, 12, 15, 18, 20, 24, 30, 35, 40, 50}) physicalConfigurations.push_back(experimentalConfiguration(horizon, .20));
     for (const int horizon : {18, 30}) for (const double lead : {.02, .04, .06, .08, .10, .12, .15, .20}) physicalConfigurations.push_back(experimentalConfiguration(horizon, lead));
     for (const PhysicalTrace &trace : physical) for (const NamedConfiguration &config : physicalConfigurations) physicalRows.push_back(runPhysical(trace, config));
+    for (const PhysicalTrace &trace : physical) {
+        for (const NamedConfiguration &config : extensionConfigurations) authorityRows.push_back(runPhysical(trace, config));
+    }
     writeRows(output.filePath(u"coarse_scan.csv"_qs), coarse);
     writeRows(output.filePath(u"focused_scan.csv"_qs), focused);
     writeRows(output.filePath(u"randomized_corpus_summary.csv"_qs), randomized);
     writeRows(output.filePath(u"physical_per_trace_results.csv"_qs), physicalRows);
+    writeRows(output.filePath(u"new_math_authority_metrics.csv"_qs), authorityRows);
     std::vector<RunRow> all = coarse;
     all.insert(all.end(), focused.begin(), focused.end());
     all.insert(all.end(), randomized.begin(), randomized.end());
     all.insert(all.end(), physicalRows.begin(), physicalRows.end());
+    all.insert(all.end(), authorityRows.begin(), authorityRows.end());
     writeRows(output.filePath(u"all_results.csv"_qs), all);
     QString traceManifest;
     QTextStream traces(&traceManifest);
