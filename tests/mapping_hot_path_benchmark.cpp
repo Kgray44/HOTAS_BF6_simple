@@ -382,12 +382,15 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
     const bool oneSided = name == "One-Sided Linear";
     const bool adaptiveCase = name == "Adaptive Response" || name == "Adaptive Velocity"
         || name == "Adaptive Alpha-Beta" || name == "Adaptive Alpha-Beta-Gamma"
-        || name == "Adaptive Auto" || name == "Adaptive Fast" || name == "Adaptive Aggressive"
-        || name == "Adaptive Extreme" || name == "Adaptive All 8 Axes";
+        || name == "Adaptive Auto" || name == "Adaptive Light" || name == "Adaptive Balanced"
+        || name == "Adaptive Fast" || name == "Adaptive Aggressive" || name == "Adaptive Extreme"
+        || name == "Adaptive All 8 Axes";
     if (adaptiveCase) {
         for (hotas::AdaptiveResponseAxisOverride &axis : configuration.adaptiveResponseGlobal.axes) {
             axis.presetId = name == "Adaptive Extreme" ? QStringLiteral("extreme")
                 : name == "Adaptive Aggressive" ? QStringLiteral("aggressive")
+                : name == "Adaptive Balanced" ? QStringLiteral("balanced")
+                : name == "Adaptive Light" ? QStringLiteral("light")
                 : QStringLiteral("fast");
             if (name == "Adaptive Velocity") {
                 axis.properties = hotas::AdaptiveResponseModelProperty;
@@ -855,8 +858,9 @@ void runSuite(std::string_view condition, const std::vector<SyntheticReport> &re
     if (runUiStress) uiThread = std::thread(runUiModelStress, std::ref(stop));
     for (const std::string_view name : {"Linear", "Adaptive Off", "Adaptive Velocity",
                                         "Adaptive Alpha-Beta", "Adaptive Alpha-Beta-Gamma",
-                                        "Adaptive Auto", "Adaptive Fast", "Adaptive Aggressive",
-                                        "Adaptive Extreme", "Adaptive All 8 Axes",
+                                        "Adaptive Auto", "Adaptive Light", "Adaptive Balanced",
+                                        "Adaptive Fast", "Adaptive Aggressive", "Adaptive Extreme",
+                                        "Adaptive All 8 Axes",
                                         "One-Sided Linear", "J-Curve", "S-Curve", "Advanced",
                                         "Shooter-Flight", "Personal", "Custom-25"}) {
         printResult(condition, benchmark(name, reports));
