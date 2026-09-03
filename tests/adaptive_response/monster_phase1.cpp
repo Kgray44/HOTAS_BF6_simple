@@ -166,6 +166,14 @@ RuntimeAdaptiveResponseConfig runtimeForSettings(const AdaptiveResponseSettings 
     result.decelerationResponse = clean.decelerationResponse;
     result.settlingResponse = clean.settlingResponse;
     result.endpointTaper = clean.endpointTaper;
+    result.onsetAssist = clean.onsetAssist;
+    result.onsetCap = clean.onsetCap;
+    result.sustainedAssist = clean.sustainedAssist;
+    result.sustainedCap = clean.sustainedCap;
+    result.horizonExtension = clean.horizonExtension;
+    result.horizonExtensionCapSeconds = clean.horizonExtensionCapMs / 1000.0F;
+    result.turningPointProtection = clean.turningPointProtection;
+    result.turningPointMargin = clean.turningPointMargin;
     return result;
 }
 
