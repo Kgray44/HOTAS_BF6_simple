@@ -729,7 +729,19 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // evidence use the last trusted direction rather than a raw jitter sign.
     if (!reversal && trustedMeasurement) {
         const int trustedDirection = directionOf(m_velocity, velocityThreshold);
-        if (trustedDirection != 0) m_motionDirection = trustedDirection;
+        // Estimator velocity can cross through zero one report before the
+        // physical reversal detector has accumulated its required coherent
+        // travel. Only once the source has nearly met one of the existing
+        // detector travel thresholds do we retain the old owner through this
+        // narrow, safety-cancelled boundary. Ordinary small opposite jitter
+        // keeps the normal direction-update path.
+        const bool hasOppositeOwnershipEvidence = oppositeRawDirection
+            && m_oppositeEvidenceCount >= 2 && trustedDirection != 0
+            && trustedDirection != m_motionDirection;
+        const bool unconfirmedOppositeOwnership = hasOppositeOwnershipEvidence
+            && m_softReversalMotion >= 0.80F * std::min(softReversalThreshold,
+                std::max(hardReversalDisplacement, configuration.noiseRejection * 4.0F));
+        if (trustedDirection != 0 && !unconfirmedOppositeOwnership) m_motionDirection = trustedDirection;
     }
     if (confirmedQuiet) {
         m_velocity = 0.0F;
@@ -756,6 +768,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                                        0.0F, 1.0F);
     const bool settling = !reversal && (decelerating || confirmedQuiet
         || (holdConfidence < 0.45F && !meaningfulMeasurement));
+    // Safety cancellation prevents stale lead immediately, but an ambiguous
+    // opposite source report can be followed by one held report before the
+    // full reversal threshold is met. Decay the stale dynamic state over
+    // that boundary so the held report cannot reopen old-direction lead at
+    // the previous speed. This does not alter normal new-math settling or a
+    // confirmed reversal, which owns its own state reset above.
+    if (safetyCancellation && settling) {
+        const float settle = std::clamp(configuration.settlingResponse, 0.0F, 1.0F);
+        m_velocity *= 1.0F - settle * 0.45F;
+        m_acceleration *= 1.0F - settle * 0.65F;
+    }
     // Confidence is estimator trust, not a second copy of movement magnitude.
     // Motion intensity is applied exactly once when the horizon is formed.
     float confidence = (0.35F + coherence * 0.65F) * holdConfidence;
