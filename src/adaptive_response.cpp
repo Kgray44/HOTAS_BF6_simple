@@ -506,6 +506,16 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float priorVelocity = m_velocity;
     const float velocityThreshold = std::max(0.002F, configuration.motionSensitivity * 0.10F);
     const int rawDirection = directionOf(measuredDelta, kMinimumMeaningfulDelta * 0.25F);
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    const std::uint32_t testAblationMask = configuration.testAblationMask;
+    const bool testDisableOnset = (testAblationMask & AdaptiveResponseTestAblationOnset) != 0U;
+    const bool testDisableSustained = (testAblationMask & AdaptiveResponseTestAblationSustained) != 0U;
+    const bool testDisableHorizonExtension = (testAblationMask & AdaptiveResponseTestAblationHorizonExtension) != 0U;
+    const bool testDisableTurningPersistence = (testAblationMask & AdaptiveResponseTestAblationTurningPersistence) != 0U;
+    const bool testDisableLaunchPrearm = (testAblationMask & AdaptiveResponseTestAblationLaunchPrearm) != 0U;
+    const bool testDisableRenewedAccelerationRelease = (testAblationMask & AdaptiveResponseTestAblationRenewedAccelerationRelease) != 0U;
+    const bool testDisableDirectionalOwnership = (testAblationMask & AdaptiveResponseTestAblationDirectionalOwnership) != 0U;
+#endif
     if (m_motionDirection == 0) m_motionDirection = directionOf(priorVelocity, velocityThreshold);
     const bool oppositeRawDirection = rawDirection != 0 && m_motionDirection != 0
         && rawDirection != m_motionDirection;
@@ -727,9 +737,25 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // Ordinary coherent motion owns a direction too. This is deliberately
     // updated after estimator correction so source-braking and sustained
     // evidence use the last trusted direction rather than a raw jitter sign.
-    if (!reversal && trustedMeasurement) {
+    if (!reversal && trustedMeasurement
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+        && !testDisableDirectionalOwnership
+#endif
+    ) {
         const int trustedDirection = directionOf(m_velocity, velocityThreshold);
-        if (trustedDirection != 0) m_motionDirection = trustedDirection;
+        // Estimator velocity can cross through zero one report before the
+        // physical reversal detector has accumulated its required coherent
+        // travel. Only once the source has nearly met one of the existing
+        // detector travel thresholds do we retain the old owner through this
+        // narrow, safety-cancelled boundary. Ordinary small opposite jitter
+        // keeps the normal direction-update path.
+        const bool hasOppositeOwnershipEvidence = oppositeRawDirection
+            && m_oppositeEvidenceCount >= 2 && trustedDirection != 0
+            && trustedDirection != m_motionDirection;
+        const bool unconfirmedOppositeOwnership = hasOppositeOwnershipEvidence
+            && m_softReversalMotion >= 0.80F * std::min(softReversalThreshold,
+                std::max(hardReversalDisplacement, configuration.noiseRejection * 4.0F));
+        if (trustedDirection != 0 && !unconfirmedOppositeOwnership) m_motionDirection = trustedDirection;
     }
     if (confirmedQuiet) {
         m_velocity = 0.0F;
@@ -756,6 +782,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
                                        0.0F, 1.0F);
     const bool settling = !reversal && (decelerating || confirmedQuiet
         || (holdConfidence < 0.45F && !meaningfulMeasurement));
+    // Safety cancellation prevents stale lead immediately, but an ambiguous
+    // opposite source report can be followed by one held report before the
+    // full reversal threshold is met.  Decay the stale dynamic state over
+    // that boundary so the held report cannot reopen old-direction lead at
+    // the previous speed.  This does not alter normal new-math settling or a
+    // confirmed reversal, which owns its own state reset above.
+    if (safetyCancellation && settling) {
+        const float settle = std::clamp(configuration.settlingResponse, 0.0F, 1.0F);
+        m_velocity *= 1.0F - settle * 0.45F;
+        m_acceleration *= 1.0F - settle * 0.65F;
+    }
     // Confidence is estimator trust, not a second copy of movement magnitude.
     // Motion intensity is applied exactly once when the horizon is formed.
     float confidence = (0.35F + coherence * 0.65F) * holdConfidence;
@@ -810,7 +847,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // while an opposite report is safety-cancelled. Established motion keeps
     // the normal onset path and does not pay for preparatory authority work.
     const bool launchNeedsPrearm = !meaningfulMeasurement || safetyCancellation;
-    const bool sourceGrowthCanPrearm = launchNeedsPrearm && sourceGrowthDirection != 0
+    bool sourceGrowthCanPrearm = launchNeedsPrearm && sourceGrowthDirection != 0
         && (m_motionDirection == 0 || sourceGrowthDirection == m_motionDirection)
         && (m_launchEvidenceDirection == 0
             || sourceGrowthDirection == m_launchEvidenceDirection)
@@ -833,7 +870,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const int launchEvidenceDirection = rawDirection != 0 ? rawDirection : intendedDirection;
     const float launchTravelThreshold = std::max(kMinimumMeaningfulDelta * 1.5F,
         meaningfulDelta * 0.45F);
-    const bool ordinaryPrearm = !meaningfulMeasurement && sourceUpdated && launchEvidenceDirection != 0
+    bool ordinaryPrearm = !meaningfulMeasurement && sourceUpdated && launchEvidenceDirection != 0
         && (m_motionDirection == 0 || launchEvidenceDirection == m_motionDirection)
         && coherence >= 0.84F && std::abs(physical - m_lastMeaningfulPhysical) >= launchTravelThreshold
         && (sourceGrowthCanPrearm
@@ -842,9 +879,16 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // Safety cancellation always keeps old-direction lead at zero. It may,
     // however, collect bounded evidence for repeated credible opposite input
     // so confirmed reversal reacquisition does not start from nothing.
-    const bool oppositePrearm = safetyCancellation && sourceUpdated && rawDirection != 0
+    bool oppositePrearm = safetyCancellation && sourceUpdated && rawDirection != 0
         && m_oppositeEvidenceCount >= 1 && absoluteDelta >= launchTravelThreshold
         && coherence >= 0.72F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    if (testDisableLaunchPrearm) {
+        sourceGrowthCanPrearm = false;
+        ordinaryPrearm = false;
+        oppositePrearm = false;
+    }
+#endif
     const bool prearmCandidate = (!braking && !settling && ordinaryPrearm) || oppositePrearm;
     if (confirmedQuiet) {
         m_launchEvidence = 0.0F;
@@ -887,12 +931,19 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         && m_reacquisitionAuthority > 0.0F;
     const float accelerationIntent = onsetValid
         ? launchIntent * configuration.accelerationResponse * onsetReadiness : 0.0F;
-    const float onsetTarget = accelerationIntent * configuration.onsetAssist * configuration.onsetCap
+    float onsetTarget = accelerationIntent * configuration.onsetAssist * configuration.onsetCap
         * coherence * m_reacquisitionAuthority;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    if (testDisableOnset) onsetTarget = 0.0F;
+#endif
     // This is a predictor-authority envelope, not an axis/output filter. It
     // removes the last discrete eligibility knee while keeping braking and
     // reversal shutdown immediate and safety-first.
-    if (braking || safetyCancellation || reversal || confirmedQuiet) {
+    if (braking || safetyCancellation || reversal || confirmedQuiet
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+        || testDisableOnset
+#endif
+    ) {
         m_onsetAuthority = 0.0F;
     } else {
         constexpr float kOnsetAttackTauSeconds = 0.006F;
@@ -911,7 +962,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         && coherence >= 0.82F && speed > microCutoff * 0.65F
         && !braking && !settling && !safetyCancellation && !reversal && !confirmedQuiet
         && m_reacquisitionAuthority > 0.0F;
-    if (safetyCancellation || reversal || confirmedQuiet) {
+    if (safetyCancellation || reversal || confirmedQuiet
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+        || testDisableSustained
+#endif
+    ) {
         // A completed quiet, an ambiguous turn, or coherent braking must never
         // carry slow-motion authority into an invalid old direction.
         m_sustainedEvidence = 0.0F;
@@ -939,9 +994,12 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // immediately.
     const float sustainedBrakeSuppression = 1.0F - smootherstep(0.03F, 0.72F,
         m_brakingReductionFactor);
-    const float sustainedAuthority = m_sustainedEvidence * coherence * slowModerateAuthority
+    float sustainedAuthority = m_sustainedEvidence * coherence * slowModerateAuthority
         * configuration.sustainedAssist * configuration.sustainedCap
         * m_reacquisitionAuthority * sustainedBrakeSuppression;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    if (testDisableSustained) sustainedAuthority = 0.0F;
+#endif
     const float velocityAuthority = intensity;
     const float motionUrgency = std::clamp(1.0F - (1.0F - velocityAuthority)
         * (1.0F - std::clamp(onsetAuthority, 0.0F, 1.0F))
@@ -962,13 +1020,20 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // Only a fresh physical source change can build extension. The stored
     // envelope may coast smoothly over an ordinary held report, but repeated
     // sample-and-hold values cannot manufacture new horizon authority.
-    const float horizonExtensionTarget = (sourceUpdated && !braking && !settling && !safetyCancellation
+    float horizonExtensionTarget = (sourceUpdated && !braking && !settling && !safetyCancellation
         && !reversal && !confirmedQuiet && m_reacquisitionAuthority > 0.0F)
         ? std::clamp(m_sustainedEvidence * lowSpeedForExtension * lowAccelerationForExtension
             * highCoherenceForExtension * holdConfidence * configuration.horizonExtension
             * m_reacquisitionAuthority, 0.0F, 1.0F)
         : 0.0F;
-    if (safetyCancellation || reversal || confirmedQuiet) {
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    if (testDisableHorizonExtension) horizonExtensionTarget = 0.0F;
+#endif
+    if (safetyCancellation || reversal || confirmedQuiet
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+        || testDisableHorizonExtension
+#endif
+    ) {
         m_horizonExtensionAuthority = 0.0F;
     } else {
         constexpr float kExtensionAttackTauSeconds = 0.045F;
@@ -1051,9 +1116,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     // constraining normal high-speed travel before physical braking is real.
     const bool credibleTurningConstraint = sourceBrakingEvidence > 0.0001F
         && (rawTurningPointHorizonLimit > 0.0F || rawTurningPointLeadLimit > 0.0F);
-    const bool renewedAcceleration = !sourceBrakingDetected
+    bool renewedAcceleration = !sourceBrakingDetected
         && (sourceSpeedGrowingInMotionDirection
             || m_velocity * m_acceleration > accelerationLow * std::max(speed, velocityThreshold));
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    if (testDisableRenewedAccelerationRelease) renewedAcceleration = false;
+    if (testDisableTurningPersistence) {
+        m_turningPointAuthority = 0.0F;
+        m_turningPointHorizonLimitSeconds = 0.060F;
+        m_turningPointLeadLimit = 0.50F;
+    } else
+#endif
     if (safetyCancellation || reversal || confirmedQuiet) {
         m_turningPointAuthority = 0.0F;
         m_turningPointHorizonLimitSeconds = 0.060F;
@@ -1161,6 +1234,21 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.velocityAuthority = velocityAuthority;
     result.accelerationIntent = accelerationIntent;
 #if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    result.measuredDelta = measuredDelta;
+    result.absoluteDelta = absoluteDelta;
+    result.lastAcceptedSourceIntervalSeconds = m_lastAcceptedSourceInterval;
+    result.softReversalMotion = m_softReversalMotion;
+    result.hardReversalDisplacement = hardReversalDisplacement;
+    result.softReversalThreshold = softReversalThreshold;
+    result.brakingReductionTarget = m_brakingReductionTarget;
+    result.launchEvidence = m_launchEvidence;
+    result.rawDirection = rawDirection;
+    result.motionDirection = m_motionDirection;
+    result.acceptedSourceDirection = m_acceptedSourceDirection;
+    result.oppositeEvidenceCount = static_cast<int>(m_oppositeEvidenceCount);
+    result.launchEvidenceDirection = m_launchEvidenceDirection;
+    result.launchEvidenceCount = static_cast<int>(m_launchEvidenceCount);
+    result.testAblationMask = testAblationMask;
     result.launchIntent = launchIntent;
     result.onsetTarget = onsetTarget;
 #endif
@@ -1203,6 +1291,8 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.meaningfulMeasurement = meaningfulMeasurement;
     result.sourceUpdated = sourceUpdated;
     result.braking = braking;
+    result.hardReversal = hardReversal;
+    result.softReversal = softReversal;
 #endif
     result.state = reversal ? AdaptiveMotionState::Reversing
         : confirmedQuiet || speed <= velocityThreshold ? AdaptiveMotionState::Stable

@@ -35,6 +35,21 @@ struct AdaptiveResponseTelemetry {
 #if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
     // Test-only microscope for deterministic continuity investigation. These
     // are compiled into mapping-core validation, not the production hot path.
+    float measuredDelta = 0.0F;
+    float absoluteDelta = 0.0F;
+    float lastAcceptedSourceIntervalSeconds = 0.0F;
+    float softReversalMotion = 0.0F;
+    float hardReversalDisplacement = 0.0F;
+    float softReversalThreshold = 0.0F;
+    float brakingReductionTarget = 0.0F;
+    float launchEvidence = 0.0F;
+    int rawDirection = 0;
+    int motionDirection = 0;
+    int acceptedSourceDirection = 0;
+    int oppositeEvidenceCount = 0;
+    int launchEvidenceDirection = 0;
+    int launchEvidenceCount = 0;
+    std::uint32_t testAblationMask = 0U;
     float launchIntent = 0.0F;
     float onsetTarget = 0.0F;
 #endif
@@ -82,6 +97,8 @@ struct AdaptiveResponseTelemetry {
     bool meaningfulMeasurement = false;
     bool sourceUpdated = false;
     bool braking = false;
+    bool hardReversal = false;
+    bool softReversal = false;
 #endif
 };
 

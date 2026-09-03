@@ -59,6 +59,9 @@ struct CampaignOptions {
     int randomCountOverride = -1;
     int jobs = 1;
     QString outputDirectory;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    std::uint32_t testAblationMask = AdaptiveResponseTestAblationNone;
+#endif
     QString baselineDirectory;
     QString candidateDirectory;
 };
@@ -336,16 +339,28 @@ std::vector<NamedConfiguration> configurationsFor(const CampaignOptions &options
     };
     RuntimeAdaptiveResponseConfig off = verificationConfiguration(AdaptiveResponseModel::Auto);
     off.enabled = false;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    off.testAblationMask = options.testAblationMask;
+#endif
     if (include("Off")) configurations.push_back({"Off", off});
     for (const AdaptiveResponseModel model : {AdaptiveResponseModel::Velocity, AdaptiveResponseModel::AlphaBeta,
                                                AdaptiveResponseModel::AlphaBetaGamma, AdaptiveResponseModel::Auto}) {
         const std::string name = modelName(model);
-        if (include(name)) configurations.push_back({name, verificationConfiguration(model)});
+        if (include(name)) {
+            RuntimeAdaptiveResponseConfig configuration = verificationConfiguration(model);
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+            configuration.testAblationMask = options.testAblationMask;
+#endif
+            configurations.push_back({name, configuration});
+        }
     }
     if (options.modelFilter == "all" || options.modelFilter == "presets") {
         for (const AdaptiveResponsePreset &preset : builtInAdaptiveResponsePresets()) {
-            configurations.push_back({"Preset " + preset.name.toStdString(),
-                runtimeForSettings(preset.axes[0].settings), true});
+            RuntimeAdaptiveResponseConfig configuration = runtimeForSettings(preset.axes[0].settings);
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+            configuration.testAblationMask = options.testAblationMask;
+#endif
+            configurations.push_back({"Preset " + preset.name.toStdString(), configuration, true});
         }
     }
     return configurations;
@@ -1001,7 +1016,11 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         }
         if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || result.retainedForFailure)) {
             std::ostringstream trace;
-            trace << "time_seconds,human_intent,human_intent_velocity,human_intent_acceleration,human_intent_direction,human_intent_reversal,human_intent_stop,observed_device,observed_device_velocity,observed_device_direction,observed_device_reversal,estimated,predicted,lead,predictor_velocity,predictor_acceleration,horizon_ms,confidence,motion_intensity,predictor_state,predictor_reversal,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop\n";
+            trace << "time_seconds,human_intent,human_intent_velocity,human_intent_acceleration,human_intent_direction,human_intent_reversal,human_intent_stop,observed_device,observed_device_velocity,observed_device_direction,observed_device_reversal,estimated,predicted,lead,predictor_velocity,predictor_acceleration,horizon_ms,confidence,motion_intensity,predictor_state,predictor_reversal,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop";
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+            trace << ",physical_delta,raw_direction,motion_direction,accepted_source_direction,opposite_evidence_count,soft_reversal_travel,hard_reversal_threshold,soft_reversal_threshold,safety_cancelled,hard_reversal,soft_reversal,reacquisition_authority,launch_intent,launch_evidence,launch_evidence_count,launch_evidence_direction,onset_authority,sustained_evidence,sustained_authority,base_horizon_ms,horizon_extension_authority,horizon_extension_target,allowed_horizon_ms,braking_target,braking_factor,turning_confidence,raw_turning_horizon_ms,persistent_turning_horizon_ms,raw_turning_lead_limit,persistent_turning_lead_limit,wrong_direction_lead_contribution,ablation_mask";
+#endif
+            trace << '\n';
             for (size_t index = 0; index < result.trace.size(); ++index) {
                 const TraceSample &sample = result.trace[index];
                 const AdaptiveResponseTelemetry &telemetry = result.telemetry[index];
@@ -1014,7 +1033,29 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                     << telemetry.activeHorizonSeconds * 1000.0F << ',' << telemetry.confidence << ',' << telemetry.motionIntensity << ','
                     << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << ','
                     << (sample.sourceSampleUpdated ? 1 : 0) << ',' << sample.sourceSampleTimeSeconds << ',' << sample.dtSeconds << ','
-                    << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0) << '\n';
+                    << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0);
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+                const float physicalDelta = index == 0U ? 0.0F : sample.physical - result.trace[index - 1U].physical;
+                const float wrongDirectionContribution = sample.physicalGroundTruthDirection != 0
+                    && telemetry.lead * static_cast<float>(sample.physicalGroundTruthDirection) < -0.002F
+                    ? std::abs(telemetry.lead) * sample.dtSeconds : 0.0F;
+                trace << ',' << physicalDelta << ',' << telemetry.rawDirection << ',' << telemetry.motionDirection << ','
+                    << telemetry.acceptedSourceDirection << ',' << telemetry.oppositeEvidenceCount << ','
+                    << telemetry.softReversalMotion << ',' << telemetry.hardReversalDisplacement << ','
+                    << telemetry.softReversalThreshold << ',' << (telemetry.safetyCancelled ? 1 : 0) << ','
+                    << (telemetry.hardReversal ? 1 : 0) << ',' << (telemetry.softReversal ? 1 : 0) << ','
+                    << telemetry.reacquisitionAuthority << ',' << telemetry.launchIntent << ',' << telemetry.launchEvidence << ','
+                    << telemetry.launchEvidenceCount << ',' << telemetry.launchEvidenceDirection << ','
+                    << telemetry.onsetAuthority << ',' << telemetry.sustainedEvidence << ',' << telemetry.sustainedAuthority << ','
+                    << telemetry.normalMaximumHorizonSeconds * 1000.0F << ',' << telemetry.horizonExtensionEligibility << ','
+                    << telemetry.horizonExtensionTarget << ',' << telemetry.allowedMaximumHorizonSeconds * 1000.0F << ','
+                    << telemetry.brakingReductionTarget << ',' << telemetry.brakingReductionFactor << ','
+                    << telemetry.turningPointConfidence << ',' << telemetry.rawTurningPointHorizonLimitSeconds * 1000.0F << ','
+                    << telemetry.appliedTurningPointHorizonLimitSeconds * 1000.0F << ','
+                    << telemetry.rawTurningPointLeadLimit << ',' << telemetry.appliedTurningPointLeadLimit << ','
+                    << wrongDirectionContribution << ',' << telemetry.testAblationMask;
+#endif
+                trace << '\n';
             }
             const QString traceName = QString::number(static_cast<qulonglong>(
                 qHash(q(result.scenario.id + "|" + result.configuration))), 16)
@@ -1714,6 +1755,30 @@ CampaignOptions parseOptions(int argc, char *argv[], QString *error)
             if (!value.empty()) options.masterSeed = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 0));
         } else if (argument == "--scenario") options.scenarioFilter = next(index, "--scenario");
         else if (argument == "--model") options.modelFilter = next(index, "--model");
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+        else if (argument == "--ablate") {
+            const std::string value = next(index, "--ablate");
+            static const std::map<std::string, std::uint32_t> ablations{
+                {"onset", AdaptiveResponseTestAblationOnset},
+                {"sustained", AdaptiveResponseTestAblationSustained},
+                {"horizon-extension", AdaptiveResponseTestAblationHorizonExtension},
+                {"turning-persistence", AdaptiveResponseTestAblationTurningPersistence},
+                {"launch-prearm", AdaptiveResponseTestAblationLaunchPrearm},
+                {"renewed-acceleration-release", AdaptiveResponseTestAblationRenewedAccelerationRelease},
+                {"directional-ownership", AdaptiveResponseTestAblationDirectionalOwnership},
+            };
+            std::stringstream values(value);
+            std::string item;
+            while (std::getline(values, item, ',')) {
+                const auto found = ablations.find(item);
+                if (found == ablations.cend()) {
+                    if (error) *error = QStringLiteral("Unknown test-only ablation: %1").arg(q(item));
+                    return options;
+                }
+                options.testAblationMask |= found->second;
+            }
+        }
+#endif
         else if (argument == "--sample-rate") options.sampleRateFilter = std::atoi(next(index, "--sample-rate").c_str());
         else if (argument == "--random-count") options.randomCountOverride = std::atoi(next(index, "--random-count").c_str());
         else if (argument == "--jobs") options.jobs = std::max(1, std::atoi(next(index, "--jobs").c_str()));

@@ -174,6 +174,19 @@ struct AdaptiveResponsePreset {
 
 // Fully flattened, trivial runtime data. This is purposely not a pointer to
 // persistence data and cannot cause hierarchy/preset/QString work per report.
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+enum AdaptiveResponseTestAblation : std::uint32_t {
+    AdaptiveResponseTestAblationNone = 0U,
+    AdaptiveResponseTestAblationOnset = 1U << 0U,
+    AdaptiveResponseTestAblationSustained = 1U << 1U,
+    AdaptiveResponseTestAblationHorizonExtension = 1U << 2U,
+    AdaptiveResponseTestAblationTurningPersistence = 1U << 3U,
+    AdaptiveResponseTestAblationLaunchPrearm = 1U << 4U,
+    AdaptiveResponseTestAblationRenewedAccelerationRelease = 1U << 5U,
+    AdaptiveResponseTestAblationDirectionalOwnership = 1U << 7U,
+};
+#endif
+
 struct RuntimeAdaptiveResponseConfig {
     bool enabled = false;
     AdaptiveResponseModel model = AdaptiveResponseModel::Auto;
@@ -198,6 +211,9 @@ struct RuntimeAdaptiveResponseConfig {
     float turningPointMargin = 0.0F;
     float domainMinimum = -1.0F;
     float domainMaximum = 1.0F;
+#if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
+    std::uint32_t testAblationMask = AdaptiveResponseTestAblationNone;
+#endif
 };
 
 // Automation compiles temporary response overlays into this primitive-only
