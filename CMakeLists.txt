@@ -468,7 +468,7 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
 endif()
 
 option(HOTAS_BUILD_ADAPTIVE_FORECAST_RESEARCH
-    "Build the V2.4.R0.6 offline safe-horizon research runners" OFF)
+    "Build the V2.4.R0.7 offline horizon-error-bound research runners" OFF)
 if (HOTAS_BUILD_ADAPTIVE_FORECAST_RESEARCH)
     function(add_adaptive_forecastability_runner target_name)
         qt_add_executable(${target_name}

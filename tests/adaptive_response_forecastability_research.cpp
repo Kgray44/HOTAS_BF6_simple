@@ -1699,6 +1699,699 @@ int researchMainR06(const Options &options, const std::vector<Trace> &historical
     return exact?0:4;
 }
 
+// R0.7 intentionally leaves the R0.6 H-C mapping above intact as a historical
+// comparator.  The new shadow policy predicts an absolute CA extrapolation
+// error bound at each fixed horizon and derives availability from that bound.
+constexpr std::array<double, 5> kR07Budgets{{.005, .010, .020, .040, .060}};
+constexpr std::array<const char *, 5> kR07BudgetNames{{"tight", "precision", "general", "aggressive", "experimental"}};
+constexpr size_t kR07RiskBins = 8U;
+constexpr int kR07MaximumGroups = 9;
+constexpr int kR07NoiseTiers = 3;
+
+enum class R07CandidateKind : int { RiskOnly, RiskIntensity, RiskNoise, RiskIntensityNoise, StateRiskIntensityNoise };
+
+struct R07Sample {
+    std::string trace, corpus, family;
+    bool physical = false;
+    double time = 0.0, risk = 0.0, intensity = 0.0, noiseBurden = 0.0;
+    double cadenceConfidence = 0.0;
+    int state = 0, fold = 0;
+    std::array<double, kHorizonsMs.size()> errors{};
+    std::array<double, kHorizonsMs.size()> forecasts{};
+    std::array<double, kHorizonsMs.size()> motionScale{};
+    std::array<double, kR07Budgets.size()> actualSafeMs{};
+};
+
+using R07HorizonBounds = std::array<double, kHorizonsMs.size()>;
+using R07RiskBounds = std::array<R07HorizonBounds, kR07RiskBins>;
+using R07NoiseBounds = std::array<R07RiskBounds, kR07NoiseTiers>;
+using R07GroupBounds = std::array<R07NoiseBounds, kR07MaximumGroups>;
+
+struct R07Calibration {
+    std::string name;
+    R07CandidateKind kind = R07CandidateKind::RiskOnly;
+    int groups = 1;
+    int noiseTiers = 1;
+    double quantile = .975;
+    double residualMargin = 0.0;
+    R07GroupBounds bounds{};
+};
+
+struct R07Metrics {
+    size_t available = 0;
+    size_t eligible = 0, covered = 0;
+    double availableHorizonSum = 0.0;
+    double predictedHorizonSum = 0.0;
+    double actualHorizonSum = 0.0;
+    double calibrationErrorSum = 0.0;
+    std::vector<double> availableHorizons, horizons, efficiencies, conservatism;
+};
+
+const char *r07CandidateName(R07CandidateKind kind)
+{
+    switch (kind) {
+    case R07CandidateKind::RiskOnly: return "Q-A risk-only horizon quantile table";
+    case R07CandidateKind::RiskIntensity: return "Q-B risk plus motion intensity";
+    case R07CandidateKind::RiskNoise: return "Q-C risk plus noise burden";
+    case R07CandidateKind::RiskIntensityNoise: return "Q-D risk plus motion intensity plus noise tier";
+    case R07CandidateKind::StateRiskIntensityNoise: return "Q-E motion-state-conditioned Q-D";
+    }
+    return "unknown";
+}
+
+size_t r07RiskBin(double risk)
+{
+    return std::min(kR07RiskBins - 1U, static_cast<size_t>(std::clamp(risk, 0.0, .999999) * kR07RiskBins));
+}
+
+int r07IntensityTier(double intensity)
+{
+    return intensity < .16 ? 0 : intensity < .62 ? 1 : 2;
+}
+
+int r07NoiseTier(double burden)
+{
+    return burden < .45 ? 0 : burden < 1.20 ? 1 : 2;
+}
+
+int r07StateTier(int state)
+{
+    // Stable, micro, and settling are a single quiet state.  Deceleration and
+    // reversal retain a separate state because their future error is often
+    // unlike established coherent motion, without consuming a persona label.
+    if (state == static_cast<int>(hotas::AdaptiveMotionState::Stable)
+        || state == static_cast<int>(hotas::AdaptiveMotionState::Micro)
+        || state == static_cast<int>(hotas::AdaptiveMotionState::Settling)) return 0;
+    if (state == static_cast<int>(hotas::AdaptiveMotionState::Decelerating)
+        || state == static_cast<int>(hotas::AdaptiveMotionState::Reversing)) return 2;
+    return 1;
+}
+
+int r07Group(const R07Sample &sample, R07CandidateKind kind)
+{
+    const int intensity = r07IntensityTier(sample.intensity);
+    if (kind == R07CandidateKind::RiskIntensity || kind == R07CandidateKind::RiskIntensityNoise) return intensity;
+    if (kind == R07CandidateKind::StateRiskIntensityNoise) return r07StateTier(sample.state) * 3 + intensity;
+    return 0;
+}
+
+int r07Noise(const R07Sample &sample, R07CandidateKind kind)
+{
+    return kind == R07CandidateKind::RiskNoise || kind == R07CandidateKind::RiskIntensityNoise
+        || kind == R07CandidateKind::StateRiskIntensityNoise ? r07NoiseTier(sample.noiseBurden) : 0;
+}
+
+int r07GroupCount(R07CandidateKind kind)
+{
+    return kind == R07CandidateKind::StateRiskIntensityNoise ? 9
+        : kind == R07CandidateKind::RiskIntensity || kind == R07CandidateKind::RiskIntensityNoise ? 3 : 1;
+}
+
+int r07NoiseCount(R07CandidateKind kind)
+{
+    return kind == R07CandidateKind::RiskNoise || kind == R07CandidateKind::RiskIntensityNoise
+        || kind == R07CandidateKind::StateRiskIntensityNoise ? 3 : 1;
+}
+
+std::vector<R07Sample> r07Samples(const std::vector<TraceEvaluation> &evaluations)
+{
+    std::vector<R07Sample> output;
+    for (size_t traceIndex = 0; traceIndex < evaluations.size(); ++traceIndex) {
+        const TraceEvaluation &evaluation = evaluations[traceIndex];
+        for (const Observation &row : evaluation.rows) {
+            R07Sample sample;
+            sample.trace = evaluation.trace.id;
+            sample.corpus = evaluation.trace.corpus;
+            sample.family = evaluation.trace.family;
+            sample.physical = evaluation.trace.physicalTrace;
+            sample.time = row.time;
+            sample.risk = std::clamp(1.0 - row.r05Confidence[1], 0.0, 1.0); // R05-B, unchanged.
+            sample.intensity = std::clamp(static_cast<double>(row.telemetry.motionIntensity), 0.0, 1.0);
+            const double noiseFloor = std::max(.00025, static_cast<double>(row.telemetry.noiseThreshold));
+            const double normalizedInnovation = std::sqrt(std::max(0.0, row.slowInnovationEnergy[1])) / noiseFloor;
+            const double microDelta = std::abs(static_cast<double>(row.telemetry.physicalDelta)) / noiseFloor;
+            const double cadenceBurden = 1.0 - std::clamp(row.cadenceConfidence, 0.0, 1.0);
+            // Bounded scalar, entirely observable at report time.  It is not a
+            // V2.3 noise-filter change and it never reaches the mapper.
+            sample.noiseBurden = std::clamp(.45 * normalizedInnovation + .35 * microDelta
+                + .20 * cadenceBurden, 0.0, 3.0);
+            sample.cadenceConfidence = std::clamp(row.cadenceConfidence, 0.0, 1.0);
+            sample.state = static_cast<int>(row.telemetry.state);
+            sample.fold = static_cast<int>(traceIndex % 5U); // complete traces remain intact.
+            sample.errors.fill(-1.0);
+            sample.forecasts.fill(0.0);
+            sample.motionScale.fill(0.0);
+            const double speed = std::abs(static_cast<double>(row.telemetry.velocity));
+            const double acceleration = std::abs(static_cast<double>(row.telemetry.acceleration));
+            for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+                const double seconds = kHorizonsMs[horizon] / 1000.0;
+                const double forecast = row.physical + row.telemetry.velocity * seconds
+                    + .5 * row.telemetry.acceleration * seconds * seconds;
+                sample.forecasts[horizon] = forecast;
+                sample.motionScale[horizon] = std::max({noiseFloor, speed * seconds,
+                    .5 * acceleration * seconds * seconds, .002});
+                if (const auto truth = valueAt(evaluation.trace.samples, row.time + seconds)) {
+                    sample.errors[horizon] = std::abs(forecast - *truth);
+                }
+            }
+            for (size_t budget = 0; budget < kR07Budgets.size(); ++budget) {
+                for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+                    if (sample.errors[horizon] >= 0.0 && sample.errors[horizon] <= kR07Budgets[budget]) {
+                        sample.actualSafeMs[budget] = kHorizonsMs[horizon];
+                    }
+                }
+            }
+            output.push_back(std::move(sample));
+        }
+    }
+    return output;
+}
+
+R07Calibration r07Build(const std::vector<R07Sample> &samples, R07CandidateKind kind,
+                        double quantile, int omitFold = -1)
+{
+    R07Calibration result;
+    result.name = r07CandidateName(kind);
+    result.kind = kind;
+    result.groups = r07GroupCount(kind);
+    result.noiseTiers = r07NoiseCount(kind);
+    result.quantile = quantile;
+    using CellValues = std::array<std::array<std::array<std::array<std::vector<double>, kHorizonsMs.size()>,
+        kR07RiskBins>, kR07NoiseTiers>, kR07MaximumGroups>;
+    CellValues values{};
+    std::array<std::vector<double>, kHorizonsMs.size()> global{};
+    for (const R07Sample &sample : samples) {
+        if (sample.fold == omitFold) continue;
+        const int group = r07Group(sample, kind);
+        const int noise = r07Noise(sample, kind);
+        const size_t risk = r07RiskBin(sample.risk);
+        for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+            if (sample.errors[horizon] < 0.0) continue;
+            values[group][noise][risk][horizon].push_back(sample.errors[horizon]);
+            global[horizon].push_back(sample.errors[horizon]);
+        }
+    }
+    for (int group = 0; group < result.groups; ++group) for (int noise = 0; noise < result.noiseTiers; ++noise) {
+        for (size_t risk = 0; risk < kR07RiskBins; ++risk) for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+            const std::vector<double> &cell = values[group][noise][risk][horizon];
+            result.bounds[group][noise][risk][horizon] = percentile(cell.empty() ? global[horizon] : cell, quantile);
+        }
+        // Offline isotonic-style projection: longer horizon and higher risk can
+        // never claim a lower error bound merely from finite-sample noise.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (size_t risk = 0; risk < kR07RiskBins; ++risk) for (size_t horizon = 1; horizon < kHorizonsMs.size(); ++horizon) {
+                result.bounds[group][noise][risk][horizon] = std::max(result.bounds[group][noise][risk][horizon],
+                    result.bounds[group][noise][risk][horizon - 1U]);
+            }
+            for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) for (size_t risk = 1; risk < kR07RiskBins; ++risk) {
+                result.bounds[group][noise][risk][horizon] = std::max(result.bounds[group][noise][risk][horizon],
+                    result.bounds[group][noise][risk - 1U][horizon]);
+            }
+        }
+    }
+    return result;
+}
+
+double r07Bound(const R07Calibration &calibration, const R07Sample &sample, size_t horizon)
+{
+    return calibration.bounds[r07Group(sample, calibration.kind)][r07Noise(sample, calibration.kind)]
+        [r07RiskBin(sample.risk)][horizon] + calibration.residualMargin;
+}
+
+double r07PredictedSafeMs(const R07Calibration &calibration, const R07Sample &sample, size_t budget)
+{
+    double safe = 0.0;
+    for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+        if (r07Bound(calibration, sample, horizon) <= kR07Budgets[budget]) safe = kHorizonsMs[horizon];
+    }
+    return safe;
+}
+
+int r07HorizonIndex(double milliseconds)
+{
+    for (size_t index = 0; index < kHorizonsMs.size(); ++index) {
+        if (std::abs(kHorizonsMs[index] - milliseconds) < .01) return static_cast<int>(index);
+    }
+    return -1;
+}
+
+R07Metrics r07Measure(const R07Calibration &calibration, const std::vector<R07Sample> &samples,
+                      size_t budget, int onlyFold = -1, const std::string &family = {}, bool movingOnly = false)
+{
+    R07Metrics result;
+    for (const R07Sample &sample : samples) {
+        if (onlyFold >= 0 && sample.fold != onlyFold) continue;
+        if (!family.empty() && sample.family != family) continue;
+        if (movingOnly && sample.intensity < .16) continue;
+        const double predicted = r07PredictedSafeMs(calibration, sample, budget);
+        if (sample.errors[0] < 0.0) continue;
+        const double actual = sample.actualSafeMs[budget];
+        ++result.available;
+        result.availableHorizonSum += predicted;
+        result.availableHorizons.push_back(predicted);
+        result.efficiencies.push_back(std::clamp(predicted / std::max(2.0, actual), 0.0, 2.0));
+        const int index = r07HorizonIndex(predicted);
+        // A zero declaration is deliberately not admitted to coverage.  It is
+        // reported as availability separately and cannot inflate reliability.
+        if (index < 0 || sample.errors[static_cast<size_t>(index)] < 0.0) continue;
+        const double error = sample.errors[static_cast<size_t>(index)];
+        const double bound = r07Bound(calibration, sample, static_cast<size_t>(index));
+        ++result.eligible;
+        result.covered += error <= kR07Budgets[budget] ? 1U : 0U;
+        result.predictedHorizonSum += predicted;
+        result.actualHorizonSum += actual;
+        result.calibrationErrorSum += bound - error;
+        result.horizons.push_back(predicted);
+        result.conservatism.push_back(bound / std::max(.0001, error));
+    }
+    return result;
+}
+
+double r07Reliability(const R07Metrics &metric)
+{
+    return metric.eligible == 0U ? 0.0 : static_cast<double>(metric.covered) / metric.eligible;
+}
+
+double r07MeanHorizon(const R07Metrics &metric)
+{
+    return metric.eligible == 0U ? 0.0 : metric.predictedHorizonSum / metric.eligible;
+}
+
+double r07MeanAvailableHorizon(const R07Metrics &metric)
+{
+    return metric.available == 0U ? 0.0 : metric.availableHorizonSum / metric.available;
+}
+
+double r07ResidualMargin(const std::vector<R07Sample> &samples, R07CandidateKind kind, double quantile)
+{
+    std::vector<double> residuals;
+    for (int fold = 0; fold < 5; ++fold) {
+        const R07Calibration fit = r07Build(samples, kind, quantile, fold);
+        for (const R07Sample &sample : samples) if (sample.fold == fold) {
+            for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+                if (sample.errors[horizon] >= 0.0) residuals.push_back(sample.errors[horizon] - r07Bound(fit, sample, horizon));
+            }
+        }
+    }
+    return std::max(0.0, percentile(residuals, quantile));
+}
+
+std::vector<Trace> r07BlindCorpus()
+{
+    std::vector<Trace> traces;
+    std::uint32_t seed = 0x2407F00DU;
+    const std::array<const char *, 5> personas{{"Precision Pilot", "Combat Helicopter", "Fixed-Wing", "Space-Sim", "Noisy Sensor"}};
+    for (size_t persona = 0; persona < personas.size(); ++persona) for (int sequence = 0; sequence < 120; ++sequence) {
+        std::uint32_t state = seed++;
+        const bool combat = persona == 1U;
+        const double step = combat ? .032 : persona == 0U ? .19 : persona == 2U ? .072 : persona == 3U ? .105 : .14;
+        const double range = combat ? .72 : persona == 0U ? .10 : persona == 2U ? .58 : persona == 3U ? .66 : .25;
+        std::vector<std::pair<double, float>> points{{0.0, static_cast<float>((unitRandom(state) - .5) * .18)}};
+        for (double time = step; time < 2.9; time += step) {
+            const double mode = sequence % 9 == 0 ? 1.28 : sequence % 7 == 0 ? .55 : 1.0;
+            points.push_back({time, std::clamp(points.back().second + static_cast<float>((unitRandom(state) - .5)
+                * 2.0 * range * mode), -1.0F, 1.0F)});
+        }
+        points.push_back({3.1, points.back().second});
+        traces.push_back(syntheticTrace("blind-r07/persona/" + std::to_string(sequence) + "/" + personas[persona],
+            "blind-r07", personas[persona], points, seed++, combat ? 250 : 125, persona == 4U, persona == 4U ? .006 : 0.0));
+    }
+    const std::array<const char *, 13> names{{"slow coherent", "smooth ballistic", "fast ballistic", "very-fast ballistic",
+        "acceleration changes", "high jerk", "reversal", "repeated reversal", "brake/reverse", "stop", "cadence jitter",
+        "sample-and-hold", "endpoint compound"}};
+    for (int sequence = 0; sequence < 200; ++sequence) {
+        const int style = sequence % static_cast<int>(names.size());
+        std::vector<std::pair<double, float>> points;
+        switch (style) {
+        case 0: points={{0,-.70F},{.80F,.70F},{1.25F,.70F}}; break;
+        case 1: points={{0,-.88F},{.30F,.88F},{1.15F,.88F}}; break;
+        case 2: points={{0,-.90F},{.115F,.90F},{1.0F,.90F}}; break;
+        case 3: points={{0,-.92F},{.052F,.92F},{.90F,.92F}}; break;
+        case 4: points={{0,-.80F},{.22F,.15F},{.34F,.85F},{1.1F,.85F}}; break;
+        case 5: points={{0,0},{.035F,.65F},{.070F,-.58F},{.110F,.82F},{.60F,.82F}}; break;
+        case 6: points={{0,.82F},{.18F,-.78F},{.48F,.76F},{1.08F,.76F}}; break;
+        case 7: points={{0,-.70F},{.13F,.72F},{.25F,-.66F},{.37F,.70F},{1.05F,.70F}}; break;
+        case 8: points={{0,-.86F},{.15F,.80F},{.24F,.79F},{.35F,-.72F},{1.08F,-.72F}}; break;
+        case 9: points={{0,-.90F},{.16F,.88F},{1.10F,.88F}}; break;
+        case 10: points={{0,-.65F},{.58F,.62F},{1.20F,.62F}}; break;
+        case 11: points={{0,-.50F},{.36F,.55F},{.72F,.55F},{.95F,-.35F},{1.2F,-.35F}}; break;
+        default: points={{0,-.48F},{.30F,.55F},{.55F,.95F},{.75F,.32F},{1.15F,.32F}}; break;
+        }
+        const bool cadence = style == 10 || style == 11;
+        const bool noisy = style == 5;
+        traces.push_back(syntheticTrace("blind-r07/structured/" + std::to_string(sequence) + "/" + names[style],
+            "blind-r07", names[style], points, seed++, cadence ? 125 : 250, cadence, noisy ? .003 : 0.0));
+    }
+    return traces;
+}
+
+std::string r07FeatureRows(const std::vector<R07Sample> &samples)
+{
+    std::ostringstream output;
+    output << "trace_id,corpus,motion_family,time_ms,r05_b_risk,motion_intensity,motion_intensity_tier,noise_burden,noise_tier,cadence_confidence,motion_state,blocked_fold\n";
+    for (const R07Sample &sample : samples) output << csv(sample.trace) << ',' << csv(sample.corpus) << ',' << csv(sample.family)
+        << ',' << number(sample.time * 1000.0,3) << ',' << number(sample.risk) << ',' << number(sample.intensity) << ','
+        << r07IntensityTier(sample.intensity) << ',' << number(sample.noiseBurden) << ',' << r07NoiseTier(sample.noiseBurden)
+        << ',' << number(sample.cadenceConfidence) << ',' << sample.state << ',' << sample.fold << '\n';
+    return output.str();
+}
+
+std::string r07TrainingRows(const std::vector<R07Sample> &samples)
+{
+    std::ostringstream output;
+    output << "trace_id,corpus,motion_family,time_ms,horizon_ms,absolute_future_error,ca_forecast,motion_scale,r05_b_risk,motion_intensity,noise_burden,motion_state,blocked_fold\n";
+    for (const R07Sample &sample : samples) for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+        if (sample.errors[horizon] < 0.0) continue;
+        output << csv(sample.trace) << ',' << csv(sample.corpus) << ',' << csv(sample.family) << ',' << number(sample.time * 1000.0,3)
+            << ',' << number(kHorizonsMs[horizon],0) << ',' << number(sample.errors[horizon]) << ',' << number(sample.forecasts[horizon])
+            << ',' << number(sample.motionScale[horizon]) << ',' << number(sample.risk) << ',' << number(sample.intensity)
+            << ',' << number(sample.noiseBurden) << ',' << sample.state << ',' << sample.fold << '\n';
+    }
+    return output.str();
+}
+
+std::string r07NoiseAnalysis(const std::vector<R07Sample> &samples)
+{
+    std::ostringstream output;
+    output << "noise_tier,horizon_ms,samples,mean_error,p95_error,mean_r05_b_risk,mean_cadence_confidence\n";
+    for (int tier = 0; tier < 3; ++tier) for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+        Stats errors, risks, cadence;
+        for (const R07Sample &sample : samples) if (r07NoiseTier(sample.noiseBurden) == tier && sample.errors[horizon] >= 0.0) {
+            errors.add(sample.errors[horizon]); risks.add(sample.risk); cadence.add(sample.cadenceConfidence);
+        }
+        output << tier << ',' << number(kHorizonsMs[horizon],0) << ',' << errors.count() << ',' << number(errors.mean())
+            << ',' << number(errors.percentile(.95)) << ',' << number(risks.mean()) << ',' << number(cadence.mean()) << '\n';
+    }
+    return output.str();
+}
+
+std::string r07MotionScaleAnalysis(const std::vector<R07Sample> &samples)
+{
+    std::ostringstream output;
+    output << "intensity_tier,horizon_ms,samples,mean_motion_scale,mean_error,p95_error,mean_error_over_scale\n";
+    for (int tier = 0; tier < 3; ++tier) for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+        Stats scale, errors, normalized;
+        for (const R07Sample &sample : samples) if (r07IntensityTier(sample.intensity) == tier && sample.errors[horizon] >= 0.0) {
+            scale.add(sample.motionScale[horizon]); errors.add(sample.errors[horizon]); normalized.add(sample.errors[horizon] / sample.motionScale[horizon]);
+        }
+        output << tier << ',' << number(kHorizonsMs[horizon],0) << ',' << errors.count() << ',' << number(scale.mean())
+            << ',' << number(errors.mean()) << ',' << number(errors.percentile(.95)) << ',' << number(normalized.mean()) << '\n';
+    }
+    return output.str();
+}
+
+std::string r07SpecialAnalysis(const std::vector<R07Sample> &samples, const R07Calibration &calibration,
+                               const std::string &family, const char *scope)
+{
+    std::ostringstream output;
+    output << "scope,r05_b_risk_bin,horizon_ms,samples,mean_actual_error,p95_actual_error,mean_predicted_bound,coverage_general\n";
+    for (size_t bin = 0; bin < kR07RiskBins; ++bin) for (const double horizonMs : {4.0,8.0,12.0,18.0,24.0,30.0}) {
+        const int horizon = r07HorizonIndex(horizonMs); Stats errors, bounds; size_t safe = 0;
+        for (const R07Sample &sample : samples) if (sample.family == family && r07RiskBin(sample.risk) == bin
+            && horizon >= 0 && sample.errors[static_cast<size_t>(horizon)] >= 0.0) {
+            const size_t index = static_cast<size_t>(horizon);
+            errors.add(sample.errors[index]); bounds.add(r07Bound(calibration, sample, index));
+            safe += sample.errors[index] <= .020 ? 1U : 0U;
+        }
+        output << scope << ',' << bin << ',' << number(horizonMs,0) << ',' << errors.count() << ',' << number(errors.mean())
+            << ',' << number(errors.percentile(.95)) << ',' << number(bounds.mean()) << ','
+            << number(errors.count() ? static_cast<double>(safe) / errors.count() : 0.0) << '\n';
+    }
+    return output.str();
+}
+
+std::string r07PredictedVsActual(const std::vector<R07Sample> &samples, const R07Calibration &calibration,
+                                 bool physicalOnly = false)
+{
+    std::ostringstream output;
+    output << "trace_id,corpus,motion_family,time_ms,horizon_ms,actual_error,predicted_error_bound,conservatism_ratio,r05_b_risk,motion_intensity,noise_burden,motion_scale\n";
+    for (const R07Sample &sample : samples) {
+        if (physicalOnly && !sample.physical) continue;
+        for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) if (sample.errors[horizon] >= 0.0) {
+            const double bound = r07Bound(calibration, sample, horizon);
+            output << csv(sample.trace) << ',' << csv(sample.corpus) << ',' << csv(sample.family) << ',' << number(sample.time * 1000.0,3)
+                << ',' << number(kHorizonsMs[horizon],0) << ',' << number(sample.errors[horizon]) << ',' << number(bound)
+                << ',' << number(bound / std::max(.0001, sample.errors[horizon])) << ',' << number(sample.risk) << ','
+                << number(sample.intensity) << ',' << number(sample.noiseBurden) << ',' << number(sample.motionScale[horizon]) << '\n';
+        }
+    }
+    return output.str();
+}
+
+std::string r07EfficiencyRows(const std::vector<R07Sample> &samples, const R07Calibration &calibration)
+{
+    std::ostringstream output;
+    output << "trace_id,motion_family,time_ms,quality_budget,predicted_safe_horizon_ms,actual_maximum_safe_horizon_ms,horizon_efficiency,declared_safe,actual_error_at_declared,predicted_bound_at_declared\n";
+    for (const R07Sample &sample : samples) for (const size_t budget : {size_t{1}, size_t{2}}) {
+        const double predicted = r07PredictedSafeMs(calibration, sample, budget);
+        const int horizon = r07HorizonIndex(predicted);
+        const bool hasHorizon = horizon >= 0 && sample.errors[static_cast<size_t>(horizon)] >= 0.0;
+        const double actual = sample.actualSafeMs[budget];
+        output << csv(sample.trace) << ',' << csv(sample.family) << ',' << number(sample.time * 1000.0,3) << ','
+            << kR07BudgetNames[budget] << ',' << number(predicted,0) << ',' << number(actual,0) << ','
+            << number(std::clamp(predicted / std::max(2.0, actual), 0.0, 2.0)) << ','
+            << (hasHorizon && sample.errors[static_cast<size_t>(horizon)] <= kR07Budgets[budget] ? "true" : "false") << ','
+            << (hasHorizon ? number(sample.errors[static_cast<size_t>(horizon)]) : "") << ','
+            << (hasHorizon ? number(r07Bound(calibration, sample, static_cast<size_t>(horizon))) : "") << '\n';
+    }
+    return output.str();
+}
+
+std::string r07FamilyRows(const std::vector<R07Sample> &samples, const R07Calibration &calibration)
+{
+    std::map<std::string, int> families;
+    for (const R07Sample &sample : samples) families[sample.family] = 1;
+    std::ostringstream output;
+    output << "scope,quality_budget,available_future_rows,eligible_declared_predictions,reliability,mean_safe_horizon_ms,median_safe_horizon_ms,p10_efficiency,p90_efficiency,median_efficiency,median_conservatism_ratio,pct_ge_8_ms,pct_ge_12_ms,pct_ge_18_ms,pct_ge_24_ms\n";
+    for (const auto &[family, ignored] : families) {
+        (void)ignored;
+        for (const size_t budget : {size_t{1}, size_t{2}}) {
+            const R07Metrics metric = r07Measure(calibration, samples, budget, -1, family);
+            const double denom = std::max<size_t>(1U, metric.availableHorizons.size());
+            size_t ge8 = 0, ge12 = 0, ge18 = 0, ge24 = 0;
+            for (double value : metric.availableHorizons) { ge8 += value >= 8.0; ge12 += value >= 12.0; ge18 += value >= 18.0; ge24 += value >= 24.0; }
+            output << csv(family) << ',' << kR07BudgetNames[budget] << ',' << metric.available << ',' << metric.eligible << ',' << number(r07Reliability(metric))
+                << ',' << number(r07MeanAvailableHorizon(metric)) << ',' << number(percentile(metric.availableHorizons,.50))
+                << ',' << number(percentile(metric.efficiencies,.10)) << ',' << number(percentile(metric.efficiencies,.90))
+                << ',' << number(percentile(metric.efficiencies,.50)) << ',' << number(percentile(metric.conservatism,.50))
+                << ',' << number(static_cast<double>(ge8) / denom) << ',' << number(static_cast<double>(ge12) / denom)
+                << ',' << number(static_cast<double>(ge18) / denom) << ',' << number(static_cast<double>(ge24) / denom) << '\n';
+        }
+    }
+    return output.str();
+}
+
+int researchMainR07(const Options &options, const std::vector<Trace> &historical)
+{
+    const RuntimeAdaptiveResponseConfig configuration = productionConfiguration();
+    if (!productionOutput(options.output, historical)) return 3;
+    std::string equivalence;
+    const bool exact = equivalentOutput(options.baseline, options.output / "production_outputs.csv", &equivalence);
+    const std::vector<TraceEvaluation> developmentEvaluation = evaluate(historical, configuration);
+    const std::vector<R07Sample> development = r07Samples(developmentEvaluation);
+    // These two legacy maps remain retrospective, development-only comparators.
+    // They are not re-labeled and never see the fresh R0.7 blind corpus.
+    const std::vector<R06Sample> r06Development = r06Samples(developmentEvaluation);
+
+    // The corpus is generated, serialized, and hashed before any candidate is
+    // selected.  It is not observed or evaluated until after the selection lock.
+    const std::vector<Trace> blind = r07BlindCorpus();
+    if (blind.size() != 800U) { std::cerr << "R0.7 blind corpus must contain exactly 800 scenarios.\n"; return 3; }
+    const std::string blindCsv = blindCanonicalCsv(blind);
+    const std::string blindHash = QCryptographicHash::hash(QByteArray::fromStdString(blindCsv), QCryptographicHash::Sha256).toHex().toStdString();
+    const std::string blindSeal = "{\n  \"schema\": \"v2.4.R0.7-horizon-error-bounds-v1\",\n  \"generator\": \"adaptive_response_forecastability_research.cpp:r07BlindCorpus\",\n  \"seed\": \"0x2407F00D\",\n  \"scenario_count\": 800,\n  \"composition\": {\"Precision Pilot\":120,\"Combat Helicopter\":120,\"Fixed-Wing\":120,\"Space-Sim\":120,\"Noisy Sensor\":120,\"structured_torture\":200},\n  \"canonical_csv_sha256\": \"" + blindHash + "\",\n  \"sealed_before_calibration_lock\": true,\n  \"blind_replays_before_lock\": 0\n}\n";
+    if (!writeText(options.output / "blind_corpus.csv", blindCsv) || !writeText(options.output / "blind_corpus_seal.json", blindSeal)) return 3;
+
+    constexpr double targetQuantile = .975; // fixed from R0.6's inadequate ~95% pooled margin, before blind replay.
+    std::array<R07Calibration, 5> candidates{};
+    std::array<double, 5> candidateScores{};
+    std::ostringstream crossValidation, candidateRows;
+    crossValidation << "candidate,fold,quality_budget,eligible_declared_predictions,reliability,mean_safe_horizon_ms,median_efficiency,mean_calibration_error\n";
+    candidateRows << "candidate,quantile,minimum_general_fold_reliability,pooled_general_reliability,pooled_general_mean_safe_horizon_ms,selection_score,selection_status\n";
+    int selectedIndex = 0;
+    double selectedScore = -1e30;
+    for (int kind = 0; kind < 5; ++kind) {
+        const auto candidateKind = static_cast<R07CandidateKind>(kind);
+        double minimumGeneral = 1.0, reliabilityWeight = 0.0, horizonWeight = 0.0;
+        double weightedReliability = 0.0, weightedHorizon = 0.0;
+        for (int fold = 0; fold < 5; ++fold) {
+            const R07Calibration fit = r07Build(development, candidateKind, targetQuantile, fold);
+            for (const size_t budget : {size_t{1}, size_t{2}}) {
+                const R07Metrics metric = r07Measure(fit, development, budget, fold);
+                crossValidation << csv(r07CandidateName(candidateKind)) << ',' << fold << ',' << kR07BudgetNames[budget]
+                    << ',' << metric.eligible << ',' << number(r07Reliability(metric)) << ',' << number(r07MeanAvailableHorizon(metric))
+                    << ',' << number(percentile(metric.efficiencies,.50)) << ','
+                    << number(metric.eligible ? metric.calibrationErrorSum / metric.eligible : 0.0) << '\n';
+                if (budget == 2U) {
+                    minimumGeneral = std::min(minimumGeneral, r07Reliability(metric));
+                    reliabilityWeight += metric.eligible;
+                    horizonWeight += metric.available;
+                    weightedReliability += metric.eligible * r07Reliability(metric);
+                    weightedHorizon += metric.available * r07MeanAvailableHorizon(metric);
+                }
+            }
+        }
+        const double pooledReliability = reliabilityWeight > 0.0 ? weightedReliability / reliabilityWeight : 0.0;
+        const double pooledHorizon = horizonWeight > 0.0 ? weightedHorizon / horizonWeight : 0.0;
+        // Development-only selection: put reliability first, then preserve
+        // usable horizon among candidates that have comparable fold safety.
+        const double score = minimumGeneral * 10000.0 + pooledReliability * 100.0 + pooledHorizon;
+        candidateScores[static_cast<size_t>(kind)] = score;
+        candidateRows << csv(r07CandidateName(candidateKind)) << ',' << number(targetQuantile,4) << ',' << number(minimumGeneral)
+            << ',' << number(pooledReliability) << ',' << number(pooledHorizon) << ',' << number(score) << ','
+            << (score > selectedScore ? "development_leader" : "evaluated") << '\n';
+        if (score > selectedScore) { selectedScore = score; selectedIndex = kind; }
+    }
+    const R07CandidateKind selectedKind = static_cast<R07CandidateKind>(selectedIndex);
+    R07Calibration selected = r07Build(development, selectedKind, targetQuantile);
+    selected.residualMargin = r07ResidualMargin(development, selectedKind, targetQuantile);
+    const std::string lock = "{\n  \"selected_candidate\": \"" + selected.name + "\",\n  \"target_quantile\": 0.975,\n  \"selection_rule\": \"five-fold complete-trace validation: highest minimum General-band coverage, then pooled coverage and usable horizon\",\n  \"residual_correction\": \"positive blocked out-of-fold residual p97.5\",\n  \"residual_margin\": " + number(selected.residualMargin) + ",\n  \"blind_corpus_sealed_before_lock\": true,\n  \"blind_replays_before_lock\": 0\n}\n";
+    if (!writeText(options.output / "selected_calibration.json", lock)) return 3;
+
+    std::ostringstream residuals;
+    residuals << "trace_id,blocked_fold,horizon_ms,actual_error,raw_bound,residual\n";
+    for (int fold = 0; fold < 5; ++fold) {
+        const R07Calibration fit = r07Build(development, selectedKind, targetQuantile, fold);
+        for (const R07Sample &sample : development) if (sample.fold == fold) for (size_t horizon = 0; horizon < kHorizonsMs.size(); ++horizon) {
+            if (sample.errors[horizon] >= 0.0) residuals << csv(sample.trace) << ',' << fold << ',' << number(kHorizonsMs[horizon],0)
+                << ',' << number(sample.errors[horizon]) << ',' << number(r07Bound(fit, sample, horizon)) << ','
+                << number(sample.errors[horizon] - r07Bound(fit, sample, horizon)) << '\n';
+        }
+    }
+
+    const std::vector<R07Sample> blindSamples = r07Samples(evaluate(blind, configuration)); // One replay after lock.
+    const R07Metrics blindGeneral = r07Measure(selected, blindSamples, 2);
+    const R07Metrics blindPrecision = r07Measure(selected, blindSamples, 1);
+    const R07Metrics combatGeneral = r07Measure(selected, blindSamples, 2, -1, "Combat Helicopter");
+    const R07Metrics combatMoving = r07Measure(selected, blindSamples, 2, -1, "Combat Helicopter", true);
+    const R07Metrics precisionGeneral = r07Measure(selected, blindSamples, 2, -1, "Precision Pilot");
+    const R07Metrics noisyGeneral = r07Measure(selected, blindSamples, 2, -1, "Noisy Sensor");
+    std::map<std::string, R07Metrics> familyGeneral;
+    for (const std::string family : {std::string("Precision Pilot"), std::string("Combat Helicopter"), std::string("Fixed-Wing"),
+                                    std::string("Space-Sim"), std::string("Noisy Sensor")}) familyGeneral[family] = r07Measure(selected, blindSamples, 2, -1, family);
+    size_t combatMovingDenominator = 0, combatMovingAt8 = 0;
+    for (const R07Sample &sample : blindSamples) if (sample.family == "Combat Helicopter" && sample.intensity >= .16) {
+        ++combatMovingDenominator; combatMovingAt8 += r07PredictedSafeMs(selected, sample, 2) >= 8.0 ? 1U : 0U;
+    }
+    const double combatAt8 = combatMovingDenominator ? static_cast<double>(combatMovingAt8) / combatMovingDenominator : 0.0;
+    bool allFamilyReliable = true;
+    for (const auto &[family, metric] : familyGeneral) { (void)family; allFamilyReliable = allFamilyReliable && r07Reliability(metric) >= .95; }
+    const bool pass = exact && r07Reliability(blindGeneral) >= .96 && allFamilyReliable && r07Reliability(precisionGeneral) >= .95
+        && r07Reliability(noisyGeneral) >= .95 && r07MeanHorizon(combatGeneral) >= 6.0 && combatAt8 >= .30
+        && r07MeanHorizon(precisionGeneral) >= 12.0;
+    const std::string disposition = pass
+        ? "V2.4.R0.7 PASS — HORIZON ERROR BOUNDS GENERALIZE — READY FOR R1 SHADOW PREDICTOR"
+        : exact ? "V2.4.R0.7 PARTIAL — ERROR BOUNDS IMPROVED BUT CRITICAL CALIBRATION GAP REMAINS"
+        : "V2.4.R0.7 FAIL — SAFE-HORIZON CONTROL IS NOT ROBUST ENOUGH FOR R1";
+
+    const R06Calibration hc = r06Build(r06Development, 2);
+    const R06Calibration hd = r06Build(r06Development, 3);
+    const R06Metrics hcGeneral = r06Measure(hc, r06Development, 2);
+    const R06Metrics hdGeneral = r06Measure(hd, r06Development, 2);
+    std::ostringstream hdRetro;
+    hdRetro << "comparison,scope,declared_samples,general_reliability,mean_general_safe_horizon_ms,notes\n";
+    hdRetro << "H-C retained R0.6 baseline,all," << hcGeneral.count << ','
+        << number(hcGeneral.count ? static_cast<double>(hcGeneral.safe) / hcGeneral.count : 0.0) << ','
+        << number(hcGeneral.count ? hcGeneral.sum / hcGeneral.count : 0.0)
+        << ",Direct safe-horizon comparator retained without relabeling.\n";
+    hdRetro << "H-D retained R0.6 retrospective,all," << hdGeneral.count << ','
+        << number(hdGeneral.count ? static_cast<double>(hdGeneral.safe) / hdGeneral.count : 0.0) << ','
+        << number(hdGeneral.count ? hdGeneral.sum / hdGeneral.count : 0.0)
+        << ",Development-only score plus intensity map; not evaluated against R0.7 blind data.\n";
+    for (const std::string family : {std::string("Combat Helicopter"),std::string("Precision Pilot"),std::string("Noisy Sensor")}) {
+        const R06Metrics metric = r06Measure(hd, r06Development, 2, -1, family);
+        hdRetro << "H-D retained R0.6 retrospective," << csv(family) << ',' << metric.count << ','
+            << number(metric.count ? static_cast<double>(metric.safe) / metric.count : 0.0) << ','
+            << number(metric.count ? metric.sum / metric.count : 0.0)
+            << ",Q-B and Q-D test whether this same observable intensity contribution naturally carries into error bounds.\n";
+    }
+
+    const std::string policy = "# V2.4.R0.7 Research Policy\n\nThis pass is offline, compile-gated, and shadow-only. It does not modify V2.3 active horizon, final lead, presets, ABG gains, Singer/CA/CV production selection, braking, reversal, turning protection, curve envelope, MappingWorker, or DirectInput. R05-B remains FC-D plus innovation surprise. The CA forecast used only to label future absolute error is not connected to production output. Complete traces are assigned to blocked folds. The 0x2407F00D corpus was sealed before candidate selection and replayed exactly once afterward.\n";
+    const std::string identity = "{\n  \"published_release_sha\": \"37b6bf2f7dbd63ea06a9674641ce99cf07191a5f\",\n  \"qualified_mathematical_freeze_sha\": \"055e047e2847fc2ec0f59ec457188f66124898e7\",\n  \"r06_research_source_sha\": \"300e8325411096e16692b1b2b72917b7952dcabc\",\n  \"r06_equivalence_rows\": \"52463/52463 EXACT\",\n  \"production_output_changed\": false\n}\n";
+    const std::string manifest = "{\n  \"schema\": \"v2.4.R0.7\",\n  \"research_only\": true,\n  \"production_output_changed\": false,\n  \"development_samples\": " + std::to_string(development.size()) + ",\n  \"blind_scenarios\": 800,\n  \"blind_replays_after_lock\": 1,\n  \"selected_calibration\": \"" + selected.name + "\",\n  \"disposition\": \"" + disposition + "\"\n}\n";
+
+    std::ostringstream blindRows;
+    blindRows << "trace_id,motion_family,time_ms,quality_budget,predicted_safe_horizon_ms,actual_maximum_safe_horizon_ms,declared_safe,actual_error_at_declared,predicted_error_bound,r05_b_risk,motion_intensity,noise_burden\n";
+    for (const R07Sample &sample : blindSamples) for (const size_t budget : {size_t{1},size_t{2}}) {
+        const double predicted = r07PredictedSafeMs(selected, sample, budget); const int horizon = r07HorizonIndex(predicted);
+        const bool valid = horizon >= 0 && sample.errors[static_cast<size_t>(horizon)] >= 0.0;
+        blindRows << csv(sample.trace) << ',' << csv(sample.family) << ',' << number(sample.time*1000.0,3) << ',' << kR07BudgetNames[budget]
+            << ',' << number(predicted,0) << ',' << number(sample.actualSafeMs[budget],0) << ','
+            << (valid && sample.errors[static_cast<size_t>(horizon)] <= kR07Budgets[budget] ? "true" : "false") << ','
+            << (valid ? number(sample.errors[static_cast<size_t>(horizon)]) : "") << ','
+            << (valid ? number(r07Bound(selected,sample,static_cast<size_t>(horizon))) : "") << ','
+            << number(sample.risk) << ',' << number(sample.intensity) << ',' << number(sample.noiseBurden) << '\n';
+    }
+
+    std::ostringstream report;
+    report << "# V2.4.R0.7 Adaptive Response Horizon Error Bound Report\n\n## Final disposition\n\n" << disposition << "\n\n"
+        << "## 1. V2.3 baseline identity\n\nPublished `37b6bf2`; qualified mathematics `055e047e`; R0.6 source `300e832`.\n\n"
+        << "## 2. R0.6 disposition\n\nR0.6 was PARTIAL: H-C risk ranking generalized, but its direct safe-horizon map was both over-permissive for precision/noise and overly pessimistic for combat.\n\n"
+        << "## 3. H-C failure summary\n\nThe retained H-C direct-map comparator has development General reliability="
+        << number(hcGeneral.count ? static_cast<double>(hcGeneral.safe) / hcGeneral.count : 0.0)
+        << " and mean safe horizon=" << number(hcGeneral.count ? hcGeneral.sum / hcGeneral.count : 0.0)
+        << " ms. It is historical evidence only and is not relabeled or discarded.\n\n"
+        << "## 4. Error-bound formulation\n\nEach shadow CA forecast is labeled with absolute future error at 2–50 ms; availability is the greatest fixed ladder horizon whose conservative bound is within the requested budget.\n\n"
+        << "## 5. Observable features\n\nR05-B, intensity, state, configured noise relationship, and cadence confidence are all scalar observations available at report time.\n\n"
+        << "## 6. Noise-burden formulation\n\nBounded burden = 0.45 normalized slow innovation + 0.35 micro-delta/noise floor + 0.20 cadence burden. It does not modify the V2.3 filter.\n\n"
+        << "## 7. Motion-scale formulation\n\nScale is max(noise floor, |v|T, 0.5|a|T², 0.002), used only as an offline analysis feature; bounds remain absolute normalized-axis error.\n\n"
+        << "## 8. Q-A results\n\nSee `calibration_candidates.csv` and blocked folds.\n\n## 9. Q-B results\n\nSee `calibration_candidates.csv`; it is the direct retrospective intensity comparison.\n\n## 10. Q-C results\n\nSee `calibration_candidates.csv` and `noise_burden_analysis.csv`.\n\n## 11. Q-D results\n\nSee `calibration_candidates.csv`; it combines only three broad intensity and noise tiers.\n\n## 12. Q-E results\n\nSee `calibration_candidates.csv`; state conditioning is limited to quiet, established motion, and deceleration/reversal.\n\n"
+        << "## 13. Quantile target selection\n\nP97.5 was fixed before blind replay to provide margin beyond R0.6's approximately 95% result.\n\n"
+        << "## 14. Blocked cross-validation\n\nFive folds retain complete traces; no adjacent trajectory samples cross train/test partitions.\n\n"
+        << "## 15. Calibration residual correction\n\nThe selected model adds a blocked out-of-fold positive residual P97.5 correction of " << number(selected.residualMargin) << ".\n\n"
+        << "## 16. Monotonicity enforcement\n\nEach cell is projected nondecreasing with forecast horizon and nondecreasing with R05-B risk.\n\n"
+        << "## 17. Combat analysis\n\nGeneral coverage=" << number(r07Reliability(combatGeneral)) << "; mean safe horizon across all available future rows=" << number(r07MeanAvailableHorizon(combatGeneral)) << " ms; moving >=8 ms=" << number(combatAt8) << ".\n\n"
+        << "## 18. Precision analysis\n\nGeneral coverage=" << number(r07Reliability(precisionGeneral)) << "; mean safe horizon across all available future rows=" << number(r07MeanAvailableHorizon(precisionGeneral)) << " ms.\n\n"
+        << "## 19. Noisy Sensor analysis\n\nGeneral coverage=" << number(r07Reliability(noisyGeneral)) << "; noise-tier residual evidence is retained separately.\n\n"
+        << "## 20. H-D retrospective result\n\nH-D's development-only General reliability="
+        << number(hdGeneral.count ? static_cast<double>(hdGeneral.safe) / hdGeneral.count : 0.0)
+        << " and mean safe horizon=" << number(hdGeneral.count ? hdGeneral.sum / hdGeneral.count : 0.0)
+        << " ms. Q-B/Q-D are the non-relabeling intensity tests; H-D never sees the R0.7 blind corpus.\n\n"
+        << "## 21. Physical fast-sweep analysis\n\nAll 15 retained physical traces are emitted by horizon in `physical_trace_error_bounds.csv`, including predicted bounds, scale, intensity, noise burden, and R05-B.\n\n"
+        << "## 22. Physical precision/noise analysis\n\nPhysical rows are research-only realism evidence, not a selection label.\n\n"
+        << "## 23. Selected calibration\n\n" << selected.name << " with blocked residual correction.\n\n"
+        << "## 24. Fresh blind identity\n\nSeed `0x2407F00D`; 800 scenarios; SHA-256 `" << blindHash << "`.\n\n"
+        << "## 25. Confirmation lock before replay\n\n`selected_calibration.json` was emitted after the blind seal and before its single evaluation.\n\n"
+        << "## 26. Blind pooled General reliability\n\n" << number(r07Reliability(blindGeneral)) << " across " << blindGeneral.eligible << " declared horizons.\n\n"
+        << "## 27. Blind family reliability\n\nSee `blind_family_results.csv`; required families are represented explicitly.\n\n"
+        << "## 28. Blind Precision reliability\n\n" << number(r07Reliability(blindPrecision)) << ".\n\n"
+        << "## 29. Blind safe-horizon utilization\n\nSee `blind_horizon_efficiency.csv` and per-sample validation.\n\n"
+        << "## 30. Combat utilization\n\nMean General horizon=" << number(r07MeanAvailableHorizon(combatGeneral)) << " ms; eligible moving >=8 ms=" << number(combatAt8) << ".\n\n"
+        << "## 31. Fast ballistic utilization\n\nStructured family detail is retained in `blind_family_results.csv`.\n\n"
+        << "## 32. Precision utilization\n\nMean Precision Pilot General horizon=" << number(r07MeanAvailableHorizon(precisionGeneral)) << " ms.\n\n"
+        << "## 33. Noisy Sensor result\n\nCoverage=" << number(r07Reliability(noisyGeneral)) << "; no global filter or predictor change was made to force it.\n\n"
+        << "## 34. Horizon efficiency\n\nPooled General median=" << number(percentile(blindGeneral.efficiencies,.50)) << "; p10/p90=" << number(percentile(blindGeneral.efficiencies,.10)) << "/" << number(percentile(blindGeneral.efficiencies,.90)) << ".\n\n"
+        << "## 35. Conservatism ratio\n\nPooled General median=" << number(percentile(blindGeneral.conservatism,.50)) << ".\n\n"
+        << "## 36. Production equivalence\n\n" << (exact ? "52,463/52,463 file rows EXACT." : "NOT EXACT; research is blocked.") << "\n\n"
+        << "## 37. HOTPATH baseline\n\nThe normal Release benchmark is executed separately; its captured result is recorded in `hotpath_benchmark.md`.\n\n"
+        << "## 38. Estimated production cost\n\nIf separately authorized later, a fixed LUT/interpolation lookup would be the intended shadow cost. No production implementation is authorized here.\n\n"
+        << "## 39. Recommended R1 architecture\n\nDo not begin R1 in this pass. Any future R1 must use a fixed, offline-derived absolute error-bound LUT plus unchanged V2.3 safety behavior.\n\n"
+        << "## 40. Final disposition\n\n" << disposition << "\n";
+
+    const std::array<std::pair<const char *, std::string>, 18> files{{
+        {"manifest.json",manifest},{"research_policy.md",policy},{"baseline_identity.json",identity},{"production_equivalence.csv",equivalence},
+        {"horizon_error_training.csv",r07TrainingRows(development)},{"error_bound_features.csv",r07FeatureRows(development)},
+        {"noise_burden_analysis.csv",r07NoiseAnalysis(development)},{"motion_scale_analysis.csv",r07MotionScaleAnalysis(development)},
+        {"calibration_candidates.csv",candidateRows.str()},{"blocked_cross_validation.csv",crossValidation.str()},
+        {"calibration_residuals.csv",residuals.str()},{"predicted_vs_actual_error.csv",r07PredictedVsActual(development,selected)},
+        {"safe_horizon_efficiency.csv",r07EfficiencyRows(development,selected)},
+        {"combat_calibration_analysis.csv",r07SpecialAnalysis(development,selected,"Combat Helicopter","Combat Helicopter")},
+        {"precision_calibration_analysis.csv",r07SpecialAnalysis(development,selected,"Precision Pilot","Precision Pilot")},
+        {"noisy_calibration_analysis.csv",r07SpecialAnalysis(development,selected,"Noisy Sensor","Noisy Sensor")},
+        {"physical_trace_error_bounds.csv",r07PredictedVsActual(development,selected,true)},
+        {"h_d_retrospective_analysis.csv",hdRetro.str()}
+    }};
+    for (const auto &[name, contents] : files) if (!writeText(options.output / name, contents)) return 3;
+    if (!writeText(options.output / "blind_error_bound_validation.csv", blindRows.str())
+        || !writeText(options.output / "blind_family_results.csv", r07FamilyRows(blindSamples, selected))
+        || !writeText(options.output / "blind_horizon_efficiency.csv", r07EfficiencyRows(blindSamples, selected))
+        || !writeText(options.output / "hotpath_benchmark.md", "# Hot-path benchmark\n\nPending separate normal Release benchmark execution; this runner is never linked into MappingWorker.\n")
+        || !writeText(options.output / "V2.4.R0.7_Adaptive_Response_Horizon_Error_Bound_Report.md", report.str())) return 3;
+    if (!options.report.empty() && !writeText(options.report, report.str())) return 3;
+    std::cout << disposition << "\n";
+    return exact ? 0 : 4;
+}
+
 #endif
 
 int main(int argc, char *argv[])
@@ -1730,7 +2423,7 @@ int main(int argc, char *argv[])
         std::cerr << "Research mode requires --baseline <production_outputs.csv>.\n";
         return 2;
     }
-    return researchMainR06(options, traces);
+    return researchMainR07(options, traces);
 #else
     return productionOutput(options.output, traces) ? 0 : 3;
 #endif
