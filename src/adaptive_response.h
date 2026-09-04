@@ -83,6 +83,21 @@ struct AdaptiveResponseTelemetry {
     bool sourceUpdated = false;
     bool braking = false;
 #endif
+#if defined(HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    // Offline-only scalar microscope. This block is absent from every mapper
+    // target and never contributes to estimator state or output arithmetic.
+    float innovationSigned = 0.0F;
+    float predictedMeasurement = 0.0F;
+    float predictedVelocity = 0.0F;
+    float meaningfulDeltaSeconds = 0.0F;
+    float noiseThreshold = 0.0F;
+    float physicalDelta = 0.0F;
+    float holdConfidence = 1.0F;
+    float sourcePeriodResidualSeconds = 0.0F;
+    float cadenceJitterSeconds = 0.0F;
+    bool estimatorUpdated = false;
+    bool sourceUpdatedForResearch = false;
+#endif
 };
 
 // Runtime-only, allocation-free per-axis estimator state.  The Alpha-Beta
