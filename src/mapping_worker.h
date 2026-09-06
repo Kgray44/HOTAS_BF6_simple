@@ -224,6 +224,9 @@ private:
     std::atomic_bool m_mappingRequested{false};
     std::atomic_bool m_releaseVjoyRequested{false};
     std::atomic_bool m_vjoyReleasedForControlPlane{false};
+    // This fixture is only written through the explicit UI-test seam below.
+    // A normal process keeps -1 and publishes the real vJoy descriptor.
+    std::atomic_int m_testVirtualAxisAvailability{-1};
     std::atomic_uint64_t m_reacquireInputRequested{0};
     std::atomic_uint64_t m_reacquireInputAcknowledged{0};
     std::atomic_uint64_t m_configurationVersion{0};

@@ -635,6 +635,7 @@ void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float n
 
 void MappingWorker::publishVirtualAxisAvailabilityForTest(bool available)
 {
+    m_testVirtualAxisAvailability.store(available ? 1 : 0, std::memory_order_relaxed);
     m_runtime.virtualAxisAvailable[0].store(false, std::memory_order_relaxed);
     for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
         m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)].store(
@@ -915,6 +916,22 @@ void MappingWorker::run()
     auto nextVjoyCheck = std::chrono::steady_clock::now();
     auto nextVjoyAcquire = std::chrono::steady_clock::now();
 
+    const auto publishVirtualAxisAvailability = [this](
+        const std::array<bool, kVirtualAxisSlotCount> &reported) {
+        const int fixture = m_testVirtualAxisAvailability.load(std::memory_order_relaxed);
+        for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
+            // Test routes must remain deterministic while configuration swaps
+            // race the worker's first real vJoy capability poll. Production
+            // never enables this explicit fixture and therefore keeps the
+            // actual driver descriptor authoritative.
+            const bool available = fixture >= 0
+                ? axis != 0 && fixture != 0
+                : reported[static_cast<size_t>(axis)];
+            m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)].store(
+                available, std::memory_order_relaxed);
+        }
+    };
+
     const auto clearVirtualButtonSnapshot = [&] {
         lastVirtualButtonStates.fill(false);
         for (auto &button : m_runtime.virtualButtonPressed) button = false;
@@ -1162,10 +1179,7 @@ void MappingWorker::run()
             vjoy.axisCapabilities(configuration.vjoyDeviceId, nullptr);
         if (reportedAxes != vjoyAxisAvailable) {
             vjoyAxisAvailable = reportedAxes;
-            for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
-                m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
-                    vjoyAxisAvailable[static_cast<size_t>(axis)];
-            }
+            publishVirtualAxisAvailability(vjoyAxisAvailable);
             lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
             emit hardwareStateChanged();
         }
@@ -1213,10 +1227,7 @@ void MappingWorker::run()
                 outputLayoutAxes = layout->requirements.axes;
             }
         }
-        for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
-            m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
-                vjoyAxisAvailable[static_cast<size_t>(axis)];
-        }
+        publishVirtualAxisAvailability(vjoyAxisAvailable);
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
         activeProfileCache = std::move(prepared.second);
