@@ -1,4 +1,5 @@
 #include "mapping_worker.h"
+#include "hid_device_identity.h"
 
 #include "adaptive_response.h"
 #include "axis_transform.h"
@@ -526,6 +527,12 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.transformed[index] = 0.0F;
         m_runtime.adaptiveEstimated[index] = 0.0F;
         m_runtime.adaptivePredicted[index] = 0.0F;
+        m_runtime.adaptiveBaselineMapped[index] = 0.0F;
+        m_runtime.adaptivePredictedMapped[index] = 0.0F;
+        m_runtime.adaptiveOutput[index] = 0.0F;
+        m_runtime.adaptiveMappedLead[index] = 0.0F;
+        m_runtime.adaptiveAppliedLead[index] = 0.0F;
+        m_runtime.adaptiveLocalCurveGain[index] = 0.0F;
         m_runtime.adaptiveVelocity[index] = 0.0F;
         m_runtime.adaptiveAcceleration[index] = 0.0F;
         m_runtime.adaptiveHorizonSeconds[index] = 0.0F;
@@ -550,6 +557,9 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.adaptiveMotionState[index] = static_cast<int>(AdaptiveMotionState::Stable);
         m_runtime.adaptiveReversing[index] = false;
         m_runtime.adaptiveSafetyLimited[index] = false;
+        m_runtime.adaptiveDeadzoneAuthorityBlocked[index] = false;
+        m_runtime.adaptiveLeadLimited[index] = false;
+        m_runtime.adaptiveHighLocalCurveGain[index] = false;
         m_runtime.adaptiveReversalCount[index] = 0;
         m_runtime.adaptiveSafetyClampCount[index] = 0;
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
@@ -586,6 +596,50 @@ MappingWorker::~MappingWorker()
     // QThread must never reach its base destructor while run() still owns
     // DirectInput/vJoy state. The report loop wakes on a bounded interval.
     wait();
+}
+
+void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float normalized)
+{
+    const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
+    const float physical = std::clamp(normalized, -1.0F, 1.0F);
+    const size_t index = static_cast<size_t>(axis);
+
+    // This test-only injector mirrors the worker's latest snapshot contract.
+    // It deliberately does not construct a processor, send a vJoy report, or
+    // signal QML; the normal UI sampler remains responsible for presentation.
+    m_runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    m_runtime.axisCount.store(std::max(m_runtime.axisCount.load(std::memory_order_relaxed), axis + 1),
+                              std::memory_order_relaxed);
+    m_runtime.axisAvailable[index].store(true, std::memory_order_relaxed);
+    m_runtime.normalized[index].store(physical, std::memory_order_relaxed);
+    m_runtime.afterDeadzone[index].store(physical, std::memory_order_relaxed);
+    m_runtime.afterHysteresis[index].store(physical, std::memory_order_relaxed);
+    m_runtime.afterInversion[index].store(physical, std::memory_order_relaxed);
+    m_runtime.curveResponse[index].store(physical, std::memory_order_relaxed);
+    m_runtime.transformed[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptiveEstimated[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptivePredicted[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptiveBaselineMapped[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptivePredictedMapped[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptiveOutput[index].store(physical, std::memory_order_relaxed);
+    m_runtime.adaptiveRuntimeEnabled[index].store(false, std::memory_order_relaxed);
+    m_runtime.adaptiveRuntimeMaximumHorizonSeconds[index].store(0.008F, std::memory_order_relaxed);
+    m_runtime.adaptiveRuntimeMaximumLead[index].store(0.12F, std::memory_order_relaxed);
+    m_runtime.mappingActive.store(false, std::memory_order_relaxed);
+    m_runtime.mappingEffectiveState.store(static_cast<int>(MappingEffectiveState::Suspended),
+                                          std::memory_order_relaxed);
+    m_runtime.vjoyReady.store(false, std::memory_order_relaxed);
+    m_runtime.inputReports.fetch_add(1, std::memory_order_relaxed);
+    m_runtime.physicalReportsSinceAcquisition.fetch_add(1, std::memory_order_relaxed);
+}
+
+void MappingWorker::publishVirtualAxisAvailabilityForTest(bool available)
+{
+    m_runtime.virtualAxisAvailable[0].store(false, std::memory_order_relaxed);
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+        m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)].store(
+            available, std::memory_order_relaxed);
+    }
 }
 
 void MappingWorker::updateConfiguration(const MapperConfiguration &configuration)
@@ -759,7 +813,8 @@ void MappingWorker::setDeviceSnapshot(const DeviceSnapshot &snapshot)
     {
         QMutexLocker locker(&m_deviceMutex);
         changed = m_device.name != snapshot.name || m_device.id != snapshot.id
-            || m_device.hidInstanceId != snapshot.hidInstanceId;
+            || m_device.hidInstanceId != snapshot.hidInstanceId
+            || m_device.hidContainerId != snapshot.hidContainerId;
         m_device = snapshot;
     }
     if (changed) emit hardwareStateChanged();
@@ -826,6 +881,7 @@ void MappingWorker::run()
     std::array<int, kVirtualAxisSlotCount> virtualAxisSources{};
     virtualAxisSources.fill(-1);
     std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresisStates{};
+    std::array<AxisCenterResolverState, kPhysicalAxisCount> centerResolverStates{};
     std::array<AdaptiveResponseProcessor, kPhysicalAxisCount> adaptiveProcessors{};
     // Persistent hierarchy is precompiled in RuntimeAxisMapping. Automation
     // overlays are flattened only when their active property set changes, so
@@ -901,6 +957,7 @@ void MappingWorker::run()
             }
             effectiveAdaptiveConfigurations[static_cast<size_t>(axis)] = effective;
             adaptiveProcessors[static_cast<size_t>(axis)].reset();
+            centerResolverStates[static_cast<size_t>(axis)] = {};
         }
     };
     refreshEffectiveAdaptiveConfigurations();
@@ -938,6 +995,7 @@ void MappingWorker::run()
         lastNativePovValues.fill(-2);
         clearVirtualAxisSnapshot();
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AxisCenterResolverState &state : centerResolverStates) state = {};
         refreshEffectiveAdaptiveConfigurations();
         rebuildButtonTargets();
         if (countSwitch) {
@@ -975,6 +1033,7 @@ void MappingWorker::run()
         clearVirtualButtonSnapshot();
         for (std::atomic<float> &value : m_runtime.virtualValues) value = 0.0F;
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AxisCenterResolverState &state : centerResolverStates) state = {};
         for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         m_runtime.mappingActive = false;
         m_runtime.outputNeutralized = true;
@@ -1065,6 +1124,7 @@ void MappingWorker::run()
         }
         physicalMonitor.configure(availableAxes, availableButtons, objects.povCount);
         for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
+        for (AxisCenterResolverState &state : centerResolverStates) state = {};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             m_runtime.axisAvailable[index] = availableAxes[index];
         }
@@ -1076,7 +1136,9 @@ void MappingWorker::run()
         m_runtime.povCount = objects.povCount;
         for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
         m_runtime.physicalConnected = true;
-        setDeviceSnapshot({selected->name, guidToString(selected->guid), hidInstanceIdForDevice(device)});
+        const QString hidInstanceId = hidInstanceIdForDevice(device);
+        setDeviceSnapshot({selected->name, guidToString(selected->guid), hidInstanceId,
+                           hidDeviceContainerId(hidInstanceId)});
         emit workerEvent(QString(u"Controller connected: %1 · %2 axes · %3 buttons"_qs)
             .arg(selected->name).arg(objects.axisCount).arg(m_runtime.buttonCount.load()));
         if (inputEvent) SetEvent(inputEvent); // Promptly publish an initial state.
@@ -1102,8 +1164,7 @@ void MappingWorker::run()
             vjoyAxisAvailable = reportedAxes;
             for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
                 m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
-                    vjoyAxisAvailable[static_cast<size_t>(axis)]
-                    && outputLayoutAxes[static_cast<size_t>(axis)];
+                    vjoyAxisAvailable[static_cast<size_t>(axis)];
             }
             lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
             emit hardwareStateChanged();
@@ -1154,8 +1215,7 @@ void MappingWorker::run()
         }
         for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
             m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] =
-                vjoyAxisAvailable[static_cast<size_t>(axis)]
-                && outputLayoutAxes[static_cast<size_t>(axis)];
+                vjoyAxisAvailable[static_cast<size_t>(axis)];
         }
         // The mapping loop only swaps a table that was fully built before the
         // configuration version changed; it never builds a spline or LUT.
@@ -1174,8 +1234,9 @@ void MappingWorker::run()
         m_runtime.automationActiveRuleCount = 0;
         for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
         // Settings/profile updates receive a fully compiled table and begin a
-        // new hysteresis acceptance window on the next report.
+        // new centre-resolution window on the next report.
         for (AxisHysteresisState &state : hysteresisStates) state = {};
+        for (AxisCenterResolverState &state : centerResolverStates) state = {};
         for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
         appliedVersion = currentVersion;
         buttonDefaultsPending = false;
@@ -1412,6 +1473,7 @@ void MappingWorker::run()
             if (changed) {
                 pendingProfileSwitchStarted = profileSwitchStarted;
                 for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
+                for (AxisCenterResolverState &state : centerResolverStates) state = {};
             }
 
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -1442,6 +1504,7 @@ void MappingWorker::run()
             if (automationProfileChanged) {
                 pendingProfileSwitchStarted = automationStarted;
                 for (AdaptiveResponseProcessor &processor : adaptiveProcessors) processor.reset();
+                for (AxisCenterResolverState &state : centerResolverStates) state = {};
             }
             m_runtime.automationActiveRuleCount = automationEffects->activeRuleCount;
             for (int rule = 0; rule < kMaximumAutomationRules; ++rule) {
@@ -1498,6 +1561,7 @@ void MappingWorker::run()
                 }
                 effectiveAdaptiveConfigurations[static_cast<size_t>(index)] = effective;
                 adaptiveProcessors[static_cast<size_t>(index)].reset();
+                centerResolverStates[static_cast<size_t>(index)] = {};
             }
         }
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
@@ -1506,24 +1570,36 @@ void MappingWorker::run()
             m_runtime.raw[index] = raw;
             const RuntimeAxisMapping &mapping = activeMapping->axes[index];
             const float physicalNormalized = normalizeCalibrated(raw, mapping.calibration);
+            const float resolvedNormalized = resolveNormalizedAxisCenter(
+                physicalNormalized, mapping, centerResolverStates[static_cast<size_t>(index)]);
             const RuntimeAdaptiveResponseConfig &adaptiveConfiguration =
                 effectiveAdaptiveConfigurations[static_cast<size_t>(index)];
+            // Maximum Lead is now an output-domain setting. The estimator still
+            // produces a bounded physical future candidate; mapped authority is
+            // applied below after both physical positions traverse F(x).
+            RuntimeAdaptiveResponseConfig physicalPredictionConfiguration = adaptiveConfiguration;
+            physicalPredictionConfiguration.maximumLead = 0.50F;
             const AdaptiveResponseTelemetry adaptive = adaptiveProcessors[static_cast<size_t>(index)].process(
-                physicalNormalized, adaptiveConfiguration, started);
-            float curveResponse = 0.0F;
-            AxisSignalPath signalPath;
-            const float transformed = transformNormalizedAxisLive(adaptive.predicted, mapping,
-                hysteresisStates[index], &curveResponse, &signalPath);
-            // Existing diagnostics retain the measured physical normalisation.
-            // Predictor stages are exposed by their dedicated telemetry fields.
-            m_runtime.normalized[index] = physicalNormalized;
-            m_runtime.afterDeadzone[index] = signalPath.afterDeadzone;
-            m_runtime.afterHysteresis[index] = signalPath.afterHysteresis;
-            m_runtime.afterInversion[index] = signalPath.afterInversion;
-            m_runtime.curveResponse[index] = curveResponse;
-            m_runtime.transformed[index] = transformed;
+                resolvedNormalized, physicalPredictionConfiguration, started);
+            const AdaptiveMappedAxisOutput mapped = applyCurveAwareAdaptiveResponse(
+                resolvedNormalized, adaptive.predicted, adaptiveConfiguration.enabled,
+                adaptiveConfiguration.maximumLead, mapping, hysteresisStates[index]);
+            // Diagnostics, predictor, and output share the resolved canonical
+            // signal. Raw remains available above for hardware inspection.
+            m_runtime.normalized[index] = resolvedNormalized;
+            m_runtime.afterDeadzone[index] = mapped.baselineSignalPath.afterDeadzone;
+            m_runtime.afterHysteresis[index] = mapped.baselineSignalPath.afterHysteresis;
+            m_runtime.afterInversion[index] = mapped.baselineSignalPath.afterInversion;
+            m_runtime.curveResponse[index] = mapped.baselineSignalPath.afterCurve;
+            m_runtime.transformed[index] = mapped.adaptiveOutput;
             m_runtime.adaptiveEstimated[index] = adaptive.estimated;
             m_runtime.adaptivePredicted[index] = adaptive.predicted;
+            m_runtime.adaptiveBaselineMapped[index] = mapped.baselineOutput;
+            m_runtime.adaptivePredictedMapped[index] = mapped.predictedMappedOutput;
+            m_runtime.adaptiveOutput[index] = mapped.adaptiveOutput;
+            m_runtime.adaptiveMappedLead[index] = mapped.mappedLead;
+            m_runtime.adaptiveAppliedLead[index] = mapped.appliedLead;
+            m_runtime.adaptiveLocalCurveGain[index] = mapped.localCurveGain;
             m_runtime.adaptiveVelocity[index] = adaptive.velocity;
             m_runtime.adaptiveAcceleration[index] = adaptive.acceleration;
             m_runtime.adaptiveHorizonSeconds[index] = adaptive.activeHorizonSeconds;
@@ -1547,7 +1623,10 @@ void MappingWorker::run()
             m_runtime.adaptiveReacquisitionAuthority[index].store(adaptive.reacquisitionAuthority, std::memory_order_relaxed);
             m_runtime.adaptiveMotionState[index] = static_cast<int>(adaptive.state);
             m_runtime.adaptiveReversing[index] = adaptive.reversal;
-            m_runtime.adaptiveSafetyLimited[index] = adaptive.safetyLimited;
+            m_runtime.adaptiveSafetyLimited[index] = adaptive.safetyLimited || mapped.leadLimited;
+            m_runtime.adaptiveDeadzoneAuthorityBlocked[index] = mapped.deadzoneAuthorityBlocked;
+            m_runtime.adaptiveLeadLimited[index] = mapped.leadLimited;
+            m_runtime.adaptiveHighLocalCurveGain[index] = mapped.highLocalCurveGain;
             m_runtime.adaptiveReversalCount[index] = adaptiveProcessors[static_cast<size_t>(index)].reversalCount();
             m_runtime.adaptiveSafetyClampCount[index] = adaptiveProcessors[static_cast<size_t>(index)].safetyClampCount();
             m_runtime.adaptiveRuntimeEnabled[index] = adaptiveConfiguration.enabled;
@@ -1574,7 +1653,7 @@ void MappingWorker::run()
             const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[static_cast<size_t>(index)];
             m_runtime.adaptiveAutomationOverlayActive[index] = overlay.active;
             m_runtime.adaptiveAutomationOverlayProperties[index] = overlay.properties;
-            transformedAxes[static_cast<size_t>(index)] = transformed;
+            transformedAxes[static_cast<size_t>(index)] = mapped.adaptiveOutput;
         }
         if (automationEffects) {
             automation.applyAxisActions(automationInput, transformedAxes);

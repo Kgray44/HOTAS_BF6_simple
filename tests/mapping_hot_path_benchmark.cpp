@@ -79,6 +79,12 @@ struct RuntimePublication {
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> transformed{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveEstimated{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptivePredicted{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveBaselineMapped{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptivePredictedMapped{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveOutput{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveMappedLead{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveAppliedLead{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveLocalCurveGain{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveVelocity{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveAcceleration{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveHorizonSeconds{};
@@ -103,6 +109,9 @@ struct RuntimePublication {
     std::array<std::atomic<int>, hotas::kPhysicalAxisCount> adaptiveMotionState{};
     std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveReversing{};
     std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveSafetyLimited{};
+    std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveDeadzoneAuthorityBlocked{};
+    std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveLeadLimited{};
+    std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveHighLocalCurveGain{};
     std::array<std::atomic<bool>, hotas::kPhysicalAxisCount> adaptiveRuntimeEnabled{};
     std::array<std::atomic<int>, hotas::kPhysicalAxisCount> adaptiveRuntimeModel{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeMaximumHorizonSeconds{};
@@ -124,6 +133,7 @@ struct HotPathState {
     std::array<bool, hotas::kPhysicalAxisCount> availableAxes{};
     std::array<bool, hotas::kMaximumPhysicalButtons> availableButtons{};
     std::array<hotas::AxisHysteresisState, hotas::kPhysicalAxisCount> hysteresis{};
+    std::array<hotas::AxisCenterResolverState, hotas::kPhysicalAxisCount> centerResolvers{};
     std::array<hotas::AdaptiveResponseProcessor, hotas::kPhysicalAxisCount> adaptiveResponse{};
     std::array<float, hotas::kVirtualAxisSlotCount> lastVirtualValues{};
     hotas::AxisMappingTransitionEngine axisTransitions;
@@ -242,25 +252,34 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
         const float raw = snapshot.axes[static_cast<size_t>(index)];
         const hotas::RuntimeAxisMapping &axis = mapping.axes[static_cast<size_t>(index)];
         const float physicalNormalized = hotas::normalizeCalibrated(raw, axis.calibration);
+        const float resolvedNormalized = hotas::resolveNormalizedAxisCenter(
+            physicalNormalized, axis, state.centerResolvers[static_cast<size_t>(index)]);
+        hotas::RuntimeAdaptiveResponseConfig physicalPrediction = axis.adaptiveResponse;
+        physicalPrediction.maximumLead = 0.50F;
         const hotas::AdaptiveResponseTelemetry adaptive =
             state.adaptiveResponse[static_cast<size_t>(index)].process(
-                physicalNormalized, axis.adaptiveResponse, reportTimestamp);
-        float curveResponse = 0.0F;
-        hotas::AxisSignalPath path;
-        const float transformed = hotas::transformNormalizedAxisLive(adaptive.predicted, axis,
-            state.hysteresis[static_cast<size_t>(index)], &curveResponse, &path);
+                resolvedNormalized, physicalPrediction, reportTimestamp);
+        const hotas::AdaptiveMappedAxisOutput mapped = hotas::applyCurveAwareAdaptiveResponse(
+            resolvedNormalized, adaptive.predicted, axis.adaptiveResponse.enabled,
+            axis.adaptiveResponse.maximumLead, axis, state.hysteresis[static_cast<size_t>(index)]);
         state.publication.raw[static_cast<size_t>(index)].store(raw, std::memory_order_relaxed);
-        state.publication.normalized[static_cast<size_t>(index)].store(physicalNormalized,
+        state.publication.normalized[static_cast<size_t>(index)].store(resolvedNormalized,
                                                                         std::memory_order_relaxed);
-        state.publication.afterDeadzone[static_cast<size_t>(index)].store(path.afterDeadzone, std::memory_order_relaxed);
-        state.publication.afterHysteresis[static_cast<size_t>(index)].store(path.afterHysteresis, std::memory_order_relaxed);
-        state.publication.afterInversion[static_cast<size_t>(index)].store(path.afterInversion, std::memory_order_relaxed);
-        state.publication.curveResponse[static_cast<size_t>(index)].store(curveResponse, std::memory_order_relaxed);
-        state.publication.transformed[static_cast<size_t>(index)].store(transformed, std::memory_order_relaxed);
+        state.publication.afterDeadzone[static_cast<size_t>(index)].store(mapped.baselineSignalPath.afterDeadzone, std::memory_order_relaxed);
+        state.publication.afterHysteresis[static_cast<size_t>(index)].store(mapped.baselineSignalPath.afterHysteresis, std::memory_order_relaxed);
+        state.publication.afterInversion[static_cast<size_t>(index)].store(mapped.baselineSignalPath.afterInversion, std::memory_order_relaxed);
+        state.publication.curveResponse[static_cast<size_t>(index)].store(mapped.baselineSignalPath.afterCurve, std::memory_order_relaxed);
+        state.publication.transformed[static_cast<size_t>(index)].store(mapped.adaptiveOutput, std::memory_order_relaxed);
         // Match the production full Adaptive Response latest-state snapshot.
         // These fixed atomics are intentionally published without a UI call.
         state.publication.adaptiveEstimated[static_cast<size_t>(index)].store(adaptive.estimated, std::memory_order_relaxed);
         state.publication.adaptivePredicted[static_cast<size_t>(index)].store(adaptive.predicted, std::memory_order_relaxed);
+        state.publication.adaptiveBaselineMapped[static_cast<size_t>(index)].store(mapped.baselineOutput, std::memory_order_relaxed);
+        state.publication.adaptivePredictedMapped[static_cast<size_t>(index)].store(mapped.predictedMappedOutput, std::memory_order_relaxed);
+        state.publication.adaptiveOutput[static_cast<size_t>(index)].store(mapped.adaptiveOutput, std::memory_order_relaxed);
+        state.publication.adaptiveMappedLead[static_cast<size_t>(index)].store(mapped.mappedLead, std::memory_order_relaxed);
+        state.publication.adaptiveAppliedLead[static_cast<size_t>(index)].store(mapped.appliedLead, std::memory_order_relaxed);
+        state.publication.adaptiveLocalCurveGain[static_cast<size_t>(index)].store(mapped.localCurveGain, std::memory_order_relaxed);
         state.publication.adaptiveVelocity[static_cast<size_t>(index)].store(adaptive.velocity, std::memory_order_relaxed);
         state.publication.adaptiveAcceleration[static_cast<size_t>(index)].store(adaptive.acceleration, std::memory_order_relaxed);
         state.publication.adaptiveHorizonSeconds[static_cast<size_t>(index)].store(adaptive.activeHorizonSeconds, std::memory_order_relaxed);
@@ -284,7 +303,10 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
         state.publication.adaptiveReacquisitionAuthority[static_cast<size_t>(index)].store(adaptive.reacquisitionAuthority, std::memory_order_relaxed);
         state.publication.adaptiveMotionState[static_cast<size_t>(index)].store(static_cast<int>(adaptive.state), std::memory_order_relaxed);
         state.publication.adaptiveReversing[static_cast<size_t>(index)].store(adaptive.reversal, std::memory_order_relaxed);
-        state.publication.adaptiveSafetyLimited[static_cast<size_t>(index)].store(adaptive.safetyLimited, std::memory_order_relaxed);
+        state.publication.adaptiveSafetyLimited[static_cast<size_t>(index)].store(adaptive.safetyLimited || mapped.leadLimited, std::memory_order_relaxed);
+        state.publication.adaptiveDeadzoneAuthorityBlocked[static_cast<size_t>(index)].store(mapped.deadzoneAuthorityBlocked, std::memory_order_relaxed);
+        state.publication.adaptiveLeadLimited[static_cast<size_t>(index)].store(mapped.leadLimited, std::memory_order_relaxed);
+        state.publication.adaptiveHighLocalCurveGain[static_cast<size_t>(index)].store(mapped.highLocalCurveGain, std::memory_order_relaxed);
         state.publication.adaptiveRuntimeEnabled[static_cast<size_t>(index)].store(axis.adaptiveResponse.enabled, std::memory_order_relaxed);
         state.publication.adaptiveRuntimeModel[static_cast<size_t>(index)].store(static_cast<int>(axis.adaptiveResponse.model), std::memory_order_relaxed);
         state.publication.adaptiveRuntimeMaximumHorizonSeconds[static_cast<size_t>(index)].store(axis.adaptiveResponse.maximumHorizonSeconds, std::memory_order_relaxed);
@@ -299,7 +321,7 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
         state.publication.adaptiveRuntimeTurningPointMargin[static_cast<size_t>(index)].store(axis.adaptiveResponse.turningPointMargin, std::memory_order_relaxed);
         const int target = static_cast<int>(axis.profile.target);
         if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[static_cast<size_t>(target)]) {
-            output[static_cast<size_t>(target)] = transformed;
+            output[static_cast<size_t>(target)] = mapped.adaptiveOutput;
             targetUsed[static_cast<size_t>(target)] = true;
             state.virtualAxisSources[static_cast<size_t>(target)] = index;
         }
@@ -557,6 +579,7 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
             state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
             state.lastNativePovValues.fill(-2);
             state.hysteresis.fill({});
+            state.centerResolvers.fill({});
         }
         SyntheticReport report = baseReport;
         report.buttons = physicalButtons;
@@ -581,6 +604,7 @@ ProfileControlBenchmarkResult benchmarkProfileControl(
         state.lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         state.lastNativePovValues.fill(-2);
         state.hysteresis.fill({});
+        state.centerResolvers.fill({});
         setup(processControlReport, buttons, povs);
         const auto started = Clock::now();
         action(processControlReport, buttons, povs);

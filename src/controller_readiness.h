@@ -10,6 +10,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 
 namespace hotas {
 
@@ -20,8 +21,16 @@ struct PhysicalControllerCapabilities {
     QString name;
     QString directInputId;
     // Normalized HID instance identity captured from DirectInput's device
-    // path. An empty value means automatic HidHide changes are unsafe.
+    // path. It is exact for the current PnP enumeration, not durable across a
+    // USB reconnect.
     QString hidInstanceId;
+    // Windows PnP container identity for the selected physical device. This
+    // survives normal HID interface re-enumeration and lets setup reconcile
+    // the current interfaces without touching another controller.
+    QString hidContainerId;
+    // Test/control-plane seam for already resolved current HID collections.
+    // Production fills the same list from HidHide's gaming-device inventory.
+    QStringList hidHideDeviceInstanceIds;
     bool connected = false;
     // A completed DirectInput poll is stronger evidence than a second handle
     // acquisition attempt. The mapper publishes this outside its report path.
@@ -66,8 +75,10 @@ struct HidHideCapabilities {
     bool mapperAllowlisted = false;
     bool selectedControllerResolved = false;
     bool selectedControllerHidden = false;
+    QString mapperExecutable;
     QStringList allowlistedApplications;
     QStringList hiddenDeviceInstanceIds;
+    QStringList selectedControllerInstanceIds;
     QString diagnostic;
 };
 
@@ -246,6 +257,13 @@ public:
     static QString stateLabel(ControllerReadinessState state);
     static QString subsystemStateLabel(VerificationSubsystemState state);
     static QString normalizeDeviceInstanceId(QString value);
+    static bool samePhysicalController(const PhysicalControllerCapabilities &expected,
+                                       const PhysicalControllerCapabilities &observed);
+    // Arrival policy must use the durable PnP identity retained after a
+    // successful verification. DirectInput and HID interface identities can
+    // legitimately change during a USB reconnect.
+    static bool isKnownPhysicalController(const PhysicalControllerCapabilities &physical,
+                                          const std::vector<SavedControllerRecord> &records);
     static ControllerReadinessPlan checkingPlan(const PhysicalControllerCapabilities &physical,
                                                 VerificationMode mode);
     static bool isNewPhysicalControllerArrival(bool wasConnected, bool isConnected);
@@ -271,6 +289,15 @@ public:
                                             bool rollbackAttempted = false,
                                             bool rollbackSucceeded = false,
                                             bool reportsReceivedAfterRollback = false);
+    // HidHide applies visibility changes on device re-enumeration. A successful
+    // CLI read-back and a retained DirectInput handle are not a reconnect
+    // proof, so this state machine waits for the observed unplug/replug cycle.
+    void beginPhysicalReconnectVerification();
+    bool observePhysicalReconnect(bool connected, bool selectedControllerDetected,
+                                  bool reportsReceived);
+    bool reconnectVerificationPending() const { return m_reconnectVerificationPending; }
+    bool reconnectDisconnectObserved() const { return m_reconnectDisconnectObserved; }
+    bool reconnectReconciliationPending() const { return m_reconnectReconciliationPending; }
     // Used only after the post-change DirectInput proof fails. It reverses
     // the narrow journal entries created by this automatic transaction.
     bool recoverFromPhysicalAccessFailure();
@@ -312,7 +339,7 @@ private:
         bool cloakWasEnabled = false;
         QString vjoyRestoreCommand;
         QString mapperExecutable;
-        QString controllerInstanceId;
+        QStringList controllerInstanceIds;
     };
 
     VJoyCapabilities inspectVJoy(int deviceId) const;
@@ -341,6 +368,7 @@ private:
     static QString decodeOutput(const QByteArray &bytes);
     static VJoyCapabilities parseVJoyReport(const QString &report, int deviceId);
     static QStringList parseHidHideCommands(const QString &output, const QString &command);
+    static QStringList parseHidHideGamingDevices(const QString &output);
     static bool outputContainsDevice(const QString &output, const QString &instanceId);
     static QStringList vjoyConfigurationArguments(const VJoyCapabilities &before,
                                                    const MapperOutputRequirements &requirements);
@@ -354,6 +382,9 @@ private:
     PhysicalControllerCapabilities m_physical;
     MapperOutputRequirements m_inspectedRequirements;
     bool m_transactionActive = false;
+    bool m_reconnectVerificationPending = false;
+    bool m_reconnectDisconnectObserved = false;
+    bool m_reconnectReconciliationPending = false;
     Journal m_journal;
     AutomaticRepairResult m_lastRepairResult;
     SetupUtilityPaths m_utilityPaths;

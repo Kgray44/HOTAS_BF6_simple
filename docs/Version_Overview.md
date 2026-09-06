@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.3.0**
+**Current release: v2.3.1**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.3.1 — Adaptive Response correctness and Response Lab
+
+Refines Adaptive Response around real-controller observability, motion-aware center handling, and curve-aware output authority without replacing its physical-motion estimator or preset system.
+
+- Response Lab unifies Interactive and Live Controller inspection, with live physical-input telemetry independent of vJoy or Mapping On state.
+- The predictor continues to estimate normalized physical motion while current and future positions are evaluated through the selected static axis transform; Maximum Lead now bounds mapped-output lead.
+- Existing Adaptive Response settings retain their schema and numeric values. Under nonlinear curves, an existing Maximum Lead now consistently constrains game-output movement rather than physical-axis displacement.
+- Motion-aware center resolution treats coherent center transit as continuous input while settling and jitter converge to exact zero; effective-response views prioritize Physical, Baseline Output, Adaptive Output, and Predicted Mapped.
+- A passive arrival check validates the selected controller, vJoy, and HidHide after reconnect. Stable PnP container identity keeps healthy remembered controllers silent; setup opens only for genuinely new or attention-needed devices.
+- Realistic deterministic preview scenarios replace misleading normal-user stress traces while diagnostics retain predictor internals and existing reversal safety.
 
 ## v2.3.0 — Adaptive Response
 

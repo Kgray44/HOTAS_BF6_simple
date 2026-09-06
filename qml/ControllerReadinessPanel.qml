@@ -149,6 +149,28 @@ Item {
         }
 
         Rectangle {
+            visible: root.backendObject && root.backendObject.controllerReconnectRequired
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? reconnectInstructions.implicitHeight + 22 : 0
+            color: root.panelColor
+            border.color: root.warningColor
+            radius: root.radius
+            Text {
+                id: reconnectInstructions
+                anchors.fill: parent
+                anchors.margins: 11
+                text: root.backendObject && root.backendObject.controllerSetupInProgress
+                    ? "RECONCILING HIDHIDE\nController reconnected ✓  HOTAS BF6 is reading the current controller interfaces and verifying the repaired stack."
+                    : root.backendObject && root.backendObject.controllerDisconnectObserved
+                        ? "RECONNECT CONTROLLER\nController disconnected ✓  Reconnect the selected controller and move a control. HOTAS BF6 will verify the returning device and its live reports automatically."
+                        : "RECONNECT CONTROLLER\nHidHide has changed device visibility. Unplug the selected controller now. HOTAS BF6 will detect the disconnect before asking you to reconnect it."
+                color: root.textColor
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Rectangle {
             visible: root.backendObject && root.backendObject.controllerRepairOperationResults.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? Math.max(60, repairResults.implicitHeight + 22) : 0

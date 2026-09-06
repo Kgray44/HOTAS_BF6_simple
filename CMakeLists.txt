@@ -56,6 +56,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_store.cpp
     src/controller_manager.h
     src/controller_manager.cpp
+    src/hid_device_identity.h
+    src/hid_device_identity.cpp
     src/controller_discovery.h
     src/controller_discovery.cpp
     src/controller_readiness.h
@@ -125,8 +127,23 @@ set_target_properties(HOTASMapper PROPERTIES
 )
 
 if (WIN32)
-    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32)
+    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+
+    # The approved repair transaction restarts this executable elevated.  A
+    # release candidate is frequently launched outside the developer shell,
+    # so it must carry the same Qt runtime that the normal UI uses.  This also
+    # keeps the single consent prompt branded as HOTAS BF6 instead of exposing
+    # individual utility prompts.
+    get_filename_component(HOTAS_QT_BIN_DIR "${Qt6Core_DIR}/../../../bin" ABSOLUTE)
+    set(HOTAS_WINDEPLOYQT "${HOTAS_QT_BIN_DIR}/windeployqt.exe")
+    if (EXISTS "${HOTAS_WINDEPLOYQT}")
+        add_custom_command(TARGET HOTASMapper POST_BUILD
+            COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime "$<TARGET_FILE:HOTASMapper>"
+            COMMENT "Deploying the Qt runtime required by the elevated HOTAS BF6 repair transaction")
+    else()
+        message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
+    endif()
 else()
     message(FATAL_ERROR "HOTAS Mapper v1.5 targets Windows (DirectInput and vJoy).")
 endif()
@@ -264,16 +281,24 @@ if (BUILD_TESTING)
         tests/controller_readiness_tests.cpp
         src/controller_readiness.h
         src/controller_readiness.cpp
+        src/hid_device_identity.h
+        src/hid_device_identity.cpp
         src/controller_diagnostics.h
         src/controller_diagnostics.cpp
         src/mapping_types.h
     )
-    target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test shell32 advapi32)
+    target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test shell32 advapi32 cfgmgr32)
     target_include_directories(controller_readiness_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME controller_readiness_tests COMMAND controller_readiness_tests)
     if (WIN32)
         set_tests_properties(controller_readiness_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins")
+        # Preserve the MSVC runtime path from the invoking test environment.
+        # Embedding $ENV{PATH} in ENVIRONMENT splits Windows ';' path entries
+        # into separate CTest properties and can prevent this GUI-linked test
+        # from starting before QTest reports any result.
+        set_property(TEST controller_readiness_tests APPEND PROPERTY
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
     qt_add_executable(ui_release_contract_tests tests/ui_release_contract_tests.cpp)
@@ -345,7 +370,7 @@ if (BUILD_TESTING)
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
     )
-    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32)
+    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
     if (WIN32)
@@ -390,6 +415,7 @@ if (BUILD_TESTING)
         dxguid
         advapi32
         shell32
+        cfgmgr32
         psapi
     )
     target_include_directories(app_qml_startup_tests PRIVATE

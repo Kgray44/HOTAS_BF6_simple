@@ -1287,6 +1287,44 @@ std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenar
                 value = minimum + span * (0.86F - 0.56F
                     * smootherStep((elapsed - 0.340F) / 0.260F));
             } else value = minimum + span * 0.30F;
+        } else if (mode == u"fast full sweep"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.060F) / 0.280F);
+            value = minimum + span * (elapsed < 0.060F ? 0.12F
+                : elapsed < 0.340F ? 0.12F + 0.76F * progress : 0.88F);
+        } else if (mode == u"very-fast full sweep"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.050F) / 0.145F);
+            value = minimum + span * (elapsed < 0.050F ? 0.16F
+                : elapsed < 0.195F ? 0.16F + 0.70F * progress : 0.86F);
+        } else if (mode == u"same-side reversal"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            if (elapsed < 0.080F) value = minimum + span * 0.55F;
+            else if (elapsed < 0.360F) value = minimum + span * (0.55F + 0.34F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.280F));
+            else if (elapsed < 0.620F) value = minimum + span * (0.89F - 0.29F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.360F) / 0.260F));
+            else value = minimum + span * 0.60F;
+        } else if (mode == u"rapid center crossing"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.260F);
+            value = minimum + span * (elapsed < 0.080F ? 0.76F
+                : elapsed < 0.340F ? 0.76F - 0.52F * progress : 0.24F);
+        } else if (mode == u"evasive left/right"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            if (elapsed < 0.080F) value = minimum + span * 0.50F;
+            else if (elapsed < 0.280F) value = minimum + span * (0.50F - 0.27F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.200F));
+            else if (elapsed < 0.520F) value = minimum + span * (0.23F + 0.54F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.280F) / 0.240F));
+            else if (elapsed < 0.720F) value = minimum + span * (0.77F - 0.27F
+                * smootherstep(0.0F, 1.0F, (elapsed - 0.520F) / 0.200F));
+            else value = minimum + span * 0.50F;
+        } else if (mode == u"precision correction"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.120F) / 0.340F);
+            value = minimum + span * (elapsed < 0.120F ? 0.50F
+                : elapsed < 0.460F ? 0.50F + 0.026F * progress : 0.526F);
         } else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
             ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
             : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));

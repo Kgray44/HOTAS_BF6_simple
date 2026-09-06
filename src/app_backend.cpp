@@ -78,6 +78,7 @@ bool sameControllerInventory(const QList<DiscoveredController> &left,
                       [](const DiscoveredController &first, const DiscoveredController &second) {
         return first.name == second.name && first.directInputId == second.directInputId
             && first.productGuid == second.productGuid && first.hidInstanceId == second.hidInstanceId
+            && first.hidContainerId == second.hidContainerId
             && first.vendorId == second.vendorId && first.productId == second.productId
             && first.axes == second.axes && first.axisCount == second.axisCount
             && first.buttonCount == second.buttonCount && first.povCount == second.povCount
@@ -418,9 +419,10 @@ AppBackend::AppBackend(QObject *parent)
     connect(&m_adaptiveResponseHistoryTimer, &QTimer::timeout, this,
             &AppBackend::sampleAdaptiveResponseHistory);
     m_adaptiveResponseHistoryClock.start();
-    // The 83 Hz sampler is started only for connected, requested mapping from
-    // refreshUiSnapshot(). An inactive mapper must not keep the GUI event
-    // queue busy merely to record a flat line.
+    // The 83 Hz sampler is started only while a controller is connected and
+    // the application surface is visible. It reads the worker's latest fixed
+    // snapshot, so observing physical movement never depends on vJoy or
+    // active output mapping.
     m_numericTelemetryTimer.setInterval(kVisibleNumericTelemetryIntervalMs);
     m_numericTelemetryTimer.start();
     // DirectInput enumeration is an independent, low-frequency control-plane
@@ -801,6 +803,24 @@ QVariantList AppBackend::personalCurvePresets() const
     return result;
 }
 
+QVariantList AppBackend::curveCustomProfileChoices() const
+{
+    QVariantList result;
+    const int axis = m_configuration.selectedAxisIndex;
+    if (!validAxis(axis)) return result;
+    const bool targetUnipolar = axisIsOneSided(axis);
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        const AxisMapping &mapping = profile.axes[static_cast<size_t>(axis)];
+        if (mapping.curve.family != CurveFamily::Custom) continue;
+        const bool sourceUnipolar = mapping.rangeMode == AxisRangeMode::OneSided;
+        if (sourceUnipolar != targetUnipolar) continue;
+        result.append(QVariantMap{{u"id"_qs, profile.id}, {u"name"_qs, profile.name},
+                                  {u"active"_qs, profile.id == m_configuration.activeProfileId},
+                                  {u"summary"_qs, curveDefinitionSummary(mapping.curve)}});
+    }
+    return result;
+}
+
 QVariantList AppBackend::curveComparisonChoices() const
 {
     QVariantList result;
@@ -1144,7 +1164,14 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
     const AdaptiveResponseModel model = runtimePublished
         ? static_cast<AdaptiveResponseModel>(load(runtime.adaptiveRuntimeModel)) : persistent.model;
     return {{u"physical"_qs, load(runtime.normalized)}, {u"estimated"_qs, load(runtime.adaptiveEstimated)},
-            {u"predicted"_qs, load(runtime.adaptivePredicted)}, {u"virtualOutput"_qs, load(runtime.virtualValues)},
+            {u"predicted"_qs, load(runtime.adaptivePredicted)},
+            {u"baselineOutput"_qs, load(runtime.adaptiveBaselineMapped)},
+            {u"predictedMappedOutput"_qs, load(runtime.adaptivePredictedMapped)},
+            {u"adaptiveOutput"_qs, load(runtime.adaptiveOutput)},
+            {u"mappedLead"_qs, load(runtime.adaptiveMappedLead)},
+            {u"appliedLead"_qs, load(runtime.adaptiveAppliedLead)},
+            {u"localCurveGain"_qs, load(runtime.adaptiveLocalCurveGain)},
+            {u"virtualOutput"_qs, load(runtime.adaptiveOutput)},
             {u"velocity"_qs, load(runtime.adaptiveVelocity)}, {u"acceleration"_qs, load(runtime.adaptiveAcceleration)},
             {u"activeHorizonMs"_qs, load(runtime.adaptiveHorizonSeconds) * 1000.0F},
             {u"maximumHorizonMs"_qs, maximumHorizonSeconds * 1000.0F},
@@ -1172,6 +1199,9 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
             {u"automationOverlayActive"_qs, load(runtime.adaptiveAutomationOverlayActive)},
             {u"automationOverlayProperties"_qs, QVariant::fromValue(load(runtime.adaptiveAutomationOverlayProperties))},
             {u"reversing"_qs, load(runtime.adaptiveReversing)}, {u"safetyLimited"_qs, load(runtime.adaptiveSafetyLimited)},
+            {u"deadzoneAuthorityBlocked"_qs, load(runtime.adaptiveDeadzoneAuthorityBlocked)},
+            {u"leadLimited"_qs, load(runtime.adaptiveLeadLimited)},
+            {u"highLocalCurveGain"_qs, load(runtime.adaptiveHighLocalCurveGain)},
             {u"reversalCount"_qs, QVariant::fromValue(load(runtime.adaptiveReversalCount))},
             {u"safetyClampCount"_qs, QVariant::fromValue(load(runtime.adaptiveSafetyClampCount))}};
 }
@@ -1197,6 +1227,12 @@ QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
                                   {u"physical"_qs, sample.physical},
                                   {u"estimated"_qs, sample.estimated},
                                   {u"predicted"_qs, sample.predicted},
+                                  {u"baselineOutput"_qs, sample.baselineMappedOutput},
+                                  {u"predictedMappedOutput"_qs, sample.predictedMappedOutput},
+                                  {u"adaptiveOutput"_qs, sample.adaptiveOutput},
+                                  {u"mappedLead"_qs, sample.mappedLead},
+                                  {u"appliedLead"_qs, sample.appliedLead},
+                                  {u"localCurveGain"_qs, sample.localCurveGain},
                                   {u"virtualOutput"_qs, sample.virtualOutput},
                                   {u"velocity"_qs, sample.velocity},
                                   {u"acceleration"_qs, sample.acceleration},
@@ -1252,6 +1288,11 @@ QVariantMap AppBackend::adaptiveResponseHistorySince(qint64 lastSequence, int se
         samples.append(QVariantMap{{u"sequence"_qs, sample.sequence},
             {u"timeMs"_qs, sample.elapsedMs - newestMs}, {u"physical"_qs, sample.physical},
             {u"estimated"_qs, sample.estimated}, {u"predicted"_qs, sample.predicted},
+            {u"baselineOutput"_qs, sample.baselineMappedOutput},
+            {u"predictedMappedOutput"_qs, sample.predictedMappedOutput},
+            {u"adaptiveOutput"_qs, sample.adaptiveOutput},
+            {u"mappedLead"_qs, sample.mappedLead}, {u"appliedLead"_qs, sample.appliedLead},
+            {u"localCurveGain"_qs, sample.localCurveGain},
             {u"virtualOutput"_qs, sample.virtualOutput}, {u"velocity"_qs, sample.velocity},
             {u"acceleration"_qs, sample.acceleration},
             {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
@@ -1278,6 +1319,43 @@ QVariantMap AppBackend::adaptiveResponseHistorySince(qint64 lastSequence, int se
     }
     return {{u"samples"_qs, samples}, {u"newestSequence"_qs, m_adaptiveResponseHistorySequence},
             {u"reset"_qs, reset}};
+}
+
+void AppBackend::injectAdaptiveResponseLiveSampleForTest(int physicalAxis, float normalized)
+{
+    // Keep this at the control-plane/UI boundary: production DirectInput owns
+    // the same snapshot in MappingWorker, and QML still polls it at display
+    // cadence. The test request intentionally models a suspended mapper with
+    // no vJoy output capability.
+    m_mappingDesired = true;
+    m_liveInputTestSuspended = true;
+    m_worker.publishPhysicalAxisSnapshotForTest(physicalAxis, normalized);
+    sampleAdaptiveResponseHistory();
+    emit inputTelemetryChanged();
+    emit stateChanged();
+}
+
+void AppBackend::setVirtualAxisAvailabilityForTest(bool available)
+{
+    m_worker.publishVirtualAxisAvailabilityForTest(available);
+    emit stateChanged();
+}
+
+QVariantList AppBackend::runtimeAxisRoutesForTest() const
+{
+    QVariantList routes;
+    const std::shared_ptr<const RuntimeProfileCache> compiled = m_worker.runtimeProfileCache();
+    if (!compiled || compiled->profiles.empty()) return routes;
+    const int profile = std::clamp(m_worker.runtime().effectiveProfileIndex.load(), 0,
+        static_cast<int>(compiled->profiles.size()) - 1);
+    const RuntimeMappingConfiguration &mapping = compiled->profiles[static_cast<size_t>(profile)];
+    routes.reserve(kPhysicalAxisCount);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        routes.append(QVariantMap{{u"index"_qs, axis},
+            {u"target"_qs, virtualAxisLabel(
+                mapping.axes[static_cast<size_t>(axis)].profile.target)}});
+    }
+    return routes;
 }
 
 QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
@@ -1556,37 +1634,56 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
         scope, targetId, axis, nullptr, nullptr, &mapping);
     const std::vector<float> physical = adaptiveResponseScenarioPhysicalSamples(
         scenario, runtime.domainMinimum, runtime.domainMaximum);
-    const AdaptiveResponseSimulation simulated = simulateAdaptiveResponse(runtime, physical, 0.004F);
+    RuntimeAdaptiveResponseConfig physicalPrediction = runtime;
+    physicalPrediction.maximumLead = 0.50F;
+    // Static Response Preview runs the same calibrated-normalized-centre
+    // semantics as the mapper rather than displaying a single-valued static
+    // deadzone transfer. A coherent centre transit therefore stays coherent.
+    AxisCenterResolverState previewCenterResolver;
+    AxisHysteresisState previewHysteresis;
+    AdaptiveResponseProcessor previewProcessor;
+    const auto previewOrigin = std::chrono::steady_clock::time_point{};
     QVariantList result;
-    result.reserve(static_cast<qsizetype>(simulated.size()));
-    for (const AdaptiveResponseSimulationSample &sample : simulated) {
-        result.append(QVariantMap{{u"time"_qs, sample.timeSeconds}, {u"physical"_qs, sample.telemetry.physical},
-            {u"estimated"_qs, sample.telemetry.estimated}, {u"predicted"_qs, sample.telemetry.predicted},
-            {u"virtualOutput"_qs, evaluateStaticAxisTransfer(sample.telemetry.predicted, mapping)},
-            {u"lead"_qs, sample.telemetry.lead}, {u"horizonMs"_qs, sample.telemetry.activeHorizonSeconds * 1000.0F},
-            {u"confidence"_qs, sample.telemetry.confidence},
-            {u"velocity"_qs, sample.telemetry.velocity},
-            {u"acceleration"_qs, sample.telemetry.acceleration},
-            {u"accelerationIntent"_qs, sample.telemetry.accelerationIntent},
-            {u"onsetAuthority"_qs, sample.telemetry.onsetAuthority},
-            {u"sustainedEvidence"_qs, sample.telemetry.sustainedEvidence},
-            {u"sustainedAuthority"_qs, sample.telemetry.sustainedAuthority},
-            {u"motionUrgency"_qs, sample.telemetry.motionUrgency},
-            {u"horizonExtensionEligibility"_qs, sample.telemetry.horizonExtensionEligibility},
-            {u"normalMaximumHorizonMs"_qs, sample.telemetry.normalMaximumHorizonSeconds * 1000.0F},
-            {u"allowedMaximumHorizonMs"_qs, sample.telemetry.allowedMaximumHorizonSeconds * 1000.0F},
-            {u"turningPointConfidence"_qs, sample.telemetry.turningPointConfidence},
-            {u"estimatedTimeToTurnMs"_qs, sample.telemetry.estimatedTimeToTurnSeconds * 1000.0F},
-            {u"estimatedRemainingTravel"_qs, sample.telemetry.estimatedRemainingTravel},
-            {u"turningPointHorizonLimitMs"_qs, sample.telemetry.turningPointHorizonLimitSeconds * 1000.0F},
-            {u"turningPointLeadLimit"_qs, sample.telemetry.turningPointLeadLimit},
-            {u"reacquisitionAuthority"_qs, sample.telemetry.reacquisitionAuthority},
-            {u"velocityAuthority"_qs, sample.telemetry.velocityAuthority},
-            {u"motionCoherence"_qs, sample.telemetry.motionCoherence},
-            {u"sourceUpdatePeriodMs"_qs, sample.telemetry.sourceUpdatePeriodSeconds * 1000.0F},
-            {u"quietDurationMs"_qs, sample.telemetry.quietDurationSeconds * 1000.0F},
-            {u"reversal"_qs, sample.telemetry.reversal},
-            {u"state"_qs, adaptiveMotionStateLabel(sample.telemetry.state)}});
+    result.reserve(static_cast<qsizetype>(physical.size()));
+    for (size_t index = 0; index < physical.size(); ++index) {
+        const float resolved = resolveNormalizedAxisCenter(physical[index], mapping,
+                                                            previewCenterResolver);
+        const AdaptiveResponseTelemetry telemetry = previewProcessor.process(resolved, physicalPrediction,
+            previewOrigin + std::chrono::milliseconds(static_cast<qint64>(index) * 4));
+        const AdaptiveMappedAxisOutput mapped = applyCurveAwareAdaptiveResponse(
+            telemetry.physical, telemetry.predicted, runtime.enabled,
+            runtime.maximumLead, mapping, previewHysteresis);
+        result.append(QVariantMap{{u"time"_qs, static_cast<double>(index) * 0.004},
+            {u"physical"_qs, telemetry.physical}, {u"estimated"_qs, telemetry.estimated},
+            {u"predicted"_qs, telemetry.predicted},
+            {u"baselineOutput"_qs, mapped.baselineOutput},
+            {u"predictedMappedOutput"_qs, mapped.predictedMappedOutput},
+            {u"adaptiveOutput"_qs, mapped.adaptiveOutput},
+            {u"virtualOutput"_qs, mapped.adaptiveOutput},
+            {u"physicalLead"_qs, mapped.physicalLead}, {u"mappedLead"_qs, mapped.mappedLead},
+            {u"appliedLead"_qs, mapped.appliedLead}, {u"localCurveGain"_qs, mapped.localCurveGain},
+            {u"deadzoneAuthorityBlocked"_qs, mapped.deadzoneAuthorityBlocked},
+            {u"leadLimited"_qs, mapped.leadLimited},
+            {u"highLocalCurveGain"_qs, mapped.highLocalCurveGain},
+            {u"lead"_qs, mapped.physicalLead}, {u"horizonMs"_qs, telemetry.activeHorizonSeconds * 1000.0F},
+            {u"confidence"_qs, telemetry.confidence}, {u"velocity"_qs, telemetry.velocity},
+            {u"acceleration"_qs, telemetry.acceleration}, {u"accelerationIntent"_qs, telemetry.accelerationIntent},
+            {u"onsetAuthority"_qs, telemetry.onsetAuthority}, {u"sustainedEvidence"_qs, telemetry.sustainedEvidence},
+            {u"sustainedAuthority"_qs, telemetry.sustainedAuthority}, {u"motionUrgency"_qs, telemetry.motionUrgency},
+            {u"horizonExtensionEligibility"_qs, telemetry.horizonExtensionEligibility},
+            {u"normalMaximumHorizonMs"_qs, telemetry.normalMaximumHorizonSeconds * 1000.0F},
+            {u"allowedMaximumHorizonMs"_qs, telemetry.allowedMaximumHorizonSeconds * 1000.0F},
+            {u"turningPointConfidence"_qs, telemetry.turningPointConfidence},
+            {u"estimatedTimeToTurnMs"_qs, telemetry.estimatedTimeToTurnSeconds * 1000.0F},
+            {u"estimatedRemainingTravel"_qs, telemetry.estimatedRemainingTravel},
+            {u"turningPointHorizonLimitMs"_qs, telemetry.turningPointHorizonLimitSeconds * 1000.0F},
+            {u"turningPointLeadLimit"_qs, telemetry.turningPointLeadLimit},
+            {u"reacquisitionAuthority"_qs, telemetry.reacquisitionAuthority},
+            {u"velocityAuthority"_qs, telemetry.velocityAuthority},
+            {u"motionCoherence"_qs, telemetry.motionCoherence},
+            {u"sourceUpdatePeriodMs"_qs, telemetry.sourceUpdatePeriodSeconds * 1000.0F},
+            {u"quietDurationMs"_qs, telemetry.quietDurationSeconds * 1000.0F},
+            {u"reversal"_qs, telemetry.reversal}, {u"state"_qs, adaptiveMotionStateLabel(telemetry.state)}});
     }
     return result;
 }
@@ -1980,17 +2077,34 @@ void AppBackend::advanceAdaptiveResponseSimulator(float manualInput, const QStri
             m_adaptiveResponseSimulatorLastSourceMs += sourcePeriodMs;
             m_adaptiveResponseSimulatorHeldInput = reconstructedGestureAt(
                 m_adaptiveResponseSimulatorLastSourceMs);
+            m_adaptiveResponseSimulatorResolvedInput = resolveNormalizedAxisCenter(
+                m_adaptiveResponseSimulatorHeldInput, mapping,
+                m_adaptiveResponseSimulatorCenterResolver);
         }
         const auto timestamp = std::chrono::steady_clock::time_point{}
             + std::chrono::milliseconds(m_adaptiveResponseSimulatorLastTickMs);
+        RuntimeAdaptiveResponseConfig physicalPrediction = configuration;
+        physicalPrediction.maximumLead = 0.50F;
         const AdaptiveResponseTelemetry telemetry = m_adaptiveResponseSimulator.process(
-            m_adaptiveResponseSimulatorHeldInput, configuration, timestamp);
+            m_adaptiveResponseSimulatorResolvedInput, physicalPrediction, timestamp);
+        const AdaptiveMappedAxisOutput mapped = applyCurveAwareAdaptiveResponse(
+            telemetry.physical, telemetry.predicted, configuration.enabled, configuration.maximumLead,
+            mapping, m_adaptiveResponseSimulatorHysteresis);
         AdaptiveResponseSimulatorSample sample;
         sample.elapsedMs = m_adaptiveResponseSimulatorLastTickMs;
         sample.physical = telemetry.physical;
         sample.estimated = telemetry.estimated;
         sample.predicted = telemetry.predicted;
-        sample.virtualOutput = evaluateStaticAxisTransfer(telemetry.predicted, mapping);
+        sample.baselineMappedOutput = mapped.baselineOutput;
+        sample.predictedMappedOutput = mapped.predictedMappedOutput;
+        sample.adaptiveOutput = mapped.adaptiveOutput;
+        sample.mappedLead = mapped.mappedLead;
+        sample.appliedLead = mapped.appliedLead;
+        sample.localCurveGain = mapped.localCurveGain;
+        sample.deadzoneAuthorityBlocked = mapped.deadzoneAuthorityBlocked;
+        sample.leadLimited = mapped.leadLimited;
+        sample.highLocalCurveGain = mapped.highLocalCurveGain;
+        sample.virtualOutput = mapped.adaptiveOutput;
         sample.velocity = telemetry.velocity;
         sample.acceleration = telemetry.acceleration;
         sample.activeHorizonSeconds = telemetry.activeHorizonSeconds;
@@ -2055,7 +2169,16 @@ QVariantList AppBackend::adaptiveResponseSimulatorHistory() const
         result.append(QVariantMap{{u"sequence"_qs, sample.sequence},
             {u"timeMs"_qs, sample.elapsedMs - newest},
             {u"physical"_qs, sample.physical}, {u"estimated"_qs, sample.estimated},
-            {u"predicted"_qs, sample.predicted}, {u"virtualOutput"_qs, sample.virtualOutput},
+            {u"predicted"_qs, sample.predicted},
+            {u"baselineOutput"_qs, sample.baselineMappedOutput},
+            {u"predictedMappedOutput"_qs, sample.predictedMappedOutput},
+            {u"adaptiveOutput"_qs, sample.adaptiveOutput},
+            {u"mappedLead"_qs, sample.mappedLead}, {u"appliedLead"_qs, sample.appliedLead},
+            {u"localCurveGain"_qs, sample.localCurveGain},
+            {u"deadzoneAuthorityBlocked"_qs, sample.deadzoneAuthorityBlocked},
+            {u"leadLimited"_qs, sample.leadLimited},
+            {u"highLocalCurveGain"_qs, sample.highLocalCurveGain},
+            {u"virtualOutput"_qs, sample.virtualOutput},
             {u"velocity"_qs, sample.velocity}, {u"acceleration"_qs, sample.acceleration},
             {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
             {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
@@ -2105,6 +2228,14 @@ QVariantMap AppBackend::adaptiveResponseSimulatorHistorySince(qint64 lastSequenc
         samples.append(QVariantMap{{u"sequence"_qs, sample.sequence},
             {u"timeMs"_qs, sample.elapsedMs - newest}, {u"physical"_qs, sample.physical},
             {u"estimated"_qs, sample.estimated}, {u"predicted"_qs, sample.predicted},
+            {u"baselineOutput"_qs, sample.baselineMappedOutput},
+            {u"predictedMappedOutput"_qs, sample.predictedMappedOutput},
+            {u"adaptiveOutput"_qs, sample.adaptiveOutput},
+            {u"mappedLead"_qs, sample.mappedLead}, {u"appliedLead"_qs, sample.appliedLead},
+            {u"localCurveGain"_qs, sample.localCurveGain},
+            {u"deadzoneAuthorityBlocked"_qs, sample.deadzoneAuthorityBlocked},
+            {u"leadLimited"_qs, sample.leadLimited},
+            {u"highLocalCurveGain"_qs, sample.highLocalCurveGain},
             {u"virtualOutput"_qs, sample.virtualOutput}, {u"velocity"_qs, sample.velocity},
             {u"acceleration"_qs, sample.acceleration},
             {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
@@ -2137,6 +2268,8 @@ QVariantMap AppBackend::adaptiveResponseSimulatorHistorySince(qint64 lastSequenc
 void AppBackend::adaptiveResponseSimulatorClear()
 {
     m_adaptiveResponseSimulator.reset();
+    m_adaptiveResponseSimulatorHysteresis = {};
+    m_adaptiveResponseSimulatorCenterResolver = {};
     m_adaptiveResponseSimulatorHistoryNext = 0;
     m_adaptiveResponseSimulatorHistoryCount = 0;
     m_adaptiveResponseSimulatorRecordingNext = 0;
@@ -2148,6 +2281,7 @@ void AppBackend::adaptiveResponseSimulatorClear()
     m_adaptiveResponseSimulatorSourceRate = 250;
     m_adaptiveResponseSimulatorLastManualInput = 0.0F;
     m_adaptiveResponseSimulatorHeldInput = 0.0F;
+    m_adaptiveResponseSimulatorResolvedInput = 0.0F;
     m_adaptiveResponseSimulatorHasManualInput = false;
     m_adaptiveResponseSimulatorRecordingActive = false;
     m_adaptiveResponseSimulatorClock.restart();
@@ -2185,7 +2319,16 @@ QVariantList AppBackend::adaptiveResponseSimulatorRecording() const
         result.append(QVariantMap{{u"sequence"_qs, sample.sequence},
             {u"recordedElapsedMs"_qs, sample.elapsedMs - firstTime},
             {u"physical"_qs, sample.physical}, {u"estimated"_qs, sample.estimated},
-            {u"predicted"_qs, sample.predicted}, {u"virtualOutput"_qs, sample.virtualOutput},
+            {u"predicted"_qs, sample.predicted},
+            {u"baselineOutput"_qs, sample.baselineMappedOutput},
+            {u"predictedMappedOutput"_qs, sample.predictedMappedOutput},
+            {u"adaptiveOutput"_qs, sample.adaptiveOutput},
+            {u"mappedLead"_qs, sample.mappedLead}, {u"appliedLead"_qs, sample.appliedLead},
+            {u"localCurveGain"_qs, sample.localCurveGain},
+            {u"deadzoneAuthorityBlocked"_qs, sample.deadzoneAuthorityBlocked},
+            {u"leadLimited"_qs, sample.leadLimited},
+            {u"highLocalCurveGain"_qs, sample.highLocalCurveGain},
+            {u"virtualOutput"_qs, sample.virtualOutput},
             {u"velocity"_qs, sample.velocity}, {u"acceleration"_qs, sample.acceleration},
             {u"activeHorizonMs"_qs, sample.activeHorizonSeconds * 1000.0F},
             {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
@@ -2689,6 +2832,7 @@ bool AppBackend::mappingActive() const { return m_worker.runtime().mappingActive
 bool AppBackend::mappingRequested() const { return m_mappingDesired; }
 QString AppBackend::mappingStatus() const
 {
+    if (m_liveInputTestSuspended) return u"MAPPING SUSPENDED"_qs;
     const bool active = m_worker.runtime().mappingActive.load();
     const MappingEffectiveState effective =
         static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load());
@@ -2794,6 +2938,14 @@ QString AppBackend::controllerReadinessRecommendedAction() const
     }
     if (plan.state == ControllerReadinessState::NeedsChanges) return QStringLiteral("SHOW INSTRUCTIONS");
     return {};
+}
+bool AppBackend::controllerReconnectRequired() const
+{
+    return m_readiness.reconnectVerificationPending() || m_readiness.reconnectReconciliationPending();
+}
+bool AppBackend::controllerDisconnectObserved() const
+{
+    return m_readiness.reconnectDisconnectObserved();
 }
 bool AppBackend::controllerSetupCanApply() const
 {
@@ -3092,11 +3244,10 @@ QString AppBackend::virtualAxisStatus() const
 QVariantList AppBackend::quickAssignAxisTargets() const
 {
     QVariantList targets;
-    const VirtualOutputLayout *layout = activeOutputLayout();
-    if (!layout) return targets;
     const ControllerProfile &profile = currentProfile();
+    const AtomicRuntimeState &runtime = m_worker.runtime();
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        if (!layout->requirements.axes[static_cast<size_t>(index)]) continue;
+        if (!runtime.virtualAxisAvailable[static_cast<size_t>(index)].load()) continue;
         const VirtualAxis axis = static_cast<VirtualAxis>(index);
         const QString target = virtualAxisLabel(axis);
         const QString alias = profile.virtualAxisAliases[static_cast<size_t>(index)].trimmed();
@@ -3232,25 +3383,28 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
         appendEvent(u"Inactive descriptor axes cannot be routed; complete a new calibration to revise activity"_qs);
         return false;
     }
-    const VirtualOutputLayout *layout = activeOutputLayout();
-    if (virtualAxis != VirtualAxis::Disabled && layout
-        && !layout->requirements.axes[static_cast<size_t>(targetIndex)]) {
-        appendEvent(u"Selected virtual axis is not part of this profile's output layout"_qs);
-        return false;
-    }
     if (virtualAxis != VirtualAxis::Disabled
         && (targetIndex < 1 || targetIndex >= kVirtualAxisSlotCount
             || !m_worker.runtime().virtualAxisAvailable[static_cast<size_t>(targetIndex)].load())) {
         appendEvent(u"Selected vJoy axis is not exposed by the active device"_qs);
         return false;
     }
+    // Do not mutate any persistent state until the conflict decision has
+    // completed. In particular, Cancel must leave both routes and output
+    // layout metadata exactly as they were before the attempted selection.
     if (hasMappingConflict(profile.axes, physicalAxis, virtualAxis)) {
         if (!explicitOverride) return false;
-        for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            if (index != physicalAxis && profile.axes[index].target == virtualAxis) {
-                profile.axes[index].target = VirtualAxis::Disabled;
-            }
+    }
+    // The device descriptor is authoritative for the editor. Persist an
+    // exposed target into this profile's layout before compiling the next
+    // configuration so the output worker continues to route it safely.
+    if (virtualAxis != VirtualAxis::Disabled) {
+        VirtualOutputLayout *layout = activeOutputLayout();
+        if (!layout) {
+            appendEvent(u"The active profile has no virtual output layout"_qs);
+            return false;
         }
+        layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
     }
     profile.axes[physicalAxis].target = virtualAxis;
     persistAndApply();
@@ -5473,7 +5627,134 @@ void AppBackend::inspectControllerReadiness()
 
 void AppBackend::verifyHotasSetup()
 {
+    if (m_readiness.reconnectVerificationPending() || m_readiness.reconnectReconciliationPending()) {
+        observeControllerReconnect();
+        return;
+    }
     startVerification(VerificationMode::Full);
+}
+
+void AppBackend::observeControllerReconnect()
+{
+    if (!m_readiness.reconnectVerificationPending()) return;
+    const PhysicalControllerCapabilities observed = currentPhysicalCapabilities();
+    const PhysicalControllerCapabilities expected = m_readiness.plan().physical;
+    const bool matchingController = observed.connected
+        && ControllerReadinessService::samePhysicalController(expected, observed);
+    if (!m_readiness.observePhysicalReconnect(observed.connected, matchingController,
+                                               observed.inputReportsReceived)) {
+        return;
+    }
+    appendEvent(m_readiness.plan().status);
+    if (m_readiness.reconnectReconciliationPending()) {
+        reconcileControllerReconnect(observed);
+        emit stateChanged();
+        return;
+    }
+    if (!m_readiness.reconnectVerificationPending()
+        && m_readiness.plan().state == ControllerReadinessState::Ready) {
+        rememberCurrentController();
+    }
+    emit stateChanged();
+}
+
+void AppBackend::reconcileControllerReconnect(const PhysicalControllerCapabilities &physical)
+{
+    if (!m_readiness.reconnectReconciliationPending() || m_verificationInProgress) return;
+
+    const MapperConfiguration configuration = m_configuration;
+    const bool mappingWasRequested = m_worker.mappingRequested();
+    ControllerReadinessPlan waiting = m_readiness.plan();
+    waiting.state = ControllerReadinessState::Verifying;
+    waiting.isChecking = true;
+    waiting.hidhideStatus = VerificationSubsystemState::Checking;
+    waiting.hidhideSummary = QStringLiteral("Reading HidHide state for the controller's current re-enumerated interfaces.");
+    waiting.status = QStringLiteral("RECONCILING HIDHIDE — Checking current controller interfaces after reconnect.");
+    m_readiness.adoptPlan(std::move(waiting));
+    m_verificationInProgress = true;
+    emit stateChanged();
+    appendEvent(u"Controller reconnected; reconciling HidHide against its current interfaces"_qs);
+
+    auto reconciler = std::make_shared<ControllerReadinessService>();
+    QThread *thread = QThread::create([this, reconciler, configuration, physical, mappingWasRequested] {
+        const bool prepared = m_worker.prepareForDriverConfiguration();
+        bool repaired = false;
+        bool reacquired = false;
+        bool restored = true;
+        if (prepared) {
+            reconciler->inspect(configuration, physical, VerificationMode::Full);
+            if (reconciler->plan().state != ControllerReadinessState::Ready
+                && reconciler->plan().canApplyAutomatically) {
+                repaired = reconciler->applyAutomatically();
+            }
+
+            if (reconciler->plan().state == ControllerReadinessState::Ready
+                || (repaired && reconciler->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Ready)) {
+                const auto visibilityChanged = [](const AutomaticRepairOperationResult &operation) {
+                    return operation.succeeded && !operation.rollback
+                        && (operation.operationName.startsWith(QStringLiteral("Hide the selected physical controller"))
+                            || operation.operationName == QStringLiteral("Enable HidHide cloaking"));
+                };
+                const bool anotherReconnectRequired = repaired && std::any_of(
+                    reconciler->lastAutomaticRepairResult().operations.cbegin(),
+                    reconciler->lastAutomaticRepairResult().operations.cend(), visibilityChanged);
+                if (anotherReconnectRequired) {
+                    // A newly discovered collection was cloaked during the
+                    // post-reconnect reconciliation. Require its own actual
+                    // re-enumeration rather than declaring read-back READY.
+                    reconciler->beginPhysicalReconnectVerification();
+                } else {
+                    reacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                    if (reacquired) {
+                        reconciler->completePhysicalAccessVerification(true, true);
+                    } else if (repaired) {
+                        const bool rolledBack = reconciler->recoverFromPhysicalAccessFailure();
+                        reconciler->completePhysicalAccessVerification(false, false, true, rolledBack, false);
+                    } else {
+                        ControllerReadinessPlan failed = reconciler->plan();
+                        failed.state = ControllerReadinessState::Attention;
+                        failed.physicalStatus = VerificationSubsystemState::Attention;
+                        failed.physicalSummary = QStringLiteral("The reconnected controller did not provide a fresh DirectInput report during final verification.");
+                        failed.status = QStringLiteral("RECONNECT VERIFICATION INCOMPLETE — Move a control, then verify setup again.");
+                        reconciler->adoptPlan(std::move(failed));
+                    }
+                }
+            }
+        }
+        restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        if (!prepared) {
+            ControllerReadinessPlan failed = ControllerReadinessService::checkingPlan(physical, VerificationMode::Full);
+            failed.state = ControllerReadinessState::Failed;
+            failed.isChecking = false;
+            failed.status = QStringLiteral("RECONNECT VERIFICATION FAILED — HOTAS BF6 could not safely prepare the controller stack.");
+            reconciler->adoptPlan(std::move(failed));
+        } else if (!restored) {
+            ControllerReadinessPlan failed = reconciler->plan();
+            failed.state = ControllerReadinessState::Failed;
+            failed.isChecking = false;
+            failed.vjoyStatus = VerificationSubsystemState::Error;
+            failed.vjoySummary = QStringLiteral("Reconciliation completed, but HOTAS BF6 could not restore vJoy ownership.");
+            failed.status = QStringLiteral("RECONNECT VERIFICATION FAILED — Mapping did not resume after HidHide reconciliation.");
+            reconciler->adoptPlan(std::move(failed));
+        }
+
+        QMetaObject::invokeMethod(this, [this, reconciler, reacquired, restored] {
+            m_readiness = std::move(*reconciler);
+            m_verificationInProgress = false;
+            appendEvent(m_readiness.plan().status);
+            if (restored && reacquired && m_readiness.plan().state == ControllerReadinessState::Ready
+                && currentPhysicalCapabilities().connected) {
+                rememberCurrentController();
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 void AppBackend::startQuickVerification()
@@ -5569,13 +5850,8 @@ void AppBackend::startVerification(VerificationMode mode)
                 && arrivalId == m_pendingControllerArrivalId) {
                 m_pendingControllerArrivalId.clear();
                 const PhysicalControllerCapabilities current = currentPhysicalCapabilities();
-                const bool known = std::any_of(m_configuration.savedControllers.cbegin(),
-                    m_configuration.savedControllers.cend(), [&current](const SavedControllerRecord &record) {
-                        return (!current.hidInstanceId.isEmpty()
-                                && record.hidInstanceId.compare(current.hidInstanceId, Qt::CaseInsensitive) == 0)
-                            || (!current.directInputId.isEmpty()
-                                && record.lastDirectInputId.compare(current.directInputId, Qt::CaseInsensitive) == 0);
-                    });
+                const bool known = ControllerReadinessService::isKnownPhysicalController(
+                    current, m_configuration.savedControllers);
                 const bool actionable = ControllerReadinessService::needsSetupAfterControllerArrival(
                     true, m_readiness.plan());
                 if (current.connected && current.directInputId == arrivalId
@@ -5632,6 +5908,7 @@ bool AppBackend::applyControllerReadiness()
         bool prepared = m_worker.prepareForDriverConfiguration();
         bool completed = false;
         bool physicalReacquired = false;
+        bool visibilityReconnectRequired = false;
         bool recoveryAttempted = false;
         bool recoverySucceeded = false;
         bool recoveredPhysicalReports = false;
@@ -5664,7 +5941,19 @@ bool AppBackend::applyControllerReadiness()
                 repair->completePhysicalAccessVerification(false, false, recoveryAttempted,
                                                            recoverySucceeded, recoveredPhysicalReports);
             } else if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Ready) {
+                const auto changedVisibility = [](const AutomaticRepairOperationResult &operation) {
+                    return operation.succeeded && !operation.rollback
+                        && (operation.operationName == QStringLiteral("Hide the selected physical controller")
+                            || operation.operationName == QStringLiteral("Enable HidHide cloaking"));
+                };
+                visibilityReconnectRequired = std::any_of(
+                    repair->lastAutomaticRepairResult().operations.cbegin(),
+                    repair->lastAutomaticRepairResult().operations.cend(), changedVisibility);
+                if (visibilityReconnectRequired) {
+                    repair->beginPhysicalReconnectVerification();
+                } else {
                 repair->completePhysicalAccessVerification(true, true);
+                }
             }
         }
 
@@ -5706,7 +5995,8 @@ bool AppBackend::applyControllerReadiness()
                                                                restoredPlan.vjoy, restoredPlan.hidhide,
                                                                VerificationMode::Full);
             if (repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Attention
-                || repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Failed) {
+                || repair->lastAutomaticRepairResult().outcome == AutomaticRepairOutcome::Failed
+                || repair->reconnectVerificationPending()) {
                 restoredPlan.state = repairState;
                 restoredPlan.status = repairStatus;
                 restoredPlan.physicalStatus = repairPhysicalStatus;
@@ -5720,7 +6010,8 @@ bool AppBackend::applyControllerReadiness()
         }
 
         QMetaObject::invokeMethod(this, [this, repair, completed, restored, physicalReacquired,
-                                         recoveryAttempted, recoverySucceeded, recoveredPhysicalReports] {
+                                          visibilityReconnectRequired,
+                                          recoveryAttempted, recoverySucceeded, recoveredPhysicalReports] {
             m_readiness = std::move(*repair);
             m_verificationInProgress = false;
             if (completed && restored && physicalReacquired
@@ -5736,6 +6027,9 @@ bool AppBackend::applyControllerReadiness()
                 appendEvent(u"Controller setup requires a manual repair; no changes were applied"_qs);
             } else {
                 appendEvent(m_readiness.plan().status);
+                if (visibilityReconnectRequired) {
+                    appendEvent(u"HidHide changed device visibility; waiting for the required unplug and reconnect"_qs);
+                }
                 if (recoveryAttempted) {
                     appendEvent(recoverySucceeded && recoveredPhysicalReports
                         ? u"Automatic HidHide setup was reverted and physical reports resumed"_qs
@@ -6035,7 +6329,7 @@ bool AppBackend::setActiveController(const QString &recordId)
                 rebuildControllerUiModel();
                 emit selectedAxisCurveChanged();
                 appendEvent(reusedExistingVjoy
-                    ? QString(u"Active controller switched to %1; the selected vJoy descriptor matched exactly"_qs).arg(selectedTarget.name)
+                    ? QString(u"Active controller switched to %1; the selected vJoy device meets the required capabilities"_qs).arg(selectedTarget.name)
                     : QString(u"Active controller switched to %1; vJoy was configured and verified before mapping resumed"_qs).arg(selectedTarget.name));
             } else {
                 appendEvent(QString(u"Active controller switch to %1 was not completed; prior mapping configuration was restored"_qs)
@@ -6419,6 +6713,7 @@ PhysicalControllerCapabilities AppBackend::currentPhysicalCapabilities() const
     physical.name = snapshot.name;
     physical.directInputId = snapshot.id;
     physical.hidInstanceId = snapshot.hidInstanceId;
+    physical.hidContainerId = snapshot.hidContainerId;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     physical.connected = runtime.physicalConnected.load();
     physical.inputReportsReceived = runtime.physicalReportsSinceAcquisition.load() > 0;
@@ -6644,9 +6939,17 @@ void AppBackend::refreshUiSnapshot()
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
+    // Preserve the explicit HidHide reconnect proof through this UI tick. A
+    // newly reconnected controller must not start the ordinary arrival probe
+    // and replace the reconnect plan before its selected-device/live-report
+    // observation completes.
+    const bool reconnectWasPending = m_readiness.reconnectVerificationPending()
+        || m_readiness.reconnectReconciliationPending();
+    observeControllerReconnect();
     const bool connectionChanged = connected != m_physicalControllerWasConnected;
     if (ControllerReadinessService::isNewPhysicalControllerArrival(
-            m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
+            m_physicalControllerWasConnected, connected) && !m_verificationInProgress
+        && !reconnectWasPending) {
         m_pendingControllerArrivalId = deviceId();
         appendEvent(u"Physical controller arrived; evaluating setup readiness"_qs);
         startQuickVerification();
@@ -6662,7 +6965,7 @@ void AppBackend::refreshUiSnapshot()
     const bool workerRequested = m_worker.mappingRequested();
     const bool mappingIntentChanged = workerRequested != m_mappingDesired;
     if (mappingIntentChanged) m_mappingDesired = workerRequested;
-    const bool captureAdaptiveHistory = connected && workerRequested
+    const bool captureAdaptiveHistory = connected
         && m_presentationLifecycle != PresentationLifecycleState::TrayHidden;
     if (captureAdaptiveHistory && !m_adaptiveResponseHistoryTimer.isActive()) {
         // Record diagnostic history at 83 Hz; QML renders independently at
@@ -6686,10 +6989,10 @@ void AppBackend::sampleAdaptiveResponseHistory()
     const size_t index = static_cast<size_t>(axis);
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const qint64 elapsedMs = m_adaptiveResponseHistoryClock.elapsed();
-    // A disconnected or suspended mapper has no live trace to animate. Keep a
-    // sparse baseline for inspection, but do not manufacture 83 Hz flat data
-    // that would wake QML graphs without meaningful telemetry movement.
-    if ((!runtime.physicalConnected.load() || !mappingRequested())
+    // Physical DirectInput telemetry remains useful when mapping is off,
+    // suspended, or vJoy is unavailable. Only a disconnected controller gets
+    // sparse samples, preserving a responsive Live Controller inspection feed.
+    if (!runtime.physicalConnected.load()
         && m_adaptiveResponseHistoryCount > 0) {
         const int capacity = static_cast<int>(m_adaptiveResponseHistory.size());
         const AdaptiveResponseHistorySample &previous = m_adaptiveResponseHistory[static_cast<size_t>(
@@ -6704,7 +7007,13 @@ void AppBackend::sampleAdaptiveResponseHistory()
     sample.physical = runtime.normalized[index].load();
     sample.estimated = runtime.adaptiveEstimated[index].load();
     sample.predicted = runtime.adaptivePredicted[index].load();
-    sample.virtualOutput = runtime.virtualValues[index].load();
+    sample.baselineMappedOutput = runtime.adaptiveBaselineMapped[index].load();
+    sample.predictedMappedOutput = runtime.adaptivePredictedMapped[index].load();
+    sample.adaptiveOutput = runtime.adaptiveOutput[index].load();
+    sample.mappedLead = runtime.adaptiveMappedLead[index].load();
+    sample.appliedLead = runtime.adaptiveAppliedLead[index].load();
+    sample.localCurveGain = runtime.adaptiveLocalCurveGain[index].load();
+    sample.virtualOutput = sample.adaptiveOutput;
     sample.velocity = runtime.adaptiveVelocity[index].load();
     sample.acceleration = runtime.adaptiveAcceleration[index].load();
     sample.activeHorizonSeconds = runtime.adaptiveHorizonSeconds[index].load();

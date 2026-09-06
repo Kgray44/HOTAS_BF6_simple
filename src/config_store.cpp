@@ -304,7 +304,7 @@ QJsonObject savedControllerToJson(const SavedControllerRecord &record)
     for (const QString &instance : record.ownedHidHideDeviceInstances) ownedInstances.append(instance);
     return {{u"id"_qs, record.id}, {u"displayName"_qs, record.displayName},
             {u"lastDirectInputId"_qs, record.lastDirectInputId}, {u"productGuid"_qs, record.productGuid},
-            {u"hidInstanceId"_qs, record.hidInstanceId}, {u"vendorId"_qs, record.vendorId},
+            {u"hidInstanceId"_qs, record.hidInstanceId}, {u"hidContainerId"_qs, record.hidContainerId}, {u"vendorId"_qs, record.vendorId},
             {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisCount"_qs, record.axisCount},
             {u"buttonCount"_qs, record.buttonCount}, {u"povCount"_qs, record.povCount},
             {u"capabilityFingerprint"_qs, record.capabilityFingerprint}, {u"lastSeen"_qs, record.lastSeen},
@@ -323,6 +323,7 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
     parsed.lastDirectInputId = json.value(u"lastDirectInputId"_qs).toString().trimmed();
     parsed.productGuid = json.value(u"productGuid"_qs).toString().trimmed();
     parsed.hidInstanceId = json.value(u"hidInstanceId"_qs).toString().trimmed();
+    parsed.hidContainerId = json.value(u"hidContainerId"_qs).toString().trimmed();
     const QJsonArray axes = json.value(u"axes"_qs).toArray();
     const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
     if (parsed.id.isEmpty() || parsed.displayName.isEmpty() || axes.size() != kPhysicalAxisCount
@@ -1648,6 +1649,17 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             layoutIds.insert(layout.id);
             layoutDeviceIds.insert(layout.requirements.deviceId);
             configuration.outputLayouts.push_back(std::move(layout));
+        }
+        // The managed BF6 baseline is intentionally the full standard vJoy
+        // descriptor. Earlier V2.3 files recorded only their then-mapped
+        // four axes, which hid real device capability from setup and editing.
+        // Preserve custom layouts exactly; only the application-owned default
+        // is promoted, and only in control-plane configuration loading.
+        for (VirtualOutputLayout &layout : configuration.outputLayouts) {
+            if (layout.id != defaultOutputLayoutId()) continue;
+            for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+                layout.requirements.axes[static_cast<size_t>(axis)] = true;
+            }
         }
     } else {
         // v2.0.10 migration is intentionally data-only: preserve the selected

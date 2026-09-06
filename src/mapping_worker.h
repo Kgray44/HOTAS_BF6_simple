@@ -33,6 +33,12 @@ struct AtomicRuntimeState {
     // QML timer samples it independently; no report fires a UI event.
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEstimated{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptivePredicted{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveBaselineMapped{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptivePredictedMapped{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveOutput{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMappedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAppliedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveLocalCurveGain{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAcceleration{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonSeconds{};
@@ -57,6 +63,9 @@ struct AtomicRuntimeState {
     std::array<std::atomic_int, kPhysicalAxisCount> adaptiveMotionState{};
     std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveReversing{};
     std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveSafetyLimited{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveDeadzoneAuthorityBlocked{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveLeadLimited{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveHighLocalCurveGain{};
     std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveReversalCount{};
     std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptiveSafetyClampCount{};
     // The worker's already-flattened config is published alongside live
@@ -152,6 +161,7 @@ struct DeviceSnapshot {
     // Captured once at DirectInput acquisition. Readiness uses this exact HID
     // instance identity; it never infers a HidHide target from a friendly name.
     QString hidInstanceId;
+    QString hidContainerId;
 };
 
 class MappingWorker final : public QThread {
@@ -182,6 +192,13 @@ public:
     void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
+    // Deterministic test seam for the UI-side live-input contract. It writes
+    // the same fixed latest-snapshot atomics DirectInput normally publishes;
+    // it never enters the mapper report path or opens vJoy.
+    void publishPhysicalAxisSnapshotForTest(int physicalAxis, float normalized);
+    // Test-only descriptor fixture for route-editor coverage. This never
+    // starts vJoy, changes a device, or runs from the report hot path.
+    void publishVirtualAxisAvailabilityForTest(bool available);
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
     MappingLatencyPercentiles latencyPercentiles() const;

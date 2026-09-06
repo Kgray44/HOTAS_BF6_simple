@@ -75,6 +75,7 @@ void UiReleaseContractTests::controllerSetupRetainsItsExplicitTargetAndSuccessfu
     QVERIFY(header.contains(QStringLiteral("controllerSetupRequested(const QStringList &targetDirectInputIds)")));
     QVERIFY(backend.contains(QStringLiteral("emit controllerSetupRequested(newlyDiscoveredUnverifiedIds)")));
     QVERIFY(backend.contains(QStringLiteral("emit controllerSetupRequested({arrivalId})")));
+    QVERIFY(backend.contains(QStringLiteral("ControllerReadinessService::isKnownPhysicalController(")));
     QVERIFY(backend.contains(QStringLiteral("commit the controller now rather than requiring Verify Again")));
     QVERIFY(backend.contains(QStringLiteral("verifiedRequirements.buttons = verifiedPlan.requirements.buttons")));
 }
@@ -255,6 +256,7 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString readiness = sourceFile(QStringLiteral("src/controller_readiness.cpp"));
+    const QString readinessPanel = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
     const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
@@ -267,7 +269,9 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(backend.contains(QStringLiteral("physicalAxisActivityForObservedSpan")));
     QVERIFY(backend.contains(QStringLiteral("No meaningful movement observed during completed calibration")));
     QVERIFY(readiness.contains(QStringLiteral("capabilityAxesMatch")));
-    QVERIFY(readiness.contains(QStringLiteral("exact descriptor")));
+    QVERIFY(readiness.contains(QStringLiteral("Extra available axes")));
+    QVERIFY(readiness.contains(QStringLiteral("beginPhysicalReconnectVerification")));
+    QVERIFY(readiness.contains(QStringLiteral("Controller disconnected ✓")));
     QVERIFY(readiness.contains(QStringLiteral("applyManagedOutputVisibility")));
     QVERIFY(readiness.contains(QStringLiteral("validateManagedVirtualOutputIdentity")));
     QVERIFY(readiness.contains(QStringLiteral("VID_1234&PID_BEAD")));
@@ -277,10 +281,17 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(settings.contains(QStringLiteral("CREATE 5-AXIS OUTPUT")));
     QVERIFY(settings.contains(QStringLiteral("PREPARE VISIBILITY")));
     QVERIFY(settings.contains(QStringLiteral("already-open controller handle")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("RECONNECT CONTROLLER")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("controllerDisconnectObserved")));
     for (const QString &page : {standard, legacy}) {
         QVERIFY(page.contains(QStringLiteral("NOT ROUTED")));
         QVERIFY(page.contains(QStringLiteral("UNMAPPED VJOY AXES PARKED")));
         QVERIFY(page.contains(QStringLiteral("backend.physicalAxisCapabilitySummary")));
+        // The route selector must retain its declarative binding after a
+        // conflict. An imperative currentIndex write made the displayed row
+        // stale even though the backend and worker had accepted the route.
+        QVERIFY(!page.contains(QStringLiteral("currentIndex = root.outputChoices.indexOf")));
+        QVERIFY(page.contains(QStringLiteral("currentIndex: Math.max(0, root.outputChoices.indexOf")));
     }
 }
 
@@ -377,11 +388,14 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(adaptive.contains(QStringLiteral("function axisModelIndex(physicalAxis)")));
     QVERIFY(adaptive.contains(QStringLiteral("function selectAxisModelIndex(modelIndex)")));
     QVERIFY(adaptive.contains(QStringLiteral("objectName: \"adaptiveAxisSelector\"")));
-    QVERIFY(adaptive.contains(QStringLiteral("property string staticPreviewView: \"predictor\"")));
-    QVERIFY(adaptive.contains(QStringLiteral("property bool showFinalTrace: false")));
-    QVERIFY(adaptive.contains(QStringLiteral("STATIC PIPELINE")));
-    QVERIFY(adaptive.contains(QStringLiteral("Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded.")));
-    QVERIFY(adaptive.contains(QStringLiteral("MAPPED OUTPUT")));
+    QVERIFY(!adaptive.contains(QStringLiteral("staticPreviewView")));
+    QVERIFY(!adaptive.contains(QStringLiteral("showEstimatedTrace")));
+    QVERIFY(!adaptive.contains(QStringLiteral("TRACKER STATE")));
+    QVERIFY(!adaptive.contains(QStringLiteral("PREDICTOR INTERNALS")));
+    QVERIFY(adaptive.contains(QStringLiteral("property bool showFinalTrace: true")));
+    QVERIFY(adaptive.contains(QStringLiteral("EFFECTIVE RESPONSE")));
+    QVERIFY(adaptive.contains(QStringLiteral("BASELINE OUTPUT")));
+    QVERIFY(adaptive.contains(QStringLiteral("PREDICTED MAPPED")));
     QVERIFY(adaptive.contains(QStringLiteral("ONSET / MOTION ACQUISITION")));
     QVERIFY(adaptive.contains(QStringLiteral("Uses coherent acceleration to build predictive response sooner while motion is still gaining speed.")));
     QVERIFY(adaptive.contains(QStringLiteral("Limits how much acceleration may add to predictive authority. Maximum Horizon and Maximum Lead remain absolute limits.")));
@@ -390,13 +404,41 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(adaptive.contains(QStringLiteral("Permits longer temporal prediction only when slow, coherent sustained movement supports it.")));
     QVERIFY(adaptive.contains(QStringLiteral("TURNING / REVERSAL")));
     QVERIFY(adaptive.contains(QStringLiteral("Prevents prediction from extending beyond a credible imminent stop or reversal; a correctness floor remains at 0%.")));
-    QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED PREDICTION LEAD")));
-    QVERIFY(adaptive.contains(QStringLiteral("Scale is the configured maximum lead")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAGNIFIED MAPPED-OUTPUT LEAD")));
+    QVERIFY(adaptive.contains(QStringLiteral("configured maximum mapped-output lead")));
     QVERIFY(adaptive.contains(QStringLiteral("piecewise-linear resampling")));
     QVERIFY(adaptive.contains(QStringLiteral("function staticTimeTickLabels()")));
     QVERIFY(adaptive.contains(QStringLiteral("Human-Like Rapid Reversal")));
-    QVERIFY(adaptive.contains(QStringLiteral("INSTANTANEOUS REVERSAL — worst-case synthetic torture test")));
-    QVERIFY(adaptive.contains(QStringLiteral("Interactive simulator")));
+    QVERIFY(adaptive.contains(QStringLiteral("Fast Full Sweep")));
+    QVERIFY(adaptive.contains(QStringLiteral("Very-Fast Full Sweep")));
+    QVERIFY(adaptive.contains(QStringLiteral("Same-Side Reversal")));
+    QVERIFY(adaptive.contains(QStringLiteral("Rapid Center Crossing")));
+    QVERIFY(adaptive.contains(QStringLiteral("Evasive Left/Right")));
+    QVERIFY(adaptive.contains(QStringLiteral("Sudden Stop")));
+    QVERIFY(adaptive.contains(QStringLiteral("Precision Correction")));
+    QVERIFY(adaptive.contains(QStringLiteral("Response Lab")));
+    QVERIFY(adaptive.contains(QStringLiteral("component ResponseLabCard")));
+    QVERIFY(adaptive.contains(QStringLiteral("ResponseLabCard { id: responseLabCard")));
+    QVERIFY(adaptive.contains(QStringLiteral("LIVE CONTROLLER")));
+    QVERIFY(!adaptive.contains(QStringLiteral("LIVE HOTAS")));
+    QVERIFY(!adaptive.contains(QStringLiteral("Response Lab · Interactive")));
+    QVERIFY(!adaptive.contains(QStringLiteral("Response Lab · Live")));
+    QVERIFY(adaptive.contains(QStringLiteral("responseLabSource")));
+    QVERIFY(adaptive.contains(QStringLiteral("responseLabNearViewport")));
+    QVERIFY(adaptive.contains(QStringLiteral("property var responseLabSamples")));
+    QVERIFY(adaptive.contains(QStringLiteral("samples: root.responseLabSamples")));
+    QVERIFY(adaptive.contains(QStringLiteral("ADAPTIVE RESPONSE MONITOR")));
+    QVERIFY(adaptive.contains(QStringLiteral("adaptiveResponseMonitorButton")));
+    QVERIFY(adaptive.contains(QStringLiteral("Qt.WindowStaysOnTopHint")));
+    QVERIFY(backend.contains(QStringLiteral("captureAdaptiveHistory = connected")));
+    QVERIFY(!backend.contains(QStringLiteral("captureAdaptiveHistory = connected && workerRequested")));
+    const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+    const int directInputPoll = worker.indexOf(QStringLiteral("const HRESULT pollResult = device->Poll();"));
+    const int vjoyOutputGate = worker.indexOf(
+        QStringLiteral("if (mappingRequested && !m_runtime.mappingActive.load()"));
+    QVERIFY(directInputPoll >= 0);
+    QVERIFY(vjoyOutputGate >= 0);
+    QVERIFY(directInputPoll < vjoyOutputGate);
     QVERIFY(adaptive.contains(QStringLiteral("SLOW-MOTION PLAYBACK")));
     QVERIFY(adaptive.contains(QStringLiteral("Replay speed")));
     QVERIFY(adaptive.contains(QStringLiteral("CHRONOLOGICAL · NEWEST AT RIGHT")));
@@ -410,6 +452,7 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     }
     QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorStepAtContext")));
     QVERIFY(header.contains(QStringLiteral("adaptiveResponseSimulatorHistorySince")));
+    QVERIFY(header.contains(QStringLiteral("injectAdaptiveResponseLiveSampleForTest")));
     QVERIFY(header.contains(QStringLiteral("AdaptiveResponseSimulatorSample")));
     QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulator.process")));
     QVERIFY(backend.contains(QStringLiteral("reconstructs the\n    // physical gesture between QML pointer events")));

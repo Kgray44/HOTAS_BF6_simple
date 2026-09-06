@@ -1,4 +1,5 @@
 #include "controller_discovery.h"
+#include "hid_device_identity.h"
 
 #include <dinput.h>
 #include <windows.h>
@@ -89,6 +90,7 @@ BOOL CALLBACK deviceCallback(const DIDEVICEINSTANCEW *instance, VOID *context)
         controller.buttonCount = std::min(controller.buttonCount, kMaximumPhysicalButtons);
         controller.povCount = std::min(controller.povCount, kMaximumPhysicalPovs);
         controller.hidInstanceId = hidInstanceId(device);
+        controller.hidContainerId = hidDeviceContainerId(controller.hidInstanceId);
         device->Release();
     }
     enumeration->controllers->append(std::move(controller));

@@ -25,6 +25,9 @@ bool sameCapabilities(const DiscoveredController &controller, const SavedControl
 ControllerMatchStrength strengthFor(const DiscoveredController &controller,
                                     const SavedControllerRecord &record)
 {
+    if (sameText(controller.hidContainerId, record.hidContainerId)) {
+        return ControllerMatchStrength::HardwareInstance;
+    }
     if (sameText(controller.hidInstanceId, record.hidInstanceId)) {
         return ControllerMatchStrength::HardwareInstance;
     }
@@ -100,7 +103,8 @@ bool ControllerManager::isVjoySufficient(const ControllerVJoyRequirements &avail
                                           const ControllerVJoyRequirements &required)
 {
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        if (available.axes[static_cast<size_t>(index)] != required.axes[static_cast<size_t>(index)]) {
+        if (required.axes[static_cast<size_t>(index)]
+            && !available.axes[static_cast<size_t>(index)]) {
             return false;
         }
     }
@@ -121,6 +125,7 @@ SavedControllerRecord ControllerManager::verifiedRecord(
     record.lastDirectInputId = controller.directInputId;
     record.productGuid = controller.productGuid;
     record.hidInstanceId = controller.hidInstanceId;
+    record.hidContainerId = controller.hidContainerId;
     record.vendorId = controller.vendorId;
     record.productId = controller.productId;
     record.axes = controller.axes;

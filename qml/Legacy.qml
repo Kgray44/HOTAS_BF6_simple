@@ -573,7 +573,6 @@ Page {
                         if (!backend.setMapping(axisModule.info.index, currentText, false)) {
                             root.conflictingAxis = axisModule.info.index
                             root.conflictingTarget = currentText
-                            currentIndex = root.outputChoices.indexOf(axisModule.info.target)
                             axisConflictDialog.open()
                         }
                     }
@@ -1401,7 +1400,6 @@ Page {
                                             if (!backend.setMapping(processingPanel.info.index, currentText, false)) {
                                                 root.conflictingAxis = processingPanel.info.index
                                                 root.conflictingTarget = currentText
-                                                currentIndex = root.outputChoices.indexOf(processingPanel.info.target)
                                                 axisConflictDialog.open()
                                             }
                                         }
@@ -2412,12 +2410,12 @@ Page {
  spacing: 14
             Text { text: "AXIS ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width
- text: "This vJoy axis already has a source. Replacing it disables the earlier route."
+ text: "This vJoy axis already has a source. Allowing it keeps both configured routes; the established row-order output policy resolves a shared live target."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
  font.pixelSize: 12 }
             Row { spacing: 8
-            CommandButton { label: "REPLACE"
+            CommandButton { label: "ALLOW"
  onTriggered: { backend.setMapping(root.conflictingAxis, root.conflictingTarget, true)
  axisConflictDialog.close() } }
             CommandButton { label: "CANCEL"; subdued: true; onTriggered: axisConflictDialog.close() }

@@ -31,6 +31,9 @@ bool hasArgument(int argc, char *argv[], const char *argument)
 
 int main(int argc, char *argv[])
 {
+    // This intentionally happens before QApplication/Qt Quick initialization.
+    // A single elevated HOTAS BF6 process performs only the approved repair
+    // operations and returns structured read-back data to the normal UI.
     if (const std::optional<int> repairExit = hotas::runElevatedRepairTransaction(argc, argv)) {
         return *repairExit;
     }
