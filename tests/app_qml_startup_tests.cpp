@@ -6,9 +6,12 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
+#include <QGuiApplication>
+#include <QImage>
 #include <QMetaObject>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
@@ -32,6 +35,7 @@
 #include <psapi.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <cstdio>
@@ -212,16 +216,72 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
         || adaptive->property("editScope").toString() != QStringLiteral("profile")) {
         return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Edit Level or Target popup rows did not complete a real selection"));
     }
-    if (!adaptive->setProperty("simulatorExpanded", true)) {
-        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response simulator could not expand for pointer testing"));
-    }
-    settlePresentation();
     if (!clickResponseComboRow(window, surface, sourceRate, 2)
         || adaptive->property("simulatorSourceRate").toInt() != 60) {
         return failPresentationLifecycleTest(QStringLiteral("Synthetic Source Rate popup row did not update its selected rate"));
     }
     if (!clickResponseComboRow(window, surface, sourceRate, 0)) {
         return failPresentationLifecycleTest(QStringLiteral("Synthetic Source Rate could not restore 250 Hz for manual drag testing"));
+    }
+    const QVariantMap responseConfigurationBeforeSourceSwitch = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex());
+    QQmlExpression selectLiveSource(qmlContext(adaptive), adaptive,
+        QStringLiteral("setResponseLabSource('live'); responseLabSource"));
+    if (selectLiveSource.evaluate().toString() != QStringLiteral("live")
+        || selectLiveSource.hasError()
+        || backend.adaptiveResponseContextState(
+            QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex())
+            != responseConfigurationBeforeSourceSwitch) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Response Lab Live source selection changed saved Adaptive Response configuration"));
+    }
+    const int liveAxis = backend.selectedAxisIndex();
+    backend.injectAdaptiveResponseLiveSampleForTest(liveAxis, -0.65F);
+    QQmlExpression refreshFirstLiveHistory(qmlContext(adaptive), adaptive,
+        QStringLiteral("refreshHistory(true)"));
+    refreshFirstLiveHistory.evaluate();
+    const QVariantList firstLiveGraphSamples = adaptive->property("responseLabSamples").toList();
+    backend.injectAdaptiveResponseLiveSampleForTest(liveAxis, 0.70F);
+    QQmlExpression refreshLiveHistory(qmlContext(adaptive), adaptive,
+        QStringLiteral("refreshHistory(false)"));
+    refreshLiveHistory.evaluate();
+    const QVariantList liveGraphSamples = adaptive->property("responseLabSamples").toList();
+    const QVariantList capturedLiveHistory = backend.adaptiveResponseHistorySince(0, 2)
+        .value(QStringLiteral("samples")).toList();
+    bool capturedNegative = false;
+    bool capturedPositive = false;
+    for (const QVariant &sample : capturedLiveHistory) {
+        const double physical = sample.toMap().value(QStringLiteral("physical")).toDouble();
+        capturedNegative = capturedNegative || physical <= -0.64;
+        capturedPositive = capturedPositive || physical >= 0.69;
+    }
+    // The worker may publish a newer physical snapshot between test injection
+    // and a separate direct read. The Response Lab deliberately presents the
+    // UI-side sampled history, so assert its selected-axis samples instead:
+    // this proves that changing physical input reaches both the Lab state and
+    // its graph without coupling the test to an instantaneous report race.
+    if (refreshLiveHistory.hasError() || firstLiveGraphSamples.isEmpty()
+        || firstLiveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble() >= -0.64
+        || liveGraphSamples.isEmpty()
+        || liveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble() <= 0.69
+        || !capturedNegative || !capturedPositive
+        || backend.mappingStatus() != QStringLiteral("MAPPING SUSPENDED")
+        || backend.mappingActive() || backend.vjoyReady()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Live Controller snapshot did not update the unified Response Lab while mapping was suspended and vJoy unavailable "
+            "(first_samples=%1 first_newest=%2 samples=%3 oldest=%4 newest=%5 status=%6 active=%7 vjoy=%8)")
+            .arg(firstLiveGraphSamples.size())
+            .arg(firstLiveGraphSamples.isEmpty() ? 0.0 : firstLiveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
+            .arg(liveGraphSamples.size())
+            .arg(liveGraphSamples.isEmpty() ? 0.0 : liveGraphSamples.constFirst().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
+            .arg(liveGraphSamples.isEmpty() ? 0.0 : liveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
+            .arg(backend.mappingStatus()).arg(backend.mappingActive()).arg(backend.vjoyReady()));
+    }
+    QQmlExpression selectInteractiveSource(qmlContext(adaptive), adaptive,
+        QStringLiteral("setResponseLabSource('interactive'); responseLabSource"));
+    if (selectInteractiveSource.evaluate().toString() != QStringLiteral("interactive")
+        || selectInteractiveSource.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Response Lab Interactive source selection did not return to its local input feed"));
     }
     QQmlExpression applyLight(qmlContext(adaptive), adaptive, QStringLiteral("applySimplePreset('light')"));
     const QVariant applyResult = applyLight.evaluate();
@@ -234,15 +294,197 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
         return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Light preset did not apply to the selected axis"));
     }
     auto *manualInput = adaptive->findChild<QQuickItem *>(QStringLiteral("adaptiveSimulatorManualInput"));
-    if (!manualInput || manualInput->mapToScene(QPointF(manualInput->width() * 0.5,
-            manualInput->height() * 0.5)).x() <= window->width() * 0.5) {
-        return failPresentationLifecycleTest(QStringLiteral("Interactive simulator manual input was not placed to the right of its graphs"));
+    if (!manualInput || manualInput->width() < 120) {
+        return failPresentationLifecycleTest(QStringLiteral("Interactive manual input was not available in the unified Response Lab source strip"));
     }
     adaptive->setProperty("simulatorPaused", true);
-    adaptive->setProperty("simulatorExpanded", false);
     settlePresentation();
+    const QByteArray visualEvidenceDirectory = qgetenv("HOTAS_VISUAL_EVIDENCE_DIR");
+    if (!visualEvidenceDirectory.isEmpty()) {
+        const QDir evidenceDirectory(QString::fromLocal8Bit(visualEvidenceDirectory));
+        if (!evidenceDirectory.exists() && !QDir().mkpath(evidenceDirectory.absolutePath())) {
+            return failPresentationLifecycleTest(QStringLiteral("Visual evidence directory could not be created"));
+        }
+        auto scrollAndCapture = [&](const QString &objectName, const QString &filename) {
+            auto *scroll = adaptive->findChild<QQuickItem *>(QStringLiteral("adaptiveResponseScroll"));
+            auto *target = adaptive->findChild<QQuickItem *>(objectName);
+            if (!scroll || !target) return false;
+            const QPointF relative = target->mapToScene(QPointF{}) - scroll->mapToScene(QPointF{});
+            scroll->setProperty("contentY", std::max<qreal>(0.0,
+                scroll->property("contentY").toReal() + relative.y() - 30.0));
+            settlePresentation();
+            return window->grabWindow().save(evidenceDirectory.filePath(filename));
+        };
+        if (!scrollAndCapture(QStringLiteral("staticResponsePreviewCard"),
+                QStringLiteral("A-static-response-preview.png"))
+            || !scrollAndCapture(QStringLiteral("responseLabCard"),
+                QStringLiteral("B-response-lab-interactive.png"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Static or Interactive Response Lab visual evidence could not be captured"));
+        }
+        QQmlExpression selectLiveForEvidence(qmlContext(adaptive), adaptive,
+            QStringLiteral("setResponseLabSource('live')"));
+        selectLiveForEvidence.evaluate();
+        backend.injectAdaptiveResponseLiveSampleForTest(backend.selectedAxisIndex(), 0.45F);
+        QQmlExpression refreshLiveForEvidence(qmlContext(adaptive), adaptive,
+            QStringLiteral("refreshHistory(true)"));
+        refreshLiveForEvidence.evaluate();
+        if (selectLiveForEvidence.hasError() || refreshLiveForEvidence.hasError()
+            || !scrollAndCapture(QStringLiteral("responseLabCard"),
+                QStringLiteral("C-response-lab-live-controller.png"))
+            || !scrollAndCapture(QStringLiteral("responseLabEffectiveResponse"),
+                QStringLiteral("D-effective-response.png"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Live Controller or Effective Response visual evidence could not be captured"));
+        }
+        adaptive->setProperty("responseMonitorVisible", true);
+        settlePresentation();
+        QQuickWindow *monitor = nullptr;
+        for (QWindow *topLevel : QGuiApplication::topLevelWindows()) {
+            if (topLevel && topLevel->title() == QStringLiteral("Adaptive Response Monitor")) {
+                monitor = qobject_cast<QQuickWindow *>(topLevel);
+                break;
+            }
+        }
+        const bool monitorCaptured = monitor && monitor->grabWindow().save(
+            evidenceDirectory.filePath(QStringLiteral("E-adaptive-response-monitor.png")));
+        adaptive->setProperty("responseMonitorVisible", false);
+        if (!monitorCaptured) {
+            return failPresentationLifecycleTest(QStringLiteral("Detached Adaptive Response Monitor visual evidence could not be captured"));
+        }
+        QQmlExpression selectInteractiveAfterEvidence(qmlContext(adaptive), adaptive,
+            QStringLiteral("setResponseLabSource('interactive')"));
+        selectInteractiveAfterEvidence.evaluate();
+    }
     backend.setSelectedAxis(originalAxis);
     settlePresentation();
+    return true;
+}
+
+QString targetForAxis(const QVariantList &axes, int physicalAxis)
+{
+    for (const QVariant &entry : axes) {
+        const QVariantMap axis = entry.toMap();
+        if (axis.value(QStringLiteral("index")).toInt() == physicalAxis) {
+            return axis.value(QStringLiteral("target")).toString();
+        }
+    }
+    return {};
+}
+
+bool verifyAxisRouteTransactionAndPresentation(hotas::AppBackend &backend, QObject *surface)
+{
+    // This fixture represents a vJoy descriptor with every standard axis
+    // available, without starting a driver or mapping a real controller.
+    backend.setVirtualAxisAvailabilityForTest(true);
+    for (const int axis : {3, 4, 6, 7}) {
+        if (!backend.setMapping(axis, QStringLiteral("Disabled"), true)) {
+            return failPresentationLifecycleTest(QStringLiteral("Axis route fixture could not clear optional axis %1").arg(axis));
+        }
+    }
+    if (!backend.setMapping(0, QStringLiteral("X"), true)
+        || !backend.setMapping(1, QStringLiteral("Y"), true)
+        || !backend.setMapping(2, QStringLiteral("Z"), true)
+        || !backend.setMapping(5, QStringLiteral("Rz"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis route fixture could not establish its initial mappings"));
+    }
+
+    // Every axis reported by the selected vJoy descriptor is represented in
+    // the real QML dropdown model, not a historic X/Y/Z/Rz allowlist.
+    if (!selectPage(surface, 0)) return false;
+    const QVariant choicesValue = surface->property("outputChoices");
+    QStringList dropdownChoices = choicesValue.toStringList();
+    if (dropdownChoices.isEmpty()) {
+        for (const QVariant &choice : choicesValue.toList()) {
+            dropdownChoices.append(choice.toString());
+        }
+    }
+    const QStringList expectedChoices{QStringLiteral("Disabled"), QStringLiteral("X"),
+        QStringLiteral("Y"), QStringLiteral("Z"), QStringLiteral("Rx"),
+        QStringLiteral("Ry"), QStringLiteral("Rz"), QStringLiteral("Slider 0"),
+        QStringLiteral("Slider 1")};
+    if (dropdownChoices != expectedChoices) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis dropdown did not mirror the full selected-vJoy descriptor"));
+    }
+
+    // Exercise independent row ownership before the conflict flow: Roll
+    // changes to Ry, then Pitch is disabled, then Throttle takes Slider 1.
+    // No neighbouring source row may be changed by either update.
+    if (!backend.setMapping(0, QStringLiteral("Ry"), true)
+        || targetForAxis(backend.axes(), 0) != QStringLiteral("Ry")
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")
+        || targetForAxis(backend.axes(), 2) != QStringLiteral("Z")
+        || targetForAxis(backend.axes(), 5) != QStringLiteral("Rz")) {
+        return failPresentationLifecycleTest(QStringLiteral("Roll -> Ry changed an unrelated axis route"));
+    }
+    if (!backend.setMapping(1, QStringLiteral("Disabled"), true)
+        || targetForAxis(backend.axes(), 0) != QStringLiteral("Ry")
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Disabled")
+        || targetForAxis(backend.axes(), 2) != QStringLiteral("Z")
+        || targetForAxis(backend.axes(), 5) != QStringLiteral("Rz")) {
+        return failPresentationLifecycleTest(QStringLiteral("Pitch disable changed an unrelated axis route"));
+    }
+    if (!backend.setMapping(2, QStringLiteral("Slider1"), true)
+        || targetForAxis(backend.axes(), 0) != QStringLiteral("Ry")
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Disabled")
+        || targetForAxis(backend.axes(), 2) != QStringLiteral("Slider 1")
+        || targetForAxis(backend.axes(), 5) != QStringLiteral("Rz")) {
+        return failPresentationLifecycleTest(QStringLiteral("Throttle -> Slider 1 changed an unrelated axis route"));
+    }
+    if (!backend.setMapping(0, QStringLiteral("X"), true)
+        || !backend.setMapping(1, QStringLiteral("Y"), true)
+        || !backend.setMapping(2, QStringLiteral("Z"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis conflict fixture could not restore its initial mappings"));
+    }
+
+    // Cancel is a real transaction: it must not disturb the existing X/Y
+    // routes or mutate the active output-layout descriptor.
+    if (backend.setMapping(0, QStringLiteral("Y"), false)
+        || targetForAxis(backend.axes(), 0) != QStringLiteral("X")
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis conflict cancel changed an authoritative route"));
+    }
+    // An explicit Allow retains the earlier Y mapping and applies A -> Y on
+    // its first accepted attempt. The row-order policy is separately tested
+    // in mapping_core_tests without a vJoy device.
+    if (!backend.setMapping(0, QStringLiteral("Y"), true)
+        || targetForAxis(backend.axes(), 0) != QStringLiteral("Y")
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis conflict allow did not retain both configured Y routes"));
+    }
+
+    if (!backend.setMapping(0, QStringLiteral("Y"), true)
+        || !backend.setMapping(1, QStringLiteral("Disabled"), true)
+        || !backend.setMapping(5, QStringLiteral("Rx"), true)
+        || !backend.setMapping(2, QStringLiteral("Z"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Axis truth fixture could not configure Roll/Pitch/Yaw/Throttle"));
+    }
+    const QVariantList storedConfiguration = backend.axes();
+    const std::array<int, 4> physicalAxes{0, 1, 5, 2};
+    const std::array<QString, 4> expected{QStringLiteral("Y"), QStringLiteral("Disabled"),
+                                          QStringLiteral("Rx"), QStringLiteral("Z")};
+    for (size_t index = 0; index < physicalAxes.size(); ++index) {
+        const int axis = physicalAxes[index];
+        if (targetForAxis(storedConfiguration, axis) != expected[index]) {
+            return failPresentationLifecycleTest(QStringLiteral("Stored axis mapping did not retain the requested route for axis %1").arg(axis));
+        }
+        if (targetForAxis(backend.runtimeAxisRoutesForTest(), axis) != expected[index]) {
+            return failPresentationLifecycleTest(QStringLiteral("Compiled runtime route did not match stored axis mapping for axis %1").arg(axis));
+        }
+    }
+
+    // Loading/unloading the Axis page exercises the QML-bound row model. It
+    // must mirror the stored configuration after repeated re-rendering.
+    if (!selectPage(surface, 0)) return false;
+    const QVariantList firstPresentation = surface->property("allAxes").toList();
+    if (!selectPage(surface, 8) || !selectPage(surface, 0)) return false;
+    const QVariantList rerenderedPresentation = surface->property("allAxes").toList();
+    for (size_t index = 0; index < physicalAxes.size(); ++index) {
+        const int axis = physicalAxes[index];
+        const QString wanted = expected[index];
+        if (targetForAxis(firstPresentation, axis) != wanted
+            || targetForAxis(rerenderedPresentation, axis) != wanted) {
+            return failPresentationLifecycleTest(QStringLiteral("Axis row presentation diverged after a re-render for axis %1").arg(axis));
+        }
+    }
     return true;
 }
 
@@ -440,8 +682,13 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         physical.reserve(static_cast<size_t>(preview.size()));
         for (const QVariant &entry : preview) physical.push_back(
             static_cast<float>(entry.toMap().value(QStringLiteral("physical")).toDouble()));
+        hotas::RuntimeAdaptiveResponseConfig physicalPrediction = configurationForPreset(preset);
+        // The predictor is intentionally evaluated in physical-axis space
+        // before V2.3.1 applies the configured Maximum Lead in mapped-output
+        // space. Match the preview's safe physical candidate envelope here.
+        physicalPrediction.maximumLead = 0.50F;
         const hotas::AdaptiveResponseSimulation direct = hotas::simulateAdaptiveResponse(
-            configurationForPreset(preset), physical, 0.004F);
+            physicalPrediction, physical, 0.004F);
         if (direct.size() != static_cast<size_t>(preview.size())) {
             return failPresentationLifecycleTest(QStringLiteral("Preview parity sample count differed for %1").arg(preset));
         }
@@ -521,7 +768,11 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         }
     }
     if (targetId.isEmpty() || !backend.activateProfile(targetId)
-        || !backend.setAxisOutputLimits(axis, 0.55, 0.70)) {
+        || !backend.setAxisOutputLimits(axis, 0.55, 0.70)
+        || !backend.setAdaptiveResponsePropertyAtContext(
+            QStringLiteral("profile"), targetId, axis, QStringLiteral("enabled"), true)
+        || !backend.setAdaptiveResponsePropertyAtContext(
+            QStringLiteral("profile"), targetId, axis, QStringLiteral("maximumLead"), 0.04)) {
         return failPresentationLifecycleTest(QStringLiteral("Preview context target mapping could not be prepared"));
     }
     backend.setAxisInverted(axis, true);
@@ -546,11 +797,27 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
     for (qsizetype index = 0; index < targetPreview.size(); ++index) {
         const QVariantMap active = targetPreview.at(index).toMap();
         const QVariantMap inactive = inactiveTargetPreview.at(index).toMap();
-        const float expected = hotas::evaluateStaticAxisTransfer(
+        const float expectedBaseline = hotas::evaluateStaticNormalizedAxisTransfer(
+            static_cast<float>(active.value(QStringLiteral("physical")).toDouble()), targetMapping);
+        const float expectedPredictedMapped = hotas::evaluateStaticNormalizedAxisTransfer(
             static_cast<float>(active.value(QStringLiteral("predicted")).toDouble()), targetMapping);
-        if (std::abs(static_cast<float>(active.value(QStringLiteral("virtualOutput")).toDouble()) - expected) > 0.00002F
-            || std::abs(static_cast<float>(inactive.value(QStringLiteral("virtualOutput")).toDouble()) - expected) > 0.00002F) {
-            return failPresentationLifecycleTest(QStringLiteral("Static pipeline mixed live and requested mapping contexts"));
+        const float baseline = static_cast<float>(active.value(QStringLiteral("baselineOutput")).toDouble());
+        const float predictedMapped = static_cast<float>(active.value(QStringLiteral("predictedMappedOutput")).toDouble());
+        const float adaptive = static_cast<float>(active.value(QStringLiteral("adaptiveOutput")).toDouble());
+        const float appliedLead = static_cast<float>(active.value(QStringLiteral("appliedLead")).toDouble());
+        const float inactiveAdaptive = static_cast<float>(inactive.value(QStringLiteral("adaptiveOutput")).toDouble());
+        if (std::abs(baseline - expectedBaseline) > 0.00002F
+            || std::abs(predictedMapped - expectedPredictedMapped) > 0.00002F
+            || std::abs(adaptive - (baseline + appliedLead)) > 0.00002F
+            || std::abs(appliedLead) > 0.04002F
+            || std::abs(inactiveAdaptive - adaptive) > 0.00002F) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Static preview output-domain mismatch at sample %1: baseline=%2 expected=%3 "
+                "predictedMapped=%4 expected=%5 adaptive=%6 applied=%7 inactive=%8")
+                .arg(index).arg(baseline, 0, 'f', 5).arg(expectedBaseline, 0, 'f', 5)
+                .arg(predictedMapped, 0, 'f', 5).arg(expectedPredictedMapped, 0, 'f', 5)
+                .arg(adaptive, 0, 'f', 5).arg(appliedLead, 0, 'f', 5)
+                .arg(inactiveAdaptive, 0, 'f', 5));
         }
     }
     backend.setSelectedAxis(originalAxis);
@@ -649,6 +916,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
         || !profiles->property("applyImportedCalibration").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
     }
+    if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
     if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
     return selectPage(surface, 8);
 }

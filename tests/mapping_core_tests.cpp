@@ -724,6 +724,11 @@ private slots:
     void adaptiveResponseDetectsPositiveNegativeAndCenterCrossingReversals();
     void adaptiveResponseCancelsStaleLeadAtReversal();
     void adaptiveResponseTapersAndClampsAtEndpoint();
+    void adaptiveResponseMapsLeadInOutputSpaceAfterCenterResolution();
+    void adaptiveResponseCenterResolverKeepsTransitContinuousAndNeutralStable();
+    void adaptiveResponseMapsCurvesInOutputSpaceAndControlsSCurveCenterGain();
+    void adaptiveResponseGuardsHighLocalCurveGain();
+    void adaptiveResponseCanonicalPreviewScenariosAreDeterministic();
     void adaptiveResponsePersistsAndResolvesLayeredSettings();
     void adaptiveResponseRecognizesSlowMotionAcrossSampleRates();
     void adaptiveResponsePreservesSlowWobbleAcrossSampleRates();
@@ -753,15 +758,16 @@ private slots:
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
-    void vjoyAxisDescriptorsMustMatchExactlyWhileCapacitySupersetsAreAccepted();
+    void vjoyAxisDescriptorSupersetsAreAccepted();
     void physicalAxisActivityRequiresCompletedCalibrationTravel();
     void v17ConfigurationMigratesToPreservedOutputLayout();
+    void managedBf6LayoutPromotesLegacyFourAxisDescriptor();
     void disabledAxisValueDefaultsMigratesAndPersistsGlobally();
     void disabledAxisValueClampsSafely();
     void disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes();
     void v185AxisMetadataAndMappingControlsRoundTrip();
     void expandedVirtualAxesArePlannedAndUnavailableRoutesStayParked();
-    void duplicateMappingIsRejectedAndNormalized();
+    void sharedMappingIsRetainedAndResolvedByRowOrder();
     void buttonCapacityMismatchIsReported();
     void defaultButtonPassthroughIsCapacityBounded();
     void fifteenButtonPassthroughUsesButtonsOneThroughFifteen();
@@ -1382,6 +1388,207 @@ void MappingCoreTests::adaptiveResponseTapersAndClampsAtEndpoint()
     const AdaptiveResponseTelemetry disabled = processor.process(
         0.42F, configuration, origin + std::chrono::milliseconds(8));
     QVERIFY(nearlyEqual(disabled.predicted, 0.42F));
+}
+
+void MappingCoreTests::adaptiveResponseMapsLeadInOutputSpaceAfterCenterResolution()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.hysteresis = 0.0F;
+    mapping.responseCurve = compileResponseCurve(linearCurveDefinition(), false);
+    AxisHysteresisState state;
+    const AdaptiveMappedAxisOutput linear = applyCurveAwareAdaptiveResponse(
+        0.50F, 0.72F, true, 0.08F, mapping, state);
+    QVERIFY(nearlyEqual(linear.baselineOutput, 0.50F));
+    QVERIFY(nearlyEqual(linear.predictedMappedOutput, 0.72F));
+    QVERIFY(nearlyEqual(linear.appliedLead, 0.08F));
+    QVERIFY(nearlyEqual(linear.adaptiveOutput, 0.58F));
+    QVERIFY(linear.leadLimited);
+
+    // A held neutral is resolved before the predictor. The downstream mapped
+    // evaluator never re-applies a deadzone authority gate.
+    mapping.profile.deadzone = 0.03F;
+    mapping.profile.hysteresis = 0.01F;
+    AxisCenterResolverState centre;
+    QCOMPARE(resolveNormalizedAxisCenter(0.0F, mapping, centre), 0.0F);
+    const float released = resolveNormalizedAxisCenter(0.05F, mapping, centre);
+    QVERIFY(released > 0.0F);
+    state = {};
+    const AdaptiveMappedAxisOutput afterRelease = applyCurveAwareAdaptiveResponse(
+        released, 0.15F, true, 0.12F, mapping, state);
+    QVERIFY(!afterRelease.deadzoneAuthorityBlocked);
+    QVERIFY(afterRelease.adaptiveOutput > afterRelease.baselineOutput);
+}
+
+void MappingCoreTests::adaptiveResponseCenterResolverKeepsTransitContinuousAndNeutralStable()
+{
+    RuntimeAxisMapping linear;
+    linear.profile.deadzone = 0.03F;
+    linear.profile.hysteresis = 0.01F;
+    linear.responseCurve = compileResponseCurve(linearCurveDefinition(), false);
+
+    // Fast positive-to-negative and negative-to-positive sweeps are a single
+    // motion. The resolver keeps each non-zero centre sample intact instead
+    // of manufacturing a stop / restart plateau.
+    const auto verifyTransit = [&linear](const std::array<float, 11> &samples) {
+        AxisCenterResolverState centre;
+        for (float input : samples) {
+            const float resolved = resolveNormalizedAxisCenter(input, linear, centre);
+            if (std::abs(input) > 0.00001F) {
+                QVERIFY2(nearlyEqual(resolved, input), "Centre transit must retain its physical trajectory.");
+            }
+        }
+    };
+    verifyTransit({-0.50F, -0.25F, -0.10F, -0.025F, -0.010F, 0.0F,
+                   0.010F, 0.025F, 0.10F, 0.25F, 0.50F});
+    verifyTransit({0.50F, 0.25F, 0.10F, 0.025F, 0.010F, 0.0F,
+                   -0.010F, -0.025F, -0.10F, -0.25F, -0.50F});
+
+    AxisCenterResolverState settle;
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.20F, linear, settle), 0.20F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.08F, linear, settle), 0.08F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.02F, linear, settle), 0.02F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.0F, linear, settle), 0.0F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.0F, linear, settle), 0.0F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.002F, linear, settle), 0.002F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.002F, linear, settle), 0.0F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(-0.002F, linear, settle), 0.0F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.039F, linear, settle), 0.0F));
+    QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(0.041F, linear, settle), 0.041F));
+
+    // A same-sign derivative reversal is not confused with a sign crossing;
+    // its small physical trace remains available to predictor reversal logic.
+    AxisCenterResolverState reversal;
+    const std::array<float, 5> nearCentreReversal{0.20F, 0.08F, 0.01F, 0.06F, 0.15F};
+    for (float input : nearCentreReversal) {
+        QVERIFY(nearlyEqual(resolveNormalizedAxisCenter(input, linear, reversal), input));
+    }
+
+    RuntimeAxisMapping sCurve = linear;
+    sCurve.responseCurve = compileResponseCurve(
+        standardCurveDefinition(CurveFamily::SCurve, QStringLiteral("strong")), false);
+    for (const RuntimeAxisMapping *mapping : std::array<const RuntimeAxisMapping *, 2>{&linear, &sCurve}) {
+        AxisCenterResolverState centre;
+        AxisHysteresisState state;
+        AdaptiveResponseProcessor predictor;
+        RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = true;
+        configuration.maximumHorizonSeconds = 0.024F;
+        configuration.maximumLead = 0.10F;
+        configuration.motionSensitivity = 0.002F;
+        configuration.noiseRejection = 0.0001F;
+        const auto origin = std::chrono::steady_clock::time_point{};
+        float lastOutput = 0.0F;
+        bool haveLast = false;
+        for (size_t index = 0; index < 11; ++index) {
+            const float input = -0.10F + static_cast<float>(index) * 0.02F;
+            const float resolved = resolveNormalizedAxisCenter(input, *mapping, centre);
+            const AdaptiveResponseTelemetry telemetry = predictor.process(resolved, configuration,
+                origin + std::chrono::milliseconds(static_cast<int>(index) * 4));
+            const AdaptiveMappedAxisOutput output = applyCurveAwareAdaptiveResponse(
+                resolved, telemetry.predicted, true, configuration.maximumLead, *mapping, state);
+            QVERIFY(!output.deadzoneAuthorityBlocked);
+            if (haveLast) {
+                QVERIFY2(std::abs(output.adaptiveOutput - lastOutput) < 0.16F,
+                          "Adaptive Output must remain numerically continuous through centre.");
+            }
+            lastOutput = output.adaptiveOutput;
+            haveLast = true;
+        }
+    }
+
+    // Adaptive Off preserves the resolver's exact neutral and direct released
+    // baseline; no predictive lead is injected.
+    AxisCenterResolverState offCentre;
+    AxisHysteresisState offState;
+    const float held = resolveNormalizedAxisCenter(0.0F, linear, offCentre);
+    const AdaptiveMappedAxisOutput offHeld = applyCurveAwareAdaptiveResponse(
+        held, 0.20F, false, 0.10F, linear, offState);
+    QVERIFY(nearlyEqual(offHeld.adaptiveOutput, 0.0F));
+    const float offReleased = resolveNormalizedAxisCenter(-0.05F, linear, offCentre);
+    const AdaptiveMappedAxisOutput off = applyCurveAwareAdaptiveResponse(
+        offReleased, 0.20F, false, 0.10F, linear, offState);
+    QVERIFY(nearlyEqual(off.adaptiveOutput, off.baselineOutput));
+    QVERIFY(nearlyEqual(off.appliedLead, 0.0F));
+}
+
+void MappingCoreTests::adaptiveResponseMapsCurvesInOutputSpaceAndControlsSCurveCenterGain()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.hysteresis = 0.0F;
+    mapping.responseCurve = compileResponseCurve(
+        standardCurveDefinition(CurveFamily::SCurve, QStringLiteral("strong")), false);
+
+    AxisHysteresisState state;
+    const AdaptiveMappedAxisOutput nonlinear = applyCurveAwareAdaptiveResponse(
+        0.42F, 0.58F, true, 0.08F, mapping, state);
+    const float currentMapped = evaluateStaticNormalizedAxisTransfer(0.42F, mapping);
+    const float futureMapped = evaluateStaticNormalizedAxisTransfer(0.58F, mapping);
+    QVERIFY(nearlyEqual(nonlinear.baselineOutput, currentMapped));
+    QVERIFY(nearlyEqual(nonlinear.predictedMappedOutput, futureMapped));
+    QVERIFY(nearlyEqual(nonlinear.mappedLead, futureMapped - currentMapped));
+    QVERIFY(nonlinear.mappedLead > 0.0F);
+    QVERIFY(nonlinear.appliedLead > 0.0F);
+    QVERIFY(std::abs(nonlinear.appliedLead) <= 0.08001F);
+
+    state = {};
+    const AdaptiveMappedAxisOutput positiveCrossing = applyCurveAwareAdaptiveResponse(
+        -0.025F, 0.025F, true, 0.05F, mapping, state);
+    QVERIFY(positiveCrossing.mappedLead > 0.0F);
+    QVERIFY(positiveCrossing.appliedLead > 0.0F);
+    QVERIFY(std::abs(positiveCrossing.appliedLead) <= 0.05001F);
+
+    state = {};
+    const AdaptiveMappedAxisOutput negativeCrossing = applyCurveAwareAdaptiveResponse(
+        0.025F, -0.025F, true, 0.05F, mapping, state);
+    QVERIFY(negativeCrossing.mappedLead < 0.0F);
+    QVERIFY(negativeCrossing.appliedLead < 0.0F);
+    QVERIFY(std::abs(negativeCrossing.appliedLead) <= 0.05001F);
+}
+
+void MappingCoreTests::adaptiveResponseGuardsHighLocalCurveGain()
+{
+    RuntimeAxisMapping mapping;
+    mapping.profile.deadzone = 0.0F;
+    mapping.profile.hysteresis = 0.0F;
+    CurveDefinition sharp = linearCurveDefinition();
+    sharp.family = CurveFamily::Custom;
+    sharp.sourceFamily = CurveFamily::Custom;
+    sharp.strength = 1.0F;
+    sharp.pointEditing = true;
+    sharp.symmetry = false;
+    sharp.interpolation = CurveInterpolation::Linear;
+    sharp.points = {{-1.0F, -1.0F, true}, {-0.04F, -0.72F, false},
+                    {0.04F, 0.72F, false}, {1.0F, 1.0F, true}};
+    normalizeCurveDefinition(sharp, false);
+    mapping.responseCurve = compileResponseCurve(sharp, false);
+    AxisHysteresisState state;
+    const AdaptiveMappedAxisOutput result = applyCurveAwareAdaptiveResponse(
+        -0.02F, 0.02F, true, 0.50F, mapping, state);
+    QVERIFY(result.highLocalCurveGain);
+    QVERIFY(result.localCurveGain > 1.50F);
+    QVERIFY(std::abs(result.appliedLead) < std::abs(result.mappedLead));
+    QVERIFY(std::abs(result.adaptiveOutput) <= 1.0F);
+}
+
+void MappingCoreTests::adaptiveResponseCanonicalPreviewScenariosAreDeterministic()
+{
+    const QStringList scenarios{QStringLiteral("Human-Like Rapid Reversal"),
+                                QStringLiteral("Fast Full Sweep"),
+                                QStringLiteral("Very-Fast Full Sweep"),
+                                QStringLiteral("Same-Side Reversal"),
+                                QStringLiteral("Rapid Center Crossing"),
+                                QStringLiteral("Evasive Left/Right"),
+                                QStringLiteral("Sudden Stop"),
+                                QStringLiteral("Precision Correction")};
+    for (const QString &scenario : scenarios) {
+        const std::vector<float> first = adaptiveResponseScenarioPhysicalSamples(scenario, -1.0F, 1.0F);
+        const std::vector<float> second = adaptiveResponseScenarioPhysicalSamples(scenario, -1.0F, 1.0F);
+        QCOMPARE(first.size(), size_t{211});
+        QVERIFY(first == second);
+        for (const float sample : first) QVERIFY(sample >= -1.0F && sample <= 1.0F);
+    }
 }
 
 void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
@@ -3245,7 +3452,7 @@ void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAuto
     QVERIFY(ControllerManager::autoSelect({first}, {remembered, duplicate}, remembered.id).isEmpty());
 }
 
-void MappingCoreTests::vjoyAxisDescriptorsMustMatchExactlyWhileCapacitySupersetsAreAccepted()
+void MappingCoreTests::vjoyAxisDescriptorSupersetsAreAccepted()
 {
     ControllerVJoyRequirements available;
     available.axes.fill(true);
@@ -3256,9 +3463,6 @@ void MappingCoreTests::vjoyAxisDescriptorsMustMatchExactlyWhileCapacitySupersets
     required.axes[1] = true;
     required.buttons = 15;
     required.continuousPovs = 1;
-    QVERIFY(!ControllerManager::isVjoySufficient(available, required));
-    available.axes[2] = available.axes[3] = available.axes[4] = available.axes[5] = false;
-    available.axes[6] = available.axes[7] = available.axes[8] = false;
     QVERIFY(ControllerManager::isVjoySufficient(available, required));
     required.buttons = 33;
     QVERIFY(!ControllerManager::isVjoySufficient(available, required));
@@ -3311,6 +3515,27 @@ void MappingCoreTests::v17ConfigurationMigratesToPreservedOutputLayout()
              VirtualAxis::Slider0);
     QCOMPARE(migrated.calibration[static_cast<size_t>(PhysicalAxis::Rx)].maximum, 0.9F);
     QCOMPARE(migrated.axisActivity[static_cast<size_t>(PhysicalAxis::Rx)], PhysicalAxisActivity::Unknown);
+}
+
+void MappingCoreTests::managedBf6LayoutPromotesLegacyFourAxisDescriptor()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    VirtualOutputLayout &layout = configuration.outputLayouts.front();
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+        layout.requirements.axes[static_cast<size_t>(axis)] = false;
+    }
+    layout.requirements.axes[static_cast<size_t>(VirtualAxis::X)] = true;
+    layout.requirements.axes[static_cast<size_t>(VirtualAxis::Y)] = true;
+    layout.requirements.axes[static_cast<size_t>(VirtualAxis::Z)] = true;
+    layout.requirements.axes[static_cast<size_t>(VirtualAxis::Rz)] = true;
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+        QVERIFY(restored.outputLayouts.front().requirements.axes[static_cast<size_t>(axis)]);
+    }
 }
 
 void MappingCoreTests::disabledAxisValueDefaultsMigratesAndPersistsGlobally()
@@ -3456,14 +3681,29 @@ void MappingCoreTests::expandedVirtualAxesArePlannedAndUnavailableRoutesStayPark
     QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::Slider0)], -1);
 }
 
-void MappingCoreTests::duplicateMappingIsRejectedAndNormalized()
+void MappingCoreTests::sharedMappingIsRetainedAndResolvedByRowOrder()
 {
     AxisMappings mappings = defaultAxisMappings();
     QVERIFY(hasMappingConflict(mappings, static_cast<int>(PhysicalAxis::Z), VirtualAxis::X));
     QVERIFY(!hasMappingConflict(mappings, static_cast<int>(PhysicalAxis::Z), VirtualAxis::Disabled));
     mappings[static_cast<int>(PhysicalAxis::Z)].target = VirtualAxis::X;
-    QVERIFY(!normalizeMappingConflicts(mappings));
-    QCOMPARE(mappings[static_cast<int>(PhysicalAxis::Z)].target, VirtualAxis::Disabled);
+    QVERIFY(normalizeMappingConflicts(mappings));
+    QCOMPARE(mappings[static_cast<int>(PhysicalAxis::Z)].target, VirtualAxis::X);
+
+    RuntimeMappingConfiguration runtime;
+    runtime.axes[static_cast<size_t>(PhysicalAxis::X)].profile.target = VirtualAxis::X;
+    runtime.axes[static_cast<size_t>(PhysicalAxis::Z)].profile.target = VirtualAxis::X;
+    std::array<bool, kPhysicalAxisCount> available{};
+    std::array<float, kPhysicalAxisCount> transformed{};
+    available.fill(true);
+    transformed[static_cast<size_t>(PhysicalAxis::X)] = -0.35F;
+    transformed[static_cast<size_t>(PhysicalAxis::Z)] = 0.72F;
+    const VirtualAxisOutputPlan plan = buildVirtualAxisOutputPlan(runtime, available, transformed, 0.0F);
+    // Shared routes persist, while the existing fixed row-order policy gives
+    // vJoy one deterministic source without a collection or lock on reports.
+    QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::X)], -0.35F);
+    QCOMPARE(plan.sourceIndexes[static_cast<size_t>(VirtualAxis::X)],
+             static_cast<int>(PhysicalAxis::X));
 }
 
 void MappingCoreTests::buttonCapacityMismatchIsReported()

@@ -402,6 +402,28 @@ Item {
                             currentIndex: { for (let i = 0; i < model.length; ++i) if (model[i].id === editorState.presetId) return i; return -1 }
                             onActivated: { recordHistory(); if (editorState.family === "Advanced") backendObject.applyAdvancedCurvePreset(currentValue); else backendObject.applyPersonalCurvePreset(currentValue) } }
                     }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: editorState.family === "Custom"
+                        FieldCaption { text: "CUSTOM PROFILE" }
+                        AviationCombo {
+                            id: customProfileSelector
+                            Layout.fillWidth: true
+                            model: backendObject ? backendObject.curveCustomProfileChoices : []
+                            textRole: "name"
+                            valueRole: "id"
+                            currentIndex: {
+                                for (let i = 0; i < model.length; ++i) if (model[i].active) return i
+                                return model.length > 0 ? 0 : -1
+                            }
+                            enabled: model.length > 0
+                            ToolTip.text: model.length > 0
+                                ? "Copy this axis's custom response from a compatible profile."
+                                : "No compatible custom responses are available in your profiles."
+                            onActivated: { recordHistory(); backendObject.copyCurveFrom(currentValue, backendObject.selectedAxisIndex) }
+                        }
+                    }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true

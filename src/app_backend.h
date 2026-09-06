@@ -4,6 +4,7 @@
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
 #include "adaptive_response.h"
+#include "axis_transform.h"
 #include "input_learning.h"
 #include "mapping_worker.h"
 
@@ -52,6 +53,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curveStandardPresets READ curveStandardPresets CONSTANT)
     Q_PROPERTY(QVariantList curveAdvancedPresets READ curveAdvancedPresets CONSTANT)
     Q_PROPERTY(QVariantList personalCurvePresets READ personalCurvePresets NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList curveCustomProfileChoices READ curveCustomProfileChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
@@ -117,6 +119,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString controllerReadinessStatus READ controllerReadinessStatus NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessLastChecked READ controllerReadinessLastChecked NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessRecommendedAction READ controllerReadinessRecommendedAction NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerReconnectRequired READ controllerReconnectRequired NOTIFY stateChanged)
+    Q_PROPERTY(bool controllerDisconnectObserved READ controllerDisconnectObserved NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupCanApply READ controllerSetupCanApply NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupInProgress READ controllerSetupInProgress NOTIFY stateChanged)
     Q_PROPERTY(bool controllerSetupCanUndo READ controllerSetupCanUndo NOTIFY stateChanged)
@@ -196,6 +200,7 @@ public:
     QVariantList curveStandardPresets() const;
     QVariantList curveAdvancedPresets() const;
     QVariantList personalCurvePresets() const;
+    QVariantList curveCustomProfileChoices() const;
     QVariantList curveComparisonChoices() const;
     QVariantList curvePreviewChoices() const;
     QVariantList curveCopyChoices() const;
@@ -207,6 +212,16 @@ public:
     // telemetry ring for every graph frame. MappingWorker never sees this.
     Q_INVOKABLE QVariantMap adaptiveResponseHistorySince(qint64 lastSequence,
                                                           int seconds) const;
+    // Test-only bridge validating that the UI samples a physical snapshot even
+    // while output mapping is suspended and vJoy is unavailable.
+    void injectAdaptiveResponseLiveSampleForTest(int physicalAxis, float normalized);
+    // Test-only control-plane fixture for route-editor coverage. It does not
+    // start vJoy or alter production device discovery.
+    void setVirtualAxisAvailabilityForTest(bool available);
+    // Test-only snapshot of the already-compiled mapping table. It is used to
+    // compare editor/configuration state with the runtime route at a safe
+    // control-plane boundary, never from a DirectInput report.
+    QVariantList runtimeAxisRoutesForTest() const;
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -265,6 +280,8 @@ public:
     QString controllerReadinessStatus() const;
     QString controllerReadinessLastChecked() const;
     QString controllerReadinessRecommendedAction() const;
+    bool controllerReconnectRequired() const;
+    bool controllerDisconnectObserved() const;
     bool controllerSetupCanApply() const;
     bool controllerSetupInProgress() const;
     bool controllerSetupCanUndo() const;
@@ -599,6 +616,12 @@ private:
         float physical = 0.0F;
         float estimated = 0.0F;
         float predicted = 0.0F;
+        float baselineMappedOutput = 0.0F;
+        float predictedMappedOutput = 0.0F;
+        float adaptiveOutput = 0.0F;
+        float mappedLead = 0.0F;
+        float appliedLead = 0.0F;
+        float localCurveGain = 0.0F;
         float virtualOutput = 0.0F;
         float velocity = 0.0F;
         float acceleration = 0.0F;
@@ -631,6 +654,15 @@ private:
         float physical = 0.0F;
         float estimated = 0.0F;
         float predicted = 0.0F;
+        float baselineMappedOutput = 0.0F;
+        float predictedMappedOutput = 0.0F;
+        float adaptiveOutput = 0.0F;
+        float mappedLead = 0.0F;
+        float appliedLead = 0.0F;
+        float localCurveGain = 0.0F;
+        bool deadzoneAuthorityBlocked = false;
+        bool leadLimited = false;
+        bool highLocalCurveGain = false;
         float virtualOutput = 0.0F;
         float velocity = 0.0F;
         float acceleration = 0.0F;
@@ -716,6 +748,8 @@ private:
     void startQuickVerification();
     void startVerification(VerificationMode mode);
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
+    void observeControllerReconnect();
+    void reconcileControllerReconnect(const PhysicalControllerCapabilities &physical);
     void sampleCalibrationControlPlane();
     void finishCalibration();
     void appendCalibrationHistory(const std::array<Calibration, kPhysicalAxisCount> &calibration,
@@ -743,6 +777,10 @@ private:
     // Canonical GUI-side desired Mapping state. It is updated synchronously
     // for every user click and reconciled from worker-side Automation changes.
     bool m_mappingDesired = false;
+    // Only the deterministic Live Controller UI test sets this. It verifies
+    // a suspended presentation state without asking the worker to acquire
+    // vJoy or modify a physical device.
+    bool m_liveInputTestSuspended = false;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.
@@ -794,6 +832,8 @@ private:
     qint64 m_adaptiveResponseHistorySequence = 0;
     QElapsedTimer m_adaptiveResponseSimulatorClock;
     AdaptiveResponseProcessor m_adaptiveResponseSimulator;
+    AxisHysteresisState m_adaptiveResponseSimulatorHysteresis;
+    AxisCenterResolverState m_adaptiveResponseSimulatorCenterResolver;
     // These deliberately live on the heap: AppBackend is constructed on the
     // stack by its QML startup test, while the fixed bounds still ensure the
     // control-plane simulator cannot grow without limit.
@@ -810,6 +850,7 @@ private:
     int m_adaptiveResponseSimulatorSourceRate = 250;
     float m_adaptiveResponseSimulatorLastManualInput = 0.0F;
     float m_adaptiveResponseSimulatorHeldInput = 0.0F;
+    float m_adaptiveResponseSimulatorResolvedInput = 0.0F;
     bool m_adaptiveResponseSimulatorHasManualInput = false;
     bool m_adaptiveResponseSimulatorRecordingActive = false;
     QElapsedTimer m_calibrationFinalizationClock;

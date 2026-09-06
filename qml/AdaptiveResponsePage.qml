@@ -1,6 +1,7 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
+import QtQuick.Window 6.5
 
 Item {
     id: root
@@ -27,10 +28,10 @@ Item {
     property var testLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, editScope, selectedTargetId(), backendObject.selectedAxisIndex)
     property bool advancedExpanded: false
     property bool testLabExpanded: false
-    property bool simulatorExpanded: false
-    property bool liveAnalysisExpanded: false
     property int historyWindowSeconds: 5
     property bool historyPaused: false
+    property bool liveRecording: false
+    property bool liveReplaying: false
     property var historySamples: []
     property int historyLastSequence: 0
     property int historyInspectIndex: -1
@@ -38,11 +39,10 @@ Item {
     property string comparisonTargetId: "off"
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     property var comparisonTestLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
-    property string staticPreviewView: "predictor"
     property bool showPhysicalTrace: true
-    property bool showEstimatedTrace: false
+    property bool showBaselineTrace: true
     property bool showPredictedTrace: true
-    property bool showFinalTrace: false
+    property bool showFinalTrace: true
     property real simulatorInput: 0
     property int simulatorSourceRate: 250
     property bool simulatorPaused: true
@@ -54,8 +54,12 @@ Item {
     property var simulatorRecordingSamples: []
     property var simulatorDisplaySamples: []
     property int simulatorLastSequence: 0
-    property bool simulatorNearViewport: false
-    property bool liveAnalysisNearViewport: false
+    property bool responseLabNearViewport: false
+    property string responseLabSource: "interactive"
+    property var responseLabSamples: responseLabSource === "live" ? historySamples : simulatorDisplaySamples
+    property var responseLabTelemetry: responseLabSource === "live" ? telemetry : simulatorCurrentSample()
+    property bool responseMonitorVisible: false
+    property bool responseMonitorPinned: false
 
     function effective() { return state.runtimeEffective || state.effective || ({}) }
     function numericOr(value, fallback) {
@@ -123,12 +127,17 @@ Item {
         root.setPreview()
         return true
     }
-    function setStaticPreviewView(view) {
-        staticPreviewView = view
-        showPhysicalTrace = true
-        showEstimatedTrace = view === "predictor"
-        showPredictedTrace = true
-        showFinalTrace = view === "pipeline"
+    function setResponseLabSource(source) {
+        if (responseLabSource === source) return
+        responseLabSource = source
+        historyLastSequence = 0
+        historySamples = []
+        liveRecording = false
+        liveReplaying = false
+        simulatorLastSequence = 0
+        simulatorSamples = []
+        simulatorDisplaySamples = []
+        if (source === "live") refreshHistory(true)
     }
     function staticScenarioDurationMs() {
         if (!previewSamples || previewSamples.length === 0) return 0
@@ -147,8 +156,7 @@ Item {
             && top <= adaptiveScroll.contentY + adaptiveScroll.height + 240
     }
     function refreshViewportActivity() {
-        simulatorNearViewport = sectionNearViewport(simulatorCard)
-        liveAnalysisNearViewport = sectionNearViewport(liveAnalysisCard)
+        responseLabNearViewport = sectionNearViewport(responseLabCard)
     }
     function refreshSimulator(reset) {
         const update = backendObject.adaptiveResponseSimulatorHistorySince(reset ? 0 : simulatorLastSequence)
@@ -173,6 +181,16 @@ Item {
         let maximum = minimum
         for (let index = 0; index < simulatorDisplaySamples.length; ++index) {
             for (let field = 0; field < fields.length; ++field) maximum = Math.max(maximum, Math.abs(root.numericOr(simulatorDisplaySamples[index][fields[field]], 0)))
+        }
+        return maximum
+    }
+    function responseLabMagnitude(fields, minimum) {
+        let maximum = minimum
+        const samples = responseLabSamples || []
+        for (let index = 0; index < samples.length; ++index) {
+            for (let field = 0; field < fields.length; ++field) {
+                maximum = Math.max(maximum, Math.abs(root.numericOr(samples[index][fields[field]], 0)))
+            }
         }
         return maximum
     }
@@ -219,9 +237,14 @@ Item {
         const incoming = update.samples || []
         if (reset || update.reset) historySamples = incoming
         else if (incoming.length > 0) {
-            for (let index = 0; index < incoming.length; ++index) historySamples.push(incoming[index])
+            // QML must observe a new array reference for the Canvas binding to
+            // repaint. This is display-rate control-plane work only; the
+            // mapper still publishes a fixed latest snapshot without UI work.
+            const updated = historySamples.slice(0)
+            for (let index = 0; index < incoming.length; ++index) updated.push(incoming[index])
             const maximum = Math.max(180, historyWindowSeconds * 100)
-            if (historySamples.length > maximum) historySamples.splice(0, historySamples.length - maximum)
+            if (updated.length > maximum) updated.splice(0, updated.length - maximum)
+            historySamples = updated
         }
         historyLastSequence = Number(update.newestSequence || historyLastSequence)
     }
@@ -257,10 +280,17 @@ Item {
         function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
-    Timer { interval: 33; running: root.liveAnalysisExpanded && root.liveAnalysisNearViewport && !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory(false) }
-    Timer { interval: 16; running: root.simulatorExpanded && root.simulatorNearViewport && !root.simulatorPaused && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: root.sampleSimulator() }
-    Timer { interval: 16; running: root.simulatorExpanded && root.simulatorNearViewport && root.simulatorReplaying && !root.simulatorPaused; repeat: true; onTriggered: root.updateReplayPresentation() }
-    Timer { interval: 33; running: root.simulatorExpanded && root.simulatorNearViewport && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: { root.refreshSimulator(false); root.simulatorDisplaySamples = root.simulatorSamples.slice(0) } }
+    Timer { interval: 33; running: root.responseLabSource === "live" && root.responseLabNearViewport && !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory(false) }
+    Timer { interval: 33; running: root.responseLabSource === "live" && root.liveReplaying && root.historySamples.length > 0; repeat: true
+        onTriggered: {
+            const next = root.historyInspectIndex + 1
+            if (next >= root.historySamples.length) { root.liveReplaying = false; root.historyPaused = true }
+            else root.historyInspectIndex = next
+        }
+    }
+    Timer { interval: 16; running: root.responseLabSource === "interactive" && root.responseLabNearViewport && !root.simulatorPaused && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: root.sampleSimulator() }
+    Timer { interval: 16; running: root.responseLabSource === "interactive" && root.responseLabNearViewport && root.simulatorReplaying && !root.simulatorPaused; repeat: true; onTriggered: root.updateReplayPresentation() }
+    Timer { interval: 33; running: root.responseLabSource === "interactive" && root.responseLabNearViewport && !root.simulatorReplaying; repeat: true; triggeredOnStart: true; onTriggered: { root.refreshSimulator(false); root.simulatorDisplaySamples = root.simulatorSamples.slice(0) } }
 
     component Card: Rectangle {
         default property alias content: contentHost.data
@@ -358,14 +388,63 @@ Item {
             }
         }
     }
+    component ResponseTextField: TextField {
+        id: field
+        implicitHeight: 36
+        color: root.themeTokens.text
+        placeholderTextColor: root.themeTokens.textFaint
+        selectionColor: root.themeTokens.selection
+        selectedTextColor: root.themeTokens.textStrong
+        leftPadding: 11
+        rightPadding: 11
+        font.pixelSize: 11
+        background: Rectangle {
+            radius: root.themeTokens.controlRadius
+            color: root.themeTokens.control
+            border.color: field.activeFocus ? root.themeTokens.orange : field.hovered ? root.themeTokens.borderStrong : root.themeTokens.border
+        }
+    }
+    component ThemedDialog: Dialog {
+        id: themedDialog
+        property string heading: ""
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        padding: 14
+        title: ""
+        standardButtons: Dialog.NoButton
+        background: Rectangle {
+            color: root.themeTokens.panel
+            border.color: root.themeTokens.borderStrong
+            radius: root.themeTokens.controlRadius
+        }
+        header: Rectangle {
+            implicitHeight: root.topGun ? 64 : 58
+            color: root.themeTokens.panel
+            border.color: root.themeTokens.border
+            radius: root.themeTokens.controlRadius
+            Text {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.leftMargin: 14; anchors.rightMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                text: themedDialog.heading.toUpperCase()
+                color: root.themeTokens.textStrong
+                font.pixelSize: root.topGun ? 17 : 15
+                font.bold: true
+                font.family: root.themeTokens.displayFont
+                elide: Text.ElideRight
+            }
+            Rectangle { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.leftMargin: 14; width: 42; height: 2; color: root.themeTokens.orange }
+        }
+    }
     component Metric: Item {
         property string caption: ""
         property string value: "—"
         property color tone: root.themeTokens.text
-        implicitWidth: 135; implicitHeight: 46
-        Column { anchors.verticalCenter: parent.verticalCenter; spacing: 3
-            Caption { text: parent.parent.caption }
-            Text { text: parent.parent.value; color: parent.parent.tone; font.pixelSize: 16; font.bold: true; font.family: root.themeTokens.telemetryFont }
+        implicitWidth: 135; width: implicitWidth; implicitHeight: 46
+        Column { width: parent.width; anchors.verticalCenter: parent.verticalCenter; spacing: 3
+            Caption { width: parent.width; text: parent.parent.caption; elide: Text.ElideRight }
+            Text { width: parent.width; text: parent.parent.value; color: parent.parent.tone; font.pixelSize: 16; font.bold: true; font.family: root.themeTokens.telemetryFont; elide: Text.ElideRight }
         }
     }
     component Gauge: Item {
@@ -383,9 +462,11 @@ Item {
     }
     component HistoryGraph: Canvas {
         id: historyGraph
+        property var samples: root.historySamples
         property var series: []
         property real lowerBound: -1
         property real upperBound: 1
+        onSamplesChanged: requestPaint()
         onSeriesChanged: requestPaint()
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
@@ -399,23 +480,23 @@ Item {
             const center = lowerBound < 0 && upperBound > 0
                 ? height * (1 - (0 - lowerBound) / Math.max(0.0001, upperBound - lowerBound)) : height - 1
             ctx.beginPath(); ctx.moveTo(0, center); ctx.lineTo(width, center); ctx.stroke()
-            if (!root.historySamples || root.historySamples.length === 0) return
+            if (!samples || samples.length === 0) return
             for (let line = 0; line < series.length; ++line) {
                 const descriptor = series[line]
                 ctx.strokeStyle = descriptor.color
                 ctx.lineWidth = 2
                 ctx.beginPath()
-                for (let index = 0; index < root.historySamples.length; ++index) {
-                    const point = root.historySamples[index]
+                for (let index = 0; index < samples.length; ++index) {
+                    const point = samples[index]
                     const value = Math.max(lowerBound, Math.min(upperBound, Number(point[descriptor.field] || 0)))
-                    const x = index * width / Math.max(1, root.historySamples.length - 1)
+                    const x = index * width / Math.max(1, samples.length - 1)
                     const y = height * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound))
                     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
                 }
                 ctx.stroke()
             }
-            if (root.historyPaused && root.historyInspectIndex >= 0 && root.historySamples.length > 0) {
-                const inspectX = root.historyInspectIndex * width / Math.max(1, root.historySamples.length - 1)
+            if (samples === root.historySamples && root.historyPaused && root.historyInspectIndex >= 0 && samples.length > 0) {
+                const inspectX = root.historyInspectIndex * width / Math.max(1, samples.length - 1)
                 ctx.strokeStyle = root.themeTokens.orange
                 ctx.lineWidth = 1
                 ctx.beginPath(); ctx.moveTo(inspectX, 0); ctx.lineTo(inspectX, height); ctx.stroke()
@@ -638,6 +719,210 @@ Item {
         }
     }
 
+    component ResponseLabCard: Card {
+        property var labTelemetry: root.responseLabTelemetry || ({})
+        property bool liveSource: root.responseLabSource === "live"
+        Column {
+            width: parent.width
+            spacing: 11
+
+            RowLayout {
+                width: parent.width
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Response Lab"; color: root.themeTokens.textStrong; font.pixelSize: 18; font.bold: true }
+                    Text { text: "One synchronized inspection surface. Changing source changes only the input feed; Adaptive Response settings, curves, and profile configuration remain untouched."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                }
+                Caption { text: "INPUT SOURCE" }
+                ActionButton { objectName: "responseLabInteractiveSource"; text: "INTERACTIVE"; implicitHeight: 30; padding: 9; accent: !liveSource; onClicked: root.setResponseLabSource("interactive") }
+                ActionButton { objectName: "responseLabLiveSource"; text: "LIVE CONTROLLER"; implicitHeight: 30; padding: 9; accent: liveSource; onClicked: root.setResponseLabSource("live") }
+            }
+
+            Rectangle {
+                objectName: "responseLabEffectiveResponse"
+                width: parent.width
+                implicitHeight: sourceControls.implicitHeight + 18
+                radius: root.themeTokens.controlRadius
+                color: root.themeTokens.panelInset
+                border.color: root.themeTokens.border
+                Column {
+                    id: sourceControls
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 7
+                    RowLayout {
+                        width: parent.width
+                        spacing: 7
+                        ActionButton { text: "LIVE"; implicitHeight: 28; padding: 8; accent: liveSource ? !root.historyPaused && !root.liveRecording && !root.liveReplaying : !root.simulatorPaused && !root.simulatorReplaying && !root.simulatorRecording; onClicked: {
+                            if (liveSource) { root.liveReplaying = false; root.liveRecording = false; root.historyPaused = false; root.refreshHistory(false) }
+                            else { root.simulatorReplaying = false; root.simulatorRecording = false; backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorPaused = false; root.refreshSimulator() }
+                        } }
+                        ActionButton { text: "RECORD"; implicitHeight: 28; padding: 8; accent: liveSource ? root.liveRecording : root.simulatorRecording; onClicked: {
+                            if (liveSource) { root.liveReplaying = false; root.liveRecording = true; root.historyPaused = false; root.historyLastSequence = 0; root.historySamples = []; root.refreshHistory(true) }
+                            else { root.simulatorReplaying = false; backendObject.adaptiveResponseSimulatorStartRecording(); root.simulatorRecording = true; root.simulatorPaused = false; root.refreshSimulator() }
+                        } }
+                        ActionButton { text: "STOP"; implicitHeight: 28; padding: 8; accent: false; onClicked: {
+                            if (liveSource) { root.liveRecording = false; root.liveReplaying = false; root.historyPaused = true }
+                            else { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorPaused = true; root.refreshSimulator() }
+                        } }
+                        ActionButton { text: "REPLAY"; implicitHeight: 28; padding: 8; accent: liveSource ? root.liveReplaying : root.simulatorReplaying; enabled: liveSource ? root.historySamples.length > 0 : backendObject.adaptiveResponseSimulatorRecording().length > 0; onClicked: {
+                            if (liveSource) { root.liveRecording = false; root.historyPaused = true; root.historyInspectIndex = 0; root.liveReplaying = true }
+                            else { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.startReplay() }
+                        } }
+                        ActionButton { text: liveSource ? (root.historyPaused ? "RESUME" : "PAUSE") : (root.simulatorPaused ? "RESUME" : "PAUSE"); implicitHeight: 28; padding: 8; accent: false; onClicked: {
+                            if (liveSource) { root.liveReplaying = false; root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory(false) }
+                            else root.simulatorPaused = !root.simulatorPaused
+                        } }
+                        ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: {
+                            if (liveSource) { root.liveRecording = false; root.liveReplaying = false; root.historyPaused = true; root.historyLastSequence = 0; root.historySamples = []; root.historyInspectIndex = -1 }
+                            else { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorLastSequence = 0; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] }
+                        } }
+                        Item { Layout.fillWidth: true }
+                        Caption { visible: !liveSource; text: "SYNTHETIC RATE" }
+                        ResponseCombo { visible: !liveSource; objectName: "adaptiveSourceRateSelector"; Layout.preferredWidth: 108; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onChoiceActivated: function(index, value) { root.simulatorSourceRate = Number(value) } }
+                    }
+                    RowLayout {
+                        visible: !liveSource
+                        width: parent.width
+                        spacing: 10
+                        Caption { text: root.simulatorReplaying ? "REPLAY" : root.simulatorRecording ? "RECORDING" : root.simulatorPaused ? "PAUSED" : "LIVE" }
+                        Text { text: "MANUAL INPUT"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                        ThemedSlider { objectName: "adaptiveSimulatorManualInput"; Layout.fillWidth: true; from: -1; to: 1; stepSize: 0.001; value: root.simulatorInput; onMoved: { root.simulatorInput = value; if (!root.simulatorPaused && !root.simulatorReplaying) root.sampleSimulator() } }
+                        Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont }
+                    }
+                    RowLayout {
+                        visible: liveSource && backendObject.physicalConnected
+                        width: parent.width
+                        Caption { text: root.liveReplaying ? "REPLAYING CAPTURE" : root.liveRecording ? "RECORDING" : root.historyPaused ? "PAUSED INSPECTION" : "LIVE CONTROLLER" }
+                        Text { text: "Latest physical-input snapshot; observable while mapping is off, suspended, or vJoy is unavailable."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Repeater { model: [2, 5, 10, 30]
+                            delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
+                        }
+                    }
+                    Text { visible: liveSource && !backendObject.physicalConnected; text: "NO PHYSICAL CONTROLLER AVAILABLE — connect or select a controller to populate this same Response Lab. No mapped output, game, or vJoy device is required for observation."; color: root.themeTokens.orange; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
+                    RowLayout { visible: !liveSource && (root.simulatorRecordingSamples.length > 0 || root.simulatorReplaying); width: parent.width; spacing: 7
+                        Caption { text: "SLOW-MOTION PLAYBACK" }
+                        Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                        Repeater { model: [1, 2, 4, 6, 8, 10]
+                            delegate: ActionButton { required property var modelData; text: modelData + "×"; implicitHeight: 27; padding: 7; accent: root.replaySlowdown === modelData; onClicked: root.replaySlowdown = modelData }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Caption { text: root.replaySlowdown === 1 ? "1× original presentation" : root.replaySlowdown + "× slower presentation · original timestamps and results" }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                implicitHeight: effectiveResponseContent.implicitHeight + 22
+                radius: root.themeTokens.controlRadius
+                color: root.themeTokens.panel
+                border.color: root.themeTokens.border
+                Column {
+                    id: effectiveResponseContent
+                    anchors.fill: parent
+                    anchors.margins: 11
+                    spacing: 9
+                    RowLayout {
+                        width: parent.width
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Text { text: "Response Lab · Effective response"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
+                            Text { text: "Captured from the latest physical-input snapshot at 83 Hz; graphs render independently at about 30 Hz. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        ActionButton { objectName: "adaptiveResponseMonitorButton"; text: "↗"; implicitHeight: 30; padding: 9; accent: false; ToolTip.visible: hovered; ToolTip.text: "Open Adaptive Response Monitor"; onClicked: root.responseMonitorVisible = true }
+                        Text { text: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? (labTelemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: 16; font.bold: true }
+                    }
+                    Flow { width: parent.width; spacing: 16
+                        Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(labTelemetry.physical, 0)) }
+                        Metric { caption: "BASELINE OUTPUT"; value: root.percent(root.numericOr(labTelemetry.baselineOutput, 0)) }
+                        Metric { caption: "ADAPTIVE OUTPUT"; value: root.percent(root.numericOr(labTelemetry.adaptiveOutput, 0)); tone: root.themeTokens.ready }
+                        Metric { caption: "PREDICTED MAPPED"; value: root.percent(root.numericOr(labTelemetry.predictedMappedOutput, 0)); tone: root.themeTokens.orange }
+                        Metric { caption: "VELOCITY"; value: root.numericOr(labTelemetry.velocity, 0).toFixed(2) }
+                        Metric { caption: "ACCELERATION"; value: root.numericOr(labTelemetry.acceleration, 0).toFixed(1) }
+                        Metric { caption: "MOTION"; value: Math.round(root.numericOr(labTelemetry.motionIntensity, 0) * 100) + "%" }
+                        Metric { caption: "ACCEL INTENT"; value: Math.round(root.numericOr(labTelemetry.accelerationIntent, 0) * 100) + "%" }
+                        Metric { caption: "ONSET AUTHORITY"; value: Math.round(root.numericOr(labTelemetry.onsetAuthority, 0) * 100) + "%" }
+                        Metric { caption: "SUSTAINED EVIDENCE"; value: Math.round(root.numericOr(labTelemetry.sustainedEvidence, 0) * 100) + "%" }
+                        Metric { caption: "SUSTAINED AUTHORITY"; value: Math.round(root.numericOr(labTelemetry.sustainedAuthority, 0) * 100) + "%" }
+                        Metric { caption: "PREDICTIVE AUTHORITY"; value: Math.round(root.numericOr(labTelemetry.motionUrgency, 0) * 100) + "%" }
+                        Metric { caption: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? "ACTIVE PREDICTION" : "DORMANT HORIZON"; value: root.numericOr(labTelemetry.activeHorizonMs, 0).toFixed(2) + " ms" }
+                        Metric { caption: "MAX HORIZON"; value: root.numericOr(labTelemetry.maximumHorizonMs, root.numericOr(root.effective().maximumHorizonMs, 0)).toFixed(1) + " ms" }
+                        Metric { caption: "ALLOWED HORIZON"; value: root.numericOr(labTelemetry.allowedMaximumHorizonMs, 0).toFixed(1) + " ms" }
+                        Metric { caption: "TURN CONFIDENCE"; value: Math.round(root.numericOr(labTelemetry.turningPointConfidence, 0) * 100) + "%" }
+                        Metric { caption: "TURN LIMIT"; value: root.numericOr(labTelemetry.turningPointHorizonLimitMs, 0).toFixed(2) + " ms" }
+                        Metric { caption: "MAPPED LEAD"; value: root.percent(root.numericOr(labTelemetry.mappedLead, 0)) }
+                        Metric { caption: "MAX OUTPUT LEAD"; value: root.percent(root.numericOr(labTelemetry.maximumLead, root.numericOr(root.effective().maximumLead, 0))) }
+                        Metric { caption: "LOCAL CURVE GAIN"; value: root.numericOr(labTelemetry.localCurveGain, 0).toFixed(2) + "×" }
+                        Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(labTelemetry.confidence, 0) * 100) + "%" }
+                        Metric { caption: "REVERSALS"; value: root.numericOr(labTelemetry.reversalCount, 0) }
+                        Metric { caption: "SAFETY CLAMPS"; value: root.numericOr(labTelemetry.safetyClampCount, 0) }
+                    }
+                    Flow { width: parent.width; spacing: 9
+                        Caption { text: "CENTER RESOLVER UPSTREAM"; color: root.themeTokens.ready }
+                        Caption { text: labTelemetry.leadLimited ? "MAPPED LEAD LIMITED" : "LEAD WITHIN LIMIT"; color: labTelemetry.leadLimited ? root.themeTokens.orange : root.themeTokens.textMuted }
+                        Caption { text: labTelemetry.highLocalCurveGain ? "HIGH LOCAL CURVE GAIN" : "NORMAL CURVE GAIN"; color: labTelemetry.highLocalCurveGain ? root.themeTokens.orange : root.themeTokens.textMuted }
+                    }
+                    Flow { width: parent.width; spacing: 14
+                        Gauge { caption: "ACTIVE PREDICTION"; value: root.numericOr(labTelemetry.activeHorizonMs, 0); maximum: Math.max(0.1, root.numericOr(labTelemetry.maximumHorizonMs, root.numericOr(root.effective().maximumHorizonMs, 0))); tone: root.themeTokens.orange }
+                        Gauge { caption: "MAPPED LEAD"; value: Math.abs(root.numericOr(labTelemetry.appliedLead, 0)); maximum: Math.max(0.001, root.numericOr(labTelemetry.maximumLead, root.numericOr(root.effective().maximumLead, 0))); tone: root.themeTokens.ready }
+                        Gauge { caption: "CONFIDENCE"; value: root.numericOr(labTelemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
+                        Gauge { caption: "MOTION INTENSITY"; value: root.numericOr(labTelemetry.motionIntensity, 0); maximum: 1; tone: root.themeTokens.orange }
+                        Gauge { caption: "PREDICTIVE AUTHORITY"; value: root.numericOr(labTelemetry.motionUrgency, 0); maximum: 1; tone: root.themeTokens.ready }
+                    }
+                }
+            }
+
+            RowLayout { width: parent.width
+                Caption { text: (liveSource && root.historyPaused ? "PAUSED INSPECTION" : liveSource ? "LIVE CONTROLLER" : "INTERACTIVE") + " · " + (root.runtimeState.axisLabel || root.state.axisLabel || "Axis").toUpperCase() }
+                Item { Layout.fillWidth: true }
+                Caption { text: "CHRONOLOGICAL · NEWEST AT RIGHT" }
+            }
+            Text { text: "EFFECTIVE RESPONSE  ·  physical and mapped-output axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 156; samples: root.responseLabSamples; lowerBound: -1; upperBound: 1; series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"baselineOutput", color:root.themeTokens.cyan}, {field:"adaptiveOutput", color:root.themeTokens.ready}, {field:"predictedMappedOutput", color:root.themeTokens.orange}] }
+            TimeAxis { seconds: liveSource ? root.historyWindowSeconds : 5 }
+            Row { spacing: 16
+                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
+            }
+            Text { text: "MOTION  ·  independent velocity and acceleration scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            RowLayout { width: parent.width; spacing: 10
+                ColumnLayout { Layout.fillWidth: true
+                    Caption { text: "VELOCITY / s" }
+                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; samples: root.responseLabSamples; lowerBound: -root.responseLabMagnitude(["velocity"], 0.1); upperBound: root.responseLabMagnitude(["velocity"], 0.1); series: [{field:"velocity", color:root.themeTokens.cyan}] }
+                }
+                ColumnLayout { Layout.fillWidth: true
+                    Caption { text: "ACCELERATION / s²" }
+                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; samples: root.responseLabSamples; lowerBound: -root.responseLabMagnitude(["acceleration"], 0.1); upperBound: root.responseLabMagnitude(["acceleration"], 0.1); series: [{field:"acceleration", color:root.themeTokens.orange}] }
+                }
+            }
+            Text { text: "ADAPTIVE RESPONSE  ·  horizon/confidence and lead retain independent scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            RowLayout { width: parent.width; spacing: 10
+                ColumnLayout { Layout.fillWidth: true
+                    Caption { text: "HORIZON / CONFIDENCE · % OF ACTIVE LIMIT" }
+                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; samples: root.responseLabSamples; lowerBound: 0; upperBound: 1; series: [{field:"horizonRatio", color:root.themeTokens.orange}, {field:"confidence", color:root.themeTokens.ready}] }
+                }
+                ColumnLayout { Layout.fillWidth: true
+                    Caption { text: "PREDICTION LEAD · AXIS UNITS" }
+                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; samples: root.responseLabSamples; lowerBound: -root.responseLabMagnitude(["appliedLead"], 0.01); upperBound: root.responseLabMagnitude(["appliedLead"], 0.01); series: [{field:"appliedLead", color:root.themeTokens.cyan}] }
+                }
+            }
+            Column { visible: liveSource && root.historyPaused && root.historySamples.length > 0; width: parent.width; spacing: 5
+                ThemedSlider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
+                Flow { width: parent.width; spacing: 14
+                    Metric { caption: "INSPECT TIME"; value: root.numericOr(root.inspectedHistorySample().timeMs, 0).toFixed(0) + " ms" }
+                    Metric { caption: "PHYSICAL / BASELINE"; value: root.percent(root.numericOr(root.inspectedHistorySample().physical, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().baselineOutput, 0)) }
+                    Metric { caption: "PREDICTED / ADAPTIVE"; value: root.percent(root.numericOr(root.inspectedHistorySample().predictedMappedOutput, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().adaptiveOutput, 0)) }
+                    Metric { caption: "VELOCITY / ACCEL"; value: root.numericOr(root.inspectedHistorySample().velocity, 0).toFixed(2) + " / " + root.numericOr(root.inspectedHistorySample().acceleration, 0).toFixed(1) }
+                    Metric { caption: "HORIZON / LEAD"; value: root.numericOr(root.inspectedHistorySample().activeHorizonMs, 0).toFixed(2) + " ms / " + root.percent(root.numericOr(root.inspectedHistorySample().lead, 0)) }
+                    Metric { caption: "CONFIDENCE / STATE"; value: Math.round(root.numericOr(root.inspectedHistorySample().confidence, 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
+                }
+            }
+        }
+    }
+
     Flickable {
         id: adaptiveScroll
         objectName: "adaptiveResponseScroll"
@@ -709,90 +994,6 @@ Item {
             }
 
             Card {
-                id: simulatorCard
-                Column { width: parent.width; spacing: 10
-                    RowLayout { width: parent.width
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Interactive simulator"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "An isolated production AdaptiveResponseProcessor. It uses the selected context but never writes mapper state, DirectInput state, or vJoy output."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        }
-                        Caption { text: root.simulatorReplaying ? "REPLAY" : root.simulatorRecording ? "RECORDING" : root.simulatorPaused ? "PAUSED" : "LIVE" }
-                        ActionButton { text: root.simulatorExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.simulatorExpanded = !root.simulatorExpanded }
-                    }
-                    Column { visible: root.simulatorExpanded; width: parent.width; spacing: 10
-                    RowLayout { width: parent.width; spacing: 7
-                        ActionButton { text: "LIVE"; implicitHeight: 28; padding: 8; accent: !root.simulatorPaused && !root.simulatorReplaying && !root.simulatorRecording; onClicked: { root.simulatorReplaying = false; root.simulatorRecording = false; backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorPaused = false; root.refreshSimulator() } }
-                        ActionButton { text: "RECORD"; implicitHeight: 28; padding: 8; accent: root.simulatorRecording; onClicked: { root.simulatorReplaying = false; backendObject.adaptiveResponseSimulatorStartRecording(); root.simulatorRecording = true; root.simulatorPaused = false; root.refreshSimulator() } }
-                        ActionButton { text: "STOP"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorPaused = true; root.refreshSimulator() } }
-                        ActionButton { text: "REPLAY"; implicitHeight: 28; padding: 8; accent: root.simulatorReplaying; enabled: backendObject.adaptiveResponseSimulatorRecording().length > 0; onClicked: { backendObject.adaptiveResponseSimulatorStopRecording(); root.simulatorRecording = false; root.startReplay() } }
-                        ActionButton { text: root.simulatorPaused ? "RESUME" : "PAUSE"; implicitHeight: 28; padding: 8; accent: false; onClicked: root.simulatorPaused = !root.simulatorPaused }
-                        ActionButton { text: "CLEAR"; implicitHeight: 28; padding: 8; accent: false; onClicked: { backendObject.adaptiveResponseSimulatorClear(); root.simulatorPaused = true; root.simulatorRecording = false; root.simulatorReplaying = false; root.simulatorLastSequence = 0; root.simulatorSamples = []; root.simulatorRecordingSamples = []; root.simulatorDisplaySamples = [] } }
-                        Item { Layout.fillWidth: true }
-                        Caption { text: "SYNTHETIC SOURCE RATE" }
-                        ResponseCombo { objectName: "adaptiveSourceRateSelector"; Layout.preferredWidth: 118; model: [{label:"250 Hz",rate:250},{label:"125 Hz",rate:125},{label:"60 Hz",rate:60},{label:"30 Hz",rate:30}]; textRole: "label"; valueRole: "rate"; currentIndex: root.simulatorSourceRate === 250 ? 0 : root.simulatorSourceRate === 125 ? 1 : root.simulatorSourceRate === 60 ? 2 : 3; onChoiceActivated: function(index, value) { root.simulatorSourceRate = Number(value) } }
-                    }
-                    GridLayout { width: parent.width; columns: 2; columnSpacing: 14; rowSpacing: 0
-                        ColumnLayout { Layout.row: 0; Layout.column: 1; Layout.preferredWidth: 112; Layout.alignment: Qt.AlignTop | Qt.AlignHCenter; spacing: 4
-                            Caption { text: "MANUAL INPUT"; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "+100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
-                            VerticalSimulatorSlider { objectName: "adaptiveSimulatorManualInput"; Layout.alignment: Qt.AlignHCenter; value: root.simulatorInput; onMoved: { root.simulatorInput = value; if (!root.simulatorPaused && !root.simulatorReplaying) root.sampleSimulator() } }
-                            Text { text: "0"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "−100"; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont; Layout.alignment: Qt.AlignHCenter }
-                        }
-                        ColumnLayout { Layout.row: 0; Layout.column: 0; Layout.fillWidth: true; spacing: 7
-                            RowLayout { Layout.fillWidth: true
-                                Text { text: "SIMULATED SIGNAL PATH"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                                Caption { text: "OLDER  ←                 →  NEWEST" }
-                            }
-                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 148; samples: root.simulatorDisplaySamples; lowerBound: -1; upperBound: 1
-                                series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"estimated", color:root.themeTokens.cyan}, {field:"predicted", color:root.themeTokens.orange}, {field:"virtualOutput", color:root.themeTokens.ready}] }
-                            Row { spacing: 16
-                                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                                Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                                Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                                Text { text: "— Final output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                            }
-                            Text { text: "VELOCITY  ·  axis units / second  ·  newest at right"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["velocity"], 0.1); upperBound: root.simulatorMagnitude(["velocity"], 0.1); series: [{field:"velocity",color:root.themeTokens.cyan}] }
-                            Text { text: "ACCELERATION  ·  axis units / second²  ·  newest at right"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -root.simulatorMagnitude(["acceleration"], 0.1); upperBound: root.simulatorMagnitude(["acceleration"], 0.1); series: [{field:"acceleration",color:root.themeTokens.orange}] }
-                            Text { text: "ADAPTIVE ACTIVITY  ·  horizon / confidence  ·  percent of configured range"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: 0; upperBound: 1; series: [{field:"horizonRatio",color:root.themeTokens.orange},{field:"confidence",color:root.themeTokens.ready}] }
-                            Text { text: "PREDICTION LEAD  ·  ±" + root.percent(root.numericOr(root.simulatorCurrentSample().maximumLead, 0)).replace("+", "") + " configured limit  ·  axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                            SimulatorGraph { Layout.fillWidth: true; Layout.preferredHeight: 82; samples: root.simulatorDisplaySamples; lowerBound: -Math.max(0.005, root.numericOr(root.simulatorCurrentSample().maximumLead, 0.01)); upperBound: Math.max(0.005, root.numericOr(root.simulatorCurrentSample().maximumLead, 0.01)); series: [{field:"lead",color:root.themeTokens.cyan}] }
-                            TimeAxis { seconds: 5 }
-                        }
-                    }
-                    RowLayout { width: parent.width; visible: root.simulatorRecordingSamples.length > 0 || root.simulatorReplaying
-                        Caption { text: "SLOW-MOTION PLAYBACK" }
-                        Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Repeater { model: [1, 2, 4, 6, 8, 10]
-                            delegate: ActionButton { required property var modelData; text: modelData + "×"; implicitHeight: 27; padding: 7; accent: root.replaySlowdown === modelData; onClicked: root.replaySlowdown = modelData }
-                        }
-                        Item { Layout.fillWidth: true }
-                        Caption { text: root.replaySlowdown === 1 ? "1× original presentation" : root.replaySlowdown + "× slower presentation · original timestamps and results" }
-                    }
-                    Flow { width: parent.width; spacing: 16
-                        Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(root.simulatorCurrentSample().physical, 0)) }
-                        Metric { caption: "ESTIMATED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().estimated, 0)) }
-                        Metric { caption: "PREDICTED"; value: root.percent(root.numericOr(root.simulatorCurrentSample().predicted, 0)); tone: root.themeTokens.orange }
-                        Metric { caption: "MAPPED OUTPUT"; value: root.percent(root.numericOr(root.simulatorCurrentSample().virtualOutput, 0)); tone: root.themeTokens.ready }
-                        Metric { caption: "VELOCITY"; value: root.numericOr(root.simulatorCurrentSample().velocity, 0).toFixed(2) + " /s" }
-                        Metric { caption: "ACCELERATION"; value: root.numericOr(root.simulatorCurrentSample().acceleration, 0).toFixed(1) + " /s²" }
-                        Metric { caption: "ACTIVE HORIZON"; value: root.numericOr(root.simulatorCurrentSample().activeHorizonMs, 0).toFixed(2) + " ms" }
-                        Metric { caption: "LEAD"; value: root.percent(root.numericOr(root.simulatorCurrentSample().lead, 0)) }
-                        Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(root.simulatorCurrentSample().confidence, 0) * 100) + "%" }
-                        Metric { caption: "STATE"; value: root.simulatorCurrentSample().state || "Stable" }
-                    }
-                    Text { text: "Move the slider like a virtual HOTAS. The simulator reconstructs your continuous gesture, samples it at the selected controller rate, then runs the real predictor. New samples appear at the right; older motion scrolls left."; color: root.themeTokens.textMuted; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
-                    Text { text: "Physical = manual slider · Estimated = internal motion estimate · Predicted = expected near-future stick position · Mapped Output = prediction through the static active-axis mapping. Synthetic Source Rate emulates how often a physical controller reports a new axis sample."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
-                    Text { text: root.simulatorSamples.length === 0 || root.simulatorPaused ? "PAUSED — press LIVE or RECORD and move Manual Input." : "RECORD stores original timestamps and output samples. REPLAY redraws those stored samples only; it never recomputes predictor output."; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
-                    }
-                }
-            }
-
-            Card {
                 Column { width: parent.width; spacing: 12
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
@@ -816,29 +1017,23 @@ Item {
             }
 
             Card {
+                objectName: "staticResponsePreviewCard"
                 Column { width: parent.width; spacing: 10
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
                             Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Repeatable synthetic input uses the same lightweight estimator as runtime. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
+                            Text { text: "Repeatable realistic HOTAS motion through this selected axis’s exact static mapping. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
                         }
-                        ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 206; model: ["Slow Sweep", "Slow One-Way Sweep", "Slow Coherent Waggle", "Small Slow Correction", "Fast Sweep", "Instant Reversal Torture", "Extreme Turning-Point Torture", "Human-Like Rapid Reversal", "Positive-Side Reversal", "Negative-Side Reversal", "Center-Crossing Reversal", "Micro Adjustments", "Sudden Stop", "Center Fighting"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onChoiceActivated: function(index, value) { root.scenario = String(value); root.setPreview() } }
-                    }
-                    RowLayout { width: parent.width; spacing: 8
-                        Caption { text: "VIEW" }
-                        ActionButton { text: "PREDICTOR"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "predictor"; onClicked: root.setStaticPreviewView("predictor") }
-                        ActionButton { text: "STATIC PIPELINE"; implicitHeight: 28; padding: 8; accent: root.staticPreviewView === "pipeline"; onClicked: root.setStaticPreviewView("pipeline") }
-                        Item { Layout.fillWidth: true }
-                        Caption { text: root.staticPreviewView === "predictor" ? "Estimator view · no curve/output-stage dominance" : root.editScope === "preset" ? "Static mapped output uses the current profile/axis mapping; Response Preset supplies predictor settings only. Dynamic stages are excluded." : root.editScope === "category" ? "Static mapped output uses the current profile/axis mapping with selected Category settings. Dynamic stages are excluded." : root.editScope === "global" ? "Static mapped output uses the current profile/axis mapping with application defaults. Dynamic stages are excluded." : "Static mapped output uses the requested profile/axis mapping. Dynamic automation and transition state are excluded." }
+                        ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 216; model: ["Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onChoiceActivated: function(index, value) { root.scenario = String(value); root.setPreview() } }
                     }
                     RowLayout { width: parent.width; spacing: 6
                         Caption { text: "TRACES" }
                         ActionButton { text: "PHYSICAL"; implicitHeight: 26; padding: 7; accent: root.showPhysicalTrace; onClicked: root.showPhysicalTrace = !root.showPhysicalTrace }
-                        ActionButton { text: "ESTIMATED"; implicitHeight: 26; padding: 7; accent: root.showEstimatedTrace; onClicked: root.showEstimatedTrace = !root.showEstimatedTrace }
-                        ActionButton { text: "PREDICTED"; implicitHeight: 26; padding: 7; accent: root.showPredictedTrace; onClicked: root.showPredictedTrace = !root.showPredictedTrace }
-                        ActionButton { text: "MAPPED OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showFinalTrace; onClicked: root.showFinalTrace = !root.showFinalTrace }
+                        ActionButton { text: "BASELINE OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showBaselineTrace; onClicked: root.showBaselineTrace = !root.showBaselineTrace }
+                        ActionButton { text: "ADAPTIVE OUTPUT"; implicitHeight: 26; padding: 7; accent: root.showFinalTrace; onClicked: root.showFinalTrace = !root.showFinalTrace }
+                        ActionButton { text: "PREDICTED MAPPED"; implicitHeight: 26; padding: 7; accent: root.showPredictedTrace; onClicked: root.showPredictedTrace = !root.showPredictedTrace }
                         Item { Layout.fillWidth: true }
-                        Caption { text: root.staticScenarioDurationMs().toFixed(0) + " ms synthetic scenario" }
+                        Caption { text: "Mapped-output preview · " + root.staticScenarioDurationMs().toFixed(0) + " ms synthetic scenario" }
                     }
                     Canvas { id: graph; width: parent.width; height: 220
                         onPaint: {
@@ -867,17 +1062,17 @@ Item {
                                 ctx.stroke(); ctx.setLineDash([])
                             }
                             if (root.showPhysicalTrace) trace("physical", root.themeTokens.textStrong, 2.5, false)
-                            if (root.showEstimatedTrace) trace("estimated", root.themeTokens.cyan, 1.25, true)
-                            if (root.showPredictedTrace) trace("predicted", root.themeTokens.orange, 3, false)
-                            if (root.showFinalTrace) trace("virtualOutput", root.themeTokens.ready, 2.25, false)
+                            if (root.showBaselineTrace) trace("baselineOutput", root.themeTokens.cyan, 2, false)
+                            if (root.showPredictedTrace) trace("predictedMappedOutput", root.themeTokens.orange, 2, false)
+                            if (root.showFinalTrace) trace("adaptiveOutput", root.themeTokens.ready, 2.75, false)
                         }
-                        Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } function onStaticPreviewViewChanged() { graph.requestPaint() } function onShowPhysicalTraceChanged() { graph.requestPaint() } function onShowEstimatedTraceChanged() { graph.requestPaint() } function onShowPredictedTraceChanged() { graph.requestPaint() } function onShowFinalTraceChanged() { graph.requestPaint() } }
+                        Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } function onShowPhysicalTraceChanged() { graph.requestPaint() } function onShowBaselineTraceChanged() { graph.requestPaint() } function onShowPredictedTraceChanged() { graph.requestPaint() } function onShowFinalTraceChanged() { graph.requestPaint() } }
                     }
                     Row { spacing: 16
                         Text { visible: root.showPhysicalTrace; text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { visible: root.showEstimatedTrace; text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                        Text { visible: root.showPredictedTrace; text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                        Text { visible: root.showFinalTrace; text: "— Final output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                        Text { visible: root.showBaselineTrace; text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                        Text { visible: root.showFinalTrace; text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                        Text { visible: root.showPredictedTrace; text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
                     }
                     RowLayout { width: parent.width
                         Repeater { model: root.staticTimeTickLabels()
@@ -888,16 +1083,16 @@ Item {
                     Rectangle { width: parent.width; height: 1; color: root.themeTokens.divider }
                     Column { id: staticLeadDetail; width: parent.width; spacing: 5
                         property real configuredMaximum: Math.max(0.001, root.numericOr(root.effective().maximumLead, 0.01))
-                        property real currentLead: root.previewSamples && root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].lead, 0) : 0
+                        property real currentLead: root.previewSamples && root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].appliedLead, 0) : 0
                         property real peakLead: {
                             let peak = 0
-                            for (let index = 0; index < root.previewSamples.length; ++index) peak = Math.max(peak, Math.abs(root.numericOr(root.previewSamples[index].lead, 0)))
+                            for (let index = 0; index < root.previewSamples.length; ++index) peak = Math.max(peak, Math.abs(root.numericOr(root.previewSamples[index].appliedLead, 0)))
                             return peak
                         }
                         RowLayout { width: parent.width
                             ColumnLayout { Layout.fillWidth: true
-                                Text { text: "MAGNIFIED PREDICTION LEAD"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true }
-                                Text { text: "Scale is the configured maximum lead: ±" + root.percent(staticLeadDetail.configuredMaximum); color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                                Text { text: "MAGNIFIED MAPPED-OUTPUT LEAD"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true }
+                                Text { text: "Scale is the configured maximum mapped-output lead: ±" + root.percent(staticLeadDetail.configuredMaximum); color: root.themeTokens.textMuted; font.pixelSize: 10 }
                             }
                             Caption { text: "CURRENT " + root.percent(staticLeadDetail.currentLead) + "  ·  PEAK " + root.percent(staticLeadDetail.peakLead) + "  ·  ACTIVE HORIZON " + (root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].horizonMs, 0).toFixed(1) : "0.0") + " ms" }
                         }
@@ -910,7 +1105,7 @@ Item {
                                 const sampleCount = root.previewSamples.length
                                 const renderCount = Math.max(sampleCount, Math.floor(width))
                                 ctx.strokeStyle = root.themeTokens.cyan; ctx.lineWidth = 2; ctx.beginPath()
-                                for (let renderIndex = 0; renderIndex < renderCount; ++renderIndex) { const samplePosition = renderIndex * (sampleCount - 1) / Math.max(1, renderCount - 1); const leftIndex = Math.floor(samplePosition); const rightIndex = Math.min(sampleCount - 1, leftIndex + 1); const fraction = samplePosition - leftIndex; const left = root.numericOr(root.previewSamples[leftIndex].lead, 0); const right = root.numericOr(root.previewSamples[rightIndex].lead, 0); const value = Math.max(-maxLead, Math.min(maxLead, left + (right - left) * fraction)); const x = renderIndex * width / Math.max(1, renderCount - 1); const y = height * (0.5 - value / (2 * maxLead)); if (renderIndex === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y) }
+                                for (let renderIndex = 0; renderIndex < renderCount; ++renderIndex) { const samplePosition = renderIndex * (sampleCount - 1) / Math.max(1, renderCount - 1); const leftIndex = Math.floor(samplePosition); const rightIndex = Math.min(sampleCount - 1, leftIndex + 1); const fraction = samplePosition - leftIndex; const left = root.numericOr(root.previewSamples[leftIndex].appliedLead, 0); const right = root.numericOr(root.previewSamples[rightIndex].appliedLead, 0); const value = Math.max(-maxLead, Math.min(maxLead, left + (right - left) * fraction)); const x = renderIndex * width / Math.max(1, renderCount - 1); const y = height * (0.5 - value / (2 * maxLead)); if (renderIndex === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y) }
                                 ctx.stroke()
                             }
                             Connections { target: root; function onPreviewSamplesChanged() { previewLeadGraph.requestPaint() } }
@@ -992,7 +1187,7 @@ Item {
                         }
                         TuneGroup { title: "PREDICTION ENVELOPE"; detail: "Safety limits in time and normalized-axis headroom."
                             TuneRow { label: "Maximum horizon"; detail: "Adaptive ceiling; active prediction can remain below it."; from: 0; to: 30; step: 0.5; unit: "ms"; propertyKey: "maximumHorizonMs"; value: root.numericOr(effective().maximumHorizonMs, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "maximumHorizonMs", value); root.setPreview() } }
-                            TuneRow { label: "Maximum lead"; detail: "Hard safety envelope in normalized axis travel."; from: 0.01; to: 0.50; step: 0.01; unit: "%"; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "maximumLead", value); root.setPreview() } }
+                            TuneRow { label: "Maximum mapped-output lead"; detail: "Hard safety envelope in effective game-output movement, consistent across linear and nonlinear curves."; from: 0.01; to: 0.50; step: 0.01; unit: "%"; propertyKey: "maximumLead"; value: root.numericOr(effective().maximumLead, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "maximumLead", value); root.setPreview() } }
                             TuneRow { label: "Endpoint taper"; detail: "Tapers lead into the remaining output headroom."; from: 0.01; to: 1; step: 0.01; unit: "%"; propertyKey: "endpointTaper"; value: root.numericOr(effective().endpointTaper, 0.16); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "endpointTaper", value); root.setPreview() } }
                         }
                         TuneGroup { title: "MOTION ESTIMATION"; detail: "Evidence thresholds and model gains; these rows are control-plane settings, not a live report loop."
@@ -1023,116 +1218,7 @@ Item {
                 }
             }
 
-            Card {
-                Column { width: parent.width; spacing: 12
-                    RowLayout { width: parent.width
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Live telemetry"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Captured from the atomic latest-state snapshot at 83 Hz; graphs render independently at about 30 Hz. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
-                        }
-                        Text { text: telemetry.enabled ? (telemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: telemetry.enabled ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: 16; font.bold: true }
-                    }
-                    Flow { width: parent.width; spacing: 16
-                        Metric { caption: "PHYSICAL"; value: percent(root.numericOr(telemetry.physical, 0)) }
-                        Metric { caption: "ESTIMATED"; value: percent(root.numericOr(telemetry.estimated, 0)) }
-                        Metric { caption: "PREDICTED"; value: percent(root.numericOr(telemetry.predicted, 0)); tone: root.themeTokens.orange }
-                        Metric { caption: "VIRTUAL OUTPUT"; value: percent(root.numericOr(telemetry.virtualOutput, 0)); tone: root.themeTokens.ready }
-                        Metric { caption: "VELOCITY"; value: root.numericOr(telemetry.velocity, 0).toFixed(2) }
-                        Metric { caption: "ACCELERATION"; value: root.numericOr(telemetry.acceleration, 0).toFixed(1) }
-                        Metric { caption: "MOTION"; value: Math.round(root.numericOr(telemetry.motionIntensity, 0) * 100) + "%" }
-                        Metric { caption: "ACCEL INTENT"; value: Math.round(root.numericOr(telemetry.accelerationIntent, 0) * 100) + "%" }
-                        Metric { caption: "ONSET AUTHORITY"; value: Math.round(root.numericOr(telemetry.onsetAuthority, 0) * 100) + "%" }
-                        Metric { caption: "SUSTAINED EVIDENCE"; value: Math.round(root.numericOr(telemetry.sustainedEvidence, 0) * 100) + "%" }
-                        Metric { caption: "SUSTAINED AUTHORITY"; value: Math.round(root.numericOr(telemetry.sustainedAuthority, 0) * 100) + "%" }
-                        Metric { caption: "PREDICTIVE AUTHORITY"; value: Math.round(root.numericOr(telemetry.motionUrgency, 0) * 100) + "%" }
-                        Metric { caption: "ACTIVE PREDICTION"; value: (telemetry.enabled ? root.numericOr(telemetry.activeHorizonMs, 0) : 0).toFixed(2) + " ms" }
-                        Metric { caption: telemetry.enabled ? "MAX HORIZON" : "DORMANT HORIZON"; value: root.numericOr(telemetry.maximumHorizonMs, 0).toFixed(1) + " ms" }
-                        Metric { caption: "ALLOWED HORIZON"; value: root.numericOr(telemetry.allowedMaximumHorizonMs, 0).toFixed(1) + " ms" }
-                        Metric { caption: "TURN CONFIDENCE"; value: Math.round(root.numericOr(telemetry.turningPointConfidence, 0) * 100) + "%" }
-                        Metric { caption: "TURN LIMIT"; value: root.numericOr(telemetry.turningPointHorizonLimitMs, 0).toFixed(2) + " ms" }
-                        Metric { caption: "LEAD"; value: percent(telemetry.enabled ? root.numericOr(telemetry.lead, 0) : 0) }
-                        Metric { caption: telemetry.enabled ? "MAX LEAD" : "DORMANT LEAD"; value: percent(root.numericOr(telemetry.maximumLead, 0)) }
-                        Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(telemetry.confidence, 0) * 100) + "%" }
-                        Metric { caption: "REVERSALS"; value: root.numericOr(telemetry.reversalCount, 0) }
-                        Metric { caption: "SAFETY CLAMPS"; value: root.numericOr(telemetry.safetyClampCount, 0) }
-                    }
-                    Flow { width: parent.width; spacing: 14
-                        Gauge { caption: "ACTIVE PREDICTION"; value: telemetry.enabled ? root.numericOr(telemetry.activeHorizonMs, 0) : 0; maximum: Math.max(0.1, root.numericOr(telemetry.maximumHorizonMs, 0)); tone: root.themeTokens.orange }
-                        Gauge { caption: "PREDICTION LEAD"; value: telemetry.enabled ? Math.abs(root.numericOr(telemetry.lead, 0)) : 0; maximum: Math.max(0.001, root.numericOr(telemetry.maximumLead, 0)); tone: root.themeTokens.ready }
-                        Gauge { caption: "CONFIDENCE"; value: root.numericOr(telemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
-                        Gauge { caption: "MOTION INTENSITY"; value: root.numericOr(telemetry.motionIntensity, 0); maximum: 1; tone: root.themeTokens.orange }
-                        Gauge { caption: "PREDICTIVE AUTHORITY"; value: root.numericOr(telemetry.motionUrgency, 0); maximum: 1; tone: root.themeTokens.ready }
-                    }
-                }
-            }
-
-            Card {
-                id: liveAnalysisCard
-                Column { width: parent.width; spacing: 9
-                    RowLayout { width: parent.width
-                        ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Live analysis"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "A fixed UI-side ring captures the atomic latest state at 83 Hz while this section renders near 30 Hz. Position, motion, and Adaptive Response each retain their own readable scale."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        }
-                        ActionButton { text: root.liveAnalysisExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.liveAnalysisExpanded = !root.liveAnalysisExpanded }
-                    }
-                    Column { visible: root.liveAnalysisExpanded; width: parent.width; spacing: 9
-                        Repeater { model: [2, 5, 10, 30]
-                            delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
-                        }
-                        ActionButton { text: root.historyPaused ? "RESUME" : "PAUSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: { root.historyPaused = !root.historyPaused; if (!root.historyPaused) root.refreshHistory() } }
-                    RowLayout { width: parent.width
-                        Caption { text: (root.historyPaused ? "PAUSED INSPECTION" : "LIVE") + " · " + (runtimeState.axisLabel || root.state.axisLabel || "Axis").toUpperCase() }
-                        Item { Layout.fillWidth: true }
-                        Caption { text: "CHRONOLOGICAL · NEWEST AT RIGHT" }
-                    }
-                    Text { text: "AXIS POSITION  ·  normalized axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                    HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 156; lowerBound: -1; upperBound: 1
-                        series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"estimated", color:root.themeTokens.cyan}, {field:"predicted", color:root.themeTokens.orange}, {field:"virtualOutput", color:root.themeTokens.ready}] }
-                    TimeAxis { seconds: root.historyWindowSeconds }
-                    Row { spacing: 16
-                        Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { text: "— Estimated"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                        Text { text: "— Predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                        Text { text: "— Virtual output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                    }
-                    Text { text: "MOTION  ·  independent velocity and acceleration scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                    RowLayout { width: parent.width; spacing: 10
-                        ColumnLayout { Layout.fillWidth: true
-                            Caption { text: "VELOCITY / s" }
-                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["velocity"], 0.1); upperBound: root.historyMagnitude(["velocity"], 0.1); series: [{field:"velocity", color:root.themeTokens.cyan}] }
-                        }
-                        ColumnLayout { Layout.fillWidth: true
-                            Caption { text: "ACCELERATION / s²" }
-                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["acceleration"], 0.1); upperBound: root.historyMagnitude(["acceleration"], 0.1); series: [{field:"acceleration", color:root.themeTokens.orange}] }
-                        }
-                    }
-                    Text { text: "ADAPTIVE RESPONSE  ·  horizon/confidence and lead retain independent scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-                    RowLayout { width: parent.width; spacing: 10
-                        ColumnLayout { Layout.fillWidth: true
-                            Caption { text: "HORIZON / CONFIDENCE · % OF ACTIVE LIMIT" }
-                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: 0; upperBound: 1
-                                series: [{field:"horizonRatio", color:root.themeTokens.orange}, {field:"confidence", color:root.themeTokens.ready}] }
-                        }
-                        ColumnLayout { Layout.fillWidth: true
-                            Caption { text: "PREDICTION LEAD · AXIS UNITS" }
-                            HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; lowerBound: -root.historyMagnitude(["lead"], 0.01); upperBound: root.historyMagnitude(["lead"], 0.01); series: [{field:"lead", color:root.themeTokens.cyan}] }
-                        }
-                    }
-                    Column { visible: root.historyPaused && root.historySamples.length > 0; width: parent.width; spacing: 5
-                        ThemedSlider { width: parent.width; from: 0; to: Math.max(0, root.historySamples.length - 1); stepSize: 1; value: Math.max(0, root.historyInspectIndex); onMoved: root.historyInspectIndex = Math.round(value) }
-                        Flow { width: parent.width; spacing: 14
-                            Metric { caption: "INSPECT TIME"; value: root.numericOr(root.inspectedHistorySample().timeMs, 0).toFixed(0) + " ms" }
-                            Metric { caption: "PHYSICAL / ESTIMATE"; value: root.percent(root.numericOr(root.inspectedHistorySample().physical, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().estimated, 0)) }
-                            Metric { caption: "PREDICTED / OUTPUT"; value: root.percent(root.numericOr(root.inspectedHistorySample().predicted, 0)) + " / " + root.percent(root.numericOr(root.inspectedHistorySample().virtualOutput, 0)) }
-                            Metric { caption: "VELOCITY / ACCEL"; value: root.numericOr(root.inspectedHistorySample().velocity, 0).toFixed(2) + " / " + root.numericOr(root.inspectedHistorySample().acceleration, 0).toFixed(1) }
-                            Metric { caption: "HORIZON / LEAD"; value: root.numericOr(root.inspectedHistorySample().activeHorizonMs, 0).toFixed(2) + " ms / " + root.percent(root.numericOr(root.inspectedHistorySample().lead, 0)) }
-                            Metric { caption: "CONFIDENCE / STATE"; value: Math.round(root.numericOr(root.inspectedHistorySample().confidence, 0) * 100) + "% / " + (root.inspectedHistorySample().state || "Stable") }
-                        }
-                    }
-                    }
-                }
-            }
+            ResponseLabCard { id: responseLabCard; objectName: "responseLabCard" }
 
             Card {
                 Column { width: parent.width; spacing: 8
@@ -1183,33 +1269,91 @@ Item {
         }
     }
 
-    Dialog {
+    Window {
+        id: responseMonitor
+        objectName: "adaptiveResponseMonitor"
+        visible: root.responseMonitorVisible
+        width: 700
+        height: 560
+        minimumWidth: 460
+        minimumHeight: 360
+        title: "Adaptive Response Monitor"
+        modality: Qt.NonModal
+        flags: Qt.Window | (root.responseMonitorPinned ? Qt.WindowStaysOnTopHint : 0)
+        color: root.themeTokens.panel
+        onClosing: function(close) {
+            close.accepted = false
+            root.responseMonitorVisible = false
+        }
+        property var monitorTelemetry: root.responseLabTelemetry || ({})
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 10
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Text { text: "ADAPTIVE RESPONSE MONITOR"; color: root.themeTokens.textStrong; font.pixelSize: 18; font.bold: true }
+                    Text { text: "Read-only view of the same UI telemetry snapshots used by Response Lab."; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                }
+                Caption { text: "PIN / ALWAYS ON TOP" }
+                ThemedSwitch { objectName: "adaptiveResponseMonitorPin"; checked: root.responseMonitorPinned; onToggled: root.responseMonitorPinned = checked }
+                ActionButton { text: "CLOSE"; accent: false; implicitHeight: 28; padding: 8; onClicked: root.responseMonitorVisible = false }
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 14
+                Metric { caption: "INPUT SOURCE"; value: root.responseLabSource === "live" ? "LIVE CONTROLLER" : "INTERACTIVE"; tone: root.themeTokens.orange }
+                Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(responseMonitor.monitorTelemetry.physical, 0)) }
+                Metric { caption: "BASELINE OUTPUT"; value: root.percent(root.numericOr(responseMonitor.monitorTelemetry.baselineOutput, 0)) }
+                Metric { caption: "ADAPTIVE OUTPUT"; value: root.percent(root.numericOr(responseMonitor.monitorTelemetry.adaptiveOutput, 0)); tone: root.themeTokens.ready }
+                Metric { caption: "PREDICTED MAPPED"; value: root.percent(root.numericOr(responseMonitor.monitorTelemetry.predictedMappedOutput, 0)); tone: root.themeTokens.orange }
+                Metric { caption: "ACTIVE PREDICTION"; value: root.numericOr(responseMonitor.monitorTelemetry.activeHorizonMs, 0).toFixed(2) + " ms" }
+                Metric { caption: "MAPPED LEAD"; value: root.percent(root.numericOr(responseMonitor.monitorTelemetry.appliedLead, 0)) }
+                Metric { caption: "CONFIDENCE"; value: Math.round(root.numericOr(responseMonitor.monitorTelemetry.confidence, 0) * 100) + "%" }
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 14
+                Gauge { caption: "ACTIVE PREDICTION"; value: root.numericOr(responseMonitor.monitorTelemetry.activeHorizonMs, 0); maximum: Math.max(0.1, root.numericOr(responseMonitor.monitorTelemetry.maximumHorizonMs, root.numericOr(root.effective().maximumHorizonMs, 0))); tone: root.themeTokens.orange }
+                Gauge { caption: "MAPPED LEAD"; value: Math.abs(root.numericOr(responseMonitor.monitorTelemetry.appliedLead, 0)); maximum: Math.max(0.001, root.numericOr(responseMonitor.monitorTelemetry.maximumLead, root.numericOr(root.effective().maximumLead, 0))); tone: root.themeTokens.ready }
+                Gauge { caption: "CONFIDENCE"; value: root.numericOr(responseMonitor.monitorTelemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
+                Gauge { caption: "PREDICTIVE AUTHORITY"; value: root.numericOr(responseMonitor.monitorTelemetry.motionUrgency, 0); maximum: 1; tone: root.themeTokens.ready }
+            }
+            Text { text: "EFFECTIVE RESPONSE  ·  same synchronized graph history"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            HistoryGraph { Layout.fillWidth: true; Layout.fillHeight: true; samples: root.responseLabSamples; lowerBound: -1; upperBound: 1; series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"baselineOutput", color:root.themeTokens.cyan}, {field:"adaptiveOutput", color:root.themeTokens.ready}, {field:"predictedMappedOutput", color:root.themeTokens.orange}] }
+            Row { spacing: 16
+                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
+                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
+            }
+        }
+    }
+
+    ThemedDialog {
         id: savePresetDialog
-        title: "Save current setup as preset"
-        modal: true
-        anchors.centerIn: parent
+        heading: "Save current setup as preset"
         width: 440
-        standardButtons: Dialog.Cancel
-        background: Rectangle { color: root.themeTokens.panel; border.color: root.themeTokens.borderStrong; radius: root.themeTokens.controlRadius }
         contentItem: ColumnLayout { spacing: 10
             Text { text: "Captures the current effective Adaptive Response configuration for all axes."; color: root.themeTokens.textMuted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            TextField { id: presetName; Layout.fillWidth: true; placeholderText: "Preset name" }
-            TextField { id: presetDescription; Layout.fillWidth: true; placeholderText: "Optional description" }
+            Caption { text: "PRESET NAME" }
+            ResponseTextField { id: presetName; Layout.fillWidth: true; placeholderText: "Preset name" }
+            Caption { text: "DESCRIPTION · OPTIONAL" }
+            ResponseTextField { id: presetDescription; Layout.fillWidth: true; placeholderText: "Optional description" }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
+                ActionButton { text: "CANCEL"; accent: false; onClicked: savePresetDialog.close() }
                 ActionButton { text: "SAVE PRESET"; onClicked: { if (backendObject.saveAdaptiveResponsePreset(presetName.text, presetDescription.text)) { presetName.text = ""; presetDescription.text = ""; savePresetDialog.close() } } }
             }
         }
     }
 
-    Dialog {
+    ThemedDialog {
         id: presetManageDialog
-        title: "Response Presets"
-        modal: true
-        anchors.centerIn: parent
+        heading: "Response Presets"
         width: Math.min(680, root.width - 36)
-        standardButtons: Dialog.Close
-        background: Rectangle { color: root.themeTokens.panel; border.color: root.themeTokens.borderStrong; radius: root.themeTokens.controlRadius }
         contentItem: ScrollView { clip: true; contentWidth: availableWidth; implicitHeight: Math.min(440, root.height - 140)
             ColumnLayout { width: presetManageDialog.width - 30; spacing: 8
                 Text { text: "Custom presets can be edited directly, renamed, duplicated, exported with their required Pack dependencies, or deleted once all references are resolved."; color: root.themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
@@ -1231,22 +1375,22 @@ Item {
                 Text { visible: (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn }).length === 0; text: "No custom Response Presets yet. Save a current setup to create one."; color: root.themeTokens.textMuted; font.pixelSize: 10 }
             }
         }
+        footer: Rectangle { implicitHeight: 56; color: root.themeTokens.panel; border.color: root.themeTokens.border
+            ActionButton { anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter; text: "CLOSE"; accent: false; onClicked: presetManageDialog.close() }
+        }
     }
 
-    Dialog {
+    ThemedDialog {
         id: renamePresetDialog
-        title: "Rename Response Preset"
-        modal: true
-        anchors.centerIn: parent
+        heading: "Rename Response Preset"
         width: 420
-        standardButtons: Dialog.Cancel
-        background: Rectangle { color: root.themeTokens.panel; border.color: root.themeTokens.borderStrong; radius: root.themeTokens.controlRadius }
         contentItem: ColumnLayout { spacing: 10
             Text { text: "Names must be unique and cannot reuse a built-in Response Preset name."; color: root.themeTokens.textMuted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            TextField { id: renamePresetName; Layout.fillWidth: true; placeholderText: "Preset name" }
+            ResponseTextField { id: renamePresetName; Layout.fillWidth: true; placeholderText: "Preset name" }
             Text { id: renamePresetError; visible: text.length > 0; text: ""; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
+                ActionButton { text: "CANCEL"; accent: false; onClicked: renamePresetDialog.close() }
                 ActionButton { text: "SAVE NAME"; enabled: renamePresetName.text.trim().length > 0; onClicked: { if (backendObject.renameAdaptiveResponsePreset(root.renamePresetId, renamePresetName.text)) { renamePresetDialog.close() } else { renamePresetError.text = "Use a unique name of 64 characters or fewer." } } }
             }
         }

@@ -117,6 +117,70 @@ float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping)
     return applyRescaledDeadzone(calibrated, mapping.profile.deadzone);
 }
 
+float resolveNormalizedAxisCenter(float normalized, const RuntimeAxisMapping &mapping,
+                                  AxisCenterResolverState &state)
+{
+    const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
+    normalized = oneSided ? std::clamp(normalized, 0.0F, 1.0F) : clampUnit(normalized);
+    if (oneSided) {
+        // A throttle has no signed physical centre transit. Keep its existing
+        // lower-end deadzone semantics out of the centred-axis state machine.
+        return applyRescaledUnipolarDeadzone(normalized, mapping.profile.deadzone);
+    }
+
+    const float deadzone = std::clamp(mapping.profile.deadzone, 0.0F, 0.95F);
+    // The existing per-axis hysteresis setting is the centre hold/release
+    // band. It deliberately does not become a generic output smoother.
+    const float hysteresis = std::clamp(mapping.profile.hysteresis, 0.0F, 0.25F);
+    const float releaseBoundary = std::min(1.0F, deadzone + hysteresis);
+    const float motionThreshold = std::max(0.0015F, hysteresis * 0.25F);
+    const float magnitude = std::abs(normalized);
+
+    if (!state.initialized) {
+        state.previousInput = normalized;
+        state.previousDelta = 0.0F;
+        state.quietSamples = 0;
+        state.initialized = true;
+        state.centerHeld = magnitude <= deadzone;
+        return state.centerHeld ? 0.0F : normalized;
+    }
+
+    const float delta = normalized - state.previousInput;
+    const bool moving = std::abs(delta) > motionThreshold;
+    const bool coherentTransit = moving && std::abs(state.previousDelta) > motionThreshold
+        && ((delta > 0.0F) == (state.previousDelta > 0.0F));
+
+    if (state.centerHeld) {
+        // Leaving a genuine neutral hold requires the configured hysteresis
+        // band. Once released, samples flow through zero unaltered until they
+        // truly settle again.
+        if (magnitude <= releaseBoundary) {
+            state.previousInput = normalized;
+            state.previousDelta = delta;
+            return 0.0F;
+        }
+        state.centerHeld = false;
+        state.quietSamples = 0;
+    }
+
+    const bool insideCentreStabilityRegion = magnitude <= deadzone;
+    if (insideCentreStabilityRegion && !moving && !coherentTransit
+        && std::abs(state.previousDelta) <= motionThreshold) {
+        state.quietSamples = static_cast<unsigned char>(std::min(255,
+            static_cast<int>(state.quietSamples) + 1));
+        // Two consecutive low-motion reports are enough to distinguish a
+        // resting centre from a coherent sweep without adding latency to the
+        // latter. The output remains the physical trajectory until this point.
+        if (state.quietSamples >= 2) state.centerHeld = true;
+    } else {
+        state.quietSamples = 0;
+    }
+
+    state.previousInput = normalized;
+    state.previousDelta = delta;
+    return state.centerHeld ? 0.0F : normalized;
+}
+
 float evaluateResponseCurve(float value, const RuntimeAxisMapping &mapping)
 {
     if (mapping.profile.rangeMode == AxisRangeMode::OneSided) {
@@ -146,12 +210,11 @@ float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &sta
     return state.lastAcceptedInput;
 }
 
-float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping, float *curveResponse,
-                                 AxisSignalPath *signalPath)
+float evaluateStaticNormalizedAxisTransfer(float normalized, const RuntimeAxisMapping &mapping,
+                                           float *curveResponse, AxisSignalPath *signalPath)
 {
-    const float calibrated = normalizeCalibrated(raw, mapping.calibration);
     const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
-    const float normalized = oneSided ? std::max(0.0F, calibrated) : calibrated;
+    normalized = oneSided ? std::clamp(normalized, 0.0F, 1.0F) : clampUnit(normalized);
     float transformed = oneSided
         ? applyRescaledUnipolarDeadzone(normalized, mapping.profile.deadzone)
         : applyRescaledDeadzone(normalized, mapping.profile.deadzone);
@@ -168,6 +231,35 @@ float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping, f
     transformed = applyOutputLimits(transformed, mapping.profile);
     if (signalPath) signalPath->afterLimits = transformed;
     return transformed;
+}
+
+float evaluateResolvedNormalizedAxisTransfer(float resolvedNormalized,
+                                             const RuntimeAxisMapping &mapping,
+                                             float *curveResponse, AxisSignalPath *signalPath)
+{
+    const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
+    float transformed = oneSided ? std::clamp(resolvedNormalized, 0.0F, 1.0F)
+                                 : clampUnit(resolvedNormalized);
+    if (signalPath) {
+        signalPath->normalized = transformed;
+        signalPath->afterDeadzone = transformed;
+        signalPath->afterHysteresis = transformed;
+    }
+    if (mapping.profile.inverted) transformed = oneSided ? 1.0F - transformed : -transformed;
+    if (signalPath) signalPath->afterInversion = transformed;
+    transformed = evaluateResponseCurve(transformed, mapping);
+    if (curveResponse) *curveResponse = transformed;
+    if (signalPath) signalPath->afterCurve = transformed;
+    transformed = applyOutputLimits(transformed, mapping.profile);
+    if (signalPath) signalPath->afterLimits = transformed;
+    return transformed;
+}
+
+float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping, float *curveResponse,
+                                 AxisSignalPath *signalPath)
+{
+    return evaluateStaticNormalizedAxisTransfer(normalizeCalibrated(raw, mapping.calibration), mapping,
+                                                curveResponse, signalPath);
 }
 
 float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
@@ -208,21 +300,77 @@ float transformAxis(float raw, const RuntimeAxisMapping &mapping)
     return evaluateStaticAxisTransfer(raw, mapping);
 }
 
+AdaptiveMappedAxisOutput applyCurveAwareAdaptiveResponse(
+    float physicalCurrent, float physicalFuture, bool adaptiveEnabled,
+    float maximumMappedLead, const RuntimeAxisMapping &mapping,
+    AxisHysteresisState &hysteresisState)
+{
+    constexpr float kMinimumPhysicalLead = 0.00025F;
+    constexpr float kHighCurveGain = 1.50F;
+    // Centred axes have already passed through resolveNormalizedAxisCenter.
+    // This compatibility parameter remains in the public helper signature so
+    // existing callers do not allocate or rebuild state; it is intentionally
+    // not a second downstream deadzone/hysteresis stage.
+    (void)hysteresisState;
+    AdaptiveMappedAxisOutput result;
+    const bool oneSided = mapping.profile.rangeMode == AxisRangeMode::OneSided;
+    physicalCurrent = oneSided ? std::clamp(physicalCurrent, 0.0F, 1.0F)
+                               : clampUnit(physicalCurrent);
+    physicalFuture = oneSided ? std::clamp(physicalFuture, 0.0F, 1.0F)
+                              : clampUnit(physicalFuture);
+
+    // F(x) and F(xFuture) are both evaluated after centre resolution. A
+    // speculative future position never mutates centre state or reinserts a
+    // static deadzone plateau into an intentional zero crossing.
+    result.baselineOutput = evaluateResolvedNormalizedAxisTransfer(
+        physicalCurrent, mapping, nullptr, &result.baselineSignalPath);
+    const float currentMapped = result.baselineOutput;
+    result.predictedMappedOutput = evaluateResolvedNormalizedAxisTransfer(physicalFuture, mapping);
+    result.physicalLead = physicalFuture - physicalCurrent;
+    result.mappedLead = result.predictedMappedOutput - currentMapped;
+    const float physicalMagnitude = std::abs(result.physicalLead);
+    result.localCurveGain = physicalMagnitude > kMinimumPhysicalLead
+        ? std::abs(result.mappedLead) / physicalMagnitude : 0.0F;
+
+    result.deadzoneAuthority = adaptiveEnabled ? 1.0F : 0.0F;
+    result.deadzoneAuthorityBlocked = false;
+    if (!adaptiveEnabled) {
+        result.predictedMappedOutput = result.baselineOutput;
+        result.adaptiveOutput = result.baselineOutput;
+        return result;
+    }
+
+    float authority = 1.0F;
+    result.highLocalCurveGain = result.localCurveGain > kHighCurveGain;
+    if (result.highLocalCurveGain) {
+        // A square-root taper keeps steep curve regions responsive while
+        // preventing a tiny physical prediction from becoming an abrupt
+        // mapped-output jump. It is derived from values already evaluated.
+        authority = std::sqrt(kHighCurveGain / result.localCurveGain);
+    }
+    const float requestedLead = result.mappedLead * authority;
+    const float boundedLead = std::clamp(requestedLead, -std::max(0.0F, maximumMappedLead),
+                                         std::max(0.0F, maximumMappedLead));
+    result.leadLimited = std::abs(boundedLead - result.mappedLead) > 0.00001F;
+    result.adaptiveOutput = applyOutputLimits(result.baselineOutput + boundedLead, mapping.profile);
+    result.appliedLead = result.adaptiveOutput - result.baselineOutput;
+    result.leadLimited = result.leadLimited
+        || std::abs(result.appliedLead - boundedLead) > 0.00001F;
+    return result;
+}
+
 bool normalizeMappingConflicts(AxisMappings &mappings)
 {
-    std::array<bool, kVirtualAxisSlotCount> occupied{};
     bool clean = true;
     for (auto &mapping : mappings) {
         const int target = static_cast<int>(mapping.target);
         if (mapping.target == VirtualAxis::Disabled) {
             continue;
         }
-        if (target < 1 || target >= static_cast<int>(occupied.size()) || occupied[target]) {
+        if (target < 1 || target >= kVirtualAxisSlotCount) {
             mapping.target = VirtualAxis::Disabled;
             clean = false;
-            continue;
         }
-        occupied[target] = true;
     }
     return clean;
 }

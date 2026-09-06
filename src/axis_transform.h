@@ -6,13 +6,24 @@
 
 namespace hotas {
 
-// The fixed v1.4 order is calibration -> normalization -> rescaled deadzone
-// -> hysteresis -> inversion -> compiled response curve -> output limits.
-// Static previews intentionally omit hysteresis because it is stateful and
-// cannot be represented truthfully as a single-valued transfer trace.
+// Legacy non-centre transfer state retained for the curve editor and old
+// configuration semantics.  The mapper's centred-axis report path instead
+// uses AxisCenterResolverState below, before Adaptive Response.
 struct AxisHysteresisState {
     float lastAcceptedInput = 0.0F;
     bool initialized = false;
+};
+
+// Fixed, per-axis report state for the canonical centre resolver.  A centred
+// control is held at exact neutral only after it has actually settled there;
+// an in-flight sweep keeps its continuous normalized trajectory through zero.
+// No time source, allocation, lock, or UI dependency is involved.
+struct AxisCenterResolverState {
+    float previousInput = 0.0F;
+    float previousDelta = 0.0F;
+    unsigned char quietSamples = 0;
+    bool initialized = false;
+    bool centerHeld = false;
 };
 
 struct AxisSignalPath {
@@ -22,6 +33,27 @@ struct AxisSignalPath {
     float afterInversion = 0.0F;
     float afterCurve = 0.0F;
     float afterLimits = 0.0F;
+};
+
+// The estimator continues to reason about physical stick motion. This small
+// fixed-size result captures the separate, curve-aware authority decision in
+// game-output space without introducing state, allocation, or UI work.
+struct AdaptiveMappedAxisOutput {
+    AxisSignalPath baselineSignalPath{};
+    float baselineOutput = 0.0F;
+    float predictedMappedOutput = 0.0F;
+    float adaptiveOutput = 0.0F;
+    float physicalLead = 0.0F;
+    float mappedLead = 0.0F;
+    float appliedLead = 0.0F;
+    float localCurveGain = 0.0F;
+    // Compatibility telemetry retained for existing snapshots. Centre hold
+    // now occurs before prediction, so mapped-output authority is never
+    // acquired or collapsed at a downstream deadzone edge.
+    float deadzoneAuthority = 1.0F;
+    bool deadzoneAuthorityBlocked = false;
+    bool leadLimited = false;
+    bool highLocalCurveGain = false;
 };
 
 // The output plan is rebuilt from fixed-size arrays once per physical report.
@@ -62,16 +94,30 @@ float normalizeCalibrated(float raw, const Calibration &calibration);
 float applyRescaledDeadzone(float value, float deadzone);
 float applyRescaledUnipolarDeadzone(float value, float deadzone);
 float preprocessAxisInput(float raw, const RuntimeAxisMapping &mapping);
+// Resolves calibrated/normalized physical input into the one canonical signal
+// consumed by the centred-axis mapper, predictor, diagnostics, and response
+// previews.  mapping.profile.hysteresis provides the hold/release band.
+float resolveNormalizedAxisCenter(float normalized, const RuntimeAxisMapping &mapping,
+                                  AxisCenterResolverState &state);
 float evaluateResponseCurve(float value, const RuntimeAxisMapping &mapping);
 float applyOutputLimits(float value, const AxisMapping &mapping);
 float applyAxisHysteresis(float value, float threshold, AxisHysteresisState &state);
+// Evaluates the deterministic, non-hysteretic part of the per-axis pipeline
+// for an already-normalized physical position. This is the F(x) used to
+// compare current and predicted physical positions in mapped-output space.
+float evaluateStaticNormalizedAxisTransfer(float normalized, const RuntimeAxisMapping &mapping,
+                                           float *curveResponse = nullptr,
+                                           AxisSignalPath *signalPath = nullptr);
+// Maps an already centre-resolved normalized value.  It deliberately does not
+// apply a second deadzone or hysteresis stage.
+float evaluateResolvedNormalizedAxisTransfer(float resolvedNormalized,
+                                             const RuntimeAxisMapping &mapping,
+                                             float *curveResponse = nullptr,
+                                             AxisSignalPath *signalPath = nullptr);
 float evaluateStaticAxisTransfer(float raw, const RuntimeAxisMapping &mapping,
                                  float *curveResponse = nullptr,
                                  AxisSignalPath *signalPath = nullptr);
-// Adaptive Response supplies a bounded normalized physical prediction at this
-// point in the path. Calibration has already happened, while deadzone,
-// hysteresis, inversion, curve, and output limits retain their established
-// ordering and semantics.
+// Legacy live transfer used outside the resolved Adaptive Response pipeline.
 float transformNormalizedAxisLive(float normalized, const RuntimeAxisMapping &mapping,
                                   AxisHysteresisState &hysteresisState,
                                   float *curveResponse = nullptr,
@@ -80,6 +126,13 @@ float transformAxisLive(float raw, const RuntimeAxisMapping &mapping,
                         AxisHysteresisState &hysteresisState,
                         float *curveResponse = nullptr, AxisSignalPath *signalPath = nullptr);
 float transformAxis(float raw, const RuntimeAxisMapping &mapping);
+// Applies an already-computed prediction to the current resolved mapped
+// baseline. The configured maximum lead is interpreted as a mapped-output
+// limit; the predictor remains in normalized physical-axis space.
+AdaptiveMappedAxisOutput applyCurveAwareAdaptiveResponse(
+    float physicalCurrent, float physicalFuture, bool adaptiveEnabled,
+    float maximumMappedLead, const RuntimeAxisMapping &mapping,
+    AxisHysteresisState &hysteresisState);
 
 // Restores safe, bounded profile values after configuration deserialization.
 void normalizeAxisProcessing(AxisMapping &mapping);
@@ -87,8 +140,9 @@ void normalizeAxisProcessing(AxisMapping &mapping);
 // This is never called by the DirectInput-to-vJoy report path.
 void switchAxisOutputLimitDomain(AxisMapping &mapping, AxisRangeMode rangeMode);
 
-// Rejects duplicate non-disabled targets, retaining the first assignment.
-// Returns true when the configuration was already conflict-free.
+// Keeps valid shared non-disabled targets intact during configuration load.
+// The fixed-size output plan resolves a shared target deterministically by
+// physical-axis row order; the user may explicitly opt in through the UI.
 bool normalizeMappingConflicts(AxisMappings &mappings);
 bool hasMappingConflict(const AxisMappings &mappings, int sourceIndex,
                         VirtualAxis candidateTarget);

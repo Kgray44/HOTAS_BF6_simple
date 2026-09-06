@@ -270,8 +270,42 @@ Flickable {
         Rectangle { Layout.fillWidth: true; height: 1; color: root.border }
     }
     component Field: TextField {
-        implicitHeight: 33; color: root.text; selectByMouse: true
+        implicitHeight: 33; color: root.text; placeholderTextColor: root.muted; selectByMouse: true
+        selectionColor: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.42)
+        selectedTextColor: root.text
         background: Rectangle { radius: theme.topGun ? 1 : 5; color: root.inset; border.color: parent.activeFocus ? root.accent : root.border }
+    }
+    component ThemedDialog: Dialog {
+        id: themedDialog
+        property string heading: ""
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        padding: 14
+        standardButtons: Dialog.NoButton
+        background: Rectangle {
+            color: root.panel
+            border.color: root.border
+            radius: theme.topGun ? 1 : 7
+        }
+        header: Rectangle {
+            implicitHeight: theme.topGun ? 62 : 56
+            color: root.panel
+            border.color: root.border
+            radius: theme.topGun ? 1 : 7
+            Text {
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.leftMargin: 14; anchors.rightMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                text: themedDialog.heading.toUpperCase()
+                color: root.text
+                font.pixelSize: theme.topGun ? 16 : 14
+                font.bold: true
+                font.family: theme.topGun ? theme.displayFont : undefined
+                elide: Text.ElideRight
+            }
+            Rectangle { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.leftMargin: 14; width: 42; height: 2; color: root.accent }
+        }
     }
     component ThemedComboBox: ComboBox {
         id: themedComboBox
@@ -570,7 +604,7 @@ Flickable {
                     }
                 }
                 RowLayout { Layout.fillWidth: true
-                    ActionButton { label: "RENAME"; subdued: true; actionEnabled: !root.detail.active; onTriggered: { renameProfileDialog.profileId = root.selectedProfileId; renameProfileDialog.profileName = root.detail.name; renameProfileDialog.open() } }
+                    ActionButton { label: "RENAME"; subdued: true; onTriggered: { renameProfileDialog.profileId = root.selectedProfileId; renameProfileDialog.profileName = root.detail.name; renameProfileDialog.open() } }
                     ActionButton { label: "DUPLICATE"; subdued: true; onTriggered: { duplicateProfileDialog.profileId = root.selectedProfileId; duplicateProfileDialog.name = root.detail.name + " Copy"; duplicateProfileDialog.categoryId = root.detail.categoryId; duplicateProfileDialog.open() } }
                     ActionButton { label: "MOVE CATEGORY"; subdued: true; onTriggered: { moveProfileDialog.profileId = root.selectedProfileId; moveProfileDialog.categoryId = root.detail.categoryId; moveProfileDialog.open() } }
                     ActionButton { label: root.detail.enabled ? "DISABLE" : "ENABLE"; subdued: true; actionEnabled: !root.detail.active; onTriggered: backendObject.setProfileEnabled(root.selectedProfileId, !root.detail.enabled) }
@@ -594,15 +628,16 @@ Flickable {
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteCategoryDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfileCategory(deleteCategoryDialog.categoryId)) { deleteCategoryDialog.close(); root.returnToLibrary() } } } }
         }
     }
-    Dialog { id: newCategoryDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "New Category"; standardButtons: Dialog.NoButton
+    ThemedDialog { id: newCategoryDialog; heading: "New Category"; width: 368
         contentItem: ColumnLayout { width: 340; spacing: 10
             Text { text: "CATEGORY NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
             Field { id: categoryName; Layout.fillWidth: true; placeholderText: "Battlefield 6" }
+            Text { text: "Use a category to group profiles and optional game-detection rules."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: newCategoryDialog.close() } ActionButton { label: "CREATE"; actionEnabled: categoryName.text.trim().length > 0; onTriggered: { if (backendObject.createProfileCategory(categoryName.text)) newCategoryDialog.close() } } }
         }
         onOpened: { categoryName.text = ""; categoryName.forceActiveFocus() }
     }
-    Dialog { id: createProfileDialog; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "New Profile"; standardButtons: Dialog.NoButton
+    ThemedDialog { id: createProfileDialog; property string categoryId: ""; heading: "New Profile"; width: 388
         contentItem: ColumnLayout { width: 360; spacing: 10
             Text { text: "PROFILE NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
             Field { id: newProfileName; Layout.fillWidth: true; placeholderText: "Helicopter" }

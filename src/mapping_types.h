@@ -661,6 +661,7 @@ struct DiscoveredController {
     QString directInputId;
     QString productGuid;
     QString hidInstanceId;
+    QString hidContainerId;
     int vendorId = 0;
     int productId = 0;
     std::array<bool, kPhysicalAxisCount> axes{};
@@ -677,6 +678,7 @@ struct SavedControllerRecord {
     QString lastDirectInputId;
     QString productGuid;
     QString hidInstanceId;
+    QString hidContainerId;
     int vendorId = 0;
     int productId = 0;
     std::array<bool, kPhysicalAxisCount> axes{};
@@ -778,10 +780,12 @@ inline VirtualOutputLayout defaultBf6OutputLayout()
     layout.name = u"BF6 Output"_qs;
     layout.requirements.deviceId = 1;
     layout.requirements.buttons = 32;
-    layout.requirements.axes[static_cast<int>(VirtualAxis::X)] = true;
-    layout.requirements.axes[static_cast<int>(VirtualAxis::Y)] = true;
-    layout.requirements.axes[static_cast<int>(VirtualAxis::Z)] = true;
-    layout.requirements.axes[static_cast<int>(VirtualAxis::Rz)] = true;
+    // The standard vJoy device supports all eight conventional axes. A
+    // profile still routes only the axes it assigns, but the recommended
+    // baseline must not hide usable capability from its editor or verifier.
+    for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
+        layout.requirements.axes[static_cast<size_t>(index)] = true;
+    }
     return layout;
 }
 

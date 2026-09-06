@@ -1,4 +1,5 @@
 #include "controller_readiness.h"
+#include "hid_device_identity.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -51,10 +52,13 @@ QString quotedArguments(const QStringList &arguments)
 }
 
 bool capabilityAxesMatch(const std::array<bool, kVirtualAxisSlotCount> &have,
-                          const std::array<bool, kVirtualAxisSlotCount> &need)
+                           const std::array<bool, kVirtualAxisSlotCount> &need)
 {
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        if (have[static_cast<size_t>(index)] != need[static_cast<size_t>(index)]) return false;
+        // A configured vJoy device may expose useful axes beyond the active
+        // profile's current demand. Only a missing required capability makes
+        // the descriptor insufficient; a capability superset is valid.
+        if (need[static_cast<size_t>(index)] && !have[static_cast<size_t>(index)]) return false;
     }
     return true;
 }
@@ -110,6 +114,55 @@ QString stateName(const VJoyCapabilities &vjoy)
     if (vjoy.busy) return QStringLiteral("busy in another application");
     if (!vjoy.devicePresent) return QStringLiteral("not configured");
     return QStringLiteral("available");
+}
+
+QString canonicalPath(const QString &path)
+{
+    QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return QDir::toNativeSeparators(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+}
+
+bool samePath(const QString &left, const QString &right)
+{
+    return !left.isEmpty() && !right.isEmpty()
+        && canonicalPath(left).compare(canonicalPath(right), Qt::CaseInsensitive) == 0;
+}
+
+bool isVJoyHidInstance(const QString &instanceId)
+{
+    return ControllerReadinessService::normalizeDeviceInstanceId(instanceId).startsWith(
+        QStringLiteral("HID\\VID_1234&PID_BEAD\\"), Qt::CaseInsensitive);
+}
+
+QStringList selectedPhysicalHidInstances(const PhysicalControllerCapabilities &physical,
+                                         const QStringList &gamingInstances)
+{
+    QStringList result;
+    const auto append = [&result](const QString &value) {
+        const QString normalized = ControllerReadinessService::normalizeDeviceInstanceId(value);
+        if (!normalized.isEmpty() && !result.contains(normalized, Qt::CaseInsensitive)) result.append(normalized);
+    };
+
+    for (const QString &instance : physical.hidHideDeviceInstanceIds) {
+        if (!isVJoyHidInstance(instance)) append(instance);
+    }
+    if (result.isEmpty() && !physical.hidContainerId.isEmpty()) {
+        for (const QString &instance : gamingInstances) {
+            if (isVJoyHidInstance(instance)) continue;
+            const QString container = hidDeviceContainerId(instance);
+            if (!container.isEmpty()
+                && container.compare(physical.hidContainerId, Qt::CaseInsensitive) == 0) {
+                append(instance);
+            }
+        }
+    }
+    // Exact current identity is a safe fallback only when Windows could not
+    // provide a container-aware enumeration. It never broadens to VID/PID.
+    if (result.isEmpty() && !physical.hidInstanceId.isEmpty() && !isVJoyHidInstance(physical.hidInstanceId)) {
+        append(physical.hidInstanceId);
+    }
+    return result;
 }
 
 QString decodeProcessOutput(const QByteArray &bytes)
@@ -222,7 +275,7 @@ void ControllerReadinessService::persistRecoveryJournal() const
         {QStringLiteral("cloakWasEnabled"), m_journal.cloakWasEnabled},
         {QStringLiteral("vjoyRestoreCommand"), m_journal.vjoyRestoreCommand},
         {QStringLiteral("mapperExecutable"), m_journal.mapperExecutable},
-        {QStringLiteral("controllerInstanceId"), m_journal.controllerInstanceId},
+        {QStringLiteral("controllerInstanceIds"), QJsonArray::fromStringList(m_journal.controllerInstanceIds)},
     };
     QSettings settings;
     settings.setValue(QLatin1String(kPendingRecoveryKey), QJsonDocument(record).toJson(QJsonDocument::Compact));
@@ -244,8 +297,20 @@ void ControllerReadinessService::loadRecoveryJournal()
     recovered.cloakWasEnabled = record.value(QStringLiteral("cloakWasEnabled")).toBool();
     recovered.vjoyRestoreCommand = record.value(QStringLiteral("vjoyRestoreCommand")).toString();
     recovered.mapperExecutable = record.value(QStringLiteral("mapperExecutable")).toString();
-    recovered.controllerInstanceId = record.value(QStringLiteral("controllerInstanceId")).toString();
-    recovered.available = !recovered.controllerInstanceId.isEmpty()
+    for (const QJsonValue &value : record.value(QStringLiteral("controllerInstanceIds")).toArray()) {
+        const QString instance = normalizeDeviceInstanceId(value.toString());
+        if (!instance.isEmpty() && !recovered.controllerInstanceIds.contains(instance, Qt::CaseInsensitive)) {
+            recovered.controllerInstanceIds.append(instance);
+        }
+    }
+    // Read the prior single-target journal once so an interrupted older
+    // candidate remains safely reversible after upgrading.
+    const QString legacyInstance = normalizeDeviceInstanceId(
+        record.value(QStringLiteral("controllerInstanceId")).toString());
+    if (!legacyInstance.isEmpty() && !recovered.controllerInstanceIds.contains(legacyInstance, Qt::CaseInsensitive)) {
+        recovered.controllerInstanceIds.append(legacyInstance);
+    }
+    recovered.available = !recovered.controllerInstanceIds.isEmpty()
         && (recovered.vjoyChanged || recovered.mapperWasAdded || recovered.controllerWasHidden || recovered.cloakWasEnabled);
     if (recovered.available) m_journal = std::move(recovered);
     else clearRecoveryJournal();
@@ -392,9 +457,14 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
     plan.vjoyNeedsChanges = !isVJoySufficient(vjoy, effectiveRequirements);
     if (!plan.vjoyNeedsChanges) {
         plan.vjoyStatus = VerificationSubsystemState::Ready;
-        plan.vjoySummary = vjoy.ownedByHotasBf6
-            ? QStringLiteral("vJoy Device %1 — Ready · HOTAS BF6 currently owns this device.").arg(vjoy.deviceId)
-            : QStringLiteral("vJoy Device %1 — Ready · configured correctly.").arg(vjoy.deviceId);
+        const QString extras = extraAxisList(vjoy.axes, effectiveRequirements.axes);
+        const QString capabilitySuffix = extras == QStringLiteral("none")
+            ? QString{}
+            : QStringLiteral(" Extra available axes: %1.").arg(extras);
+        plan.vjoySummary = (vjoy.ownedByHotasBf6
+            ? QStringLiteral("vJoy Device %1 — Ready · HOTAS BF6 currently owns this device.")
+            : QStringLiteral("vJoy Device %1 — Ready · required capabilities present."))
+                .arg(vjoy.deviceId) + capabilitySuffix;
         plan.findings.append(plan.vjoySummary);
     } else if (!vjoy.installed || !vjoy.configurationUtilityAvailable) {
         plan.vjoyStatus = VerificationSubsystemState::Error;
@@ -406,11 +476,8 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         plan.findings.append(plan.vjoySummary);
     } else {
         plan.vjoyStatus = VerificationSubsystemState::Error;
-        const QString extras = extraAxisList(vjoy.axes, effectiveRequirements.axes);
-        plan.vjoySummary = extras == QStringLiteral("none")
-            ? QStringLiteral("vJoy Device %1 needs the required output capabilities.").arg(vjoy.deviceId)
-            : QStringLiteral("vJoy Device %1 exposes additional axes: %2. This layout requires an exact descriptor.")
-                .arg(vjoy.deviceId).arg(extras);
+        plan.vjoySummary = QStringLiteral("vJoy Device %1 needs the required output capabilities.")
+            .arg(vjoy.deviceId);
         plan.findings.append(QStringLiteral("VJOY NEEDS CONFIGURATION — Device %1 is %2; HOTAS BF6 requires %3.")
             .arg(vjoy.deviceId).arg(stateName(vjoy)).arg(describeVJoyRequirement(effectiveRequirements)));
         if (vjoy.forceFeedbackKnown && (!vjoy.devicePresent || !vjoy.restoreCommand.isEmpty())
@@ -454,14 +521,23 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         plan.findings.append(plan.hidhideSummary);
     } else if (hidhide.cloaked && !hidhide.mapperAllowlisted) {
         plan.hidhideStatus = VerificationSubsystemState::Error;
-        plan.hidhideSummary = QStringLiteral("HidHide is blocking HOTAS BF6 from the selected physical device.");
+        plan.hidhideSummary = QStringLiteral("HidHide is blocking this running HOTAS BF6 executable from the selected physical device: %1")
+            .arg(hidhide.mapperExecutable);
         plan.findings.append(plan.hidhideSummary);
+        // This is the primary safe repair case: the exact running executable
+        // can be allowlisted without touching any unrelated HidHide rule.
+        plan.hidhideCanApply = true;
+        plan.proposedChanges.append(QStringLiteral("Allow this running HOTAS BF6 executable through HidHide: %1")
+            .arg(hidhide.mapperExecutable));
     } else {
         plan.hidhideStatus = VerificationSubsystemState::Attention;
         plan.hidhideSummary = QStringLiteral("HidHide needs configuration for the selected physical controller.");
         plan.hidhideCanApply = true;
         plan.findings.append(QStringLiteral("PHYSICAL CONTROLLER STILL VISIBLE TO GAMES — HOTAS BF6 can allow itself, hide only this controller, then enable cloaking."));
-        if (!hidhide.mapperAllowlisted) plan.proposedChanges.append(QStringLiteral("Allow HOTAS BF6 through HidHide before changing device visibility."));
+        if (!hidhide.mapperAllowlisted) {
+            plan.proposedChanges.append(QStringLiteral("Allow this running HOTAS BF6 executable through HidHide: %1")
+                .arg(hidhide.mapperExecutable));
+        }
         if (!hidhide.selectedControllerHidden) plan.proposedChanges.append(QStringLiteral("Hide only %1 from ordinary applications.").arg(physical.name));
         if (!hidhide.cloaked) plan.proposedChanges.append(QStringLiteral("Enable HidHide cloaking after the mapper is allowlisted."));
     }
@@ -572,6 +648,34 @@ QString ControllerReadinessService::normalizeDeviceInstanceId(QString value)
     return value;
 }
 
+bool ControllerReadinessService::samePhysicalController(const PhysicalControllerCapabilities &expected,
+                                                          const PhysicalControllerCapabilities &observed)
+{
+    if (!expected.hidContainerId.isEmpty() && !observed.hidContainerId.isEmpty()) {
+        return expected.hidContainerId.compare(observed.hidContainerId, Qt::CaseInsensitive) == 0;
+    }
+    if (!expected.hidInstanceId.isEmpty() && !observed.hidInstanceId.isEmpty()) {
+        return normalizeDeviceInstanceId(expected.hidInstanceId)
+            == normalizeDeviceInstanceId(observed.hidInstanceId);
+    }
+    return !expected.directInputId.isEmpty() && !observed.directInputId.isEmpty()
+        && expected.directInputId.compare(observed.directInputId, Qt::CaseInsensitive) == 0;
+}
+
+bool ControllerReadinessService::isKnownPhysicalController(
+    const PhysicalControllerCapabilities &physical,
+    const std::vector<SavedControllerRecord> &records)
+{
+    if (!physical.connected) return false;
+    return std::any_of(records.cbegin(), records.cend(), [&physical](const SavedControllerRecord &record) {
+        PhysicalControllerCapabilities remembered;
+        remembered.directInputId = record.lastDirectInputId;
+        remembered.hidInstanceId = record.hidInstanceId;
+        remembered.hidContainerId = record.hidContainerId;
+        return samePhysicalController(remembered, physical);
+    });
+}
+
 QString ControllerReadinessService::decodeOutput(const QByteArray &bytes)
 {
     if (bytes.size() >= 2 && bytes[0] == '\xff' && bytes[1] == '\xfe') {
@@ -657,10 +761,22 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
     result.discretePovs = discrete.toInt();
     const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:\\s*([^\\r\\n]+)")));
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        const QString name = virtualAxisLabel(static_cast<VirtualAxis>(index));
-        result.axes[static_cast<size_t>(index)] = axes.contains(QRegularExpression(
-            QStringLiteral("\\b%1\\b").arg(QRegularExpression::escape(name)),
-            QRegularExpression::CaseInsensitiveOption));
+        const VirtualAxis axis = static_cast<VirtualAxis>(index);
+        const QString name = virtualAxisLabel(axis);
+        QString compactName = name;
+        compactName.remove(u' ');
+        // vJoyConfig's own report spells its two sliders "Sl0" and "Sl1"
+        // on some releases, while configuration arguments and the UI use
+        // "Slider 0" / "Slider 1". Treat those as the same authoritative
+        // capability; otherwise a valid descriptor gets reconfigured and
+        // repeatedly fails convergence against its unchanged report.
+        QStringList aliases{name, compactName};
+        if (axis == VirtualAxis::Slider0) aliases.append(QStringLiteral("Sl0"));
+        if (axis == VirtualAxis::Slider1) aliases.append(QStringLiteral("Sl1"));
+        result.axes[static_cast<size_t>(index)] = std::any_of(aliases.cbegin(), aliases.cend(), [&axes](const QString &alias) {
+            return axes.contains(QRegularExpression(QStringLiteral("\\b%1\\b").arg(QRegularExpression::escape(alias)),
+                QRegularExpression::CaseInsensitiveOption));
+        });
     }
     const QString ffb = firstRegexCapture(report, QRegularExpression(
         QStringLiteral("(?im)FFB\\s+Effects?\\s*:\\s*([^\\r\\n]+)")));
@@ -681,6 +797,18 @@ QStringList ControllerReadinessService::parseHidHideCommands(const QString &outp
         .arg(QRegularExpression::escape(command)));
     QRegularExpressionMatchIterator iterator = expression.globalMatch(output);
     while (iterator.hasNext()) result.append(iterator.next().captured(1));
+    return result;
+}
+
+QStringList ControllerReadinessService::parseHidHideGamingDevices(const QString &output)
+{
+    QStringList result;
+    const QRegularExpression expression(QStringLiteral("(?im)(HID\\\\[^\\r\\n\\\"]+)"));
+    QRegularExpressionMatchIterator iterator = expression.globalMatch(output);
+    while (iterator.hasNext()) {
+        const QString instance = normalizeDeviceInstanceId(iterator.next().captured(1));
+        if (!instance.isEmpty() && !result.contains(instance, Qt::CaseInsensitive)) result.append(instance);
+    }
     return result;
 }
 
@@ -764,33 +892,33 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
     } else {
         result.diagnostic = cloak.error.isEmpty() ? cloak.output.trimmed() : cloak.error;
     }
+    result.mapperExecutable = mapperExecutablePath();
     const SetupProcessResult apps = runHidHide(false, {QStringLiteral("--app-list")});
     if (apps.succeeded()) {
         result.allowlistedApplications = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
-        const QString expected = QDir::toNativeSeparators(mapperExecutablePath());
         result.mapperAllowlisted = std::any_of(result.allowlistedApplications.cbegin(),
-            result.allowlistedApplications.cend(), [&expected](const QString &entry) {
-                return QDir::toNativeSeparators(entry).compare(expected, Qt::CaseInsensitive) == 0;
+            result.allowlistedApplications.cend(), [&result](const QString &entry) {
+                return samePath(entry, result.mapperExecutable);
             });
     }
+    QStringList gamingDevices;
+    const SetupProcessResult devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+    if (devices.succeeded()) gamingDevices = parseHidHideGamingDevices(devices.output);
+    result.selectedControllerInstanceIds = selectedPhysicalHidInstances(physical, gamingDevices);
+    result.selectedControllerResolved = !result.selectedControllerInstanceIds.isEmpty();
     const SetupProcessResult hidden = runHidHide(false, {QStringLiteral("--dev-list")});
     if (hidden.succeeded()) {
         result.hiddenDeviceInstanceIds = parseHidHideCommands(hidden.output, QStringLiteral("dev-hide"));
-        const QString selected = normalizeDeviceInstanceId(physical.hidInstanceId);
-        result.selectedControllerHidden = std::any_of(result.hiddenDeviceInstanceIds.cbegin(),
-            result.hiddenDeviceInstanceIds.cend(), [&selected](const QString &entry) {
-                return normalizeDeviceInstanceId(entry) == selected;
+        result.selectedControllerHidden = !result.selectedControllerInstanceIds.isEmpty()
+            && std::all_of(result.selectedControllerInstanceIds.cbegin(),
+                           result.selectedControllerInstanceIds.cend(), [&result](const QString &selected) {
+                return std::any_of(result.hiddenDeviceInstanceIds.cbegin(), result.hiddenDeviceInstanceIds.cend(),
+                    [&selected](const QString &entry) {
+                        return normalizeDeviceInstanceId(entry) == normalizeDeviceInstanceId(selected);
+                    });
             });
-    }
-    // DIPROP_GUIDANDPATH is the exact PnP/HID path for the DirectInput device
-    // the mapper already has open. That is a stable, per-instance identity;
-    // do not downgrade it to an ambiguous warning merely because HidHide's
-    // optional gaming-device listing is unavailable or formats it differently.
-    if (!physical.hidInstanceId.isEmpty()) {
-        result.selectedControllerResolved = true;
-        const SetupProcessResult devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
-        if (devices.succeeded() && outputContainsDevice(devices.output, physical.hidInstanceId)) {
-            result.selectedControllerResolved = true;
+        if (!result.selectedControllerHidden && result.selectedControllerResolved) {
+            result.diagnostic = QStringLiteral("One or more current HID collections for the selected controller are not cloaked.");
         }
     }
     return result;
@@ -824,10 +952,10 @@ OutputVisibilitySwitchResult ControllerReadinessService::applyManagedOutputVisib
         result.status = QStringLiteral("HidHide did not provide a readable runtime configuration; visibility was left unchanged.");
         return result;
     }
-    const QString mapperPath = QDir::toNativeSeparators(mapperExecutablePath());
+    const QString mapperPath = mapperExecutablePath();
     const QStringList appEntries = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
     const bool mapperAllowed = std::any_of(appEntries.cbegin(), appEntries.cend(), [&mapperPath](const QString &entry) {
-            return QDir::toNativeSeparators(entry).compare(mapperPath, Qt::CaseInsensitive) == 0;
+            return samePath(entry, mapperPath);
         });
     if (!cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive) || !mapperAllowed) {
         result.status = QStringLiteral("HidHide visibility switching requires existing cloaking and a HOTAS BF6 allowlist entry; no runtime change was made.");
@@ -992,7 +1120,7 @@ SetupProcessResult ControllerReadinessService::runVJoy(bool elevated, const QStr
 
 QString ControllerReadinessService::mapperExecutablePath() const
 {
-    return QCoreApplication::applicationFilePath();
+    return canonicalPath(QCoreApplication::applicationFilePath());
 }
 
 QString ControllerReadinessService::vjoyConfigPath() const
@@ -1061,7 +1189,7 @@ QList<ControllerReadinessService::RepairOperation> ControllerReadinessService::r
     if (!plan.hidhideNeedsChanges) return operations;
 
     journal->mapperExecutable = mapperExecutablePath();
-    journal->controllerInstanceId = normalizeDeviceInstanceId(plan.physical.hidInstanceId);
+    journal->controllerInstanceIds = plan.hidhide.selectedControllerInstanceIds;
     const QString hidhideCli = hidhideCliPath();
     // Critical ordering: allow the mapper before hiding only the selected
     // physical device, then enable cloaking. Existing lists are never cleared.
@@ -1077,15 +1205,20 @@ QList<ControllerReadinessService::RepairOperation> ControllerReadinessService::r
         journal->mapperWasAdded = true;
     }
     if (plan.physical.connected && !plan.hidhide.selectedControllerHidden) {
-        RepairOperation operation;
-        operation.name = QStringLiteral("Hide the selected physical controller");
-        operation.program = hidhideCli;
-        operation.arguments = {QStringLiteral("--dev-hide"), journal->controllerInstanceId};
-        operation.rollbackName = QStringLiteral("Unhide the selected physical controller");
-        operation.rollbackArguments = {QStringLiteral("--dev-unhide"), journal->controllerInstanceId};
-        operation.failureSummary = QStringLiteral("HidHide device repair failed");
-        operations.append(std::move(operation));
-        journal->controllerWasHidden = true;
+        for (int index = 0; index < journal->controllerInstanceIds.size(); ++index) {
+            const QString &instance = journal->controllerInstanceIds.at(index);
+            RepairOperation operation;
+            operation.name = index == 0 ? QStringLiteral("Hide the selected physical controller")
+                                      : QStringLiteral("Hide selected physical controller interface %1").arg(index + 1);
+            operation.program = hidhideCli;
+            operation.arguments = {QStringLiteral("--dev-hide"), instance};
+            operation.rollbackName = index == 0 ? QStringLiteral("Unhide the selected physical controller")
+                                              : QStringLiteral("Unhide selected physical controller interface %1").arg(index + 1);
+            operation.rollbackArguments = {QStringLiteral("--dev-unhide"), instance};
+            operation.failureSummary = QStringLiteral("HidHide device repair failed");
+            operations.append(std::move(operation));
+        }
+        journal->controllerWasHidden = !journal->controllerInstanceIds.isEmpty();
     }
     if (plan.physical.connected && !plan.hidhide.cloaked) {
         RepairOperation operation;
@@ -1112,8 +1245,10 @@ AutomaticRepairResult ControllerReadinessService::runRepairTransaction(
     }
 
     const QString nonce = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const QString requestPath = QDir::temp().filePath(QStringLiteral("hotas-bf6-repair-%1-request.json").arg(nonce));
-    const QString resultPath = QDir::temp().filePath(QStringLiteral("hotas-bf6-repair-%1-result.json").arg(nonce));
+    const QString requestPath = QDir::temp().filePath(
+        QStringLiteral("hotas-bf6-repair-%1-request.json").arg(nonce));
+    const QString resultPath = QDir::temp().filePath(
+        QStringLiteral("hotas-bf6-repair-%1-result.json").arg(nonce));
     QJsonArray requestOperations;
     for (const RepairOperation &operation : operations) {
         QJsonObject item;
@@ -1130,15 +1265,16 @@ AutomaticRepairResult ControllerReadinessService::runRepairTransaction(
         result.message = QStringLiteral("The approved repair request could not be prepared.");
         return result;
     }
-    const QJsonObject request{{QStringLiteral("schemaVersion"), 1},
-                              {QStringLiteral("operations"), requestOperations}};
-    requestFile.write(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    requestFile.write(QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"), 1},
+        {QStringLiteral("operations"), requestOperations}}).toJson(QJsonDocument::Compact));
     if (!requestFile.commit()) {
         result.outcome = AutomaticRepairOutcome::Failed;
         result.message = QStringLiteral("The approved repair request could not be saved.");
         return result;
     }
 
+    // One UAC consent belongs to HOTAS BF6.  The elevated app runs no UI and
+    // accepts only this short, structured, local operation list.
     const SetupProcessResult helper = m_runner->runElevated(mapperExecutablePath(),
         {QStringLiteral("--hotas-repair-transaction"), QStringLiteral("--request"), requestPath,
          QStringLiteral("--result"), resultPath},
@@ -1150,12 +1286,9 @@ AutomaticRepairResult ControllerReadinessService::runRepairTransaction(
     if (resultFile.open(QIODevice::ReadOnly)) response = QJsonDocument::fromJson(resultFile.readAll(), &parseError);
     QFile::remove(requestPath);
     QFile::remove(resultPath);
-
     if (helper.cancelled) {
         result.outcome = AutomaticRepairOutcome::Cancelled;
         result.message = QStringLiteral("Automatic repair was cancelled because administrator approval was not granted.");
-        result.operations.append({QStringLiteral("Administrator repair process"), false, false, false, false,
-                                  helper.exitCode, helper.windowsErrorCode, result.message, helper.output, helper.errorOutput});
         return result;
     }
     if (!helper.started || !helper.finished) {
@@ -1163,60 +1296,40 @@ AutomaticRepairResult ControllerReadinessService::runRepairTransaction(
         result.message = helper.error.isEmpty()
             ? QStringLiteral("Administrator repair process could not be started.")
             : QStringLiteral("Administrator repair process could not be started: %1").arg(helper.error);
-        result.operations.append({QStringLiteral("Administrator repair process"), helper.started, helper.finished,
-                                  false, false, helper.exitCode, helper.windowsErrorCode, result.message,
-                                  helper.output, helper.errorOutput});
         return result;
     }
     if (parseError.error != QJsonParseError::NoError || !response.isObject()) {
         result.outcome = AutomaticRepairOutcome::Failed;
-        result.message = helper.error.isEmpty()
-            ? QStringLiteral("Administrator repair process did not return structured repair results.")
-            : QStringLiteral("Administrator repair process failed: %1").arg(helper.error);
+        result.message = QStringLiteral("Administrator repair process did not return structured repair results.");
         return result;
     }
-
-    const QJsonArray operationResults = response.object().value(QStringLiteral("operations")).toArray();
-    for (const QJsonValue &value : operationResults) {
+    for (const QJsonValue &value : response.object().value(QStringLiteral("operations")).toArray()) {
         const QJsonObject item = value.toObject();
-        AutomaticRepairOperationResult operation;
-        operation.operationName = item.value(QStringLiteral("name")).toString();
-        operation.started = item.value(QStringLiteral("started")).toBool();
-        operation.finished = item.value(QStringLiteral("finished")).toBool();
-        operation.succeeded = item.value(QStringLiteral("succeeded")).toBool();
-        operation.rollback = item.value(QStringLiteral("rollback")).toBool();
-        operation.exitCode = item.value(QStringLiteral("exitCode")).toInt(-1);
-        operation.windowsErrorCode = item.value(QStringLiteral("windowsErrorCode")).toInt();
-        operation.message = item.value(QStringLiteral("message")).toString();
-        operation.output = item.value(QStringLiteral("output")).toString();
-        operation.errorOutput = item.value(QStringLiteral("errorOutput")).toString();
-        result.operations.append(std::move(operation));
+        result.operations.append({item.value(QStringLiteral("name")).toString(),
+            item.value(QStringLiteral("started")).toBool(), item.value(QStringLiteral("finished")).toBool(),
+            item.value(QStringLiteral("succeeded")).toBool(), item.value(QStringLiteral("rollback")).toBool(),
+            item.value(QStringLiteral("exitCode")).toInt(-1), item.value(QStringLiteral("windowsErrorCode")).toInt(),
+            item.value(QStringLiteral("message")).toString(), item.value(QStringLiteral("output")).toString(),
+            item.value(QStringLiteral("errorOutput")).toString()});
     }
     if (response.object().value(QStringLiteral("success")).toBool()) {
         result.outcome = AutomaticRepairOutcome::Ready;
         result.message = QStringLiteral("Approved repair operations completed.");
         return result;
     }
-
+    result.outcome = AutomaticRepairOutcome::Failed;
     const auto failed = std::find_if(result.operations.cbegin(), result.operations.cend(),
         [](const AutomaticRepairOperationResult &operation) { return !operation.rollback && !operation.succeeded; });
-    const int operationIndex = failed == result.operations.cend() ? -1
+    const int failedIndex = failed == result.operations.cend() ? -1
         : static_cast<int>(std::distance(result.operations.cbegin(), failed));
-    const RepairOperation *planned = operationIndex >= 0 && operationIndex < operations.size()
-        ? &operations.at(operationIndex) : nullptr;
-    result.outcome = AutomaticRepairOutcome::Failed;
-    result.message = planned ? planned->failureSummary : QStringLiteral("The approved repair operation failed.");
+    const RepairOperation *planned = failedIndex >= 0 && failedIndex < operations.size()
+        ? &operations.at(failedIndex) : nullptr;
+    result.message = planned ? planned->failureSummary : QStringLiteral("An approved repair operation failed.");
     if (failed != result.operations.cend()) {
-        const QString exitMessage = failed->exitCode >= 0
-            ? QStringLiteral("Command exited with code %1").arg(failed->exitCode) : QString{};
-        if (!exitMessage.isEmpty()) result.message += QStringLiteral(" %1.").arg(exitMessage);
-        QString diagnostic = !failed->errorOutput.trimmed().isEmpty() ? failed->errorOutput.trimmed()
+        if (failed->exitCode >= 0) result.message += QStringLiteral(" Command exited with code %1.").arg(failed->exitCode);
+        const QString diagnostic = !failed->errorOutput.trimmed().isEmpty() ? failed->errorOutput.trimmed()
             : !failed->message.trimmed().isEmpty() ? failed->message.trimmed() : failed->output.trimmed();
-        const int newline = diagnostic.indexOf(QRegularExpression(QStringLiteral("[\\r\\n]")));
-        if (newline >= 0) diagnostic.truncate(newline);
-        if (!diagnostic.isEmpty() && diagnostic.compare(exitMessage, Qt::CaseInsensitive) != 0) {
-            result.message += QStringLiteral(" %1").arg(diagnostic.left(240));
-        }
+        if (!diagnostic.isEmpty()) result.message += QStringLiteral(" %1").arg(diagnostic.left(240));
     }
     return result;
 }
@@ -1264,9 +1377,12 @@ bool ControllerReadinessService::rollback(Journal *journal, QString *failure)
                QStringLiteral("could not disable newly enabled cloaking"));
     }
     if (journal->controllerWasHidden) {
-        record(QStringLiteral("Restore physical controller visibility"), runHidHide(true,
-               {QStringLiteral("--dev-unhide"), journal->controllerInstanceId}),
-               QStringLiteral("could not unhide the selected controller"));
+        for (int index = journal->controllerInstanceIds.size() - 1; index >= 0; --index) {
+            record(index == 0 ? QStringLiteral("Restore physical controller visibility")
+                              : QStringLiteral("Restore physical controller interface %1 visibility").arg(index + 1),
+                   runHidHide(true, {QStringLiteral("--dev-unhide"), journal->controllerInstanceIds.at(index)}),
+                   QStringLiteral("could not unhide the selected controller"));
+        }
     }
     if (journal->mapperWasAdded) {
         record(QStringLiteral("Restore prior HidHide allowlist"), runHidHide(true,
@@ -1315,18 +1431,31 @@ bool ControllerReadinessService::allowlistMapperOnly()
     const SetupProcessResult operation = runHidHide(true,
         {QStringLiteral("--app-reg"), mapperExecutablePath()});
     if (!operation.succeeded()) return false;
-    m_plan.hidhide.mapperAllowlisted = true;
+    const HidHideCapabilities observed = inspectHidHide(m_plan.physical);
+    m_plan = planFor(m_plan.physical, m_plan.requirements, m_plan.vjoy, observed,
+                     m_plan.verificationMode == VerificationMode::None
+                         ? VerificationMode::Quick : m_plan.verificationMode);
+    if (!m_plan.hidhide.mapperAllowlisted) {
+        m_plan.hidhideStatus = VerificationSubsystemState::Error;
+        m_plan.hidhideSummary = QStringLiteral("HidHide accepted the allowlist command, but this running executable was not present on read-back: %1")
+            .arg(mapperExecutablePath());
+        m_plan.status = QStringLiteral("HIDHIDE ACCESS REPAIR FAILED — Read-back did not allowlist this running executable.");
+        return false;
+    }
     m_plan.hidhideStatus = VerificationSubsystemState::Attention;
-    m_plan.hidhideSummary = QStringLiteral("HOTAS BF6 is now allowlisted. Re-enumerating physical controllers.");
+    m_plan.hidhideSummary = QStringLiteral("This running HOTAS BF6 executable is allowlisted; re-enumerating physical controllers.");
     m_plan.status = QStringLiteral("HIDHIDE ACCESS REPAIRED — Connect or replug a physical controller to continue setup.");
     return true;
 }
 
 void ControllerReadinessService::completePhysicalAccessVerification(bool reacquired, bool reportsReceived,
-                                                                    bool rollbackAttempted,
-                                                                    bool rollbackSucceeded,
-                                                                    bool reportsReceivedAfterRollback)
+                                                                     bool rollbackAttempted,
+                                                                     bool rollbackSucceeded,
+                                                                     bool reportsReceivedAfterRollback)
 {
+    m_reconnectVerificationPending = false;
+    m_reconnectDisconnectObserved = false;
+    m_reconnectReconciliationPending = false;
     m_lastRepairResult.physicalReacquisitionAttempted = true;
     m_lastRepairResult.physicalReacquisitionSucceeded = reacquired;
     m_lastRepairResult.physicalReportsReceivedAfterRepair = reportsReceived;
@@ -1370,8 +1499,81 @@ void ControllerReadinessService::completePhysicalAccessVerification(bool reacqui
     }
 }
 
+void ControllerReadinessService::beginPhysicalReconnectVerification()
+{
+    m_reconnectVerificationPending = true;
+    m_reconnectDisconnectObserved = false;
+    m_reconnectReconciliationPending = false;
+    m_plan.state = ControllerReadinessState::Verifying;
+    m_plan.isChecking = false;
+    m_plan.physicalStatus = VerificationSubsystemState::Attention;
+    m_plan.physicalSummary = QStringLiteral("HidHide is configured. Unplug %1 to verify the required device re-enumeration.")
+        .arg(m_plan.physical.name);
+    m_plan.status = QStringLiteral("RECONNECT CONTROLLER — HidHide is configured. Unplug %1, then reconnect it when prompted.")
+        .arg(m_plan.physical.name);
+    m_plan.lastChecked = QDateTime::currentDateTime();
+    m_lastRepairResult.message = QStringLiteral("HidHide configuration is verified; waiting for an observed controller reconnect.");
+}
+
+bool ControllerReadinessService::observePhysicalReconnect(bool connected,
+                                                           bool selectedControllerDetected,
+                                                           bool reportsReceived)
+{
+    if (!m_reconnectVerificationPending) return false;
+    if (!m_reconnectDisconnectObserved) {
+        if (connected) return false;
+        m_reconnectDisconnectObserved = true;
+        m_plan.physicalStatus = VerificationSubsystemState::Checking;
+        m_plan.physicalSummary = QStringLiteral("Controller disconnected ✓  Reconnect %1 now.").arg(m_plan.physical.name);
+        m_plan.status = QStringLiteral("RECONNECT CONTROLLER — Controller disconnected ✓  Reconnect %1 and move a control.")
+            .arg(m_plan.physical.name);
+        m_plan.lastChecked = QDateTime::currentDateTime();
+        return true;
+    }
+    if (!connected) return false;
+    if (!selectedControllerDetected) {
+        const QString summary = QStringLiteral("A controller was detected, but it is not the selected %1.")
+            .arg(m_plan.physical.name);
+        const QString status = QStringLiteral("RECONNECT CONTROLLER — Waiting for the selected controller to return.");
+        if (m_plan.physicalSummary == summary && m_plan.status == status) return false;
+        m_plan.physicalStatus = VerificationSubsystemState::Attention;
+        m_plan.physicalSummary = summary;
+        m_plan.status = status;
+        m_plan.lastChecked = QDateTime::currentDateTime();
+        return true;
+    }
+    if (!reportsReceived) {
+        const QString summary = QStringLiteral("%1 reconnected ✓  Waiting for a live input report.")
+            .arg(m_plan.physical.name);
+        const QString status = QStringLiteral("RECONNECT CONTROLLER — Move a control to confirm live input.");
+        if (m_plan.physicalSummary == summary && m_plan.status == status) return false;
+        m_plan.physicalStatus = VerificationSubsystemState::Checking;
+        m_plan.physicalSummary = summary;
+        m_plan.status = status;
+        m_plan.lastChecked = QDateTime::currentDateTime();
+        return true;
+    }
+
+    m_reconnectVerificationPending = false;
+    m_reconnectReconciliationPending = true;
+    m_plan.physicalStatus = VerificationSubsystemState::Ready;
+    m_plan.physicalSummary = QStringLiteral("%1 reconnected ✓  Live input reports received ✓.")
+        .arg(m_plan.physical.name);
+    m_plan.hidhideStatus = VerificationSubsystemState::Checking;
+    m_plan.hidhideSummary = QStringLiteral("Reconciling current HID interfaces for the reconnected controller.");
+    m_plan.state = ControllerReadinessState::Verifying;
+    m_plan.status = QStringLiteral("RECONCILING HIDHIDE — Re-reading current controller interfaces after reconnect.");
+    m_plan.lastChecked = QDateTime::currentDateTime();
+    m_lastRepairResult.physicalReacquisitionAttempted = true;
+    m_lastRepairResult.physicalReacquisitionSucceeded = true;
+    m_lastRepairResult.physicalReportsReceivedAfterRepair = true;
+    m_lastRepairResult.message = QStringLiteral("Controller reconnected with live input; reconciling HidHide against the current interfaces.");
+    return true;
+}
+
 bool ControllerReadinessService::verifyReady()
 {
+    if (m_reconnectVerificationPending || m_reconnectReconciliationPending) return false;
     const VJoyCapabilities vjoy = inspectVJoy(m_configuration.vjoyDeviceId);
     const HidHideCapabilities hidhide = inspectHidHide(m_physical);
     m_plan = planFor(m_physical, requirementsFor(m_configuration), vjoy, hidhide);
@@ -1381,10 +1583,13 @@ bool ControllerReadinessService::verifyReady()
 bool ControllerReadinessService::applyAutomatically()
 {
     if (m_transactionActive || !m_plan.canApplyAutomatically) return false;
+    m_reconnectVerificationPending = false;
+    m_reconnectDisconnectObserved = false;
+    m_reconnectReconciliationPending = false;
     m_transactionActive = true;
     Journal journal;
     m_plan.state = ControllerReadinessState::AwaitingPermission;
-    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — HOTAS BF6 will run one approved repair transaction.");
+    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — HOTAS BF6 will run only the approved vJoy and HidHide repair utilities.");
     const QList<RepairOperation> operations = repairOperationsFor(m_plan, &journal);
     m_lastRepairResult = runRepairTransaction(operations);
     if (m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled) {
@@ -1436,6 +1641,9 @@ bool ControllerReadinessService::undoLastAutomaticSetup()
     QString failure;
     const bool restored = rollback(&m_journal, &failure);
     if (restored) {
+        m_reconnectVerificationPending = false;
+        m_reconnectDisconnectObserved = false;
+        m_reconnectReconciliationPending = false;
         m_journal = {};
         clearRecoveryJournal();
         inspect(m_configuration, m_physical);

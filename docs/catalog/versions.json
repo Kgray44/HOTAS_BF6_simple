@@ -532,5 +532,18 @@
       "Schema 21 migrates legacy configurations to safe-off Adaptive Response defaults. Profile and Pack files retain required custom Adaptive Response presets and validate dependencies before atomic import.",
       "Focused core and Automation tests cover direct convergence, reversal cancellation, endpoint taper/clamping, layering/persistence, priority overlays, and hot-path allocation measurement. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain separate checks."
     ]
+  },
+  {
+    "version": "2.3.1",
+    "title": "Adaptive Response correctness and Response Lab",
+    "summary": "Refines Adaptive Response around real-controller observability, motion-aware center handling, and curve-aware output authority without replacing its physical-motion estimator or preset system.",
+    "highlights": [
+      "Response Lab unifies Interactive and Live Controller inspection, with live physical-input telemetry independent of vJoy or Mapping On state.",
+      "The predictor continues to estimate normalized physical motion while current and future positions are evaluated through the selected static axis transform; Maximum Lead now bounds mapped-output lead.",
+      "Existing Adaptive Response settings retain their schema and numeric values. Under nonlinear curves, an existing Maximum Lead now consistently constrains game-output movement rather than physical-axis displacement.",
+      "Motion-aware center resolution treats coherent center transit as continuous input while settling and jitter converge to exact zero; effective-response views prioritize Physical, Baseline Output, Adaptive Output, and Predicted Mapped.",
+      "A passive arrival check validates the selected controller, vJoy, and HidHide after reconnect. Stable PnP container identity keeps healthy remembered controllers silent; setup opens only for genuinely new or attention-needed devices.",
+      "Realistic deterministic preview scenarios replace misleading normal-user stress traces while diagnostics retain predictor internals and existing reversal safety."
+    ]
   }
 ]

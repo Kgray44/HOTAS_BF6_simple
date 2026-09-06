@@ -29,6 +29,14 @@ PhysicalControllerCapabilities connectedController()
     return physical;
 }
 
+bool containsCanonicalApplicationPath(const QStringList &paths)
+{
+    const QString application = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    return std::any_of(paths.cbegin(), paths.cend(), [&application](const QString &path) {
+        return QFileInfo(path).canonicalFilePath().compare(application, Qt::CaseInsensitive) == 0;
+    });
+}
+
 VJoyCapabilities readyVJoy()
 {
     VJoyCapabilities vjoy;
@@ -38,7 +46,7 @@ VJoyCapabilities readyVJoy()
     vjoy.devicePresent = true;
     vjoy.reportValid = true;
     vjoy.deviceId = 1;
-    vjoy.axes[1] = vjoy.axes[2] = vjoy.axes[3] = vjoy.axes[6] = true;
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) vjoy.axes[axis] = true;
     vjoy.buttons = 32;
     vjoy.forceFeedbackKnown = true;
     vjoy.restoreCommand = QStringLiteral("1 -f -a X Y Z Rz -b 32");
@@ -74,12 +82,15 @@ public:
     bool failRuntimeUnhide = false;
     bool cancelElevation = false;
     bool repairApplied = false;
+    bool cloakEnabled = false;
     int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
     QStringList calls;
+    QStringList elevatedPrograms;
     QStringList gamingDevices;
     QStringList hiddenDevices;
+    QStringList allowlistedApplications;
 
     SetupProcessResult run(const QString &program, const QStringList &arguments, int) override
     {
@@ -93,98 +104,147 @@ public:
 
     SetupProcessResult runElevated(const QString &program, const QStringList &arguments, int) override
     {
-        Q_UNUSED(program)
         calls.append(QStringLiteral("elevated:") + arguments.join(u' '));
+        elevatedPrograms.append(program);
+        ++elevatedTransactions;
+        if (cancelElevation) {
+            SetupProcessResult cancelled;
+            cancelled.cancelled = true;
+            cancelled.windowsErrorCode = 1223;
+            cancelled.error = QStringLiteral("Administrator approval was cancelled");
+            return cancelled;
+        }
         if (arguments.contains(QStringLiteral("--hotas-repair-transaction"))) {
-            ++elevatedTransactions;
-            if (cancelElevation) {
-                SetupProcessResult cancelled;
-                cancelled.cancelled = true;
-                cancelled.windowsErrorCode = 1223;
-                cancelled.error = QStringLiteral("Administrator approval was cancelled");
-                return cancelled;
-            }
-            const int requestIndex = arguments.indexOf(QStringLiteral("--request"));
-            const int resultIndex = arguments.indexOf(QStringLiteral("--result"));
-            if (requestIndex < 0 || resultIndex < 0 || requestIndex + 1 >= arguments.size()
-                || resultIndex + 1 >= arguments.size()) {
-                return {false, false, -1, {}, QStringLiteral("fake repair transaction arguments are incomplete")};
-            }
-            const QString requestPath = arguments.at(requestIndex + 1);
-            const QString resultPath = arguments.at(resultIndex + 1);
-            QFile requestFile(requestPath);
-            if (!requestFile.open(QIODevice::ReadOnly)) {
-                return {false, false, -1, {}, QStringLiteral("fake repair request could not be read")};
-            }
-            const QJsonDocument request = QJsonDocument::fromJson(requestFile.readAll());
-            lastRepairRequest = QString::fromUtf8(request.toJson(QJsonDocument::Compact));
-
-            QJsonArray results;
-            bool success = true;
-            QJsonArray completed;
-            for (const QJsonValue &value : request.object().value(QStringLiteral("operations")).toArray()) {
-                const QJsonObject operation = value.toObject();
-                QStringList operationArguments;
-                for (const QJsonValue &argument : operation.value(QStringLiteral("arguments")).toArray()) {
-                    operationArguments.append(argument.toString());
-                }
-                const bool failed = failHide && operationArguments.contains(QStringLiteral("--dev-hide"));
-                QJsonObject item;
-                item.insert(QStringLiteral("name"), operation.value(QStringLiteral("name")));
-                item.insert(QStringLiteral("started"), true);
-                item.insert(QStringLiteral("finished"), true);
-                item.insert(QStringLiteral("succeeded"), !failed);
-                item.insert(QStringLiteral("rollback"), false);
-                item.insert(QStringLiteral("exitCode"), failed ? 5 : 0);
-                item.insert(QStringLiteral("message"), failed ? QStringLiteral("Access denied") : QString{});
-                results.append(item);
-                if (failed) { success = false; break; }
-                completed.append(operation);
-            }
-            if (!success) {
-                for (int index = completed.size() - 1; index >= 0; --index) {
-                    const QJsonObject operation = completed.at(index).toObject();
-                    if (operation.value(QStringLiteral("rollbackArguments")).toArray().isEmpty()) continue;
-                    QJsonObject rollback;
-                    rollback.insert(QStringLiteral("name"), operation.value(QStringLiteral("name")));
-                    rollback.insert(QStringLiteral("started"), true);
-                    rollback.insert(QStringLiteral("finished"), true);
-                    rollback.insert(QStringLiteral("succeeded"), true);
-                    rollback.insert(QStringLiteral("rollback"), true);
-                    rollback.insert(QStringLiteral("exitCode"), 0);
-                    results.append(rollback);
-                }
-            } else {
-                repairApplied = true;
-            }
-            QSaveFile resultFile(resultPath);
-            if (!resultFile.open(QIODevice::WriteOnly)) {
-                return {false, false, -1, {}, QStringLiteral("fake repair result could not be written")};
-            }
-            resultFile.write(QJsonDocument(QJsonObject{{QStringLiteral("success"), success},
-                                                        {QStringLiteral("operations"), results}})
-                .toJson(QJsonDocument::Compact));
-            if (!resultFile.commit()) {
-                return {false, false, -1, {}, QStringLiteral("fake repair result could not be committed")};
-            }
-            return {true, true, success ? 0 : 1, {}, {}};
+            return runApprovedRepairHelper(arguments);
         }
         if (failRollback && arguments.contains(QStringLiteral("--dev-unhide"))) {
             return {true, true, 5, {}, QStringLiteral("Access denied")};
         }
+        if (failHide && arguments.contains(QStringLiteral("--dev-hide"))) {
+            return {true, true, 5, {}, QStringLiteral("Access denied")};
+        }
+        for (int index = 0; index < arguments.size(); ++index) {
+            const QString &argument = arguments.at(index);
+            if (argument == QStringLiteral("--dev-hide") && index + 1 < arguments.size()) {
+                const QString &instance = arguments.at(++index);
+                if (!hiddenDevices.contains(instance, Qt::CaseInsensitive)) hiddenDevices.append(instance);
+            } else if (argument == QStringLiteral("--dev-unhide") && index + 1 < arguments.size()) {
+                hiddenDevices.removeAll(arguments.at(++index));
+            } else if (argument == QStringLiteral("--app-reg") && index + 1 < arguments.size()) {
+                const QString &application = arguments.at(++index);
+                if (!allowlistedApplications.contains(application, Qt::CaseInsensitive)) {
+                    allowlistedApplications.append(application);
+                }
+            } else if (argument == QStringLiteral("--app-unreg") && index + 1 < arguments.size()) {
+                allowlistedApplications.removeAll(arguments.at(++index));
+            } else if (argument == QStringLiteral("--cloak-on")) {
+                cloakEnabled = true;
+            } else if (argument == QStringLiteral("--cloak-off")) {
+                cloakEnabled = false;
+            }
+        }
+        repairApplied = true;
         return result(arguments);
     }
 
 private:
+    SetupProcessResult runApprovedRepairHelper(const QStringList &arguments)
+    {
+        const int requestIndex = arguments.indexOf(QStringLiteral("--request"));
+        const int resultIndex = arguments.indexOf(QStringLiteral("--result"));
+        if (requestIndex < 0 || resultIndex < 0 || requestIndex + 1 >= arguments.size()
+            || resultIndex + 1 >= arguments.size()) {
+            return {false, false, -1, {}, QStringLiteral("Repair request arguments were invalid")};
+        }
+        lastRepairRequest = arguments.at(requestIndex + 1);
+        QFile request(lastRepairRequest);
+        QJsonParseError error;
+        if (!request.open(QIODevice::ReadOnly)) return {false, false, -1, {}, QStringLiteral("Repair request was unavailable")};
+        const QJsonDocument document = QJsonDocument::fromJson(request.readAll(), &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) {
+            return {false, false, -1, {}, QStringLiteral("Repair request was invalid")};
+        }
+
+        const auto execute = [this](const QJsonObject &operation, bool rollback) {
+            const QJsonArray encoded = rollback ? operation.value(QStringLiteral("rollbackArguments")).toArray()
+                                                : operation.value(QStringLiteral("arguments")).toArray();
+            QStringList args;
+            for (const QJsonValue &value : encoded) args.append(value.toString());
+            calls.append(QStringLiteral("helper:") + args.join(u' '));
+            const bool rejected = (!rollback && failHide && args.contains(QStringLiteral("--dev-hide")))
+                || (rollback && failRollback && args.contains(QStringLiteral("--dev-unhide")));
+            QJsonObject item{{QStringLiteral("name"), operation.value(QStringLiteral("name")).toString()},
+                             {QStringLiteral("rollback"), rollback}, {QStringLiteral("started"), true},
+                             {QStringLiteral("finished"), true}, {QStringLiteral("succeeded"), !rejected},
+                             {QStringLiteral("exitCode"), rejected ? 5 : 0}};
+            if (rejected) {
+                item.insert(QStringLiteral("message"), QStringLiteral("Access denied"));
+                return item;
+            }
+            for (int index = 0; index < args.size(); ++index) {
+                const QString &argument = args.at(index);
+                if (argument == QStringLiteral("--dev-hide") && index + 1 < args.size()) {
+                    const QString &instance = args.at(++index);
+                    if (!hiddenDevices.contains(instance, Qt::CaseInsensitive)) hiddenDevices.append(instance);
+                } else if (argument == QStringLiteral("--dev-unhide") && index + 1 < args.size()) {
+                    hiddenDevices.removeAll(args.at(++index));
+                } else if (argument == QStringLiteral("--app-reg") && index + 1 < args.size()) {
+                    const QString &application = args.at(++index);
+                    if (!allowlistedApplications.contains(application, Qt::CaseInsensitive)) allowlistedApplications.append(application);
+                } else if (argument == QStringLiteral("--app-unreg") && index + 1 < args.size()) {
+                    allowlistedApplications.removeAll(args.at(++index));
+                } else if (argument == QStringLiteral("--cloak-on")) {
+                    cloakEnabled = true;
+                } else if (argument == QStringLiteral("--cloak-off")) {
+                    cloakEnabled = false;
+                }
+            }
+            repairApplied = true;
+            return item;
+        };
+
+        QJsonArray results;
+        QList<QJsonObject> completed;
+        bool success = true;
+        for (const QJsonValue &value : document.object().value(QStringLiteral("operations")).toArray()) {
+            const QJsonObject operation = value.toObject();
+            const QJsonObject item = execute(operation, false);
+            results.append(item);
+            if (!item.value(QStringLiteral("succeeded")).toBool()) { success = false; break; }
+            completed.append(operation);
+        }
+        if (!success) {
+            for (auto it = completed.crbegin(); it != completed.crend(); ++it) {
+                if (!it->value(QStringLiteral("rollbackArguments")).toArray().isEmpty()) {
+                    results.append(execute(*it, true));
+                }
+            }
+        }
+        QSaveFile output(arguments.at(resultIndex + 1));
+        if (!output.open(QIODevice::WriteOnly)) return {false, false, -1, {}, QStringLiteral("Repair response was unavailable")};
+        output.write(QJsonDocument(QJsonObject{{QStringLiteral("success"), success},
+            {QStringLiteral("operations"), results}}).toJson(QJsonDocument::Compact));
+        if (!output.commit()) return {false, false, -1, {}, QStringLiteral("Repair response could not be written")};
+        return {true, true, success ? 0 : 1, {}, {}};
+    }
+
     SetupProcessResult result(const QStringList &arguments)
     {
         const QString joined = arguments.join(u' ');
         if (joined.contains(QStringLiteral("--cloak-state"))) {
-            return {true, true, 0, repairApplied ? QStringLiteral("--cloak-on\n") : QStringLiteral("--cloak-off\n"), {}};
+            return {true, true, 0, (cloakEnabled || repairApplied)
+                ? QStringLiteral("--cloak-on\n") : QStringLiteral("--cloak-off\n"), {}};
         }
         if (joined.contains(QStringLiteral("--app-list"))) {
-            return {true, true, 0, repairApplied
-                ? QStringLiteral("--app-reg \"") + QCoreApplication::applicationFilePath() + QStringLiteral("\"\n") : QString{}, {}};
+            QStringList applications = allowlistedApplications;
+            if (repairApplied && !applications.contains(QCoreApplication::applicationFilePath(), Qt::CaseInsensitive)) {
+                applications.append(QCoreApplication::applicationFilePath());
+            }
+            QStringList lines;
+            for (const QString &application : applications) {
+                lines.append(QStringLiteral("--app-reg \"") + application + QStringLiteral("\""));
+            }
+            return {true, true, 0, lines.join(u'\n') + (lines.isEmpty() ? QString{} : QStringLiteral("\n")), {}};
         }
         if (joined.contains(QStringLiteral("--dev-list"))) {
             if (!hiddenDevices.isEmpty()) {
@@ -211,7 +271,7 @@ private:
                 --staleVJoyCapabilityInspections;
                 capabilitiesConverged = false;
             }
-            return {true, true, 0, QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rz\nFFB Effects: None\n")
+            return {true, true, 0, QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
                 .arg(capabilitiesConverged ? 32 : 4), {}};
         }
         return {true, true, 0, {}, {}};
@@ -238,10 +298,12 @@ private slots:
     void passiveIdentityGapIsAttentionNotFailure();
     void checkingPlanPublishesEverySubsystem();
     void controllerArrivalRequestsSetupOnlyForActionableTransitions();
+    void knownControllerArrivalUsesStableIdentity();
     void activeInputReportsArePhysicalHealthEvidence();
     void processRunnerRollbackOnlyReversesThisTransaction();
-    void repairCompletesInOneElevationAndVerifies();
+    void repairCompletesWithElevatedUtilitiesAndVerifies();
     void repairWaitsForDelayedVJoyCapabilityPublication();
+    void reconnectCycleRequiresObservedDisconnectAndLiveReports();
     void selfAccessFailureRollsBackBeforeReportingReady();
     void failedReacquisitionRequestsReconnectInsteadOfReady();
     void failedRecoveryReportsRollbackFailure();
@@ -249,7 +311,13 @@ private slots:
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
-    void virtualAxisDescriptorsMustMatchExactly();
+    void virtualAxisCapabilitySupersetIsReady();
+    void vjoyShortSliderAliasesRemainReady();
+    void validVJoySupersetCannotDisagreeWithAggregateHealth();
+    void staleVJoyPlanBecomesReadyImmediatelyAfterCorrection();
+    void currentCandidateExecutableMustBeAllowlistedAndReadBack();
+    void physicalControllerContainerIdentitySurvivesReenumeration();
+    void automaticRepairConvergesWithoutChangingUnrelatedHidHideRules();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
     void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
@@ -428,6 +496,31 @@ void ControllerReadinessTests::controllerArrivalRequestsSetupOnlyForActionableTr
     QVERIFY(!ControllerReadinessService::needsSetupAfterControllerArrival(true, ready));
 }
 
+void ControllerReadinessTests::knownControllerArrivalUsesStableIdentity()
+{
+    PhysicalControllerCapabilities verified = connectedController();
+    verified.hidContainerId = QStringLiteral("{F6B6CF3A-8C6D-4A8A-9821-123456789ABC}");
+
+    SavedControllerRecord remembered;
+    remembered.id = QStringLiteral("remembered-hotas");
+    remembered.lastDirectInputId = verified.directInputId;
+    remembered.hidInstanceId = verified.hidInstanceId;
+    remembered.hidContainerId = verified.hidContainerId;
+
+    PhysicalControllerCapabilities reenumerated = verified;
+    reenumerated.directInputId = QStringLiteral("{new-directinput-guid}");
+    reenumerated.hidInstanceId = QStringLiteral("HID\\VID_044F&PID_B68D\\re-enumerated-interface");
+
+    QVERIFY(ControllerReadinessService::isKnownPhysicalController(reenumerated, {remembered}));
+
+    const ControllerReadinessPlan ready = ControllerReadinessService::planFor(
+        reenumerated, defaultRequirements(), readyVJoy(), readyHidHide(), VerificationMode::Quick);
+    QVERIFY(!ControllerReadinessService::needsSetupAfterControllerArrival(true, ready));
+
+    reenumerated.hidContainerId = QStringLiteral("{C4CE6D3A-3A34-4F8B-80E1-987654321ABC}");
+    QVERIFY(!ControllerReadinessService::isKnownPhysicalController(reenumerated, {remembered}));
+}
+
 void ControllerReadinessTests::activeInputReportsArePhysicalHealthEvidence()
 {
     PhysicalControllerCapabilities physical = connectedController();
@@ -459,15 +552,19 @@ void ControllerReadinessTests::processRunnerRollbackOnlyReversesThisTransaction(
     QVERIFY(probe->calls.contains(QStringLiteral("-t -c 1")));
     QVERIFY(!service.applyAutomatically());
     QCOMPARE(probe->elevatedTransactions, 1);
-    QVERIFY(probe->lastRepairRequest.contains(QStringLiteral("--dev-hide")));
-    QVERIFY(probe->lastRepairRequest.contains(QStringLiteral("HID\\\\VID_044F&PID_B68D\\\\EXACT-INSTANCE")));
+    QVERIFY(std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("helper:"))
+            && call.contains(QStringLiteral("--dev-hide"))
+            && call.contains(QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance"), Qt::CaseInsensitive);
+    }));
+    QVERIFY(containsCanonicalApplicationPath(probe->elevatedPrograms));
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Failed);
     QVERIFY(service.lastAutomaticRepairResult().message.contains(QStringLiteral("HidHide device repair failed")));
     QVERIFY(service.lastAutomaticRepairResult().message.contains(QStringLiteral("code 5")));
     QVERIFY(!service.plan().status.contains(QStringLiteral("failed: ."), Qt::CaseInsensitive));
 }
 
-void ControllerReadinessTests::repairCompletesInOneElevationAndVerifies()
+void ControllerReadinessTests::repairCompletesWithElevatedUtilitiesAndVerifies()
 {
     auto fake = std::make_unique<FakeRunner>();
     FakeRunner *probe = fake.get();
@@ -486,6 +583,7 @@ void ControllerReadinessTests::repairCompletesInOneElevationAndVerifies()
     QVERIFY(service.applyAutomatically());
     service.completePhysicalAccessVerification(true, true);
     QCOMPARE(probe->elevatedTransactions, 1);
+    QVERIFY(containsCanonicalApplicationPath(probe->elevatedPrograms));
     QCOMPARE(service.lastAutomaticRepairResult().outcome, AutomaticRepairOutcome::Ready);
     QCOMPARE(service.plan().state, ControllerReadinessState::Ready);
     QCOMPARE(service.plan().status, QStringLiteral("READY — Controller setup repaired successfully and physical input was reacquired."));
@@ -741,7 +839,7 @@ void ControllerReadinessTests::buttonCapacityUsesMappedRoutesRatherThanProvision
     QCOMPARE(ControllerReadinessService::requirementsFor(configuration).buttons, 29);
 }
 
-void ControllerReadinessTests::virtualAxisDescriptorsMustMatchExactly()
+void ControllerReadinessTests::virtualAxisCapabilitySupersetIsReady()
 {
     ControllerVJoyRequirements saved;
     saved.deviceId = 1;
@@ -750,13 +848,187 @@ void ControllerReadinessTests::virtualAxisDescriptorsMustMatchExactly()
     saved.continuousPovs = 1;
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(saved);
     VJoyCapabilities vjoy = readyVJoy();
-    vjoy.axes[4] = vjoy.axes[5] = true; // Extra advertised axes are incompatible.
-    vjoy.buttons = 32;                  // Button capacity remains a minimum.
+    // The recommended full vJoy descriptor is a valid capability superset of
+    // an older four-axis profile requirement.
+    vjoy.buttons = 32; // Button capacity remains a minimum.
     vjoy.continuousPovs = 1;
     const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
         connectedController(), requirements, vjoy, readyHidHide());
-    QVERIFY(plan.vjoyNeedsChanges);
-    QVERIFY(plan.vjoySummary.contains(QStringLiteral("additional axes")));
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QCOMPARE(plan.state, ControllerReadinessState::Ready);
+    QVERIFY(plan.vjoySummary.contains(
+        QStringLiteral("Extra available axes: Rx, Ry, Slider 0, Slider 1.")));
+}
+
+void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    fake->repairApplied = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperOutputRequirements requirements = defaultRequirements();
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider1)] = true;
+    const ControllerReadinessPlan &plan = service.inspectForRequirements(
+        defaultConfiguration(), connectedController(), requirements);
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+}
+
+void ControllerReadinessTests::validVJoySupersetCannotDisagreeWithAggregateHealth()
+{
+    MapperOutputRequirements requirements;
+    requirements.axes[static_cast<size_t>(VirtualAxis::X)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Y)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Z)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Rz)] = true;
+    requirements.buttons = 15;
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.buttons = 30;
+    // The real Device 1 descriptor is a valid eight-axis capability superset.
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), requirements, vjoy, readyHidHide());
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(plan.state, ControllerReadinessState::Ready);
+}
+
+void ControllerReadinessTests::staleVJoyPlanBecomesReadyImmediatelyAfterCorrection()
+{
+    VJoyCapabilities insufficient = readyVJoy();
+    insufficient.axes[static_cast<size_t>(VirtualAxis::Slider1)] = false;
+    MapperOutputRequirements requirements = defaultRequirements();
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider1)] = true;
+    const ControllerReadinessPlan invalid = ControllerReadinessService::planFor(
+        connectedController(), requirements, insufficient, readyHidHide());
+    QCOMPARE(invalid.vjoyStatus, VerificationSubsystemState::Error);
+
+    VJoyCapabilities corrected = readyVJoy();
+    corrected.buttons = 30;
+    const ControllerReadinessPlan ready = ControllerReadinessService::planFor(
+        connectedController(), requirements, corrected, readyHidHide());
+    QVERIFY(!ready.vjoyNeedsChanges);
+    QCOMPARE(ready.vjoyStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(ready.state, ControllerReadinessState::Ready);
+}
+
+void ControllerReadinessTests::currentCandidateExecutableMustBeAllowlistedAndReadBack()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    // A production install entry is not proof that this candidate executable
+    // has HidHide access.
+    probe->cloakEnabled = true;
+    probe->allowlistedApplications = {QStringLiteral("C:/Program Files/HOTAS BF6/HOTAS BF6.exe")};
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    const MapperConfiguration configuration = defaultConfiguration();
+    const ControllerReadinessPlan &blocked = service.inspect(configuration, connectedController());
+    QVERIFY(!blocked.hidhide.mapperAllowlisted);
+    QCOMPARE(blocked.hidhideStatus, VerificationSubsystemState::Error);
+    QVERIFY(blocked.hidhideCanApply);
+    QVERIFY(service.allowlistMapperOnly());
+    QVERIFY(service.plan().hidhide.mapperAllowlisted);
+    QVERIFY(service.plan().hidhide.allowlistedApplications.contains(
+        QCoreApplication::applicationFilePath(), Qt::CaseInsensitive));
+    QVERIFY(service.plan().hidhide.allowlistedApplications.contains(
+        QStringLiteral("C:/Program Files/HOTAS BF6/HOTAS BF6.exe"), Qt::CaseInsensitive));
+    QVERIFY(std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("elevated:--app-reg "));
+    }));
+}
+
+void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenumeration()
+{
+    PhysicalControllerCapabilities before = connectedController();
+    before.hidContainerId = QStringLiteral("{F6B6CF3A-8C6D-4A8A-9821-123456789ABC}");
+    PhysicalControllerCapabilities after = before;
+    after.hidInstanceId = QStringLiteral("HID\\VID_044F&PID_B68D\\re-enumerated-interface");
+    QVERIFY(ControllerReadinessService::samePhysicalController(before, after));
+
+    // A different container is never silently treated as the selected HOTAS,
+    // even if it happens to share a product family.
+    after.hidContainerId = QStringLiteral("{C4CE6D3A-3A34-4F8B-80E1-987654321ABC}");
+    QVERIFY(!ControllerReadinessService::samePhysicalController(before, after));
+}
+
+void ControllerReadinessTests::automaticRepairConvergesWithoutChangingUnrelatedHidHideRules()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->hiddenDevices = {QStringLiteral("HID\\VID_9999&PID_0001\\unrelated-controller")};
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    const ControllerReadinessPlan &before = service.inspect(configuration, connectedController());
+    QVERIFY(before.canApplyAutomatically);
+    QVERIFY(service.applyAutomatically());
+    service.completePhysicalAccessVerification(true, true);
+    QCOMPARE(service.plan().physicalStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(service.plan().vjoyStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(service.plan().hidhideStatus, VerificationSubsystemState::Ready);
+    QCOMPARE(service.plan().state, ControllerReadinessState::Ready);
+    QVERIFY(probe->hiddenDevices.contains(
+        QStringLiteral("HID\\VID_9999&PID_0001\\unrelated-controller")));
+    QVERIFY(!std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.contains(QStringLiteral("--dev-unhide HID\\VID_9999&PID_0001"));
+    }));
+    const QString elevatedCommands = probe->calls.join(u'\n');
+    QVERIFY(elevatedCommands.contains(QStringLiteral("VID_044F&PID_B68D")));
+    QVERIFY(!elevatedCommands.contains(QStringLiteral("VID_1234&PID_BEAD")));
+    QVERIFY(containsCanonicalApplicationPath(probe->elevatedPrograms));
+}
+
+void ControllerReadinessTests::reconnectCycleRequiresObservedDisconnectAndLiveReports()
+{
+    ControllerReadinessService service;
+    const ControllerReadinessPlan initial = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), readyVJoy(), readyHidHide());
+    service.adoptPlan(initial);
+    QCOMPARE(initial.state, ControllerReadinessState::Ready);
+
+    service.beginPhysicalReconnectVerification();
+    QVERIFY(service.reconnectVerificationPending());
+    QVERIFY(!service.reconnectDisconnectObserved());
+    QCOMPARE(service.plan().state, ControllerReadinessState::Verifying);
+    QVERIFY(service.plan().status.contains(QStringLiteral("Unplug")));
+
+    // A retained DirectInput handle is deliberately insufficient proof.
+    QVERIFY(!service.observePhysicalReconnect(true, true, true));
+    QVERIFY(service.reconnectVerificationPending());
+
+    QVERIFY(service.observePhysicalReconnect(false, false, false));
+    QVERIFY(service.reconnectDisconnectObserved());
+    QVERIFY(service.plan().physicalSummary.contains(QStringLiteral("disconnected ✓")));
+
+    QVERIFY(service.observePhysicalReconnect(true, false, true));
+    QVERIFY(service.reconnectVerificationPending());
+    QVERIFY(service.plan().physicalSummary.contains(QStringLiteral("not the selected")));
+
+    QVERIFY(service.observePhysicalReconnect(true, true, false));
+    QVERIFY(service.reconnectVerificationPending());
+    QVERIFY(service.plan().physicalSummary.contains(QStringLiteral("Waiting for a live input report")));
+
+    QVERIFY(service.observePhysicalReconnect(true, true, true));
+    QVERIFY(!service.reconnectVerificationPending());
+    QVERIFY(service.reconnectReconciliationPending());
+    QCOMPARE(service.plan().state, ControllerReadinessState::Verifying);
+    QCOMPARE(service.plan().hidhideStatus, VerificationSubsystemState::Checking);
+    QVERIFY(service.plan().status.contains(QStringLiteral("reconcil"), Qt::CaseInsensitive));
 }
 
 void ControllerReadinessTests::savedControllerVjoyRequirementsDetectInsufficientOutput()

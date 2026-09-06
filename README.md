@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.3.0**
+**Current release: v2.3.1**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.3.0 adds Adaptive Response: a per-axis, short-horizon predictive phase lead driven only by normalized physical input. Its global, category, profile, and temporary Automation layers compile before report processing; estimator telemetry, safety clamping, presets, portable dependencies, and schema-21 migration retain the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.3.1 refines Adaptive Response with physical-input Live Controller telemetry, motion-aware center handling, and curve-aware mapped-output prediction authority. Its global, category, profile, and temporary Automation layers compile before report processing; fixed latest-state telemetry, safety clamping, presets, portable dependencies, and schema-21 compatibility retain the allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 
@@ -84,7 +84,7 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 ## Installation and first use
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
-2. Open HOTAS BF6 at Overview. Choose a connected controller in Settings when more than one is available; a new controller opens themed setup after selection.
+2. Open HOTAS BF6 at Overview. A newly connected controller is passively checked against the selected device, vJoy, and HidHide state; healthy remembered controllers reconnect silently, while only a genuinely new or attention-needed controller opens setup.
 3. Open Settings and choose VERIFY CONTROLLER SETUP to deeply verify the selected physical controller, the active profile's virtual-output layout, and HidHide configuration.
 4. Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 executes required vJoy/HidHide changes through one approved elevated transaction and restores the Mapping On/Off state that preceded the repair.
 5. Confirm READY, then select or create a profile.

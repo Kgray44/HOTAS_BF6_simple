@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Battlefield 6 Compatibility
 
-**Current release: v2.3.0**
+**Current release: v2.3.1**
 
 ## Official / anticheat boundary
 
@@ -18,7 +18,7 @@ Repository evidence verifies deterministic mapper behavior, headless tests, pack
 
 ## Windows and signing
 
-Azure Artifact Signing with GitHub OIDC is prepared for trusted stable releases, but its Public Trust certificate profile is pending Microsoft identity validation. Until that profile exists, manual release runs are explicitly unsigned dry runs and stable tag publication is blocked. Local self-signing is development-only and never a public-release identity.
+Azure Artifact Signing with GitHub OIDC is prepared for trusted stable releases, but its Public Trust certificate profile is pending Microsoft identity validation. Until that profile exists, releases are published unsigned with explicit workflow evidence; Windows reputation, Smart App Control, or other security features may warn about an unsigned installer. Local self-signing is development-only and never a public-release identity.
 
 ## Reporting a compatibility regression
 
