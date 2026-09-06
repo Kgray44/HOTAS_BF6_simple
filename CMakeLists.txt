@@ -105,6 +105,7 @@ qt_add_resources(HOTASMapper hotas_icon_resources
     PREFIX "/"
     FILES
         assets/icons/png/hotas-bf6-256.png
+        assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
         assets/themes/topgun/fighter-silhouette.svg
         assets/themes/topgun/wing-badge.svg
         assets/themes/topgun/slash-stripes.svg
@@ -232,6 +233,11 @@ if (BUILD_TESTING)
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    qt_add_resources(mapping_core_tests hotas_starter_profile_test_resources
+        PREFIX "/"
+        FILES
+            assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+    )
     target_compile_definitions(mapping_core_tests PRIVATE HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
     add_test(NAME mapping_core_tests COMMAND mapping_core_tests)
 
@@ -265,11 +271,20 @@ if (BUILD_TESTING)
         src/profile_trigger_runtime.cpp
         src/automation_engine.h
         src/automation_engine.cpp
+        src/profile_model.h
+        src/profile_model.cpp
+        src/profile_portability.h
+        src/profile_portability.cpp
         src/config_store.h
         src/config_store.cpp
     )
     target_link_libraries(automation_engine_tests PRIVATE Qt6::Core Qt6::Test)
     target_include_directories(automation_engine_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    qt_add_resources(automation_engine_tests hotas_starter_profile_automation_test_resources
+        PREFIX "/"
+        FILES
+            assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+    )
     add_test(NAME automation_engine_tests COMMAND automation_engine_tests)
     if (WIN32)
         set_tests_properties(automation_engine_tests PROPERTIES
@@ -348,6 +363,11 @@ if (BUILD_TESTING)
     )
     target_link_libraries(upgrade_configuration_fixture PRIVATE Qt6::Core)
     target_include_directories(upgrade_configuration_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    qt_add_resources(upgrade_configuration_fixture hotas_starter_profile_fixture_resources
+        PREFIX "/"
+        FILES
+            assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+    )
 
     set(HOTAS_BACKEND_STARTUP_TEST_SOURCES ${HOTAS_MAPPER_SOURCES})
     list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES src/main.cpp)
@@ -369,6 +389,11 @@ if (BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
+    )
+    qt_add_resources(app_backend_startup_tests hotas_starter_profile_backend_test_resources
+        PREFIX "/"
+        FILES
+            assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
@@ -422,6 +447,11 @@ if (BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
+    )
+    qt_add_resources(app_qml_startup_tests hotas_starter_profile_qml_test_resources
+        PREFIX "/"
+        FILES
+            assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)

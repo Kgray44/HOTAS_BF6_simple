@@ -29,7 +29,7 @@ private slots:
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
-    void installerUpgradeAcceptanceTracksSchema20();
+    void installerUpgradeAcceptanceTracksSchema22();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
     void allThemeSelectorsUseSkinnedDarkPopups();
@@ -546,16 +546,18 @@ void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSig
     QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema20()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema22()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 21")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v21")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 22")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v22")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v22")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v21")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v21")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v22")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v22")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v22")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()
