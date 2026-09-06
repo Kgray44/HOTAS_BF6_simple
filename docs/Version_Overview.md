@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.3.1**
+**Current release: v2.3.2**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.3.2 — Battlefield 6 Helicopter starter profile
+
+Ships a ready-to-customize Battlefield 6 Helicopter starter profile derived from the project's working helicopter configuration without changing Adaptive Response or the mapping hot path.
+
+- New installations include General / Normal, General / Precision, and Battlefield 6 / Helicopter in Profile Library.
+- Schema 22 safely adds the deterministic starter profile once to v2.3.1-and-earlier configurations while preserving selected profiles, controller configuration, calibration, mappings, curves, Automation, and user-created categories.
+- The bundled portable profile keeps its portable mappings, output-layout requirements, curves, and built-in Adaptive Response preset references while excluding calibration, DirectInput runtime IDs, HidHide instance state, local paths, and installation state.
+- A user-created Battlefield 6 or Helicopter name collision is never overwritten; the starter is added under a separate Battlefield 6 (Starter) category when necessary.
+- The seeded profile remains an ordinary editable profile. Changes and deletion persist across later launches; the starter is not continuously restored.
 
 ## v2.3.1 — Adaptive Response correctness and Response Lab
 

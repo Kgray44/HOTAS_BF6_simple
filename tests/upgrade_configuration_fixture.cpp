@@ -72,12 +72,33 @@ bool writeFixture(int schemaVersion)
     return settings.status() == QSettings::NoError;
 }
 
+bool hasBundledBattlefieldHelicopterStarter(const hotas::MapperConfiguration &configuration)
+{
+    const hotas::ProfileCategory *category = hotas::findProfileCategory(
+        configuration, QStringLiteral("starter-battlefield-6"));
+    const hotas::ControllerProfile *profile = hotas::findProfile(
+        configuration, QStringLiteral("starter-battlefield-6-helicopter"));
+    return category && profile && category->name == QStringLiteral("Battlefield 6")
+        && profile->name == QStringLiteral("Helicopter")
+        && profile->categoryId == category->id
+        && category->profileIds == std::vector<QString>{profile->id};
+}
+
+bool assertFreshStarter()
+{
+    if (!hasBundledBattlefieldHelicopterStarter(hotas::ConfigStore::load())) {
+        std::cerr << "Fresh configuration is missing the Battlefield 6 / Helicopter starter.\n";
+        return false;
+    }
+    return true;
+}
+
 bool assertMigratedFixture()
 {
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
-    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 21) {
-        std::cerr << "Expected the installed mapper to persist schema 21.\n";
+    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 22) {
+        std::cerr << "Expected the installed mapper to persist schema 22.\n";
         return false;
     }
 
@@ -87,7 +108,8 @@ bool assertMigratedFixture()
         || configuration.vjoyDeviceId != 2 || configuration.disabledAxisValue != -0.25F
         || configuration.automations.size() != 1
         || configuration.automations.front().name != QStringLiteral("Upgrade Automation")
-        || configuration.profiles.empty() || configuration.outputLayouts.size() != 1) {
+        || configuration.profiles.empty() || configuration.outputLayouts.size() != 1
+        || !hasBundledBattlefieldHelicopterStarter(configuration)) {
         std::cerr << "Migrated fixture lost application settings, profiles, or automation.\n";
         return false;
     }
@@ -137,8 +159,9 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v21"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-fresh-v22"))) return assertFreshStarter() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v22"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, or --assert-v21 (optionally with --test-mode).\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v22, or --assert-v22 (optionally with --test-mode).\n";
     return 2;
 }

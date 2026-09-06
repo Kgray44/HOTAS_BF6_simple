@@ -3,6 +3,7 @@
 #include "axis_transform.h"
 #include "adaptive_response.h"
 #include "button_mapping.h"
+#include "profile_portability.h"
 #include "response_curve.h"
 
 #include <QDir>
@@ -21,8 +22,12 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 21;
+constexpr int kProfileSchemaVersion = 22;
 constexpr int kUniversalStrengthSchemaVersion = 7;
+constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
+constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
+constexpr auto kBundledBattlefieldHelicopterResource =
+    ":/assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile";
 
 QString settingsFilePath()
 {
@@ -1255,6 +1260,112 @@ MapperConfiguration fallbackWithGlobalSettings(const QJsonObject &json)
     return fallback;
 }
 
+QString uniqueBundledCategoryName(const MapperConfiguration &configuration, const QString &sourceName)
+{
+    const QString base = sourceName.left(52).trimmed() + u" (Starter)"_qs;
+    if (isProfileCategoryNameAvailable(configuration, base)) return base;
+    for (int suffix = 2; suffix < 1000; ++suffix) {
+        const QString candidate = sourceName.left(47).trimmed()
+            + QString(u" (Starter %1)"_qs).arg(suffix);
+        if (isProfileCategoryNameAvailable(configuration, candidate)) return candidate;
+    }
+    return {};
+}
+
+QString uniqueBundledProfileName(const MapperConfiguration &configuration, const QString &sourceName,
+                                 const QString &categoryId)
+{
+    const QString base = sourceName.left(36).trimmed() + u" (Starter)"_qs;
+    if (isProfileNameAvailableInCategory(configuration, base, categoryId)) return base;
+    for (int suffix = 2; suffix < 1000; ++suffix) {
+        const QString candidate = sourceName.left(31).trimmed()
+            + QString(u" (Starter %1)"_qs).arg(suffix);
+        if (isProfileNameAvailableInCategory(configuration, candidate, categoryId)) return candidate;
+    }
+    return {};
+}
+
+bool seedBundledBattlefieldHelicopterProfile(MapperConfiguration *configuration)
+{
+    if (!configuration || findProfile(*configuration, QLatin1String(kBundledBattlefieldHelicopterProfileId))) {
+        return false;
+    }
+
+    PortableConfigurationBundle bundle;
+    QString error;
+    if (!ProfilePortability::inspect(QLatin1String(kBundledBattlefieldHelicopterResource), &bundle, &error)
+        || bundle.kind != PortableConfigurationKind::Profile) {
+        return false;
+    }
+
+    const ProfileCategory *sourceCategory = nullptr;
+    for (const ProfileCategory &category : bundle.categories) {
+        if (category.id == QLatin1String(kBundledBattlefieldCategoryId)) {
+            sourceCategory = &category;
+            break;
+        }
+    }
+    const ControllerProfile *sourceProfile = nullptr;
+    for (const ControllerProfile &profile : bundle.profiles) {
+        if (profile.id == QLatin1String(kBundledBattlefieldHelicopterProfileId)) {
+            sourceProfile = &profile;
+            break;
+        }
+    }
+    if (!sourceCategory || !sourceProfile || sourceProfile->categoryId != sourceCategory->id) return false;
+
+    ProfileCategory *destinationCategory = findProfileCategory(*configuration, sourceCategory->id);
+    if (!destinationCategory) {
+        ProfileCategory created = *sourceCategory;
+        created.profileIds.clear();
+        created.defaultProfileId.clear();
+        created.lastActiveProfileId.clear();
+        if (!isProfileCategoryNameAvailable(*configuration, created.name)) {
+            created.name = uniqueBundledCategoryName(*configuration, created.name);
+            if (created.name.isEmpty()) return false;
+        }
+        configuration->profileCategories.push_back(std::move(created));
+        destinationCategory = &configuration->profileCategories.back();
+    }
+
+    ControllerProfile seeded = *sourceProfile;
+    seeded.categoryId = destinationCategory->id;
+    if (!isProfileNameAvailableInCategory(*configuration, seeded.name, seeded.categoryId)) {
+        seeded.name = uniqueBundledProfileName(*configuration, seeded.name, seeded.categoryId);
+        if (seeded.name.isEmpty()) return false;
+    }
+
+    if (!findOutputLayout(*configuration, seeded.outputLayoutId)) {
+        const VirtualOutputLayout *sourceLayout = nullptr;
+        for (const VirtualOutputLayout &layout : bundle.outputLayouts) {
+            if (layout.id == seeded.outputLayoutId) {
+                sourceLayout = &layout;
+                break;
+            }
+        }
+        if (!sourceLayout) return false;
+        const auto sameDevice = std::find_if(configuration->outputLayouts.cbegin(),
+            configuration->outputLayouts.cend(), [sourceLayout](const VirtualOutputLayout &layout) {
+                return layout.requirements.deviceId == sourceLayout->requirements.deviceId;
+            });
+        if (sameDevice != configuration->outputLayouts.cend()) {
+            seeded.outputLayoutId = sameDevice->id;
+        } else {
+            configuration->outputLayouts.push_back(*sourceLayout);
+        }
+    }
+
+    configuration->profiles.push_back(std::move(seeded));
+    destinationCategory->profileIds.push_back(configuration->profiles.back().id);
+    if (destinationCategory->defaultProfileId.isEmpty()) {
+        destinationCategory->defaultProfileId = configuration->profiles.back().id;
+    }
+    if (destinationCategory->lastActiveProfileId.isEmpty()) {
+        destinationCategory->lastActiveProfileId = configuration->profiles.back().id;
+    }
+    return true;
+}
+
 } // namespace
 
 MapperConfiguration ConfigStore::load()
@@ -1262,7 +1373,11 @@ MapperConfiguration ConfigStore::load()
     const QSettings stored(settingsFilePath(), QSettings::IniFormat);
     const QByteArray encoded = stored.value(QLatin1String(kConfigKey)).toByteArray();
     const QJsonDocument document = QJsonDocument::fromJson(encoded);
-    if (!document.isObject()) return defaultConfiguration();
+    if (!document.isObject()) {
+        MapperConfiguration configuration = defaultConfiguration();
+        seedBundledBattlefieldHelicopterProfile(&configuration);
+        return configuration;
+    }
 
     bool valid = false;
     MapperConfiguration configuration = fromJson(document.object(), &valid);
@@ -1368,11 +1483,17 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
 MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
 {
     const int version = json.value(u"version"_qs).toInt();
-    if (version == 1 || version == 2) return migrateLegacyConfiguration(json, version, valid);
+    if (version == 1 || version == 2) {
+        bool migratedValid = false;
+        MapperConfiguration configuration = migrateLegacyConfiguration(json, version, &migratedValid);
+        if (migratedValid) seedBundledBattlefieldHelicopterProfile(&configuration);
+        if (valid) *valid = migratedValid;
+        return configuration;
+    }
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
-        && version != kProfileSchemaVersion) {
+        && version != 21 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1746,6 +1867,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (const VirtualOutputLayout *activeLayout = findOutputLayout(configuration,
             activeProfile(configuration).outputLayoutId)) {
         configuration.vjoyDeviceId = activeLayout->requirements.deviceId;
+    }
+    if (version < kProfileSchemaVersion) {
+        seedBundledBattlefieldHelicopterProfile(&configuration);
     }
     if (valid) *valid = true;
     return configuration;

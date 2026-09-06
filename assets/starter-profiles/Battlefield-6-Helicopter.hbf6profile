@@ -1,0 +1,1084 @@
+{
+    "exportedAtUtc": "2026-09-06T22:32:28Z",
+    "exportedByVersion": "2.3.1",
+    "format": "HOTAS-BF6-Profile",
+    "manifest": {
+        "categoryCount": 1,
+        "dependencySummary": {
+            "profileControls": true,
+            "relatedAutomations": 0,
+            "requiredAdaptiveResponsePresets": 0,
+            "requiredCurves": 0,
+            "requiredOutputLayouts": 1
+        },
+        "description": "",
+        "includesAdaptiveResponseGlobal": false,
+        "includesAutomations": true,
+        "includesCalibration": false,
+        "includesDevices": false,
+        "includesGameDetection": true,
+        "includesProfileRelationships": true,
+        "name": "Battlefield 6 / Helicopter",
+        "profileCount": 1,
+        "sourceController": {
+            "axes": [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+            ],
+            "axisCount": 8,
+            "buttonCount": 15,
+            "name": "T.Flight Hotas One",
+            "povCount": 1,
+            "productGuid": "{B68D044F-0000-0000-0000-504944564944}",
+            "productId": 46733,
+            "vendorId": 1103,
+            "vjoyRequirements": {
+                "axes": [
+                    false,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true
+                ],
+                "buttons": 15,
+                "continuousPovs": 0,
+                "deviceId": 1,
+                "discretePovs": 0
+            }
+        }
+    },
+    "payload": {
+        "adaptiveResponsePresets": [
+        ],
+        "automations": [
+        ],
+        "categories": [
+            {
+                "adaptiveResponse": {
+                    "axes": [
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        }
+                    ]
+                },
+                "defaultProfileId": "starter-battlefield-6-helicopter",
+                "enabled": true,
+                "executableRules": [
+                ],
+                "icon": "",
+                "id": "starter-battlefield-6",
+                "lastActiveProfileId": "starter-battlefield-6-helicopter",
+                "name": "Battlefield 6",
+                "profileIds": [
+                    "starter-battlefield-6-helicopter"
+                ],
+                "restoreLastProfile": true
+            }
+        ],
+        "curves": [
+        ],
+        "outputLayouts": [
+            {
+                "hidHideDeviceInstanceId": "",
+                "hidhideManaged": false,
+                "id": "bf6-output",
+                "name": "BF6 Output",
+                "requirements": {
+                    "axes": [
+                        false,
+                        true,
+                        true,
+                        true,
+                        true,
+                        true,
+                        true,
+                        true,
+                        true
+                    ],
+                    "buttons": 32,
+                    "continuousPovs": 0,
+                    "deviceId": 1,
+                    "discretePovs": 0
+                }
+            }
+        ],
+        "povProfileTriggers": [
+        ],
+        "profileTriggers": [
+        ],
+        "profiles": [
+            {
+                "adaptiveResponse": {
+                    "axes": [
+                        {
+                            "presetId": "extreme",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "extreme",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "off",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "off",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "off",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "extreme",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        },
+                        {
+                            "presetId": "",
+                            "properties": 0,
+                            "settings": {
+                                "accelerationResponse": 0.5799999833106995,
+                                "decelerationResponse": 0.8500000238418579,
+                                "enabled": false,
+                                "endpointTaper": 0.1599999964237213,
+                                "horizonExtension": 0,
+                                "horizonExtensionCapMs": 0,
+                                "maximumHorizonMs": 8,
+                                "maximumLead": 0.11999999731779099,
+                                "model": "auto",
+                                "motionSensitivity": 0.03500000014901161,
+                                "noiseRejection": 0.012000000104308128,
+                                "onsetAssist": 0,
+                                "onsetCap": 0,
+                                "reversalDetection": 0.07500000298023224,
+                                "reversalResponse": 1,
+                                "settlingResponse": 0.9200000166893005,
+                                "sustainedAssist": 0,
+                                "sustainedCap": 0,
+                                "turningPointMargin": 0,
+                                "turningPointProtection": 0,
+                                "velocityResponse": 0.7200000286102295
+                            }
+                        }
+                    ]
+                },
+                "axes": [
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Personal · 100%",
+                            "family": "custom",
+                            "interpolation": "smooth",
+                            "pointDensity": 13,
+                            "pointEditing": false,
+                            "points": [
+                                {
+                                    "input": -1,
+                                    "locked": true,
+                                    "output": -1
+                                },
+                                {
+                                    "input": -0.8333333730697632,
+                                    "locked": false,
+                                    "output": -0.8010990023612976
+                                },
+                                {
+                                    "input": -0.6666666269302368,
+                                    "locked": false,
+                                    "output": -0.532821774482727
+                                },
+                                {
+                                    "input": -0.5,
+                                    "locked": false,
+                                    "output": -0.38999998569488525
+                                },
+                                {
+                                    "input": -0.3333333730697632,
+                                    "locked": false,
+                                    "output": -0.34293171763420105
+                                },
+                                {
+                                    "input": -0.16666662693023682,
+                                    "locked": false,
+                                    "output": -0.2349817454814911
+                                },
+                                {
+                                    "input": 0,
+                                    "locked": true,
+                                    "output": 0
+                                },
+                                {
+                                    "input": 0.16666662693023682,
+                                    "locked": false,
+                                    "output": 0.2349817454814911
+                                },
+                                {
+                                    "input": 0.3333333730697632,
+                                    "locked": false,
+                                    "output": 0.34293171763420105
+                                },
+                                {
+                                    "input": 0.5,
+                                    "locked": false,
+                                    "output": 0.38999998569488525
+                                },
+                                {
+                                    "input": 0.6666666269302368,
+                                    "locked": false,
+                                    "output": 0.532821774482727
+                                },
+                                {
+                                    "input": 0.8333333730697632,
+                                    "locked": false,
+                                    "output": 0.8010990023612976
+                                },
+                                {
+                                    "input": 1,
+                                    "locked": true,
+                                    "output": 1
+                                }
+                            ],
+                            "presetId": "custom",
+                            "sourceFamily": "personal",
+                            "sourcePresetId": "curve-3fa242ad-a6b4-4540-b6d7-9317238c806a",
+                            "strength": 1,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "X"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": true,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Rx"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Y"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Disabled"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Disabled"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Advanced · 100%",
+                            "family": "custom",
+                            "interpolation": "smooth",
+                            "pointDensity": 25,
+                            "pointEditing": false,
+                            "points": [
+                                {
+                                    "input": -1,
+                                    "locked": true,
+                                    "output": -1
+                                },
+                                {
+                                    "input": -0.9166666269302368,
+                                    "locked": false,
+                                    "output": -0.8730904459953308
+                                },
+                                {
+                                    "input": -0.8333333730697632,
+                                    "locked": false,
+                                    "output": -0.7489649057388306
+                                },
+                                {
+                                    "input": -0.75,
+                                    "locked": false,
+                                    "output": -0.6265232563018799
+                                },
+                                {
+                                    "input": -0.6666666269302368,
+                                    "locked": false,
+                                    "output": -0.4992643892765045
+                                },
+                                {
+                                    "input": -0.5833333730697632,
+                                    "locked": false,
+                                    "output": -0.3781857490539551
+                                },
+                                {
+                                    "input": -0.5,
+                                    "locked": false,
+                                    "output": -0.2744334936141968
+                                },
+                                {
+                                    "input": -0.4166666269302368,
+                                    "locked": false,
+                                    "output": -0.20855973660945892
+                                },
+                                {
+                                    "input": -0.3333333730697632,
+                                    "locked": false,
+                                    "output": -0.1642099767923355
+                                },
+                                {
+                                    "input": -0.25,
+                                    "locked": false,
+                                    "output": -0.14719019830226898
+                                },
+                                {
+                                    "input": -0.16666662693023682,
+                                    "locked": false,
+                                    "output": -0.12876571714878082
+                                },
+                                {
+                                    "input": -0.019999999552965164,
+                                    "locked": false,
+                                    "output": -0.07999999821186066
+                                },
+                                {
+                                    "input": 0,
+                                    "locked": true,
+                                    "output": 0
+                                },
+                                {
+                                    "input": 0.019999999552965164,
+                                    "locked": false,
+                                    "output": 0.07999999821186066
+                                },
+                                {
+                                    "input": 0.16666662693023682,
+                                    "locked": false,
+                                    "output": 0.12876571714878082
+                                },
+                                {
+                                    "input": 0.25,
+                                    "locked": false,
+                                    "output": 0.14719019830226898
+                                },
+                                {
+                                    "input": 0.3333333730697632,
+                                    "locked": false,
+                                    "output": 0.1642099767923355
+                                },
+                                {
+                                    "input": 0.4166666269302368,
+                                    "locked": false,
+                                    "output": 0.20855973660945892
+                                },
+                                {
+                                    "input": 0.5,
+                                    "locked": false,
+                                    "output": 0.2744334936141968
+                                },
+                                {
+                                    "input": 0.5833333730697632,
+                                    "locked": false,
+                                    "output": 0.3781857490539551
+                                },
+                                {
+                                    "input": 0.6666666269302368,
+                                    "locked": false,
+                                    "output": 0.4992643892765045
+                                },
+                                {
+                                    "input": 0.75,
+                                    "locked": false,
+                                    "output": 0.6265232563018799
+                                },
+                                {
+                                    "input": 0.8333333730697632,
+                                    "locked": false,
+                                    "output": 0.7489649057388306
+                                },
+                                {
+                                    "input": 0.9166666269302368,
+                                    "locked": false,
+                                    "output": 0.8730904459953308
+                                },
+                                {
+                                    "input": 1,
+                                    "locked": true,
+                                    "output": 1
+                                }
+                            ],
+                            "presetId": "custom",
+                            "sourceFamily": "advanced",
+                            "sourcePresetId": "custom",
+                            "strength": 1,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Disabled"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Disabled"
+                    },
+                    {
+                        "centeredOutputMaximum": 1,
+                        "centeredOutputMinimum": -1,
+                        "curve": {
+                            "baseLabel": "Linear",
+                            "family": "linear",
+                            "interpolation": "smooth",
+                            "pointDensity": 9,
+                            "pointEditing": false,
+                            "points": [
+                            ],
+                            "presetId": "linear",
+                            "sourceFamily": "linear",
+                            "sourcePresetId": "",
+                            "strength": 0,
+                            "symmetry": true
+                        },
+                        "customName": "",
+                        "deadzone": 0.029999999329447746,
+                        "hysteresis": 0.0020000000949949026,
+                        "inverted": false,
+                        "oneSidedOutputMaximum": 1,
+                        "oneSidedOutputMinimum": 0,
+                        "outputMaximum": 1,
+                        "outputMinimum": -1,
+                        "rangeMode": "centered",
+                        "target": "Disabled"
+                    }
+                ],
+                "buttons": [
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 14,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 3,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 13,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 6,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 1,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 4,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 2,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 5,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 7,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 8,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 9,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 10,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 11,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": true,
+                        "target": 12,
+                        "type": "virtualButton"
+                    },
+                    {
+                        "customName": "",
+                        "explicit": false,
+                        "target": 15,
+                        "type": "virtualButton"
+                    }
+                ],
+                "categoryId": "starter-battlefield-6",
+                "curveTransitionSmoothing": {
+                    "durationMs": 100,
+                    "enabled": true
+                },
+                "curveTransitionSmoothingOverride": false,
+                "enabled": true,
+                "id": "starter-battlefield-6-helicopter",
+                "name": "Helicopter",
+                "outputLayoutId": "bf6-output",
+                "povs": [
+                ],
+                "virtualAxisAliases": {
+                    "rx": "R Up/Down",
+                    "x": "L Left/Right",
+                    "y": "L Up/Down",
+                    "z": "R Left/Right"
+                }
+            }
+        ]
+    },
+    "schemaVersion": 1
+}

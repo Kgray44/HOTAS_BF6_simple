@@ -792,6 +792,7 @@ private slots:
     void categoryMigrationPreservesExistingProfiles();
     void categoryScopedNamesAndStableReferencesSurviveMove();
     void portableProfileRoundTripIsAtomicAndRemapsIds();
+    void bundledBattlefieldHelicopterStarterProfileMigratesSafely();
     void portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault();
     void portablePackSelectionsConflictsAndDependenciesAreSafe();
     void portableDeviceMatchingAndCalibrationRequireExplicitIntent();
@@ -1685,7 +1686,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 1);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -4211,7 +4212,7 @@ void MappingCoreTests::profileMigrationIsIdempotent()
     QVERIFY(valid);
     const MapperConfiguration reread = ConfigStore::fromJson(ConfigStore::toJson(migrated), &valid);
     QVERIFY(valid);
-    QCOMPARE(static_cast<int>(reread.profiles.size()), 2);
+    QCOMPARE(static_cast<int>(reread.profiles.size()), 3);
     QCOMPARE(reread.activeProfileId, normalProfileId());
     QCOMPARE(activeProfile(reread).axes[0].deadzone, 0.06F);
     QVERIFY(findProfile(reread, precisionProfileId()));
@@ -4265,7 +4266,7 @@ void MappingCoreTests::categoryMigrationPreservesExistingProfiles()
     bool valid = false;
     const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
     QVERIFY(valid);
-    QCOMPARE(migrated.profileCategories.size(), size_t{1});
+    QCOMPARE(migrated.profileCategories.size(), size_t{2});
     QCOMPARE(migrated.profileCategories.front().name, QStringLiteral("General"));
     QCOMPARE(migrated.profileCategories.front().profileIds.size(), source.profiles.size());
     QCOMPARE(migrated.activeProfileId, precisionProfileId());
@@ -4277,9 +4278,11 @@ void MappingCoreTests::categoryMigrationPreservesExistingProfiles()
     QCOMPARE(migrated.automations.size(), size_t{1});
     QCOMPARE(migrated.savedControllers.size(), size_t{1});
     QCOMPARE(migrated.savedControllers.front().calibration[0].minimum, -0.83F);
-    for (const ControllerProfile &profile : migrated.profiles) {
-        QCOMPARE(profile.categoryId, generalProfileCategoryId());
-        QVERIFY(profile.enabled);
+    for (const ControllerProfile &profile : source.profiles) {
+        const ControllerProfile *migratedProfile = findProfile(migrated, profile.id);
+        QVERIFY(migratedProfile);
+        QCOMPARE(migratedProfile->categoryId, generalProfileCategoryId());
+        QVERIFY(migratedProfile->enabled);
     }
 }
 
@@ -4334,6 +4337,128 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     bool valid = false;
     QVERIFY(ConfigStore::fromJson(ConfigStore::toJson(target), &valid).profiles.size() == target.profiles.size());
     QVERIFY(valid);
+}
+
+void MappingCoreTests::bundledBattlefieldHelicopterStarterProfileMigratesSafely()
+{
+    constexpr auto kCategoryId = "starter-battlefield-6";
+    constexpr auto kProfileId = "starter-battlefield-6-helicopter";
+    QString error;
+    PortableConfigurationBundle bundle;
+    QVERIFY2(ProfilePortability::inspect(
+        QStringLiteral(":/assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile"),
+        &bundle, &error), qPrintable(error));
+    QCOMPARE(bundle.kind, PortableConfigurationKind::Profile);
+    QCOMPARE(bundle.categories.size(), size_t{1});
+    QCOMPARE(bundle.profiles.size(), size_t{1});
+    QCOMPARE(bundle.curves.size(), size_t{0});
+    QCOMPARE(bundle.automations.size(), size_t{0});
+    QCOMPARE(bundle.outputLayouts.size(), size_t{1});
+    QVERIFY(!bundle.includesDevices);
+    QVERIFY(!bundle.includesCalibration);
+    QVERIFY(bundle.deviceDescriptors.empty());
+    QVERIFY(!bundle.sourceController.contains(QStringLiteral("lastDirectInputId")));
+    QVERIFY(!bundle.sourceController.contains(QStringLiteral("hidInstanceId")));
+    QVERIFY(!bundle.sourceController.contains(QStringLiteral("hidContainerId")));
+    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
+    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
+    QCOMPARE(bundle.categories.front().id, QLatin1String(kCategoryId));
+    QCOMPARE(bundle.profiles.front().id, QLatin1String(kProfileId));
+    QCOMPARE(bundle.profiles.front().name, QStringLiteral("Helicopter"));
+
+    const auto migrateV231 = [](const MapperConfiguration &source) {
+        QJsonObject v231 = ConfigStore::toJson(source);
+        v231.insert(QStringLiteral("version"), 21);
+        bool valid = false;
+        const MapperConfiguration migrated = ConfigStore::fromJson(v231, &valid);
+        return std::pair{migrated, valid};
+    };
+
+    const MapperConfiguration pristine = defaultConfiguration();
+    const auto [fresh, freshValid] = migrateV231(pristine);
+    QVERIFY(freshValid);
+    QCOMPARE(fresh.profileCategories.size(), size_t{2});
+    QCOMPARE(fresh.profiles.size(), size_t{3});
+    const ProfileCategory *starterCategory = findProfileCategory(fresh, QLatin1String(kCategoryId));
+    const ControllerProfile *starterProfile = findProfile(fresh, QLatin1String(kProfileId));
+    QVERIFY(starterCategory);
+    QVERIFY(starterProfile);
+    QCOMPARE(starterCategory->name, QStringLiteral("Battlefield 6"));
+    QCOMPARE(starterCategory->profileIds, std::vector<QString>{QLatin1String(kProfileId)});
+    QCOMPARE(starterCategory->defaultProfileId, QLatin1String(kProfileId));
+    QCOMPARE(starterCategory->lastActiveProfileId, QLatin1String(kProfileId));
+    QCOMPARE(fresh.activeProfileId, normalProfileId());
+    QCOMPARE(ConfigStore::portableCategoryToJson(*starterCategory),
+             ConfigStore::portableCategoryToJson(bundle.categories.front()));
+    QCOMPARE(ConfigStore::portableProfileToJson(*starterProfile),
+             ConfigStore::portableProfileToJson(bundle.profiles.front()));
+
+    MapperConfiguration importTarget = defaultConfiguration();
+    QStringList warnings;
+    QVERIFY2(ProfilePortability::apply(&importTarget, bundle, {}, &warnings, &error), qPrintable(error));
+    const auto imported = std::find_if(importTarget.profiles.cbegin(), importTarget.profiles.cend(),
+        [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Helicopter"); });
+    QVERIFY(imported != importTarget.profiles.cend());
+    QJsonObject importedJson = ConfigStore::portableProfileToJson(*imported);
+    QJsonObject bundledJson = ConfigStore::portableProfileToJson(bundle.profiles.front());
+    importedJson.remove(QStringLiteral("id"));
+    importedJson.remove(QStringLiteral("categoryId"));
+    bundledJson.remove(QStringLiteral("id"));
+    bundledJson.remove(QStringLiteral("categoryId"));
+    QCOMPARE(importedJson, bundledJson);
+
+    MapperConfiguration existing = defaultConfiguration();
+    QString customCategoryId;
+    QVERIFY(createProfileCategory(existing, QStringLiteral("Custom Flight"), &customCategoryId));
+    QString customProfileId;
+    QVERIFY(createProfileInCategory(existing, QStringLiteral("Personal Craft"), customCategoryId,
+                                    precisionProfileId(), &customProfileId));
+    ControllerProfile *customProfile = findProfile(existing, customProfileId);
+    QVERIFY(customProfile);
+    customProfile->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.37F;
+    QVERIFY(activateProfile(existing, customProfileId));
+    const auto [migratedExisting, existingValid] = migrateV231(existing);
+    QVERIFY(existingValid);
+    const ControllerProfile *preservedProfile = findProfile(migratedExisting, customProfileId);
+    QVERIFY(preservedProfile);
+    QCOMPARE(preservedProfile->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.37F);
+    QCOMPARE(migratedExisting.activeProfileId, customProfileId);
+    QVERIFY(findProfile(migratedExisting, QLatin1String(kProfileId)));
+
+    MapperConfiguration collision = defaultConfiguration();
+    QString collisionCategoryId;
+    QVERIFY(createProfileCategory(collision, QStringLiteral("Battlefield 6"), &collisionCategoryId));
+    QString collisionProfileId;
+    QVERIFY(createProfileInCategory(collision, QStringLiteral("Helicopter"), collisionCategoryId,
+                                    normalProfileId(), &collisionProfileId));
+    findProfile(collision, collisionProfileId)->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.43F;
+    const auto [migratedCollision, collisionValid] = migrateV231(collision);
+    QVERIFY(collisionValid);
+    const ProfileCategory *preservedCategory = findProfileCategory(migratedCollision, collisionCategoryId);
+    const ControllerProfile *preservedCollision = findProfile(migratedCollision, collisionProfileId);
+    const ProfileCategory *collisionStarterCategory = findProfileCategory(migratedCollision,
+                                                                           QLatin1String(kCategoryId));
+    QVERIFY(preservedCategory);
+    QVERIFY(preservedCollision);
+    QVERIFY(collisionStarterCategory);
+    QCOMPARE(preservedCategory->name, QStringLiteral("Battlefield 6"));
+    QCOMPARE(preservedCollision->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.43F);
+    QCOMPARE(collisionStarterCategory->name, QStringLiteral("Battlefield 6 (Starter)"));
+    QVERIFY(findProfile(migratedCollision, QLatin1String(kProfileId)));
+
+    MapperConfiguration edited = fresh;
+    ControllerProfile *editableStarter = findProfile(edited, QLatin1String(kProfileId));
+    QVERIFY(editableStarter);
+    editableStarter->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.41F;
+    bool valid = false;
+    MapperConfiguration reloaded = ConfigStore::fromJson(ConfigStore::toJson(edited), &valid);
+    QVERIFY(valid);
+    QCOMPARE(findProfile(reloaded, QLatin1String(kProfileId))
+                 ->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.41F);
+    QVERIFY(deleteProfile(reloaded, QLatin1String(kProfileId)));
+    reloaded = ConfigStore::fromJson(ConfigStore::toJson(reloaded), &valid);
+    QVERIFY(valid);
+    QVERIFY(!findProfile(reloaded, QLatin1String(kProfileId)));
 }
 
 void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault()
@@ -4847,7 +4972,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -4861,7 +4986,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     const MapperConfiguration migrated = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
     QVERIFY(migrated.profileTriggers.empty());
-    QCOMPARE(static_cast<int>(migrated.profiles.size()), static_cast<int>(configuration.profiles.size()));
+    QCOMPARE(static_cast<int>(migrated.profiles.size()), static_cast<int>(configuration.profiles.size()) + 1);
 }
 
 void MappingCoreTests::holdProfileTriggerSelectsPrecompiledRuntimeAndConsumesButton()
@@ -5090,7 +5215,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 21);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

@@ -545,5 +545,17 @@
       "A passive arrival check validates the selected controller, vJoy, and HidHide after reconnect. Stable PnP container identity keeps healthy remembered controllers silent; setup opens only for genuinely new or attention-needed devices.",
       "Realistic deterministic preview scenarios replace misleading normal-user stress traces while diagnostics retain predictor internals and existing reversal safety."
     ]
+  },
+  {
+    "version": "2.3.2",
+    "title": "Battlefield 6 Helicopter starter profile",
+    "summary": "Ships a ready-to-customize Battlefield 6 Helicopter starter profile derived from the project's working helicopter configuration without changing Adaptive Response or the mapping hot path.",
+    "highlights": [
+      "New installations include General / Normal, General / Precision, and Battlefield 6 / Helicopter in Profile Library.",
+      "Schema 22 safely adds the deterministic starter profile once to v2.3.1-and-earlier configurations while preserving selected profiles, controller configuration, calibration, mappings, curves, Automation, and user-created categories.",
+      "The bundled portable profile keeps its portable mappings, output-layout requirements, curves, and built-in Adaptive Response preset references while excluding calibration, DirectInput runtime IDs, HidHide instance state, local paths, and installation state.",
+      "A user-created Battlefield 6 or Helicopter name collision is never overwritten; the starter is added under a separate Battlefield 6 (Starter) category when necessary.",
+      "The seeded profile remains an ordinary editable profile. Changes and deletion persist across later launches; the starter is not continuously restored."
+    ]
   }
 ]

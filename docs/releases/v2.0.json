@@ -397,16 +397,50 @@
     "releaseTitle": "v2.3.0",
     "title": "Adaptive Response",
     "summary": "HOTAS BF6 v2.3.0 adds a bounded per-axis predictive phase lead for deliberate physical HOTAS movement while keeping direct physical-position reacquisition and the allocation-free DirectInput-to-vJoy report path.",
-    "status": "current",
-    "replacement": null,
+    "status": "historical-stable",
+    "replacement": "2.3.2",
     "syncToGitHubRelease": true,
-    "statusNote": "Current candidate release pending protected CI, signed installer, public updater, physical-controller, game, and packaged-resource acceptance. Local core, Automation, QML-startup, UI-contract, and synthetic hot-path evidence do not replace those gates.",
+    "statusNote": "Historical stable release. v2.3.0 established the Adaptive Response baseline; use v2.3.2 for the current starter-profile release. Physical controller, game, installer, signing, public updater, and live packaged-resource acceptance remain release- and machine-specific checks.",
     "highlights": [
       "Each axis predicts only from its calibrated normalized physical position and derivatives with an adaptive 0–30 ms horizon; it is not smoothing and does not feed prediction back into the estimator.",
       "Velocity, Alpha-Beta, Alpha-Beta-Gamma, and Auto models cancel stale lead on reversal, reduce lead at stops, taper at endpoints, and clamp within the legal axis domain.",
       "Global, Category, Profile, and temporary Automation layers expose built-in and user presets while compiling durable hierarchy and preset lookups outside the mapper report loop.",
       "Adaptive Response controls, static preview/Test Lab scenarios, diagnostics telemetry, portable preset validation, schema-21 migration, focused tests, and a synthetic hot-path benchmark provide local implementation evidence.",
       "No per-report allocation, lock, UI callback, logging, persistence, process discovery, device inspection, or profile hierarchy lookup was added to MappingWorker."
+    ]
+  },
+  {
+    "version": "2.3.1",
+    "tag": "v2.3.1",
+    "releaseTitle": "v2.3.1",
+    "title": "Adaptive Response correctness and Response Lab",
+    "summary": "Refines Adaptive Response observability and mapped-output lead authority while retaining the established physical-motion estimator and allocation-free mapping path.",
+    "status": "historical-stable",
+    "replacement": "2.3.2",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical stable release. v2.3.1 refined Adaptive Response correctness and controller arrival checks; use v2.3.2 for the current starter-profile release.",
+    "highlights": [
+      "Response Lab combines interactive and live-controller inspection, including live physical-input telemetry independent of vJoy or Mapping On state.",
+      "Maximum Lead consistently bounds mapped-output movement under nonlinear curves while existing Adaptive Response settings retain their stored values.",
+      "Motion-aware center handling keeps coherent transit continuous while settling and jitter converge to exact zero."
+    ]
+  },
+  {
+    "version": "2.3.2",
+    "tag": "v2.3.2",
+    "releaseTitle": "v2.3.2",
+    "title": "Battlefield 6 Helicopter starter profile",
+    "summary": "Adds a ready-to-customize Battlefield 6 / Helicopter starter profile derived from the project's working helicopter configuration.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release. The governed tag workflow supplies the installer, checksum, update manifest, and public updater validation; controller compatibility remains dependent on each user's configured hardware and setup.",
+    "highlights": [
+      "New installations receive the Battlefield 6 / Helicopter starter alongside the existing General / Normal and General / Precision profiles.",
+      "Schema 22 adds the starter once during a safe upgrade, preserving existing profiles, active selection, controller configuration, calibration, curves, Automation, and unrelated categories.",
+      "The starter is an ordinary editable profile: later changes and deletion persist, and user-created name collisions are never overwritten.",
+      "The portable bundled resource preserves the tested mapping semantics and excludes local paths, DirectInput runtime handles, HidHide instance state, and calibration data.",
+      "No Adaptive Response behavior or DirectInput-to-vJoy report-path work changed."
     ]
   }
 ]

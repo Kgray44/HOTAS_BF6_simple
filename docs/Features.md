@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.3.1**
+**Current release: v2.3.2**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -252,6 +252,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 - Schema migrations preserve established behavior for older configurations, including schema-18 data-only migration to reusable virtual-output layouts.
 - Schema 20 adds deterministic Curve Transition Smoothing defaults and an optional profile override while preserving prior mapping behavior.
 - Schema 21 adds safe-off Adaptive Response defaults plus global/category/profile layers, bounded custom presets, and portable preset dependencies; legacy configurations retain direct physical response.
+- Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.
 - Runtime-only toggles, latches, timers, and held-control state are never persisted.
