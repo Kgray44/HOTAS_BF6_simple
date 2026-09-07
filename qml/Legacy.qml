@@ -1066,9 +1066,9 @@ Page {
      font.bold: true }
                 }
             }
-            FineLine { Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 940; Layout.preferredWidth: 1
  Layout.preferredHeight: 24 }
-            Row { spacing: 7
+            Row { visible: root.width >= 940; spacing: 7
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
  color: "#c3cecf"
@@ -1090,9 +1090,9 @@ Page {
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
-            FineLine { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
+            Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
                 Text { text: "PROFILE"
                     color: "#78919a"; font.pixelSize: 9; font.bold: true }
                 Text { text: backend.effectiveProfileDisplayName.toUpperCase()
@@ -1102,10 +1102,10 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 900; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            FineLine { visible: root.width >= 640; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
             DeviceContextSelector {
                 objectName: "legacyDeviceContextSelector"
-                visible: root.width >= 900
+                visible: root.width >= 640
                 Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
                 Layout.maximumWidth: 272
                 backendObject: backend
@@ -1129,6 +1129,7 @@ Page {
             }
             Rectangle {
                 id: globalMappingControl
+                objectName: "globalMappingControl"
                 implicitWidth: legacyMappingRow.implicitWidth + 18; implicitHeight: 30; radius: 3
                 color: legacyMappingMouse.pressed ? "#284751" : legacyMappingMouse.containsMouse ? "#263f49" : "#18242a"
                 border.color: backend.mappingActive ? "#91c4a4" : backend.mappingRequested ? "#d6bd78" : "#52717c"

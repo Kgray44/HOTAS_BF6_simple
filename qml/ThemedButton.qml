@@ -17,13 +17,17 @@ Rectangle {
     implicitWidth: Math.max(compact ? 34 : (legacy ? 110 : 92), caption.implicitWidth + (compact ? 18 : (legacy ? 30 : 24)))
     implicitHeight: compact ? 30 : (legacy ? 36 : 34)
     radius: legacy ? 3 : theme.controlRadius
-    color: !commandEnabled ? theme.controlDisabled
-           : tone === "danger" ? Qt.rgba(dangerColor.r, dangerColor.g, dangerColor.b, mouse.containsMouse ? 0.25 : 0.14)
+    // Legacy already has a deliberately tuned CommandButton treatment.  Keep
+    // these exact values in the shared primitive so Devices can reuse it
+    // without bringing a Standard-looking button into the Legacy surface.
+    color: !commandEnabled ? (legacy ? "#151a1e" : theme.controlDisabled)
+           : tone === "danger" ? (legacy ? (mouse.containsMouse ? "#4f3439" : "#35272b")
+                                           : Qt.rgba(dangerColor.r, dangerColor.g, dangerColor.b, mouse.containsMouse ? 0.25 : 0.14))
            : tone === "secondary" ? (mouse.containsMouse ? theme.buttonSecondaryHover : theme.buttonSecondary)
            : (mouse.containsMouse ? theme.buttonHover : theme.buttonSurface)
-    border.color: !commandEnabled ? theme.border
+    border.color: !commandEnabled ? (legacy ? "#182f3539" : theme.border)
                   : tone === "danger" ? theme.danger
-                  : tone === "secondary" ? theme.border
+                  : tone === "secondary" ? (legacy ? "#536975" : theme.border)
                   : theme.orange
     opacity: commandEnabled ? 1 : 0.5
 
@@ -32,7 +36,9 @@ Rectangle {
         anchors.centerIn: parent
         anchors.margins: 8
         text: control.text
-        color: !control.commandEnabled ? theme.textFaint : control.tone === "danger" ? theme.danger : theme.textStrong
+        color: !control.commandEnabled ? (control.legacy ? "#879196" : theme.textFaint)
+                                        : control.tone === "danger" ? theme.danger
+                                                                     : (control.legacy ? "#f0f4f5" : theme.textStrong)
         font.pixelSize: control.compact ? 10 : 11
         font.bold: true
         font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable"

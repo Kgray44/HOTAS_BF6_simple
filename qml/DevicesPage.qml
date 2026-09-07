@@ -145,7 +145,11 @@ Page {
                 Layout.fillWidth: true
                 implicitHeight: migrationWarning.implicitHeight + 30
                 visible: backendObject && backendObject.deviceRigMigrationWarning.length > 0
-                color: Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
+                // Legacy warning panels retain the established layered
+                // aviation surface.  The coloured border carries severity;
+                // replacing the surface with a translucent modern fill made
+                // these cards look imported from Standard.
+                color: root.legacy ? "#e9161d23" : Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
                 border.color: warningColor
                 Text {
                     id: migrationWarning
@@ -159,7 +163,7 @@ Page {
                 Layout.fillWidth: true
                 implicitHeight: rigDetectionWarning.implicitHeight + 30
                 visible: backendObject && backendObject.deviceRigDetectionMessage.length > 0
-                color: Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
+                color: root.legacy ? "#e9161d23" : Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
                 border.color: warningColor
                 Text {
                     id: rigDetectionWarning
@@ -173,8 +177,8 @@ Page {
                 objectName: "activeRigPanel"
                 Layout.fillWidth: true
                 Layout.preferredHeight: activeRigColumn.implicitHeight + 32
-                color: selectedRig ? Qt.rgba(healthColor(selectedRig.health).r, healthColor(selectedRig.health).g,
-                                             healthColor(selectedRig.health).b, 0.08) : themeTokens.panel
+                color: root.legacy ? "#e9161d23" : (selectedRig ? Qt.rgba(healthColor(selectedRig.health).r, healthColor(selectedRig.health).g,
+                                             healthColor(selectedRig.health).b, 0.08) : themeTokens.panel)
                 border.color: selectedRig ? healthColor(selectedRig.health) : themeTokens.border
                 ColumnLayout {
                     id: activeRigColumn
@@ -309,7 +313,11 @@ Page {
                                 required property var modelData
                                 theme: root.themeTokens; legacy: root.legacy
                                 Layout.fillWidth: true; implicitHeight: memberCardContent.implicitHeight + 22; radius: root.legacy ? 4 : themeTokens.controlRadius
-                                color: Qt.rgba(panelRaisedColor.r, panelRaisedColor.g, panelRaisedColor.b, 0.54)
+                                // Do not recolour a LegacyAviationPanel into
+                                // a raised Standard card.  Its layered base,
+                                // top highlight and lower edge are part of
+                                // the Legacy visual language.
+                                color: root.legacy ? "#e9161d23" : Qt.rgba(panelRaisedColor.r, panelRaisedColor.g, panelRaisedColor.b, 0.54)
                                 border.color: modelData.ambiguous ? themeTokens.danger : modelData.connected ? themeTokens.ready : themeTokens.border
                                 ColumnLayout {
                                     id: memberCardContent
@@ -354,13 +362,26 @@ Page {
                             SmallLabel { text: "VIRTUAL OUTPUTS" }
                             Repeater {
                                 model: selectedRig ? selectedRig.outputs : []
-                                delegate: RowLayout {
+                                delegate: DevicePanel {
                                     required property var modelData
+                                    theme: root.themeTokens; legacy: root.legacy
                                     Layout.fillWidth: true
-                                    Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.text; font.pixelSize: 11; elide: Text.ElideRight }
-                                    ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value) } }
-                                    ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
-                                    ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigOutput(rigId, modelData.id) } }
+                                    implicitHeight: outputCardContent.implicitHeight + 18
+                                    color: root.legacy ? "#e9161d23" : themeTokens.panelRaised
+                                    border.color: modelData.ready ? themeTokens.ready : themeTokens.warning
+                                    RowLayout {
+                                        id: outputCardContent
+                                        anchors.fill: parent; anchors.margins: 9; spacing: 8
+                                        Rectangle { width: 7; height: 7; radius: 4; color: modelData.ready ? themeTokens.ready : themeTokens.warning }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true; spacing: 1
+                                            Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
+                                            Text { Layout.fillWidth: true; text: (modelData.ready ? "Ready" : modelData.status || "Needs verification") + "  ·  " + (modelData.routeCount || 0) + " configured routes"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                                        }
+                                        ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value) } }
+                                        ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
+                                        ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigOutput(rigId, modelData.id) } }
+                                    }
                                 }
                             }
                             RowLayout { Layout.fillWidth: true
@@ -385,40 +406,50 @@ Page {
                             theme: themeTokens; text: "BATCH AXIS EDIT…"; tone: "secondary"
                             onTriggered: batchAxisDialog.open()
                         }
-                        Rectangle { visible: selectedRig !== null; Layout.fillWidth: true; height: 1; color: themeTokens.divider }
-                        ColumnLayout {
-                            visible: selectedRig !== null; Layout.fillWidth: true; spacing: 9
-                            SmallLabel { text: "AUTOMATIC BEHAVIOR" }
-                            Flow {
-                                Layout.fillWidth: true; spacing: 12
-                                ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigEnabled(selectedRig.id, value) } }
-                                ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigAutoActivate(selectedRig.id, value) } }
+                    }
+                }
+
+                // Automatic controls intentionally have their own section.
+                // They are control-plane policy, not member/output controls,
+                // and must grow independently from the detail card.
+                Panel {
+                    objectName: "automaticBehaviorPanel"
+                    visible: selectedRig !== null
+                    Layout.fillWidth: true
+                    implicitHeight: automaticBehaviorContent.implicitHeight + 28
+                    ColumnLayout {
+                        id: automaticBehaviorContent
+                        anchors.fill: parent; anchors.margins: 14; spacing: 10
+                        SmallLabel { text: "AUTOMATIC BEHAVIOR" }
+                        Flow {
+                            Layout.fillWidth: true; spacing: 12
+                            ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigEnabled(selectedRig.id, value) } }
+                            ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigAutoActivate(selectedRig.id, value) } }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            SmallLabel { text: "DISCONNECT" }
+                            ThemedComboBox {
+                                theme: themeTokens; Layout.preferredWidth: 220
+                                model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
+                                currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
+                                onActivated: function(index) { if (selectedRig) backendObject.setDeviceRigDisconnectBehavior(selectedRig.id, index) }
                             }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                SmallLabel { text: "DISCONNECT" }
-                                ThemedComboBox {
-                                    theme: themeTokens; Layout.preferredWidth: 220
-                                    model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
-                                    currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
-                                    onActivated: function(index) { if (selectedRig) backendObject.setDeviceRigDisconnectBehavior(selectedRig.id, index) }
-                                }
-                                Item { Layout.fillWidth: true }
+                            Item { Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            SmallLabel { text: "PRIORITY" }
+                            ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { if (selectedRig) backendObject.setDeviceRigActivationPriority(selectedRig.id, value) } }
+                            SmallLabel { text: "FALLBACK" }
+                            ThemedComboBox {
+                                id: fallbackPicker; theme: themeTokens; Layout.preferredWidth: 210
+                                model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) { return selectedRig && item.id !== selectedRig.id }))
+                                textRole: "name"; valueRole: "id"
+                                currentIndex: root.indexFor(model, selectedRig ? selectedRig.fallbackRigId : "")
+                                onActivated: function(index, value) { if (selectedRig) backendObject.setDeviceRigFallback(selectedRig.id, value) }
                             }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                SmallLabel { text: "PRIORITY" }
-                                ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { if (selectedRig) backendObject.setDeviceRigActivationPriority(selectedRig.id, value) } }
-                                SmallLabel { text: "FALLBACK" }
-                                ThemedComboBox {
-                                    id: fallbackPicker; theme: themeTokens; Layout.preferredWidth: 210
-                                    model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) { return selectedRig && item.id !== selectedRig.id }))
-                                    textRole: "name"; valueRole: "id"
-                                    currentIndex: root.indexFor(model, selectedRig ? selectedRig.fallbackRigId : "")
-                                    onActivated: function(index, value) { if (selectedRig) backendObject.setDeviceRigFallback(selectedRig.id, value) }
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
+                            Item { Layout.fillWidth: true }
                         }
                     }
                 }
@@ -439,7 +470,7 @@ Page {
                                 required property var modelData
                                 theme: root.themeTokens; legacy: root.legacy
                                 implicitWidth: Math.max(170, deviceName.implicitWidth + 28); implicitHeight: 52
-                                radius: themeTokens.controlRadius; color: themeTokens.panelRaised; border.color: modelData.connected ? themeTokens.ready : themeTokens.border
+                                radius: themeTokens.controlRadius; color: root.legacy ? "#e9161d23" : themeTokens.panelRaised; border.color: modelData.connected ? themeTokens.ready : themeTokens.border
                                 Column { anchors.fill: parent; anchors.margins: 9; spacing: 2
                                     Text { id: deviceName; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; width: 210 }
                                     Text { text: modelData.state; color: themeTokens.textMuted; font.pixelSize: 9 }

@@ -39,11 +39,15 @@ Item {
 
     Rectangle {
         anchors.fill: parent; radius: theme.controlRadius
-        color: control.controlEnabled ? (hit.containsMouse ? theme.controlHover : theme.control) : theme.controlDisabled
-        border.color: popup.visible || hit.containsMouse ? theme.borderStrong : theme.border
+        color: control.controlEnabled ? (hit.containsMouse ? (control.legacy ? "#142128" : theme.controlHover)
+                                                            : theme.control)
+                                    : theme.controlDisabled
+        border.color: popup.visible ? (control.legacy ? "#78aab9" : theme.borderStrong)
+                     : hit.containsMouse ? (control.legacy ? "#527482" : theme.borderStrong)
+                                         : (control.legacy ? "#435660" : theme.border)
         Text { anchors.left: parent.left; anchors.right: arrow.left; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 10; anchors.rightMargin: 6
-            text: control.displayText; color: control.controlEnabled ? theme.text : theme.textFaint; font.pixelSize: 10; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
-        Text { id: arrow; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: popup.visible ? "⌃" : "⌄"; color: theme.textMuted; font.pixelSize: 15 }
+            text: control.displayText; color: control.controlEnabled ? (control.legacy ? "#dce7e8" : theme.text) : theme.textFaint; font.pixelSize: 10; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+        Text { id: arrow; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: popup.visible ? "⌃" : "⌄"; color: control.legacy ? "#94adb5" : theme.textMuted; font.pixelSize: 15 }
     }
     MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; enabled: control.controlEnabled; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: popup.visible ? popup.close() : popup.open() }
     Popup {
@@ -53,7 +57,11 @@ Item {
         implicitHeight: Math.min(control.popupMaximumHeight, list.contentHeight + topPadding + bottomPadding)
         height: implicitHeight
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-        background: DevicePanel { theme: control.theme; legacy: control.legacy; border.color: theme.borderStrong }
+        background: Rectangle {
+            radius: control.legacy ? 5 : control.theme.panelRadius
+            color: control.legacy ? "#151e23" : control.theme.tooltip
+            border.color: control.legacy ? "#52717c" : control.theme.borderStrong
+        }
         contentItem: ListView {
             id: list; clip: true; model: control.model; implicitHeight: contentHeight
             delegate: Item {
@@ -61,8 +69,16 @@ Item {
                 required property int index
                 width: list.width; implicitHeight: 34
                 readonly property bool chosen: index === control.currentIndex
-                Rectangle { anchors.fill: parent; radius: theme.controlRadius; color: itemHit.containsMouse ? theme.selection : parent.chosen ? theme.selectionCurrent : "transparent"; border.color: parent.chosen ? theme.borderStrong : "transparent" }
-                Text { anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: Text.AlignVCenter; text: control.textFor(index); color: theme.text; font.pixelSize: 10; elide: Text.ElideRight }
+                Rectangle {
+                    anchors.fill: parent; radius: control.legacy ? 3 : theme.controlRadius
+                    color: control.legacy
+                           ? (itemHit.containsMouse ? "#1d333b" : parent.chosen ? "#244650" : "transparent")
+                           : (itemHit.containsMouse ? theme.selection : parent.chosen ? theme.selectionCurrent : "transparent")
+                    border.color: control.legacy
+                                  ? (itemHit.containsMouse ? "#6f9fac" : parent.chosen ? "#527d88" : "transparent")
+                                  : (parent.chosen ? theme.borderStrong : "transparent")
+                }
+                Text { anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: Text.AlignVCenter; text: control.textFor(index); color: control.legacy ? "#d0dcdd" : theme.text; font.pixelSize: 10; elide: Text.ElideRight }
                 MouseArea { id: itemHit; anchors.fill: parent; hoverEnabled: true; onClicked: control.choose(index) }
             }
             ScrollIndicator.vertical: ScrollIndicator { }

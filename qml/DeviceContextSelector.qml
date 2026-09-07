@@ -39,8 +39,10 @@ Item {
 
     Rectangle {
         anchors.fill: parent; radius: theme.controlRadius
-        color: trigger.containsMouse ? theme.controlHover : theme.control
-        border.color: popup.visible ? theme.orange : theme.border
+        color: trigger.containsMouse ? (control.legacy ? "#142128" : theme.controlHover) : theme.control
+        border.color: popup.visible ? (control.legacy ? "#78aab9" : theme.orange)
+                     : trigger.containsMouse ? (control.legacy ? "#527482" : theme.borderStrong)
+                                           : (control.legacy ? "#435660" : theme.border)
         RowLayout { anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 8; spacing: 6
             Rectangle { width: 7; height: 7; radius: theme.topGun ? 1 : 4; color: control.healthColor((control.currentRig() || {}).health || "offline") }
             Text { id: contextLabel; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
@@ -62,7 +64,7 @@ Item {
         contentItem: ColumnLayout {
             width: parent.width; spacing: 6
             Text { text: "CURRENT RIG"; color: theme.textMuted; font.pixelSize: 9; font.bold: true }
-            Rectangle { Layout.fillWidth: true; implicitHeight: 48; radius: theme.controlRadius; color: theme.panelRaised; border.color: theme.border
+            DevicePanel { Layout.fillWidth: true; implicitHeight: 48; theme: control.theme; legacy: control.legacy; border.color: control.legacy ? "#52717c" : theme.border
                 Column { anchors.fill: parent; anchors.margins: 8; spacing: 2
                     Text { text: backendObject.editingDeviceRigName; color: theme.textStrong; font.pixelSize: 12; font.bold: true }
                     Text { text: ((control.currentRig() || {}).healthLabel || "Offline") + " · " + control.connectedSummary() + (backendObject.editingDeviceRigId === backendObject.activeDeviceRigId ? "   ACTIVE RUNTIME" : ""); color: theme.textMuted; font.pixelSize: 9 }

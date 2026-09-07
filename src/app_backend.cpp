@@ -2826,10 +2826,17 @@ QVariantList AppBackend::deviceRigs() const
         QVariantList outputs;
         for (const DeviceRigOutputTarget &target : rig.outputs) {
             const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
+            // The landing-page projection needs the same compact readiness
+            // summary as the output detail view.  This is a UI/control-plane
+            // snapshot, never a mapper/report-path query.
+            const QVariantMap detail = virtualOutputDetail(target.outputLayoutId);
             outputs.append(QVariantMap{{u"id"_qs, target.outputLayoutId},
                 {u"name"_qs, layout ? layout->name : u"Unavailable output"_qs},
                 {u"deviceId"_qs, layout ? layout->requirements.deviceId : 0},
-                {u"enabled"_qs, target.enabled}});
+                {u"enabled"_qs, target.enabled},
+                {u"ready"_qs, detail.value(u"ready"_qs, false)},
+                {u"status"_qs, detail.value(u"status"_qs, u"Output unavailable"_qs)},
+                {u"routeCount"_qs, detail.value(u"routeCount"_qs, 0)}});
         }
         result.append(QVariantMap{{u"id"_qs, rig.id}, {u"name"_qs, rig.name},
             {u"enabled"_qs, rig.enabled}, {u"default"_qs, rig.isDefault},

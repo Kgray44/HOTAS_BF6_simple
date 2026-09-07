@@ -5,6 +5,7 @@
 #include "theme_manager.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
@@ -864,8 +865,14 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     const QVariantMap initialRig = initialRigs.front().toMap();
     const QString rigId = initialRig.value(QStringLiteral("id")).toString();
     const QVariantList members = initialRig.value(QStringLiteral("members")).toList();
+    const QVariantList outputs = initialRig.value(QStringLiteral("outputs")).toList();
     if (rigId.isEmpty() || members.size() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture has no usable rig members"));
+    }
+    if (outputs.isEmpty() || !outputs.front().toMap().contains(QStringLiteral("ready"))
+        || !outputs.front().toMap().contains(QStringLiteral("status"))
+        || !outputs.front().toMap().contains(QStringLiteral("routeCount"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices output card projection is missing readiness or route summary"));
     }
     const QString firstMember = members.at(0).toMap().value(QStringLiteral("id")).toString();
     const QString secondMember = members.at(1).toMap().value(QStringLiteral("id")).toString();
@@ -919,7 +926,7 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     return selectPage(surface, 8);
 }
 
-bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell)
+bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QString &theme)
 {
     if (!shell || !selectPage(surface, 10)) {
         return failPresentationLifecycleTest(QStringLiteral("Devices responsive layout could not enter its page"));
@@ -927,13 +934,37 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell)
     QObject *devicesObject = pageItem(surface, 10);
     auto *devices = qobject_cast<QQuickItem *>(devicesObject);
     if (!devices) return failPresentationLifecycleTest(QStringLiteral("Devices responsive layout did not create a visual root"));
+    const QString contextName = theme == QStringLiteral("Legacy")
+        ? QStringLiteral("legacyDeviceContextSelector")
+        : theme == QStringLiteral("Top Gun") ? QStringLiteral("topGunDeviceContextSelector")
+                                           : QStringLiteral("standardDeviceContextSelector");
+    auto *contextSelector = surface->findChild<QQuickItem *>(contextName);
+    auto *mappingControl = surface->findChild<QQuickItem *>(QStringLiteral("globalMappingControl"));
+    if (!contextSelector) {
+        return failPresentationLifecycleTest(QStringLiteral("Persistent Device Context was not available for %1").arg(theme));
+    }
     const QSize original = shell->size();
-    const QList<QSize> sizes{{1280, 720}, {1440, 900}, {1920, 1080}};
+    const QList<QSize> sizes{{900, 650}, {1280, 720}, {1440, 900}, {1920, 1080}};
     const QStringList panels{QStringLiteral("activeRigPanel"), QStringLiteral("deviceRigListPanel"),
-        QStringLiteral("rigDetailsPanel"), QStringLiteral("knownDevicesPanel")};
+        QStringLiteral("rigDetailsPanel"), QStringLiteral("automaticBehaviorPanel"),
+        QStringLiteral("knownDevicesPanel")};
     for (const QSize &size : sizes) {
         shell->resize(size);
         settlePresentation();
+        if (!contextSelector->isVisible()) {
+            shell->resize(original);
+            return failPresentationLifecycleTest(QStringLiteral("Persistent Device Context disappeared at %1x%2 for %3")
+                .arg(size.width()).arg(size.height()).arg(theme));
+        }
+        if (mappingControl && mappingControl->isVisible()) {
+            const QRectF contextBounds(contextSelector->mapToScene(QPointF{}), contextSelector->size());
+            const QRectF mappingBounds(mappingControl->mapToScene(QPointF{}), mappingControl->size());
+            if (contextBounds.intersects(mappingBounds)) {
+                shell->resize(original);
+                return failPresentationLifecycleTest(QStringLiteral("Device Context overlaps mapping status at %1x%2 for %3")
+                    .arg(size.width()).arg(size.height()).arg(theme));
+            }
+        }
         QList<QQuickItem *> resolved;
         for (const QString &name : panels) {
             auto *panel = devices->findChild<QQuickItem *>(name);
@@ -948,6 +979,14 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell)
                     .arg(devices->width()).arg(devices->height())
                     .arg(scroll ? scroll->width() : -1).arg(scroll ? scroll->height() : -1)
                     .arg(content ? content->width() : -1).arg(content ? content->height() : -1));
+            }
+            if (theme == QStringLiteral("Legacy")) {
+                const QColor expectedLegacySurface(QStringLiteral("#e9161d23"));
+                if (panel->property("color").value<QColor>() != expectedLegacySurface) {
+                    shell->resize(original);
+                    return failPresentationLifecycleTest(QStringLiteral("Legacy Devices panel %1 lost its established layered surface")
+                        .arg(name));
+                }
             }
             resolved.append(panel);
         }
@@ -1063,7 +1102,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     }
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
     if (!verifyDevicesInteractionStress(backend, surface)) return false;
-    if (!verifyDevicesResponsiveLayout(surface, shell)) return false;
+    if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
     if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
     return selectPage(surface, 8);
 }

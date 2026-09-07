@@ -1108,9 +1108,9 @@ Page {
                     }
                 }
             }
-            FineLine { Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 940; Layout.preferredWidth: 1
  Layout.preferredHeight: 24 }
-            Row { spacing: 7
+            Row { visible: root.width >= 940; spacing: 7
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
  color: theme.text
@@ -1132,9 +1132,9 @@ Page {
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : theme.textMuted; font.pixelSize: 10; font.bold: true }
             }
-            FineLine { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
+            Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
                 Text { text: "PROFILE"
                     color: theme.textMuted; font.pixelSize: 9; font.bold: true }
                 Text { text: backend.effectiveProfileDisplayName.toUpperCase()
@@ -1144,12 +1144,13 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 900; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            FineLine { visible: root.width >= 640; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
             DeviceContextSelector {
                 objectName: "standardDeviceContextSelector"
-                // Keep the editing context available at the supported compact
-                // width; the label elides before profile/mapping controls do.
-                visible: root.width >= 900
+                // Keep editing context at compact sizes. The label elides,
+                // while secondary telemetry yields first, rather than making
+                // this persistent control disappear at a magic threshold.
+                visible: root.width >= 640
                 Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
                 Layout.maximumWidth: 272
                 backendObject: backend
@@ -1175,6 +1176,7 @@ Page {
             }
             Rectangle {
                 id: globalMappingControl
+                objectName: "globalMappingControl"
                 implicitWidth: mappingControlRow.implicitWidth + 18; implicitHeight: 30
                 radius: theme.topGun ? 1 : theme.controlRadius
                 color: mappingControlMouse.pressed ? theme.controlPressed : mappingControlMouse.containsMouse ? theme.controlHover : theme.control
@@ -1236,7 +1238,7 @@ Page {
             }
             DeviceContextSelector {
                 objectName: "topGunDeviceContextSelector"
-                visible: root.width >= 900
+                visible: root.width >= 560
                 x: Math.min(772, parent.width - width - 12)
                 y: 29
                 width: Math.min(240, Math.max(186, root.width - 1070))
