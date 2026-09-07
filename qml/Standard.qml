@@ -450,14 +450,14 @@ Page {
                 Layout.fillWidth: true
                 Text {
                     text: "No controller connected"
-                    color: "#f0f2f0"
+                    color: theme.cockpitText
                     font.pixelSize: 30
                     font.weight: Font.Medium
                 }
                 Item { Layout.fillWidth: true }
                 Text {
                     text: backend.mappingStatus
-                    color: backend.mappingActive ? "#a9c9b3" : "#a7afb4"
+                    color: backend.mappingActive ? theme.cockpitReady : theme.cockpitSubtle
                     font.pixelSize: 10
                     font.bold: true
                 }
@@ -465,7 +465,7 @@ Page {
             Text {
                 Layout.fillWidth: true
                 text: "The mapper is idle. Connect a controller whenever you are ready and its live controls will appear here automatically."
-                color: "#9fa9ad"
+                color: theme.cockpitSubtle
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
             }
@@ -476,27 +476,27 @@ Page {
                 Column {
                     Layout.fillWidth: true
                     spacing: 7
-                    Text { text: "Physical input"; color: "#7f8a8f"; font.pixelSize: 11; font.bold: true }
-                    Text { text: "Waiting for DirectInput"; color: "#dce2e0"; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Text { text: "No axes or buttons are being captured."; color: "#899397"; font.pixelSize: 11 }
+                    Text { text: "Physical input"; color: theme.cockpitFaint; font.pixelSize: 11; font.bold: true }
+                    Text { text: "Waiting for DirectInput"; color: theme.cockpitTelemetry; font.pixelSize: 16; font.weight: Font.DemiBold }
+                    Text { text: "No axes or buttons are being captured."; color: theme.cockpitSubtle; font.pixelSize: 11 }
                 }
                 FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 66 }
                 Column {
                     Layout.fillWidth: true
                     spacing: 7
-                    Text { text: "Virtual output"; color: "#7f8a8f"; font.pixelSize: 11; font.bold: true }
-                    Text { text: backend.vjoyReady ? "Device ready" : "No output device in use"; color: "#dce2e0"; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Text { text: backend.mappingActive ? "Output will resume when input returns." : backend.mappingRequested ? "Waiting for the controller; output resumes automatically." : "Mapping stays off until you start it."; color: "#899397"; font.pixelSize: 11 }
+                    Text { text: "Virtual output"; color: theme.cockpitFaint; font.pixelSize: 11; font.bold: true }
+                    Text { text: backend.vjoyReady ? "Device ready" : "No output device in use"; color: theme.cockpitTelemetry; font.pixelSize: 16; font.weight: Font.DemiBold }
+                    Text { text: backend.mappingActive ? "Output will resume when input returns." : backend.mappingRequested ? "Waiting for the controller; output resumes automatically." : "Mapping stays off until you start it."; color: theme.cockpitSubtle; font.pixelSize: 11 }
                 }
             }
             Item { Layout.fillHeight: true }
             FineLine { Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Safe to leave open while your controller is disconnected."; color: "#859095"; font.pixelSize: 11 }
+                Text { text: "Safe to leave open while your controller is disconnected."; color: theme.cockpitSubtle; font.pixelSize: 11 }
                 Item { Layout.fillWidth: true }
-                StatusDot { tone: "#b77b86" }
-                Text { text: "Waiting for device"; color: "#a9b2b4"; font.pixelSize: 11 }
+                StatusDot { tone: theme.cockpitDanger }
+                Text { text: "Waiting for device"; color: theme.cockpitSubtle; font.pixelSize: 11 }
             }
         }
     }
@@ -506,32 +506,32 @@ Page {
         Layout.fillWidth: true
         Layout.preferredHeight: 220
         visible: info && info.available
-        color: "#ed182128"
+        color: theme.cockpitSurface
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
  spacing: 7
             RowLayout { Layout.fillWidth: true
                 Text { text: axisModule.info.label
- color: "#eef7f7"
+ color: theme.cockpitText
  font.pixelSize: 14
  font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Text { text: axisModule.info.detail.toUpperCase() + " · ROUTE " + axisModule.info.target
- color: axisModule.info.target === "Disabled" ? "#929da1" : "#a8d1dc"
+ color: axisModule.info.target === "Disabled" ? theme.cockpitSubtle : theme.cyan
  font.pixelSize: 9
  font.bold: true }
             }
             RowLayout { Layout.fillWidth: true
                 Column { spacing: 1
-                    Text { text: "LIVE COMMAND"; color: "#7694a0"; font.pixelSize: 8; font.bold: true }
+                    Text { text: "LIVE COMMAND"; color: theme.cockpitLabel; font.pixelSize: 8; font.bold: true }
                     Text { text: root.controlValue(axisModule.info, axisModule.info.transformed)
-                        color: "#d9edf1"; font.pixelSize: 28; font.family: "Consolas"; font.weight: Font.DemiBold }
+                        color: theme.cockpitTelemetry; font.pixelSize: 28; font.family: "Consolas"; font.weight: Font.DemiBold }
                 }
                 Item { Layout.fillWidth: true }
                 Column { spacing: 2
-                    Text { text: "VIRTUAL OUTPUT"; color: "#7694a0"; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
-                    Text { text: root.outputState(axisModule.info); color: backend.vjoyReady ? "#9fcbbb" : "#d49b62"
+                    Text { text: "VIRTUAL OUTPUT"; color: theme.cockpitLabel; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
+                    Text { text: root.outputState(axisModule.info); color: backend.vjoyReady ? theme.cockpitReady : theme.cockpitWarning
                         font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
                 }
             }
@@ -539,15 +539,15 @@ Page {
             RowLayout { Layout.fillWidth: true
  spacing: 12
                 Text { text: "INPUT"
- color: "#8c989d"
+ color: theme.cockpitSubtle
  font.pixelSize: 9
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
                 value: axisModule.info.unipolar ? Number(axisModule.info.calibrated) * 2 - 1 : Number(axisModule.info.calibrated)
- tone: "#8eb5c1" }
+ tone: theme.cyan }
                 Text { text: root.controlValue(axisModule.info, axisModule.info.calibrated)
- color: "#c6dce1"
+ color: theme.cockpitMetric
  font.family: "Consolas"
  font.pixelSize: 14
  font.weight: Font.DemiBold
@@ -557,7 +557,7 @@ Page {
             RowLayout { Layout.fillWidth: true
  spacing: 12
                 Text { text: "OUTPUT"
- color: "#8c989d"
+ color: theme.cockpitSubtle
  font.pixelSize: 9
  font.bold: true
  Layout.preferredWidth: 48 }
@@ -565,9 +565,9 @@ Page {
                 value: axisModule.info.unipolar ? Number(axisModule.info.virtualValue) * 2 - 1 : Number(axisModule.info.virtualValue)
  offline: !backend.vjoyReady
  valid: axisModule.info.virtualValid
- tone: "#b7d7bf" }
+ tone: theme.cockpitReady }
                 Text { text: root.outputState(axisModule.info)
- color: backend.vjoyReady && axisModule.info.virtualValid ? "#b8d9c2" : "#c59a79"
+ color: backend.vjoyReady && axisModule.info.virtualValid ? theme.cockpitReady : theme.cockpitWarning
  font.family: "Consolas"
  font.pixelSize: backend.vjoyReady && axisModule.info.virtualValid ? 14 : 9
  font.weight: Font.DemiBold
@@ -578,7 +578,7 @@ Page {
             RowLayout { Layout.fillWidth: true
  spacing: 10
                 Text { text: "ROUTE"
- color: "#8c989d"
+ color: theme.cockpitSubtle
  font.pixelSize: 9
  font.bold: true }
                 FlightComboBox {
@@ -595,17 +595,17 @@ Page {
                         }
                     }
                     background: Rectangle { radius: 5
- color: "#0c1013"
- border.color: "#435660" }
+ color: theme.cockpitControl
+ border.color: theme.cockpitBorder }
                     contentItem: Text { leftPadding: 9
  text: axisDestination.displayText
- color: "#dce4e4"
+ color: theme.cockpitText
  verticalAlignment: Text.AlignVCenter
  font.pixelSize: 11 }
                 }
                 Item { Layout.fillWidth: true }
                 Text { text: "INVERT"
- color: "#8c989d"
+ color: theme.cockpitSubtle
  font.pixelSize: 9
  font.bold: true }
                 Switch {
@@ -615,20 +615,20 @@ Page {
                     indicator: Rectangle { implicitWidth: 32
  implicitHeight: 16
  radius: 8
- color: invertControl.checked ? "#5a737c" : "#363e43"
- border.color: "#3f525a"
+ color: invertControl.checked ? theme.cockpitControlAccent : theme.cockpitControlHover
+ border.color: theme.cockpitBorder
                         Rectangle { width: 12
  height: 12
  radius: 6
  x: invertControl.checked ? 17 : 3
  anchors.verticalCenter: parent.verticalCenter
- color: "#e8edec" }
+ color: theme.cockpitText }
                     }
                 }
             }
             RowLayout { Layout.fillWidth: true
                 Text { text: "DEADZONE  " + Math.round(Number(axisModule.info.deadzone) * 100) + "%"
- color: "#8c989d"
+ color: theme.cockpitSubtle
  font.pixelSize: 9
  font.bold: true
  Layout.preferredWidth: 90 }
@@ -644,19 +644,19 @@ Page {
  width: deadzoneControl.availableWidth
  height: 4
  radius: 2
- color: "#0c0f12"
+ color: theme.cockpitGraphInset
                         Rectangle { width: deadzoneControl.visualPosition * parent.width
  height: parent.height
  radius: 2
- color: "#829da5" }
+ color: theme.cockpitControlAccent }
                     }
                     handle: Rectangle { x: deadzoneControl.leftPadding + deadzoneControl.visualPosition * (deadzoneControl.availableWidth - width)
  y: deadzoneControl.topPadding + deadzoneControl.availableHeight / 2 - height / 2
  width: 12
  height: 12
  radius: 6
- color: "#e1e7e5"
- border.color: "#111518" }
+ color: theme.cockpitText
+ border.color: theme.cockpitGraphFrame }
                 }
             }
         }
@@ -954,7 +954,7 @@ Page {
                 color: nativeCard.info.centered ? theme.textFaint : theme.ivory; font.pixelSize: 10; font.family: theme.telemetryFont }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "NATIVE vJOY OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "NATIVE vJOY OUTPUT"; color: theme.cockpitSubtle; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 Rectangle { id: nativeToggle; Layout.preferredWidth: 43; Layout.preferredHeight: 21; radius: 11
                     color: nativeCard.info.nativeEnabled ? theme.orange : theme.control; border.color: nativeCard.info.nativeEnabled ? theme.borderStrong : theme.border
@@ -973,7 +973,7 @@ Page {
                 onActivated: backend.setNativePovOutput(nativeCard.info.index, nativeCard.info.nativeEnabled, currentValue) }
             Text { visible: root.nativePovTargetChoices.length === 0
                 text: "Unavailable · selected vJoy device exposes no POV target."
-                color: "#c69a72"; font.pixelSize: 9; font.family: "Consolas" }
+                color: theme.cockpitWarning; font.pixelSize: 9; font.family: "Consolas" }
         }
     }
 
@@ -1030,14 +1030,14 @@ Page {
  x: -100
  y: parent.height - 100
  radius: 180
- color: theme.topGun ? "#4c33221e" : "#071e2930" }
+ color: theme.shellMotifArc }
         Repeater { model: 18
             delegate: Rectangle { width: 1; height: parent.height; x: (index + 1) * parent.width / 19
-                color: theme.topGun ? "#55422430" : "#163f5261" }
+                color: theme.shellMotifVertical }
         }
         Repeater { model: 12
             delegate: Rectangle { height: 1; width: parent.width; y: (index + 1) * parent.height / 13
-                color: theme.topGun ? "#55422424" : "#123f5261" }
+                color: theme.shellMotifHorizontal }
         }
     }
 
@@ -1373,7 +1373,7 @@ Page {
  font.family: theme.topGun ? theme.displayFont : root.font.family }
                         Text { visible: modelData.future
  text: "FUTURE"
- color: "#7d878b"
+ color: theme.textFaint
  font.pixelSize: 8
  font.bold: true }
                     }
@@ -1466,8 +1466,8 @@ Page {
                             }
                         }
                         Column { visible: !theme.topGun; spacing: 4; Layout.preferredWidth: 96
-                            Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
-                            Text { text: root.hasPhysicalInput ? backend.physicalAxisCapabilitySummary : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
+                            Text { text: "SELECT AXIS"; color: theme.cockpitLabel; font.pixelSize: 10; font.bold: true }
+                            Text { text: root.hasPhysicalInput ? backend.physicalAxisCapabilitySummary : "WAITING"; color: theme.cockpitHelp; font.pixelSize: 9; font.bold: true }
                         }
                         FlightComboBox {
                             id: axisSelector
@@ -1484,7 +1484,7 @@ Page {
                                 return 0
                             }
                             onActivated: backend.setSelectedAxis(currentValue)
-                            background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : "#546d78" }
+                            background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : theme.cockpitBorder }
                             contentItem: Text { leftPadding: 12; text: axisSelector.displayText
                                 color: theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                         }
@@ -1538,7 +1538,7 @@ Page {
                                     }
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "VIRTUAL OUTPUT"; color: theme.topGun ? theme.cyan : "#85aaa8"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "VIRTUAL OUTPUT"; color: theme.cyan; font.pixelSize: 10; font.bold: true }
                                         Text { text: root.outputState(liveTelemetryPanel.info); color: liveTelemetryPanel.info.virtualRouted ? theme.cyan : theme.textMuted; font.pixelSize: liveTelemetryPanel.info.virtualRouted ? 31 : 18; font.family: theme.telemetryFont; font.bold: true }
                                         Text { text: liveTelemetryPanel.info.virtualRouted ? (backend.mappingActive ? "LIVE GAME-FACING OUTPUT" : "OUTPUT STANDBY") : "UNMAPPED VJOY AXES PARKED AT " + Number(backend.disabledAxisValue).toFixed(1) + "%"; color: theme.textFaint; font.pixelSize: 9; font.bold: true }
                                     }
@@ -1575,7 +1575,7 @@ Page {
                                                 axisConflictDialog.open()
                                             }
                                         }
-                                        background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : "#455d67" }
+                                        background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: theme.topGun ? theme.orange : theme.cockpitBorder }
                                         contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11; font.family: theme.topGun ? theme.displayFont : root.font.family }
                                     }
                                 }
@@ -1662,8 +1662,8 @@ Page {
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                        Text { text: "CURVE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: processingPanel.info.curveSummary; color: "#d5e2e3"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: "CURVE"; color: theme.cockpitLabel; font.pixelSize: 10; font.bold: true }
+                                        Text { text: processingPanel.info.curveSummary; color: theme.cockpitText; font.pixelSize: 12; font.bold: true }
                                     }
                                     CommandButton { label: "EDIT CURVE"; subdued: true; onTriggered: root.currentPage = 6 }
                                 }
@@ -1715,24 +1715,24 @@ Page {
  spacing: 18
                         TelemetryItem { caption: "PHYSICAL BUTTONS"
  value: backend.buttonCount + " DETECTED"
- tone: backend.physicalConnected ? "#b9d1d8" : "#a5afb3"
+ tone: backend.physicalConnected ? theme.cockpitInput : theme.cockpitSubtle
  Layout.fillWidth: true }
                         FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 30 }
                         TelemetryItem { caption: "VIRTUAL BUTTONS"
  value: backend.vjoyReady ? backend.vjoyButtonCount + " · " + root.capacityState() : "VJOY OFFLINE"
- tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3"
+ tone: backend.vjoyReady ? root.capacityColor() : theme.cockpitSubtle
  Layout.fillWidth: true }
                         FineLine { Layout.preferredWidth: 1
  Layout.preferredHeight: 30 }
                         TelemetryItem { caption: "LAST INPUT"
  value: backend.lastPhysicalButton > 0 ? "BUTTON " + backend.lastPhysicalButton : "WAITING"
- tone: backend.lastPhysicalButton > 0 ? "#b9d1d8" : "#8f9a9f"
+ tone: backend.lastPhysicalButton > 0 ? theme.cockpitInput : theme.cockpitSubtle
  Layout.fillWidth: true }
                     }
                 }
                 Text { text: allButtons.length > 0 ? "PHYSICAL BUTTONS" : "NO DIRECTINPUT BUTTONS AVAILABLE"
- color: "#94a1a6"
+ color: theme.cockpitSubtle
  font.pixelSize: 10
  font.bold: true }
                 GridLayout { width: parent.width
@@ -1743,7 +1743,7 @@ Page {
  delegate: ButtonCard { info: modelData } }
                 }
                 Text { visible: root.allPovs.length > 0; text: "POV / HAT · NATIVE vJOY OUTPUT"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: theme.cockpitSubtle; font.pixelSize: 10; font.bold: true }
                 GridLayout { visible: root.allPovs.length > 0; width: parent.width
                     columns: width >= 1160 ? 3 : (width >= 760 ? 2 : 1)
                     columnSpacing: 12
@@ -1752,7 +1752,7 @@ Page {
                         delegate: PovNativeCard { info: modelData } }
                 }
                 Text { visible: root.allPovInputs.length > 0; text: "POV DIRECTION ROUTES"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: theme.cockpitSubtle; font.pixelSize: 10; font.bold: true }
                 GridLayout { visible: root.allPovInputs.length > 0; width: parent.width
                     columns: width >= 1160 ? 4 : (width >= 760 ? 2 : 1)
                     columnSpacing: 12
@@ -1810,7 +1810,7 @@ Page {
                     text: "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Do not touch the stick, twist, rudder, or paddles. Throttles and sliders do not need to be centered."
                     color: theme.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
                 Panel { visible: backend.calibrationSuccess; width: parent.width; height: calibrationSuccessContent.implicitHeight + 24
-                    color: theme.topGun ? "#202015" : "#16262a"; border.color: theme.topGun ? theme.orange : theme.ready
+                    color: theme.topGun ? "#202015" : theme.cockpitReadySurface; border.color: theme.topGun ? theme.orange : theme.ready
                     Column { id: calibrationSuccessContent; anchors.fill: parent; anchors.margins: 12; spacing: 4
                         Text { text: "CALIBRATION SUCCESSFUL"; color: theme.topGun ? theme.orangeBright : theme.ready; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                         Text { text: backend.calibrationStatus; color: theme.text; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
@@ -1832,13 +1832,13 @@ Page {
                             visible: info && info.available
                             Layout.fillWidth: true
                             Layout.preferredHeight: 118
-                            color: backend.calibrationActive ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, 0.14) : (theme.topGun ? "#d80b1b20" : "#ed182128")
+                            color: backend.calibrationActive ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, 0.14) : (theme.topGun ? "#d80b1b20" : theme.cockpitSurface)
                             border.color: backend.calibrationActive ? theme.orange : theme.border
                             RowLayout { anchors.fill: parent
  anchors.margins: 15
                                 ColumnLayout { Layout.preferredWidth: 130
                                     Text { text: calibrationAxisCard.info.label.toUpperCase()
- color: theme.topGun ? theme.ivory : "#eaf0f1"
+ color: theme.topGun ? theme.ivory : theme.cockpitText
  font.pixelSize: theme.topGun ? 15 : 12
  font.bold: true
  font.family: theme.topGun ? theme.displayFont : root.font.family }
@@ -1956,17 +1956,17 @@ Page {
  anchors.margins: 14
  spacing: 7
                             Text { text: "PHYSICAL DEVICE"
- color: "#7f8d94"
+ color: theme.cockpitFaint
  font.pixelSize: 9
  font.bold: true }
                             Text { text: backend.deviceName
- color: "#e8eeee"
+ color: theme.cockpitText
  font.pixelSize: 14
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
                             Text { text: backend.axisCount + " AXES   ·   " + backend.buttonCount + " BUTTONS   ·   POV " + root.povText()
- color: "#91a0a6"
+ color: theme.cockpitSubtle
  font.pixelSize: 10
  font.family: "Consolas"
  width: parent.width }
@@ -1982,17 +1982,17 @@ Page {
  anchors.margins: 14
  spacing: 7
                             Text { text: "VIRTUAL DEVICE"
- color: "#7f8d94"
+ color: theme.cockpitFaint
  font.pixelSize: 9
  font.bold: true }
                             Text { text: "vJoy Device " + backend.vjoyDeviceId + " · " + (backend.vjoyReady ? "READY" : "OFFLINE")
- color: backend.vjoyReady ? "#e8eeee" : "#d49b62"
+ color: backend.vjoyReady ? theme.cockpitText : theme.cockpitWarning
  font.pixelSize: 14
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
                             Text { text: backend.vjoyReady ? backend.vjoyStatus : "Physical monitoring remains independent"
- color: "#91a0a6"; font.pixelSize: 10; font.family: "Consolas" }
+ color: theme.cockpitSubtle; font.pixelSize: 10; font.family: "Consolas" }
                             Text { text: backend.vjoyReady ? root.capacityState() + "   ·   REQUIRED " + backend.vjoyRequiredButtonCount : backend.vjoyStatus
  color: root.capacityColor()
  font.pixelSize: 10
@@ -2001,7 +2001,7 @@ Page {
                     }
                 }
                 Text { text: "PHYSICAL / VIRTUAL AXIS ROUTES"
- color: "#94a1a6"
+ color: theme.cockpitSubtle
  font.pixelSize: 10
  font.bold: true }
                 GridLayout { width: parent.width
@@ -2019,27 +2019,27 @@ Page {
  anchors.margins: 12
  spacing: 4
                                 Text { text: diagnosticAxisCard.info.label.toUpperCase()
- color: "#aebcc0"
+ color: theme.cockpitMetric
  font.pixelSize: 9
  font.bold: true }
                                 Text { text: "RAW       " + root.valuePercent(diagnosticAxisCard.info.raw)
- color: "#dfeaec"
+ color: theme.cockpitText
  font.pixelSize: 12
  font.family: "Consolas" }
                                 Text { text: "CALIBRATED " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.calibrated)
- color: "#a9cad2"
+ color: theme.cockpitTelemetry
  font.pixelSize: 10
  font.family: "Consolas" }
                                 Text { text: "MAPPED    " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.transformed)
- color: "#a9cad2"
+ color: theme.cockpitTelemetry
  font.pixelSize: 10
  font.family: "Consolas" }
                                 Text { text: "OUTPUT    " + root.outputState(diagnosticAxisCard.info)
- color: diagnosticAxisCard.info.virtualValid ? "#b7d7c0" : "#c59a79"
+ color: diagnosticAxisCard.info.virtualValid ? theme.cockpitReady : theme.cockpitWarning
  font.pixelSize: 10
  font.family: "Consolas" }
                                 Text { text: "ROUTE     " + diagnosticAxisCard.info.target.toUpperCase()
- color: "#7c97a1"; font.pixelSize: 9; font.family: "Consolas" }
+ color: theme.cockpitLabel; font.pixelSize: 9; font.family: "Consolas" }
                             }
                         }
                     }
@@ -2058,7 +2058,7 @@ Page {
                     }
                 }
                 Text { visible: root.allPovs.length > 0; text: "POV / HAT INPUTS"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: theme.cockpitSubtle; font.pixelSize: 10; font.bold: true }
                 GridLayout { visible: root.allPovs.length > 0; width: parent.width
                     columns: width >= 1100 ? 4 : (width >= 760 ? 2 : 1)
                     columnSpacing: 10
@@ -2074,29 +2074,29 @@ Page {
                             ]
                             Layout.fillWidth: true
                             Layout.preferredHeight: 186
-                            color: diagnosticPovCard.info.centered ? "#ed182128" : "#ec263e48"
-                            border.color: diagnosticPovCard.info.centered ? "#43546770" : "#93a3cfda"
+                            color: diagnosticPovCard.info.centered ? theme.cockpitSurface : theme.cockpitActiveSurface
+                            border.color: diagnosticPovCard.info.centered ? theme.cockpitBorder : theme.cockpitActiveBorder
                             Column { anchors.fill: parent; anchors.margins: 12; spacing: 5
                                 Text { text: "POV " + diagnosticPovCard.info.index + " / HAT"
-                                    color: "#aebcc0"; font.pixelSize: 9; font.bold: true }
+                                    color: theme.cockpitMetric; font.pixelSize: 9; font.bold: true }
                                 Text { text: "STATE     " + diagnosticPovCard.info.direction.toUpperCase()
-                                    color: diagnosticPovCard.info.centered ? "#9ba8ac" : "#d6f0f4"
+                                    color: diagnosticPovCard.info.centered ? theme.cockpitSubtle : theme.cockpitText
                                     font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
                                 Text { visible: !diagnosticPovCard.info.centered
                                     text: "ANGLE     " + diagnosticPovCard.info.angle + "°"
-                                    color: "#a9cad2"; font.pixelSize: 10; font.family: "Consolas" }
+                                    color: theme.cockpitTelemetry; font.pixelSize: 10; font.family: "Consolas" }
                                 Text { text: "RAW       " + (diagnosticPovCard.info.centered ? "—" : diagnosticPovCard.info.raw)
-                                    color: "#7c97a1"; font.pixelSize: 10; font.family: "Consolas" }
+                                    color: theme.cockpitLabel; font.pixelSize: 10; font.family: "Consolas" }
                                 Text { text: "NATIVE    " + diagnosticPovCard.info.nativeStatus
                                         + (diagnosticPovCard.info.nativeEnabled ? " · " + diagnosticPovCard.info.nativeTargetLabel : "")
-                                    color: diagnosticPovCard.info.nativeAvailable ? "#9fcfbd" : "#c69a72"
+                                    color: diagnosticPovCard.info.nativeAvailable ? theme.cockpitReady : theme.cockpitWarning
                                     font.pixelSize: 9; font.family: "Consolas" }
                                 Grid { columns: 3; columnSpacing: 9; rowSpacing: 3
                                     Repeater { model: diagnosticPovCard.directions
                                         delegate: Text { width: 50; horizontalAlignment: Text.AlignHCenter
                                             text: modelData.label
                                             color: modelData.direction !== "" && modelData.direction === diagnosticPovCard.info.direction
-                                                ? "#9fcfbd" : "#607177"
+                                                ? theme.cockpitReady : theme.cockpitLabel
                                             font.pixelSize: 8; font.bold: true; font.family: "Consolas" }
                                     }
                                 }
@@ -2105,7 +2105,7 @@ Page {
                     }
                 }
                 Text { text: "BUTTON ROUTES · " + backend.buttonCount + " PHYSICAL / " + backend.vjoyButtonCount + " VIRTUAL"
- color: "#94a1a6"
+ color: theme.cockpitSubtle
  font.pixelSize: 10
  font.bold: true }
                 GridLayout { width: parent.width
@@ -2115,16 +2115,16 @@ Page {
                     Repeater { model: root.allButtons
                         delegate: Panel { Layout.fillWidth: true
  Layout.preferredHeight: 62
- color: modelData.pressed ? "#ed20363c" : "#dc151a1f"
+ color: modelData.pressed ? theme.cockpitPressedSurface : theme.cockpitIdleSurface
                             Column { anchors.fill: parent
  anchors.margins: 10; spacing: 4
                                 Row { spacing: 7
-                                    StatusDot { tone: modelData.pressed ? "#91c4d0" : "#59646a" }
+                                    StatusDot { tone: modelData.pressed ? theme.cockpitInput : theme.cockpitLabel }
                                     Text { text: modelData.label.toUpperCase() + "  " + (modelData.pressed ? "PHYSICAL DOWN" : "PHYSICAL UP")
-                                        color: modelData.pressed ? "#c9e9ee" : "#89969b"; font.pixelSize: 9; font.bold: true }
+                                        color: modelData.pressed ? theme.cockpitText : theme.cockpitSubtle; font.pixelSize: 9; font.bold: true }
                                 }
                                 Text { text: modelData.target > 0 ? "ROUTE vJOY " + ("0" + modelData.target).slice(-2) + "  ·  VIRTUAL " + (modelData.virtualPressed ? "DOWN" : "UP") : "ROUTE UNASSIGNED"
-                                    color: modelData.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 8; font.family: "Consolas" }
+                                    color: modelData.virtualPressed ? theme.cockpitReady : theme.cockpitLabel; font.pixelSize: 8; font.family: "Consolas" }
                             }
                         }
                     }
@@ -2135,7 +2135,7 @@ Page {
                         anchors.margins: 14
                         spacing: 5
                         Text { text: "EVENT LOG"
- color: "#7f8d94"
+ color: theme.cockpitFaint
  font.pixelSize: 9
  font.bold: true }
                         ListView {
@@ -2155,7 +2155,7 @@ Page {
                             delegate: Text {
                                 width: eventLogView.width - 16
                                 text: modelData
-                                color: index === eventLogView.count - 1 ? "#cbdadd" : "#839197"
+                                color: index === eventLogView.count - 1 ? theme.cockpitTelemetry : theme.cockpitSubtle
                                 font.pixelSize: 10
                                 font.family: "Consolas"
                                 wrapMode: Text.Wrap
@@ -2290,7 +2290,7 @@ Page {
         standardButtons: Dialog.NoButton
         onOpened: { renameProfileField.text = profileName; renameProfileField.forceActiveFocus(); renameProfileField.selectAll() }
         contentItem: Column { width: 338; spacing: 12
-            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            Text { text: "NAME"; color: theme.cockpitSubtle; font.pixelSize: 10; font.bold: true }
             TextField { id: renameProfileField; width: parent.width; color: theme.text; selectByMouse: true
                 background: Rectangle { radius: theme.topGun ? 1 : theme.controlRadius; color: theme.control; border.color: renameProfileField.activeFocus ? (theme.topGun ? theme.orange : theme.borderStrong) : theme.border } }
             Row { width: parent.width; spacing: 8
@@ -2302,7 +2302,7 @@ Page {
                     onTriggered: { if (backend.renameProfile(renameProfileDialog.profileId, renameProfileField.text)) renameProfileDialog.close() } }
             }
         }
-        background: Panel { color: "#1b2126"; border.color: "#3adce5e8" }
+        background: Panel { color: theme.cockpitDialogSurface; border.color: theme.cockpitDialogBorder }
     }
     Dialog {
         id: deleteProfileDialog
@@ -2316,7 +2316,7 @@ Page {
         standardButtons: Dialog.NoButton
         contentItem: Column { width: 338; spacing: 14
             Text { text: "Delete \"" + deleteProfileDialog.profileName + "\"?\n\nThis profile's mappings will be removed."
-                width: parent.width; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+                width: parent.width; wrapMode: Text.WordWrap; color: theme.cockpitText; font.pixelSize: 12 }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: deleteProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: deleteProfileDialog.close() }
@@ -2325,7 +2325,7 @@ Page {
                     onTriggered: { if (backend.deleteProfile(deleteProfileDialog.profileId)) deleteProfileDialog.close() } }
             }
         }
-        background: Panel { color: "#241b1b"; border.color: "#44bd7777" }
+        background: Panel { color: theme.cockpitDangerSurface; border.color: theme.cockpitDangerBorder }
     }
     Connections {
         target: backend
@@ -2624,7 +2624,7 @@ Page {
             Text { width: parent.width
  text: "This vJoy axis already has a source. Allowing it keeps both configured routes; the established row-order output policy resolves a shared live target."
  wrapMode: Text.WordWrap
- color: "#d5e0e3"
+ color: theme.cockpitText
  font.pixelSize: 12 }
             Row { spacing: 8
             CommandButton { label: "ALLOW"
@@ -2633,8 +2633,8 @@ Page {
             CommandButton { label: "CANCEL"; subdued: true; onTriggered: axisConflictDialog.close() }
             }
         }
-        background: Panel { color: "#1b2126"
- border.color: "#3adce5e8" }
+        background: Panel { color: theme.cockpitDialogSurface
+ border.color: theme.cockpitDialogBorder }
     }
     Dialog {
         id: buttonConflictDialog
@@ -2651,7 +2651,7 @@ Page {
             Text { width: parent.width
  text: "Choose how to handle the existing physical route for this vJoy button. Replace swaps a valid prior output; Ignore allows both physical buttons to drive it."
  wrapMode: Text.WordWrap
- color: "#d5e0e3"
+ color: theme.cockpitText
  font.pixelSize: 12 }
             Row { spacing: 8
             CommandButton { label: "REPLACE"
@@ -2668,8 +2668,8 @@ Page {
             CommandButton { label: "CANCEL"; subdued: true; onTriggered: buttonConflictDialog.close() }
             }
         }
-        background: Panel { color: "#1b2126"
- border.color: "#3adce5e8" }
+        background: Panel { color: theme.cockpitDialogSurface
+ border.color: theme.cockpitDialogBorder }
     }
     Dialog {
         id: resetDialog
@@ -2684,14 +2684,14 @@ Page {
             Text { width: parent.width
  text: "This restores default routes and clears calibration data."
  wrapMode: Text.WordWrap
- color: "#d5e0e3"
+ color: theme.cockpitText
  font.pixelSize: 12 }
             CommandButton { width: parent.width
  label: "RESET CONFIGURATION"
  onTriggered: { backend.resetApplicationConfiguration()
  resetDialog.close() } }
         }
-        background: Panel { color: "#241b1b"
- border.color: "#44bd7777" }
+        background: Panel { color: theme.cockpitDangerSurface
+ border.color: theme.cockpitDangerBorder }
     }
 }

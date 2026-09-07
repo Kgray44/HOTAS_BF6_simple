@@ -24,6 +24,9 @@ QtObject {
     readonly property color shellGradientTop: topGun ? "#102127" : dayOps ? "#e0e3df" : "#151a1e"
     readonly property color shellGradientMiddle: topGun ? "#071217" : dayOps ? "#c8ced0" : "#0d1013"
     readonly property color shellGradientBottom: topGun ? "#050b0f" : dayOps ? "#b7c1c3" : "#080b0d"
+    readonly property color shellMotifArc: topGun ? "#4c33221e" : dayOps ? "#245d6c22" : "#071e2930"
+    readonly property color shellMotifVertical: topGun ? "#55422430" : dayOps ? "#376b7a26" : "#163f5261"
+    readonly property color shellMotifHorizontal: topGun ? "#55422424" : dayOps ? "#48758420" : "#123f5261"
     readonly property color header: topGun ? "#09151a" : dayOps ? "#bbc5c8" : "#14191d"
     readonly property color panel: topGun ? "#0b1b21" : dayOps ? "#d9ddda" : "#1a1d23"
     readonly property color panelRaised: topGun ? "#10252c" : dayOps ? "#e9ece7" : "#20282d"
@@ -62,6 +65,9 @@ QtObject {
     readonly property color graphPreview: topGun ? "#ea7132" : dayOps ? "#e17827" : "#377da3"
     readonly property color graphLabel: topGun ? "#b9a57d" : dayOps ? "#c8d5d4" : "#76909a"
     readonly property color graphFrame: topGun ? "#8a6c41" : dayOps ? "#335566" : "#4b7081"
+    readonly property color graphPanelGradientTop: topGun ? "#20352f" : dayOps ? "#3a4b52" : "#27383e"
+    readonly property color graphPanelGradientMiddle: topGun ? "#132126" : dayOps ? "#2e4048" : "#17262b"
+    readonly property color graphPanelGradientBottom: topGun ? "#061116" : dayOps ? "#202f36" : "#0b1114"
 
     readonly property color buttonSurface: topGun ? "#11191b" : dayOps ? "#c56622" : "#324f5a"
     readonly property color buttonHover: topGun ? "#3b241c" : dayOps ? "#e17827" : "#456c78"
@@ -94,6 +100,35 @@ QtObject {
     readonly property color cockpitSubtle: dayOps ? textMuted : "#8c989d"
     readonly property color cockpitMetric: dayOps ? text : "#c8dce0"
     readonly property color cockpitHelp: dayOps ? textFaint : "#718a93"
+    // The original Standard workspaces use a denser cockpit sub-language
+    // than the primary panels. Keep that language semantic so Day Ops can
+    // render the same hierarchy as light naval equipment rather than dark
+    // Standard literals on an aluminum surface.
+    readonly property color cockpitFaint: dayOps ? textFaint : "#7f8d94"
+    readonly property color cockpitReady: dayOps ? ready : "#a9c9b3"
+    readonly property color cockpitWarning: dayOps ? warning : "#d49b62"
+    readonly property color cockpitDanger: dayOps ? danger : "#b77b86"
+    readonly property color cockpitControl: dayOps ? control : "#0c1013"
+    readonly property color cockpitControlHover: dayOps ? controlHover : "#363e43"
+    readonly property color cockpitControlAccent: dayOps ? cyan : "#829da5"
+    readonly property color cockpitInput: dayOps ? cyan : "#b9d1d8"
+    readonly property color cockpitGraphInset: dayOps ? graphBackground : "#0c0f12"
+    readonly property color cockpitGraphFrame: dayOps ? graphFrame : "#111518"
+    readonly property color cockpitDialogSurface: dayOps ? tooltip : "#1b2126"
+    readonly property color cockpitDialogBorder: dayOps ? borderStrong : "#3adce5e8"
+    readonly property color cockpitDangerSurface: dayOps ? destructive : "#241b1b"
+    readonly property color cockpitDangerBorder: dayOps ? danger : "#44bd7777"
+    readonly property color cockpitReadySurface: dayOps ? panelWash : "#16262a"
+    readonly property color cockpitActiveSurface: dayOps ? selection : "#ec263e48"
+    readonly property color cockpitPressedSurface: dayOps ? selectionCurrent : "#ed20363c"
+    readonly property color cockpitIdleSurface: dayOps ? panelRaised : "#dc151a1f"
+    readonly property color curvePanelSurface: topGun ? "#d80b1b20" : dayOps ? panel : "#e61a282e"
+    readonly property color curveMenuSurface: dayOps ? tooltip : "#101b20"
+    readonly property color curveMenuBorder: dayOps ? borderStrong : "#4c7881"
+    readonly property color curveDialogSurface: dayOps ? panelRaised : "#f018252b"
+    readonly property color curveDialogBorder: dayOps ? borderStrong : "#5a7f89"
+    readonly property color curveDangerSurface: dayOps ? destructive : "#f018252b"
+    readonly property color curveDangerBorder: dayOps ? danger : "#805b56"
 
     function statusColor(severity) {
         if (severity === "error") return danger

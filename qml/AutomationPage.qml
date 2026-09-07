@@ -36,6 +36,8 @@ Item {
     readonly property color readyColor: legacy ? "#8fd5c9" : (themeTokens ? themeTokens.ready : "#8fd5c9")
     readonly property color warningColor: legacy ? "#d4ad69" : (themeTokens ? themeTokens.warning : "#d4ad69")
     readonly property color dangerColor: legacy ? "#ca9090" : (themeTokens ? themeTokens.danger : "#ca9090")
+    readonly property color dangerSurface: legacy || topGun ? "#2d2021" : (themeTokens ? themeTokens.destructive : "#2c2223")
+    readonly property color activeToggleThumb: legacy || topGun ? "#0b1012" : (themeTokens ? themeTokens.textStrong : "#f3f7f7")
     readonly property string displayFont: topGun && themeTokens ? themeTokens.displayFont : "Segoe UI Variable"
     readonly property string telemetryFont: themeTokens ? themeTokens.telemetryFont : "Consolas"
     readonly property var rules: backendObject ? backendObject.automationRules : []
@@ -336,7 +338,7 @@ Item {
         indicator: Rectangle {
             implicitWidth: 38; implicitHeight: 20; x: toggle.leftPadding - width; y: (toggle.height - height) / 2; radius: root.topGun ? 1 : 10
             color: toggle.checked ? root.readyColor : root.controlFill; border.color: toggle.checked ? root.readyColor : root.borderColor
-            Rectangle { width: 14; height: 14; radius: root.topGun ? 1 : 7; x: toggle.checked ? parent.width - width - 3 : 3; anchors.verticalCenter: parent.verticalCenter; color: toggle.checked ? "#0b1012" : root.mutedColor; Behavior on x { NumberAnimation { duration: 110 } } }
+            Rectangle { width: 14; height: 14; radius: root.topGun ? 1 : 7; x: toggle.checked ? parent.width - width - 3 : 3; anchors.verticalCenter: parent.verticalCenter; color: toggle.checked ? root.activeToggleThumb : root.mutedColor; Behavior on x { NumberAnimation { duration: 110 } } }
         }
         contentItem: Text { text: toggle.text; color: root.mutedColor; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter; font.family: root.displayFont }
     }
@@ -389,7 +391,7 @@ Item {
                     model: root.rules
                     delegate: ThemedPanel {
                         required property var modelData
-                        Layout.fillWidth: true; implicitHeight: cardContent.implicitHeight + 28; surfaceColor: modelData.health === 2 ? "#2d2021" : root.panelFill; edgeColor: modelData.health === 2 ? root.dangerColor : (modelData.active ? root.readyColor : root.borderColor)
+                        Layout.fillWidth: true; implicitHeight: cardContent.implicitHeight + 28; surfaceColor: modelData.health === 2 ? root.dangerSurface : root.panelFill; edgeColor: modelData.health === 2 ? root.dangerColor : (modelData.active ? root.readyColor : root.borderColor)
                         MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openRule(modelData) }
                         ColumnLayout {
                             id: cardContent
