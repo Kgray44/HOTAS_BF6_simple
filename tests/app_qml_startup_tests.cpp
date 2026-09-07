@@ -1,5 +1,6 @@
 #include "app_backend.h"
 #include "axis_transform.h"
+#include "config_store.h"
 #include "response_curve.h"
 #include "theme_manager.h"
 
@@ -372,6 +373,29 @@ QString targetForAxis(const QVariantList &axes, int physicalAxis)
 
 bool verifyAxisRouteTransactionAndPresentation(hotas::AppBackend &backend, QObject *surface)
 {
+    // The first theme starts in the legacy profile context. Later themes
+    // deliberately inherit the interaction test's multi-device context, so
+    // select one physical source before changing routes. That is the same
+    // user-facing guard the product applies: per-device edits are valid, but
+    // browsing/editing an inactive rig must not silently alter live mapping.
+    const QVariantList runtimeBefore = backend.runtimeAxisRoutesForTest();
+    const bool editingDeviceOverride = !backend.editingDeviceRigId().isEmpty();
+    if (editingDeviceOverride) {
+        QVariantMap editingRig;
+        for (const QVariant &entry : backend.deviceRigs()) {
+            const QVariantMap candidate = entry.toMap();
+            if (candidate.value(QStringLiteral("id")).toString() == backend.editingDeviceRigId()) {
+                editingRig = candidate;
+                break;
+            }
+        }
+        const QVariantList members = editingRig.value(QStringLiteral("members")).toList();
+        const QString source = members.isEmpty() ? QString{}
+            : members.front().toMap().value(QStringLiteral("id")).toString();
+        if (source.isEmpty() || !backend.setEditingDeviceContext(backend.editingDeviceRigId(), {source})) {
+            return failPresentationLifecycleTest(QStringLiteral("Axis route fixture could not select one rig input"));
+        }
+    }
     // This fixture represents a vJoy descriptor with every standard axis
     // available, without starting a driver or mapping a real controller.
     backend.setVirtualAxisAvailabilityForTest(true);
@@ -466,8 +490,12 @@ bool verifyAxisRouteTransactionAndPresentation(hotas::AppBackend &backend, QObje
         if (targetForAxis(storedConfiguration, axis) != expected[index]) {
             return failPresentationLifecycleTest(QStringLiteral("Stored axis mapping did not retain the requested route for axis %1").arg(axis));
         }
-        if (targetForAxis(backend.runtimeAxisRoutesForTest(), axis) != expected[index]) {
+        const QString runtimeTarget = targetForAxis(backend.runtimeAxisRoutesForTest(), axis);
+        if (!editingDeviceOverride && runtimeTarget != expected[index]) {
             return failPresentationLifecycleTest(QStringLiteral("Compiled runtime route did not match stored axis mapping for axis %1").arg(axis));
+        }
+        if (editingDeviceOverride && runtimeTarget != targetForAxis(runtimeBefore, axis)) {
+            return failPresentationLifecycleTest(QStringLiteral("Editing an inactive rig changed the live runtime route for axis %1").arg(axis));
         }
     }
 
@@ -824,6 +852,119 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
     return true;
 }
 
+bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface)
+{
+    if (!selectPage(surface, 10)) return false;
+    QObject *devices = pageItem(surface, 10);
+    if (!devices) return failPresentationLifecycleTest(QStringLiteral("Devices page was not available for interaction stress"));
+    const QVariantList initialRigs = backend.deviceRigs();
+    if (initialRigs.size() != 1) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture did not expose exactly one rig"));
+    }
+    const QVariantMap initialRig = initialRigs.front().toMap();
+    const QString rigId = initialRig.value(QStringLiteral("id")).toString();
+    const QVariantList members = initialRig.value(QStringLiteral("members")).toList();
+    if (rigId.isEmpty() || members.size() != 2) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture has no usable rig members"));
+    }
+    const QString firstMember = members.at(0).toMap().value(QStringLiteral("id")).toString();
+    const QString secondMember = members.at(1).toMap().value(QStringLiteral("id")).toString();
+    QObject *contextPopup = surface->findChild<QObject *>(QStringLiteral("deviceContextPopup"));
+    QObject *physicalDialog = devices->findChild<QObject *>(QStringLiteral("physicalDeviceDialog"));
+    QObject *outputDialog = devices->findChild<QObject *>(QStringLiteral("outputDetailDialog"));
+    QObject *createDialog = devices->findChild<QObject *>(QStringLiteral("createRigDialog"));
+    if (!contextPopup || !physicalDialog || !outputDialog || !createDialog) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices context popup or detail dialog was not created"));
+    }
+    // This is the concrete regression boundary: leave the custom context
+    // popup and detail dialogs live while the backend replaces device-rig and
+    // controller value models. The old native Menu/Instantiator path could
+    // retain stale QML objects here during ordinary clicking.
+    QMetaObject::invokeMethod(contextPopup, "open");
+    devices->setProperty("selectedDeviceId", firstMember);
+    devices->setProperty("selectedOutputId", QStringLiteral("bf6-output"));
+    QMetaObject::invokeMethod(physicalDialog, "open");
+    QMetaObject::invokeMethod(outputDialog, "open");
+    QMetaObject::invokeMethod(createDialog, "open");
+    settlePresentation();
+    if (!backend.setEditingDeviceContext(rigId, {firstMember})
+        || !backend.removeDeviceRigMember(rigId, secondMember)
+        || !backend.addDeviceRigMember(rigId, secondMember, false)) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture could not replace member model"));
+    }
+    backend.refreshControllers();
+    settlePresentation();
+    const QString transientRig = backend.createDeviceRig(QStringLiteral("Transient Fixture Rig"), {firstMember});
+    if (transientRig.isEmpty() || !backend.setEditingDeviceContext(transientRig, {firstMember})
+        || !backend.deleteDeviceRig(transientRig)) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture could not delete a live rig model"));
+    }
+    settlePresentation();
+    if (devices->property("selectedRigId").toString() != rigId) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices model replacement retained a stale deleted rig"));
+    }
+    if (!backend.setEditingDeviceContext(rigId, {firstMember, secondMember})) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture could not restore a multi-device context"));
+    }
+    QMetaObject::invokeMethod(contextPopup, "open");
+    settlePresentation();
+    if (!contextPopup->property("visible").toBool()
+        || backend.editingScopeLabel() != QStringLiteral("2 Devices")) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices custom context popup did not survive multi-device refresh"));
+    }
+    QMetaObject::invokeMethod(contextPopup, "close");
+    QMetaObject::invokeMethod(createDialog, "close");
+    QMetaObject::invokeMethod(physicalDialog, "close");
+    QMetaObject::invokeMethod(outputDialog, "close");
+    return selectPage(surface, 8);
+}
+
+bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell)
+{
+    if (!shell || !selectPage(surface, 10)) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices responsive layout could not enter its page"));
+    }
+    QObject *devicesObject = pageItem(surface, 10);
+    auto *devices = qobject_cast<QQuickItem *>(devicesObject);
+    if (!devices) return failPresentationLifecycleTest(QStringLiteral("Devices responsive layout did not create a visual root"));
+    const QSize original = shell->size();
+    const QList<QSize> sizes{{1280, 720}, {1440, 900}, {1920, 1080}};
+    const QStringList panels{QStringLiteral("activeRigPanel"), QStringLiteral("deviceRigListPanel"),
+        QStringLiteral("rigDetailsPanel"), QStringLiteral("knownDevicesPanel")};
+    for (const QSize &size : sizes) {
+        shell->resize(size);
+        settlePresentation();
+        QList<QQuickItem *> resolved;
+        for (const QString &name : panels) {
+            auto *panel = devices->findChild<QQuickItem *>(name);
+            if (!panel || panel->width() <= 0 || panel->height() <= 0
+                || panel->width() > devices->width() + 1.0) {
+                const auto *scroll = devices->findChild<QQuickItem *>(QStringLiteral("devicesScroll"));
+                const auto *content = devices->findChild<QQuickItem *>(QStringLiteral("devicesContent"));
+                shell->resize(original);
+                return failPresentationLifecycleTest(QStringLiteral("Devices panel %1 did not fit at %2x%3 (panel %4x%5, page %6x%7, scroll %8x%9, content %10x%11)")
+                    .arg(name).arg(size.width()).arg(size.height())
+                    .arg(panel ? panel->width() : -1).arg(panel ? panel->height() : -1)
+                    .arg(devices->width()).arg(devices->height())
+                    .arg(scroll ? scroll->width() : -1).arg(scroll ? scroll->height() : -1)
+                    .arg(content ? content->width() : -1).arg(content ? content->height() : -1));
+            }
+            resolved.append(panel);
+        }
+        for (int index = 1; index < resolved.size(); ++index) {
+            const QPointF previous = resolved.at(index - 1)->mapToItem(devices, QPointF{});
+            const QPointF current = resolved.at(index)->mapToItem(devices, QPointF{});
+            if (previous.y() + resolved.at(index - 1)->height() > current.y() + 0.5) {
+                shell->resize(original);
+                return failPresentationLifecycleTest(QStringLiteral("Devices panels overlapped at %1x%2")
+                    .arg(size.width()).arg(size.height()));
+            }
+        }
+    }
+    shell->resize(original);
+    return selectPage(surface, 8);
+}
+
 bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QString &theme)
 {
     QObject *presentation = shell->findChild<QObject *>(QStringLiteral("presentationLoader"));
@@ -921,6 +1062,8 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
         return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
     }
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
+    if (!verifyDevicesInteractionStress(backend, surface)) return false;
+    if (!verifyDevicesResponsiveLayout(surface, shell)) return false;
     if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
     return selectPage(surface, 8);
 }
@@ -1023,6 +1166,49 @@ bool verifyAutomationEditorInteraction(hotas::AppBackend &backend)
     return passed;
 }
 
+bool seedDeviceRigFixture()
+{
+    hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
+    const auto saved = [&configuration](const QString &id, const QString &name, bool verified) {
+        hotas::SavedControllerRecord record;
+        record.id = id;
+        record.displayName = name;
+        record.lastDirectInputId = QStringLiteral("{fixture-%1}").arg(id);
+        record.productGuid = QStringLiteral("{fixture-product-%1}").arg(id);
+        record.hidInstanceId = QStringLiteral("HID\\FIXTURE\\%1").arg(id);
+        record.axes[0] = true;
+        record.axes[1] = true;
+        record.axes[2] = true;
+        record.axisCount = 3;
+        record.buttonCount = 16;
+        record.povCount = 1;
+        record.vjoyRequirements = configuration.outputLayouts.front().requirements;
+        record.lastVerified = verified ? QStringLiteral("2026-09-07T00:00:00Z") : QString();
+        return record;
+    };
+    const hotas::SavedControllerRecord stick = saved(QStringLiteral("fixture-stick"),
+        QStringLiteral("Fixture Gladiator"), true);
+    const hotas::SavedControllerRecord throttle = saved(QStringLiteral("fixture-throttle"),
+        QStringLiteral("Fixture STECS"), false);
+    configuration.savedControllers = {stick, throttle};
+    hotas::DeviceRig rig;
+    rig.id = QStringLiteral("fixture-rig");
+    rig.name = QStringLiteral("Fixture Flight Rig");
+    rig.isDefault = true;
+    rig.members = {{stick.id, true, true, hotas::defaultOutputLayoutId()},
+                   {throttle.id, true, false, hotas::defaultOutputLayoutId()}};
+    rig.outputs = {{hotas::defaultOutputLayoutId(), true}};
+    configuration.deviceRigs = {rig};
+    // Begin with the legacy profile editor context. The route-parity section
+    // below validates the worker's base-profile cache; the Devices stress
+    // section then explicitly enters single and multi-device rig scopes.
+    // Preselecting a rig here would correctly write a device override while
+    // incorrectly comparing it to the unrelated base-profile test seam.
+    configuration.editingDeviceRigId.clear();
+    configuration.editingDeviceRecordIds.clear();
+    return hotas::ConfigStore::save(configuration);
+}
+
 }
 
 int main(int argc, char *argv[])
@@ -1043,6 +1229,7 @@ int main(int argc, char *argv[])
     testSettings.sync();
     QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
         + QStringLiteral("/settings.ini"));
+    if (!seedDeviceRigFixture()) return 1;
 
     hotas::AppBackend backend;
     hotas::ThemeManager themeManager;
@@ -1066,6 +1253,17 @@ int main(int argc, char *argv[])
         settlePresentation();
         if (!verifyPageLifecycle(backend,
                 qobject_cast<QWindow *>(engine.rootObjects().constFirst()), theme)) return 1;
+    }
+
+    // The Devices stress deliberately leaves the user-facing editing context
+    // in a multi-device scope. Exercise the production deletion transition to
+    // return subsequent legacy profile tests to their real no-rig state;
+    // otherwise those tests would try to write a device-qualified override
+    // while asserting the independent base-profile runtime cache.
+    if (!backend.deleteDeviceRig(QStringLiteral("fixture-rig"))
+        || !backend.editingDeviceRigId().isEmpty()) {
+        failPresentationLifecycleTest(QStringLiteral("fixture Device Rig context was not safely cleared"));
+        return 1;
     }
 
     if (!verifyAdaptiveResponseSimulator(backend)) return 1;

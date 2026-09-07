@@ -8,6 +8,11 @@ if (NOT HOTAS_BF6_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "HOTAS_VERSION must be a semantic major.minor.patch value")
 endif()
 string(REPLACE "." "," HOTAS_BF6_VERSION_COMMAS "${HOTAS_BF6_VERSION}")
+execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE HOTAS_BF6_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if (HOTAS_BF6_BUILD_ID STREQUAL "")
+    set(HOTAS_BF6_BUILD_ID "unknown")
+endif()
 
 project(HOTASMapper VERSION ${HOTAS_BF6_VERSION} LANGUAGES CXX)
 
@@ -68,6 +73,8 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_diagnostics.cpp
     src/setup_repair_helper.h
     src/setup_repair_helper.cpp
+    src/crash_diagnostics.h
+    src/crash_diagnostics.cpp
     src/theme_manager.h
     src/theme_manager.cpp
     src/event_log.h
@@ -102,6 +109,13 @@ qt_add_qml_module(HOTASMapper
         qml/CurveEditor.qml
         qml/ControllerReadinessPanel.qml
         qml/DevicesPage.qml
+        qml/DevicePanel.qml
+        qml/DeviceContextSelector.qml
+        qml/ThemedButton.qml
+        qml/ThemedCheckBox.qml
+        qml/ThemedComboBox.qml
+        qml/ThemedStepper.qml
+        qml/ThemedTextInput.qml
 )
 
 qt_add_resources(HOTASMapper hotas_icon_resources
@@ -131,7 +145,7 @@ set_target_properties(HOTASMapper PROPERTIES
 )
 
 if (WIN32)
-    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32)
+    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
     # The approved repair transaction restarts this executable elevated.  A
@@ -177,6 +191,8 @@ target_compile_definitions(hotas_update_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEA
 
 add_executable(HOTASBF6Launcher WIN32
     launcher/main.cpp
+    launcher/crash_reporter.h
+    launcher/crash_reporter.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_version.rc"
     resources/launcher.rc
 )
@@ -297,6 +313,22 @@ if (BUILD_TESTING)
     endif()
     add_test(NAME launcher_core_tests COMMAND launcher_core_tests)
 
+    qt_add_executable(crash_diagnostics_tests
+        tests/crash_diagnostics_tests.cpp
+        src/crash_diagnostics.h
+        src/crash_diagnostics.cpp
+        launcher/crash_reporter.h
+        launcher/crash_reporter.cpp
+    )
+    target_link_libraries(crash_diagnostics_tests PRIVATE Qt6::Core dbghelp shell32 user32)
+    target_include_directories(crash_diagnostics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/launcher)
+    target_compile_definitions(crash_diagnostics_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    add_test(NAME crash_diagnostics_tests COMMAND crash_diagnostics_tests)
+    if (WIN32)
+        set_tests_properties(crash_diagnostics_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
     qt_add_executable(controller_readiness_tests
         tests/controller_readiness_tests.cpp
         src/controller_readiness.h
@@ -400,7 +432,7 @@ if (BUILD_TESTING)
         FILES
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
-    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32)
+    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
     if (WIN32)
@@ -431,6 +463,13 @@ if (BUILD_TESTING)
             qml/CurveEditor.qml
             qml/ControllerReadinessPanel.qml
             qml/DevicesPage.qml
+            qml/DevicePanel.qml
+            qml/DeviceContextSelector.qml
+            qml/ThemedButton.qml
+            qml/ThemedCheckBox.qml
+            qml/ThemedComboBox.qml
+            qml/ThemedStepper.qml
+            qml/ThemedTextInput.qml
     )
     target_link_libraries(app_qml_startup_tests PRIVATE
         hotas_update_core
@@ -443,6 +482,7 @@ if (BUILD_TESTING)
         Qt6::Test
         Qt6::Widgets
         dinput8
+        dbghelp
         dxguid
         advapi32
         shell32

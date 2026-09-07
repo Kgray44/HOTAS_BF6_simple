@@ -25,7 +25,11 @@ ApplicationWindow {
     Component.onCompleted: backend.setTrayTheme(themeManager.currentTheme)
     Connections {
         target: themeManager
-        function onCurrentThemeChanged() { backend.setTrayTheme(themeManager.currentTheme) }
+        function onCurrentThemeChanged() {
+            backend.setTrayTheme(themeManager.currentTheme)
+            const page = presentation.item && presentation.item.currentPage !== undefined ? presentation.item.currentPage : 8
+            backend.recordCrashPresentationState(page, themeManager.currentTheme)
+        }
     }
 
     Component { id: legacySurface; Legacy { } }

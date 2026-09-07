@@ -17,6 +17,8 @@ Page {
     readonly property var themeTokens: theme
 
     property int currentPage: 8
+    onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
+    Component.onCompleted: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -1014,11 +1016,11 @@ Page {
     background: Rectangle {
         color: theme.background
         gradient: Gradient { GradientStop { position: 0.0
- color: theme.topGun ? "#102127" : "#151a1e" }
+ color: theme.shellGradientTop }
  GradientStop { position: 0.55
- color: theme.background }
+ color: theme.shellGradientMiddle }
  GradientStop { position: 1.0
- color: theme.topGun ? "#050d11" : "#0b0e10" } }
+ color: theme.shellGradientBottom } }
         Rectangle { width: parent.width
  height: 1
  color: theme.border
@@ -1142,58 +1144,18 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 1180; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
-            RowLayout {
-                visible: root.width >= 1180
-                spacing: 4
-                Button {
-                    text: backend.editingDeviceRigName + "  ▾"
-                    font.pixelSize: 10
-                    onClicked: rigContextMenu.open()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Editing rig only. Runtime activation stays in Devices."
-                }
-                Button {
-                    text: backend.editingScopeLabel + "  ▾"
-                    font.pixelSize: 10
-                    onClicked: scopeContextMenu.open()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Editing scope only. It never activates hardware."
-                }
-                Menu {
-                    id: rigContextMenu
-                    Instantiator {
-                        model: backend.deviceRigs
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: (modelData.editing ? "✓  " : "") + modelData.name + "  ·  "
-                                  + modelData.healthLabel + (modelData.active ? "  ·  ACTIVE" : "")
-                            onTriggered: backend.setEditingDeviceContext(modelData.id, [])
-                        }
-                        onObjectAdded: function(index, object) { rigContextMenu.insertItem(index, object) }
-                        onObjectRemoved: function(index, object) { rigContextMenu.removeItem(object) }
-                    }
-                    MenuSeparator {}
-                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
-                }
-                Menu {
-                    id: scopeContextMenu
-                    MenuItem { text: backend.editingScopeLabel === "All Devices" ? "✓  All Devices" : "All Devices"
-                        onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, []) }
-                    Instantiator {
-                        model: backend.editingDevices
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: (modelData.selected ? "✓  " : "") + modelData.name
-                                  + (modelData.required ? "" : "  ·  optional")
-                            onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, [modelData.id])
-                        }
-                        onObjectAdded: function(index, object) { scopeContextMenu.insertItem(index + 1, object) }
-                        onObjectRemoved: function(index, object) { scopeContextMenu.removeItem(object) }
-                    }
-                    MenuSeparator {}
-                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
-                }
+            FineLine { visible: root.width >= 900; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            DeviceContextSelector {
+                objectName: "standardDeviceContextSelector"
+                // Keep the editing context available at the supported compact
+                // width; the label elides before profile/mapping controls do.
+                visible: root.width >= 900
+                Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
+                Layout.maximumWidth: 272
+                backendObject: backend
+                theme: root.themeTokens
+                legacy: false
+                onManageDevices: root.currentPage = 10
             }
             Item { Layout.fillWidth: true }
             Rectangle {
@@ -1250,10 +1212,13 @@ Page {
                 x: 318; y: 15; height: 62; spacing: 0
                 Repeater {
                     visible: root.width >= 960
-                    model: [
+                    model: root.width >= 1180 ? [
                         { label: backend.physicalConnected ? backend.deviceName.toUpperCase() : "T.FLIGHT HOTAS ONE", value: root.physicalStatusText(), color: root.physicalStatusColor() },
                         { label: "VJOY " + backend.vjoyDeviceId, value: backend.vjoyReady ? "READY" : "OFFLINE", color: backend.vjoyReady ? theme.cyan : theme.warning },
                         { label: "PROFILE", value: backend.effectiveProfileDisplayName.toUpperCase(), color: theme.ivory }
+                    ] : [
+                        { label: backend.physicalConnected ? backend.deviceName.toUpperCase() : "T.FLIGHT HOTAS ONE", value: root.physicalStatusText(), color: root.physicalStatusColor() },
+                        { label: "VJOY " + backend.vjoyDeviceId, value: backend.vjoyReady ? "READY" : "OFFLINE", color: backend.vjoyReady ? theme.cyan : theme.warning }
                     ]
                     delegate: Item {
                         required property var modelData
@@ -1269,7 +1234,19 @@ Page {
                     }
                 }
             }
-            Item { visible: root.width >= 1180; anchors.right: parent.right; anchors.rightMargin: 18; y: 8; width: 278; height: 76
+            DeviceContextSelector {
+                objectName: "topGunDeviceContextSelector"
+                visible: root.width >= 900
+                x: Math.min(772, parent.width - width - 12)
+                y: 29
+                width: Math.min(240, Math.max(186, root.width - 1070))
+                height: 34
+                backendObject: backend
+                theme: root.themeTokens
+                legacy: false
+                onManageDevices: root.currentPage = 10
+            }
+            Item { visible: root.width >= 1420; anchors.right: parent.right; anchors.rightMargin: 18; y: 8; width: 278; height: 76
                 Image { anchors.right: parent.right; y: 3; width: 66; height: 62; source: "qrc:/assets/themes/topgun/fighter-silhouette.svg"; fillMode: Image.PreserveAspectFit; opacity: 0.94 }
                 Image { x: 0; y: 31; width: 80; height: 20; source: "qrc:/assets/themes/topgun/slash-stripes.svg"; fillMode: Image.PreserveAspectFit }
                 Text { x: 85; y: 28; text: backend.mappingStatus; color: backend.mappingActive ? theme.orangeBright : theme.textMuted; font.family: theme.displayFont; font.pixelSize: 15; font.bold: true }

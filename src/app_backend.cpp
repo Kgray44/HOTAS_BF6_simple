@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "crash_diagnostics.h"
 
 #include "adaptive_response.h"
 #include "axis_transform.h"
@@ -3479,6 +3480,15 @@ bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList
     return true;
 }
 
+void AppBackend::recordCrashPresentationState(int page, const QString &theme)
+{
+    m_crashPresentationPage = page;
+    m_crashPresentationTheme = theme.left(32);
+    // This updates the fixed crash-context snapshot only. It deliberately
+    // does not append an event for every page/property binding evaluation.
+    CrashDiagnostics::recordControlPlaneEvent(QString(), crashPresentationContext());
+}
+
 QVariantMap AppBackend::editingAxisBatchPreview(int physicalAxis, const QString &property,
                                                 const QVariant &value) const
 {
@@ -3662,7 +3672,15 @@ QString AppBackend::mappingStatus() const
     }
     return u"STARTING MAPPING"_qs;
 }
-bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
+bool AppBackend::vjoyReady() const
+{
+    // The deterministic Live Controller UI seam represents a deliberately
+    // suspended mapper with no usable output.  Keep that presentation state
+    // self-contained rather than letting a real, unrelated vJoy driver on a
+    // developer machine make the test outcome depend on external hardware.
+    // Production code never sets this flag.
+    return !m_liveInputTestSuspended && m_worker.runtime().vjoyReady.load();
+}
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
 QString AppBackend::vjoyStatusSeverity() const
 {
@@ -8346,8 +8364,27 @@ void AppBackend::resetUiPerformanceCounters()
 void AppBackend::appendEvent(const QString &event)
 {
     const QString timestamp = QDateTime::currentDateTime().toString(u"HH:mm:ss"_qs);
-    m_events.append(timestamp + u"  "_qs + event);
+    const QString entry = timestamp + u"  "_qs + event;
+    m_events.append(entry);
+    CrashDiagnostics::recordControlPlaneEvent(entry, crashPresentationContext());
     emit eventLogChanged();
+}
+
+QString AppBackend::crashPresentationContext() const
+{
+    static constexpr std::array<const char *, 11> pages{
+        "Axes", "Buttons", "Calibration", "Diagnostics", "Settings", "Profiles", "Curves", "Automation", "Overview", "Adaptive Response", "Devices"};
+    const QString page = m_crashPresentationPage >= 0 && m_crashPresentationPage < static_cast<int>(pages.size())
+        ? QString::fromLatin1(pages[static_cast<size_t>(m_crashPresentationPage)]) : u"Unknown"_qs;
+    const auto safe = [](QString value) {
+        return value.replace(u'\n', u' ').replace(u'\r', u' ').replace(u'"', u'\'').left(128);
+    };
+    return QString(u"page=%1\\ntheme=%2\\nactiveProfile=%3\\nactiveRig=%4\\neditingRig=%5\\neditingScope=%6\\nphysicalDevices=%7/%8 connected\\nmappingRequested=%9\\nmappingEffective=%10\\nvJoy=%11\\nHidHide=%12"_qs)
+        .arg(safe(page), safe(m_crashPresentationTheme), safe(activeProfileName()), safe(activeDeviceRigName()), safe(editingDeviceRigName()), safe(editingScopeLabel()))
+        .arg(m_connectedControllerCount).arg(m_discoveredControllers.size())
+        .arg(mappingRequested() ? u"true"_qs : u"false"_qs, mappingActive() ? u"true"_qs : u"false"_qs,
+             vjoyReady() ? u"ready"_qs : u"unavailable"_qs,
+             hidhideAvailable() && hidhideCloaked() && hidhideMapperAllowed() ? u"ready"_qs : u"needs attention"_qs);
 }
 
 void AppBackend::initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity)

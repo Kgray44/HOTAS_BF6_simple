@@ -18,6 +18,7 @@ Introduces reusable hardware Device Rigs that combine several explicit DirectInp
 - One themed Device Rig Setup & Verification system scales from a compact single HOTAS check to grouped multi-input and multi-output readiness, routing, visibility, and live evidence without a parallel verifier.
 - The persistent top-bar Device Rig and Editing Scope controls distinguish saved, connected, active-runtime, and editing states; changing editing context never activates hardware. Single-source route editing and reviewed compatible batch processing are explicit.
 - Day Ops is a persisted fourth presentation system with carrier-deck gray/aluminum surfaces, dark navy technical text, steel framing, safety-orange controls, and dark instrumentation insets. It preserves geometry and never affects mapper behavior.
+- Crash Reporter & Recovery Diagnostics keeps fatal evidence local: bounded recent control-plane context, metadata, and a Windows minidump where possible are handed to a small external reporter with copy, folder, and user-initiated restart actions. A session marker identifies abnormal exits that could not finish reporting; no data is uploaded automatically.
 
 ## v2.3.2 — Battlefield 6 Helicopter starter profile
 

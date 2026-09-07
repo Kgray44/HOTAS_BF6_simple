@@ -8,6 +8,8 @@ Page {
     padding: 0
 
     property int currentPage: 8
+    onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, "Legacy")
+    Component.onCompleted: backend.recordCrashPresentationState(currentPage, "Legacy")
     property bool menuOpen: false
     // Retain only compact values across page unloads, never page object trees.
     property var profileLibraryPresentationState: ({})
@@ -16,12 +18,12 @@ Page {
     // Do not materialize telemetry-shaped models when their page is unloaded.
     property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3 || currentPage === 9) ? backend.axes : []
     readonly property var adaptiveThemeTokens: ({
-        topGun: false, background: "#0d1013", panel: "#1a1d23", panelRaised: "#20282d", panelInset: "#10171b", panelRadius: 6, border: "#52717c", borderStrong: "#78aab9",
+        topGun: false, dayOps: false, legacy: true, background: "#0d1013", panel: "#1a1d23", panelRaised: "#20282d", panelInset: "#10171b", panelRadius: 6, border: "#52717c", borderStrong: "#78aab9", fastener: "#5c9caf",
         controlRadius: 4, textStrong: "#f3f7f7", text: "#d5e0e3", textMuted: "#9aa3a7",
         textFaint: "#77919a", telemetryFont: "Consolas", displayFont: "Segoe UI Variable",
-        control: "#1b2a31", controlDisabled: "#142126", controlPressed: "#29414a",
-        controlHover: "#22343c", buttonSurface: "#294a57", buttonSecondary: "#1b2a31",
-        tooltip: "#16252b", selection: "#294a57", orange: "#78aab9", cyan: "#8fc8c0",
+        control: "#10171b", controlDisabled: "#0c1013", controlPressed: "#29414a",
+        controlHover: "#142128", buttonSurface: "#324f5a", buttonHover: "#456c78", buttonSecondary: "#222c32", buttonSecondaryHover: "#303d44",
+        tooltip: "#151e23", selection: "#315a66", selectionCurrent: "#244650", orange: "#78aab9", cyan: "#8fc8c0",
         warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9"
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
@@ -1100,58 +1102,16 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 1180; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
-            RowLayout {
-                visible: root.width >= 1180
-                spacing: 4
-                Button {
-                    text: backend.editingDeviceRigName + "  ▾"
-                    font.pixelSize: 10
-                    onClicked: legacyRigContextMenu.open()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Editing rig only. Runtime activation stays in Devices."
-                }
-                Button {
-                    text: backend.editingScopeLabel + "  ▾"
-                    font.pixelSize: 10
-                    onClicked: legacyScopeContextMenu.open()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Editing scope only. It never activates hardware."
-                }
-                Menu {
-                    id: legacyRigContextMenu
-                    Instantiator {
-                        model: backend.deviceRigs
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: (modelData.editing ? "✓  " : "") + modelData.name + "  ·  "
-                                  + modelData.healthLabel + (modelData.active ? "  ·  ACTIVE" : "")
-                            onTriggered: backend.setEditingDeviceContext(modelData.id, [])
-                        }
-                        onObjectAdded: function(index, object) { legacyRigContextMenu.insertItem(index, object) }
-                        onObjectRemoved: function(index, object) { legacyRigContextMenu.removeItem(object) }
-                    }
-                    MenuSeparator {}
-                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
-                }
-                Menu {
-                    id: legacyScopeContextMenu
-                    MenuItem { text: backend.editingScopeLabel === "All Devices" ? "✓  All Devices" : "All Devices"
-                        onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, []) }
-                    Instantiator {
-                        model: backend.editingDevices
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: (modelData.selected ? "✓  " : "") + modelData.name
-                                  + (modelData.required ? "" : "  ·  optional")
-                            onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, [modelData.id])
-                        }
-                        onObjectAdded: function(index, object) { legacyScopeContextMenu.insertItem(index + 1, object) }
-                        onObjectRemoved: function(index, object) { legacyScopeContextMenu.removeItem(object) }
-                    }
-                    MenuSeparator {}
-                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
-                }
+            FineLine { visible: root.width >= 900; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            DeviceContextSelector {
+                objectName: "legacyDeviceContextSelector"
+                visible: root.width >= 900
+                Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
+                Layout.maximumWidth: 272
+                backendObject: backend
+                theme: root.adaptiveThemeTokens
+                legacy: true
+                onManageDevices: root.currentPage = 10
             }
             Item { Layout.fillWidth: true }
             Rectangle {

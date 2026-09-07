@@ -4,6 +4,7 @@ import QtQuick.Layouts 6.5
 
 Page {
     id: root
+    objectName: "devicesPage"
     padding: 0
     property var backendObject
     property var themeTokens
@@ -15,6 +16,14 @@ Page {
 
     readonly property var rigs: backendObject ? backendObject.deviceRigs : []
     readonly property var controllers: backendObject ? backendObject.controllers : []
+    // Theme.qml uses typed colors while Legacy exposes its established tokens
+    // as a compact map. Normalize here so every shared Devices surface is
+    // equally valid in all four themes.
+    property color readyColor: themeTokens.ready
+    property color warningColor: themeTokens.warning
+    property color dangerColor: themeTokens.danger
+    property color mutedColor: themeTokens.textMuted
+    property color panelRaisedColor: themeTokens.panelRaised
 
     function rigFor(id) {
         for (let i = 0; i < rigs.length; ++i) if (rigs[i].id === id) return rigs[i]
@@ -22,10 +31,10 @@ Page {
     }
     readonly property var selectedRig: rigFor(selectedRigId)
     function healthColor(key) {
-        if (key === "ready") return themeTokens.ready
-        if (key === "partial") return themeTokens.warning
-        if (key === "disabled" || key === "offline") return themeTokens.textMuted
-        return themeTokens.danger
+        if (key === "ready") return readyColor
+        if (key === "partial") return warningColor
+        if (key === "disabled" || key === "offline") return mutedColor
+        return dangerColor
     }
     function pickRig(id) {
         selectedRigId = id
@@ -38,6 +47,15 @@ Page {
         for (let i = 0; i < rig.members.length; ++i) if (rig.members[i].id === id) return true
         return false
     }
+    function indexFor(items, id) {
+        for (let i = 0; i < items.length; ++i) if (items[i].id === id) return i
+        return 0
+    }
+    function hasOutput(rig, id) {
+        if (!rig || !id) return false
+        for (let i = 0; i < rig.outputs.length; ++i) if (rig.outputs[i].id === id) return true
+        return false
+    }
     function selectedEditingCount() {
         if (!backendObject) return 0
         const entries = backendObject.editingDevices
@@ -45,8 +63,42 @@ Page {
         for (let i = 0; i < entries.length; ++i) if (entries[i].selected) ++count
         return count
     }
+    function containsRig(id) {
+        for (let i = 0; i < rigs.length; ++i) if (rigs[i].id === id) return true
+        return false
+    }
+    function normalizeSelectionsAfterModelRefresh() {
+        // A device-rig model is a value projection, not a stable QObject
+        // collection. Never retain an old map after a backend replacement.
+        const editing = backendObject ? backendObject.editingDeviceRigId : ""
+        if (containsRig(editing)) selectedRigId = editing
+        else if (!containsRig(selectedRigId)) selectedRigId = rigs.length ? rigs[0].id : ""
+        if (selectedRig && !rigHasMember(selectedRig, selectedDeviceId)) {
+            selectedDeviceId = ""
+            if (physicalDeviceDialog.visible) physicalDeviceDialog.close()
+        }
+        if (!hasOutput(selectedRig, selectedOutputId)) {
+            selectedOutputId = ""
+            if (outputDetailDialog.visible) outputDetailDialog.close()
+        }
+    }
 
-    component Panel: AviationPanel { theme: root.themeTokens }
+    Connections {
+        target: backendObject
+        function onDeviceRigsChanged() { Qt.callLater(root.normalizeSelectionsAfterModelRefresh) }
+        function onControllersChanged() { Qt.callLater(root.normalizeSelectionsAfterModelRefresh) }
+    }
+
+    component Panel: DevicePanel {
+        theme: root.themeTokens
+        legacy: root.legacy
+        // The section panels share the page viewport.  In contrast to nested
+        // member cards, they must never expand the ScrollView's content area
+        // merely because a row inside them has a wide implicit size.
+        Layout.minimumWidth: 0
+        Layout.preferredWidth: root.width
+        Layout.maximumWidth: root.width
+    }
     component SmallLabel: Text {
         color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true
         font.family: themeTokens.topGun ? themeTokens.displayFont : root.font.family
@@ -55,12 +107,19 @@ Page {
     background: Rectangle { color: themeTokens.background }
 
     ScrollView {
+        id: devicesScroll
+        objectName: "devicesScroll"
         anchors.fill: parent
         clip: true
-        contentWidth: availableWidth
+        contentWidth: root.width
 
         ColumnLayout {
-            width: parent.width
+            objectName: "devicesContent"
+            // Page is the authoritative viewport. ScrollView's availableWidth
+            // can momentarily retain the old shell width while the page host
+            // applies its margins during a resize, making rig cards extend
+            // horizontally past the actual Devices page.
+            width: root.width
             spacing: 16
 
             RowLayout {
@@ -79,18 +138,15 @@ Page {
                     }
                 }
                 Item { Layout.fillWidth: true }
-                Button {
-                    text: "+  CREATE RIG"; highlighted: true
-                    onClicked: createRigDialog.open()
-                }
+                ThemedButton { theme: themeTokens; text: "+ CREATE RIG"; onTriggered: createRigDialog.open() }
             }
 
             Panel {
                 Layout.fillWidth: true
-                Layout.preferredHeight: migrationWarning.visible ? 76 : 0
+                implicitHeight: migrationWarning.implicitHeight + 30
                 visible: backendObject && backendObject.deviceRigMigrationWarning.length > 0
-                color: Qt.rgba(themeTokens.warning.r, themeTokens.warning.g, themeTokens.warning.b, 0.10)
-                border.color: themeTokens.warning
+                color: Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
+                border.color: warningColor
                 Text {
                     id: migrationWarning
                     anchors.fill: parent; anchors.margins: 16
@@ -101,10 +157,10 @@ Page {
 
             Panel {
                 Layout.fillWidth: true
-                Layout.preferredHeight: rigDetectionWarning.visible ? 58 : 0
+                implicitHeight: rigDetectionWarning.implicitHeight + 30
                 visible: backendObject && backendObject.deviceRigDetectionMessage.length > 0
-                color: Qt.rgba(themeTokens.warning.r, themeTokens.warning.g, themeTokens.warning.b, 0.10)
-                border.color: themeTokens.warning
+                color: Qt.rgba(warningColor.r, warningColor.g, warningColor.b, 0.10)
+                border.color: warningColor
                 Text {
                     id: rigDetectionWarning
                     anchors.fill: parent; anchors.margins: 16
@@ -114,6 +170,7 @@ Page {
             }
 
             Panel {
+                objectName: "activeRigPanel"
                 Layout.fillWidth: true
                 Layout.preferredHeight: activeRigColumn.implicitHeight + 32
                 color: selectedRig ? Qt.rgba(healthColor(selectedRig.health).r, healthColor(selectedRig.health).g,
@@ -155,16 +212,16 @@ Page {
                 }
             }
 
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
-                Layout.alignment: Qt.AlignTop
                 spacing: 16
 
                 Panel {
-                    Layout.preferredWidth: Math.max(285, root.width * 0.34)
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 310
+                    objectName: "deviceRigListPanel"
+                    Layout.fillWidth: true
+                    implicitHeight: rigListContent.implicitHeight + 28
                     ColumnLayout {
+                        id: rigListContent
                         anchors.fill: parent; anchors.margins: 14
                         spacing: 8
                         RowLayout {
@@ -195,7 +252,6 @@ Page {
                                 MouseArea { id: rigHover; anchors.fill: parent; hoverEnabled: true; onClicked: root.pickRig(modelData.id) }
                             }
                         }
-                        Item { Layout.fillHeight: true }
                         Text {
                             visible: rigs.length === 0; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             text: "No Device Rigs yet. Start with your normal stick or HOTAS; extra devices can be added when you are ready."
@@ -205,9 +261,11 @@ Page {
                 }
 
                 Panel {
+                    objectName: "rigDetailsPanel"
                     Layout.fillWidth: true
-                    Layout.minimumHeight: 310
+                    implicitHeight: rigDetailsContent.implicitHeight + 32
                     ColumnLayout {
+                        id: rigDetailsContent
                         anchors.fill: parent; anchors.margins: 16
                         spacing: 12
                         RowLayout {
@@ -217,34 +275,26 @@ Page {
                                 Text { text: selectedRig ? selectedRig.name : "Build your first Device Rig"; color: themeTokens.textStrong; font.pixelSize: 21; font.bold: true }
                             }
                             Item { Layout.fillWidth: true }
-                            Button {
+                            ThemedButton {
+                                theme: themeTokens
                                 visible: selectedRig && !selectedRig.active; text: "ACTIVATE"
-                                enabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
-                                onClicked: backendObject.activateDeviceRig(selectedRig.id)
+                                commandEnabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
+                                onTriggered: backendObject.activateDeviceRig(selectedRig.id)
                             }
-                            Button {
+                            ThemedButton {
+                                theme: themeTokens; tone: "secondary"
                                 visible: selectedRig && selectedRig.active; text: "DEACTIVATE"
-                                onClicked: backendObject.deactivateDeviceRig(selectedRig.id)
+                                onTriggered: backendObject.deactivateDeviceRig(selectedRig.id)
                             }
-                            Button {
+                            ThemedButton {
+                                theme: themeTokens; tone: "secondary"
                                 visible: selectedRig; text: "VERIFY RIG"
-                                onClicked: backendObject.verifyDeviceRig(selectedRig.id)
+                                onTriggered: backendObject.verifyDeviceRig(selectedRig.id)
                             }
-                            Button {
-                                visible: selectedRig && !selectedRig.default; text: "MAKE DEFAULT"
-                                onClicked: backendObject.setDefaultDeviceRig(selectedRig.id)
-                            }
-                            Button {
-                                visible: selectedRig && selectedRig.default; text: "CLEAR DEFAULT"
-                                onClicked: backendObject.clearDefaultDeviceRig(selectedRig.id)
-                            }
-                            Button {
-                                visible: selectedRig; text: "RENAME"; flat: true
-                                onClicked: { rigNameField.text = selectedRig.name; renameRigDialog.open() }
-                            }
-                            Button {
-                                visible: selectedRig; text: "DELETE RIG"; flat: true
-                                onClicked: deleteRigDialog.open()
+                            ThemedButton {
+                                theme: themeTokens; tone: "secondary"; compact: true
+                                visible: selectedRig; text: "…"
+                                onTriggered: rigDetailsActions.open()
                             }
                         }
                         Text {
@@ -255,124 +305,72 @@ Page {
                         Repeater {
                             visible: selectedRig !== null
                             model: selectedRig ? selectedRig.members : []
-                            delegate: Rectangle {
+                            delegate: DevicePanel {
                                 required property var modelData
-                                Layout.fillWidth: true; implicitHeight: 58; radius: themeTokens.controlRadius
-                                color: Qt.rgba(themeTokens.panelRaised.r, themeTokens.panelRaised.g, themeTokens.panelRaised.b, 0.54)
+                                theme: root.themeTokens; legacy: root.legacy
+                                Layout.fillWidth: true; implicitHeight: memberCardContent.implicitHeight + 22; radius: root.legacy ? 4 : themeTokens.controlRadius
+                                color: Qt.rgba(panelRaisedColor.r, panelRaisedColor.g, panelRaisedColor.b, 0.54)
                                 border.color: modelData.ambiguous ? themeTokens.danger : modelData.connected ? themeTokens.ready : themeTokens.border
-                                RowLayout {
-                                    anchors.fill: parent; anchors.margins: 10
-                                    Rectangle { width: 7; height: 7; radius: 4; color: modelData.ambiguous ? themeTokens.danger : modelData.connected ? themeTokens.ready : themeTokens.textMuted }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true; spacing: 1
-                                        Text { text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 13; font.bold: true }
-                                        Text { text: modelData.ambiguous ? "Selection required" : !modelData.verified ? "Needs verification" : modelData.connected ? "Connected · Verified" : modelData.required ? "Required · Offline" : "Optional · Offline"; color: themeTokens.textMuted; font.pixelSize: 10 }
+                                ColumnLayout {
+                                    id: memberCardContent
+                                    anchors.fill: parent; anchors.margins: 10; spacing: 7
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Rectangle { width: 7; height: 7; radius: 4; color: modelData.ambiguous ? themeTokens.danger : modelData.connected ? themeTokens.ready : themeTokens.textMuted }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true; spacing: 1
+                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 13; font.bold: true }
+                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.ambiguous ? "Selection required" : !modelData.verified ? "Needs verification" : modelData.connected ? "Connected · Verified" : modelData.required ? "Required · Offline" : "Optional · Offline"; color: themeTokens.textMuted; font.pixelSize: 10 }
+                                        }
+                                        ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openDevice(modelData.id) }
+                                        ThemedButton { theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; visible: selectedRig && selectedRig.members.length > 1; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigMember(rigId, modelData.id) } }
                                     }
-                                    Button { text: "DETAILS"; flat: true; onClicked: root.openDevice(modelData.id) }
-                                    Button {
-                                        text: modelData.required ? "REQUIRED" : "OPTIONAL"; flat: true
-                                        onClicked: backendObject.setDeviceRigMemberRequired(selectedRig.id, modelData.id, !modelData.required)
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 10
+                                        ThemedCheckBox { theme: themeTokens; text: modelData.required ? "Required" : "Optional"; checked: !!modelData.required; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberRequired(rigId, modelData.id, value) } }
+                                        ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberEnabled(rigId, modelData.id, value) } }
+                                        ThemedButton { theme: themeTokens; text: modelData.selected ? "EDITING" : "EDIT THIS"; compact: true; tone: "secondary"; onTriggered: { let ids = []; const entries = backendObject.editingDevices; for (let i = 0; i < entries.length; ++i) if (entries[i].id === modelData.id ? !modelData.selected : entries[i].selected) ids.push(entries[i].id); if (selectedRig) backendObject.setEditingDeviceContext(selectedRig.id, ids) } }
+                                        Item { Layout.fillWidth: true }
                                     }
-                                    ComboBox {
+                                    RowLayout {
                                         visible: selectedRig && selectedRig.outputs.length > 1
-                                        Layout.preferredWidth: 138
-                                        model: selectedRig ? selectedRig.outputs : []
-                                        textRole: "name"; valueRole: "id"
-                                        currentIndex: {
-                                            if (!selectedRig) return -1
-                                            for (let outputIndex = 0; outputIndex < selectedRig.outputs.length; ++outputIndex) {
-                                                if (selectedRig.outputs[outputIndex].id === modelData.preferredOutputLayoutId) return outputIndex
-                                            }
-                                            return 0
+                                        Layout.fillWidth: true
+                                        SmallLabel { text: "OUTPUT" }
+                                        ThemedComboBox {
+                                            theme: themeTokens; Layout.preferredWidth: 220
+                                            model: selectedRig ? selectedRig.outputs : []
+                                            textRole: "name"; valueRole: "id"
+                                            currentIndex: root.indexFor(selectedRig ? selectedRig.outputs : [], modelData.preferredOutputLayoutId)
+                                            onActivated: function(index, value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberOutput(rigId, modelData.id, value) }
                                         }
-                                        onActivated: backendObject.setDeviceRigMemberOutput(selectedRig.id, modelData.id, currentValue)
-                                        ToolTip.visible: hovered; ToolTip.text: "Virtual output used by this physical input"
-                                    }
-                                    CheckBox {
-                                        text: "Use"; checked: !!modelData.enabled
-                                        onToggled: backendObject.setDeviceRigMemberEnabled(selectedRig.id, modelData.id, checked)
-                                    }
-                                    CheckBox {
-                                        checked: !!modelData.selected; text: "Edit"
-                                        onToggled: {
-                                            let ids = []
-                                            const entries = backendObject.editingDevices
-                                            for (let i = 0; i < entries.length; ++i) {
-                                                if (entries[i].id === modelData.id ? checked : entries[i].selected) ids.push(entries[i].id)
-                                            }
-                                            backendObject.setEditingDeviceContext(selectedRig.id, ids)
-                                        }
-                                    }
-                                    Button {
-                                        visible: selectedRig && selectedRig.members.length > 1
-                                        text: "REMOVE"; flat: true
-                                        onClicked: backendObject.removeDeviceRigMember(selectedRig.id, modelData.id)
+                                        Item { Layout.fillWidth: true }
                                     }
                                 }
                             }
                         }
                         Rectangle { visible: selectedRig !== null; Layout.fillWidth: true; height: 1; color: themeTokens.divider }
-                        RowLayout {
-                            visible: selectedRig !== null; Layout.fillWidth: true
+                        ColumnLayout {
+                            visible: selectedRig !== null; Layout.fillWidth: true; spacing: 8
                             SmallLabel { text: "VIRTUAL OUTPUTS" }
-                            Item { Layout.fillWidth: true }
                             Repeater {
                                 model: selectedRig ? selectedRig.outputs : []
                                 delegate: RowLayout {
                                     required property var modelData
-                                    Button {
-                                        text: modelData.name + "  ·  vJoy " + modelData.deviceId + "  ›"
-                                        flat: true; onClicked: root.openOutput(modelData.id)
-                                    }
-                                    CheckBox {
-                                        text: "Use"; checked: !!modelData.enabled
-                                        onToggled: backendObject.setDeviceRigOutputEnabled(selectedRig.id, modelData.id, checked)
-                                    }
-                                    Button {
-                                        visible: selectedRig && selectedRig.outputs.length > 1
-                                        text: "REMOVE"; flat: true
-                                        onClicked: backendObject.removeDeviceRigOutput(selectedRig.id, modelData.id)
-                                    }
+                                    Layout.fillWidth: true
+                                    Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.text; font.pixelSize: 11; elide: Text.ElideRight }
+                                    ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value) } }
+                                    ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
+                                    ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigOutput(rigId, modelData.id) } }
                                 }
                             }
-                            ComboBox {
-                                id: outputPicker
-                                Layout.preferredWidth: 190
-                                model: backendObject ? backendObject.virtualOutputLayouts : []
-                                textRole: "name"; valueRole: "id"
-                                ToolTip.visible: hovered; ToolTip.text: "Add an existing vJoy layout as another output"
-                            }
-                            Button {
-                                text: "+ ADD OUTPUT"; flat: true
-                                enabled: selectedRig && outputPicker.currentValue
-                                onClicked: backendObject.addDeviceRigOutput(selectedRig.id, outputPicker.currentValue)
+                            RowLayout { Layout.fillWidth: true
+                                ThemedButton { theme: themeTokens; text: "+ ADD OUTPUT"; tone: "secondary"; onTriggered: addOutputDialog.open() }
+                                Item { Layout.fillWidth: true }
                             }
                         }
                         RowLayout {
                             visible: selectedRig !== null; Layout.fillWidth: true; spacing: 8
-                            SmallLabel { text: "PHYSICAL INPUTS" }
-                            ComboBox {
-                                id: memberPicker
-                                Layout.preferredWidth: 220
-                                model: controllers
-                                textRole: "name"; valueRole: "id"
-                                delegate: ItemDelegate {
-                                    required property var modelData
-                                    width: memberPicker.width
-                                    enabled: modelData.id !== "" && !modelData.ambiguous
-                                             && !root.rigHasMember(root.selectedRig, modelData.id)
-                                    text: modelData.name + (modelData.connected ? " · Connected" : " · Saved / Offline")
-                                }
-                                ToolTip.visible: hovered; ToolTip.text: "Add a saved physical device to this Device Rig"
-                            }
-                            CheckBox { id: addMemberOptional; text: "Optional" }
-                            Button {
-                                text: "+ ADD DEVICE"; flat: true
-                                enabled: selectedRig && memberPicker.currentValue
-                                         && !root.rigHasMember(selectedRig, memberPicker.currentValue)
-                                onClicked: backendObject.addDeviceRigMember(selectedRig.id,
-                                    memberPicker.currentValue, !addMemberOptional.checked)
-                            }
+                            ThemedButton { theme: themeTokens; text: "+ ADD INPUT DEVICE"; tone: "secondary"; onTriggered: addMemberDialog.open() }
                             Item { Layout.fillWidth: true }
                         }
                         Text {
@@ -382,73 +380,64 @@ Page {
                                 : "Editing context changes what you view and edit across the application. It never switches the active hardware rig."
                             color: themeTokens.textMuted; font.pixelSize: 11
                         }
-                        Button {
+                        ThemedButton {
                             visible: selectedRig && root.selectedEditingCount() > 1
-                            text: "BATCH AXIS EDIT…"; flat: true
-                            onClicked: batchAxisDialog.open()
+                            theme: themeTokens; text: "BATCH AXIS EDIT…"; tone: "secondary"
+                            onTriggered: batchAxisDialog.open()
                         }
                         Rectangle { visible: selectedRig !== null; Layout.fillWidth: true; height: 1; color: themeTokens.divider }
-                        RowLayout {
-                            visible: selectedRig !== null; Layout.fillWidth: true; spacing: 12
+                        ColumnLayout {
+                            visible: selectedRig !== null; Layout.fillWidth: true; spacing: 9
                             SmallLabel { text: "AUTOMATIC BEHAVIOR" }
-                            CheckBox { text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false
-                                onToggled: if (selectedRig) backendObject.setDeviceRigEnabled(selectedRig.id, checked) }
-                            CheckBox { text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false
-                                onToggled: if (selectedRig) backendObject.setDeviceRigAutoActivate(selectedRig.id, checked) }
-                            Item { Layout.fillWidth: true }
-                            ComboBox {
-                                visible: selectedRig && selectedRig.members.length > 0
-                                model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
-                                currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
-                                onActivated: if (selectedRig) backendObject.setDeviceRigDisconnectBehavior(selectedRig.id, currentIndex)
-                                ToolTip.visible: hovered; ToolTip.text: "When a required input disappears"
+                            Flow {
+                                Layout.fillWidth: true; spacing: 12
+                                ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigEnabled(selectedRig.id, value) } }
+                                ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigAutoActivate(selectedRig.id, value) } }
                             }
-                        }
-                        RowLayout {
-                            visible: selectedRig !== null; Layout.fillWidth: true; spacing: 12
-                            SmallLabel { text: "PRIORITY / FALLBACK" }
-                            SpinBox {
-                                id: priorityBox
-                                from: 0; to: 100; stepSize: 1
-                                value: selectedRig ? Number(selectedRig.activationPriority) : 50
-                                editable: true
-                                onValueModified: if (selectedRig) backendObject.setDeviceRigActivationPriority(selectedRig.id, value)
-                                ToolTip.visible: hovered; ToolTip.text: "Higher priority wins only when no healthy active rig is retained"
-                            }
-                            Text { text: "Priority"; color: themeTokens.textMuted; font.pixelSize: 10 }
-                            ComboBox {
-                                id: fallbackPicker
-                                Layout.preferredWidth: 200
-                                model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) {
-                                    return selectedRig && item.id !== selectedRig.id
-                                }))
-                                textRole: "name"; valueRole: "id"
-                                currentIndex: {
-                                    const items = fallbackPicker.model
-                                    for (let i = 0; i < items.length; ++i)
-                                        if (selectedRig && items[i].id === selectedRig.fallbackRigId) return i
-                                    return 0
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SmallLabel { text: "DISCONNECT" }
+                                ThemedComboBox {
+                                    theme: themeTokens; Layout.preferredWidth: 220
+                                    model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
+                                    currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
+                                    onActivated: function(index) { if (selectedRig) backendObject.setDeviceRigDisconnectBehavior(selectedRig.id, index) }
                                 }
-                                onActivated: if (selectedRig) backendObject.setDeviceRigFallback(selectedRig.id, currentValue)
-                                ToolTip.visible: hovered; ToolTip.text: "Used only when the configured required-device behavior is Use fallback rig"
+                                Item { Layout.fillWidth: true }
                             }
-                            Item { Layout.fillWidth: true }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SmallLabel { text: "PRIORITY" }
+                                ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { if (selectedRig) backendObject.setDeviceRigActivationPriority(selectedRig.id, value) } }
+                                SmallLabel { text: "FALLBACK" }
+                                ThemedComboBox {
+                                    id: fallbackPicker; theme: themeTokens; Layout.preferredWidth: 210
+                                    model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) { return selectedRig && item.id !== selectedRig.id }))
+                                    textRole: "name"; valueRole: "id"
+                                    currentIndex: root.indexFor(model, selectedRig ? selectedRig.fallbackRigId : "")
+                                    onActivated: function(index, value) { if (selectedRig) backendObject.setDeviceRigFallback(selectedRig.id, value) }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
                         }
                     }
                 }
             }
 
             Panel {
-                Layout.fillWidth: true; Layout.preferredHeight: 116
+                objectName: "knownDevicesPanel"
+                Layout.fillWidth: true; implicitHeight: knownDevicesContent.implicitHeight + 28
                 ColumnLayout {
+                    id: knownDevicesContent
                     anchors.fill: parent; anchors.margins: 14
                     SmallLabel { text: "KNOWN PHYSICAL DEVICES" }
-                    RowLayout {
+                    Flow {
                         Layout.fillWidth: true; spacing: 10
                         Repeater {
                             model: controllers
-                            delegate: Rectangle {
+                            delegate: DevicePanel {
                                 required property var modelData
+                                theme: root.themeTokens; legacy: root.legacy
                                 implicitWidth: Math.max(170, deviceName.implicitWidth + 28); implicitHeight: 52
                                 radius: themeTokens.controlRadius; color: themeTokens.panelRaised; border.color: modelData.connected ? themeTokens.ready : themeTokens.border
                                 Column { anchors.fill: parent; anchors.margins: 9; spacing: 2
@@ -459,21 +448,78 @@ Page {
                             }
                         }
                         Text { visible: controllers.length === 0; text: "Connect a controller to begin."; color: themeTokens.textMuted; font.pixelSize: 12 }
-                        Item { Layout.fillWidth: true }
                     }
                 }
             }
         }
     }
 
+    Popup {
+        id: rigDetailsActions
+        objectName: "rigDetailsActionsPopup"
+        parent: Overlay.overlay
+        x: Math.max(12, root.width - width - 24); y: 96; width: 210; padding: 8
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        background: Rectangle { color: themeTokens.tooltip; border.color: themeTokens.borderStrong; radius: root.legacy ? 5 : themeTokens.panelRadius }
+        contentItem: ColumnLayout {
+            width: parent.width; spacing: 5
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.default ? "CLEAR DEFAULT" : "SET DEFAULT"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); if (rig) { if (rig.default) backendObject.clearDefaultDeviceRig(rig.id); else backendObject.setDefaultDeviceRig(rig.id) } } }
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: "RENAME RIG"; tone: "secondary"; onTriggered: { rigNameField.text = selectedRig ? selectedRig.name : ""; rigDetailsActions.close(); renameRigDialog.open() } }
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.enabled ? "DISABLE RIG" : "ENABLE RIG"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); if (rig) backendObject.setDeviceRigEnabled(rig.id, !rig.enabled) } }
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: "DELETE RIG"; tone: "danger"; onTriggered: { rigDetailsActions.close(); deleteRigDialog.open() } }
+        }
+    }
+
+    Dialog {
+        id: addMemberDialog
+        objectName: "addMemberDialog"
+        modal: true; title: "Add Input Device"
+        anchors.centerIn: parent; width: Math.min(460, Math.max(340, root.width - 48))
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
+        contentItem: ColumnLayout {
+            width: parent.width; spacing: 12
+            Text { Layout.fillWidth: true; text: "Add a saved physical controller to this rig. Its calibration and existing mappings remain intact."; color: themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            ThemedComboBox { id: memberPicker; theme: themeTokens; Layout.fillWidth: true; model: controllers.filter(function(item) { return item.id !== "" && !item.ambiguous && !root.rigHasMember(root.selectedRig, item.id) }); textRole: "name"; valueRole: "id" }
+            ThemedCheckBox { id: addMemberOptional; theme: themeTokens; text: "Optional accessory"; checked: false }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: addMemberDialog.close() }
+                ThemedButton { theme: themeTokens; text: "ADD INPUT"; commandEnabled: selectedRig && memberPicker.currentValue; onTriggered: { const rig = selectedRig; const id = memberPicker.currentValue; if (rig && id && backendObject.addDeviceRigMember(rig.id, id, !addMemberOptional.checked)) addMemberDialog.close() } }
+            }
+        }
+    }
+
+    Dialog {
+        id: addOutputDialog
+        objectName: "addOutputDialog"
+        modal: true; title: "Add Virtual Output"
+        anchors.centerIn: parent; width: Math.min(460, Math.max(340, root.width - 48))
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
+        contentItem: ColumnLayout {
+            width: parent.width; spacing: 12
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted
+                text: "Choose an existing virtual output layout for this rig. Each enabled output is verified independently." }
+            ThemedComboBox { id: outputPicker; theme: themeTokens; Layout.fillWidth: true
+                model: backendObject ? backendObject.virtualOutputLayouts : []; textRole: "name"; valueRole: "id" }
+            RowLayout {
+                Layout.fillWidth: true; Item { Layout.fillWidth: true }
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: addOutputDialog.close() }
+                ThemedButton { theme: themeTokens; text: "ADD OUTPUT"; commandEnabled: selectedRig && outputPicker.currentValue
+                    onTriggered: { const rig = selectedRig; if (rig && backendObject.addDeviceRigOutput(rig.id, outputPicker.currentValue)) addOutputDialog.close() } }
+            }
+        }
+    }
+
     Dialog {
         id: physicalDeviceDialog
+        objectName: "physicalDeviceDialog"
         modal: true
         title: "Physical Device"
         anchors.centerIn: parent
         width: Math.min(620, root.width - 42)
         property var detail: backendObject ? backendObject.physicalDeviceDetail(root.selectedDeviceId) : ({})
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.name || "Saved device"; color: themeTokens.textStrong; font.pixelSize: 22; font.bold: true }
@@ -504,22 +550,23 @@ Page {
             Text { text: "ADVANCED IDENTITY"; color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
             Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.hidInstanceId || physicalDeviceDialog.detail.directInputId || "No current raw identity"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideMiddle }
             RowLayout { Layout.fillWidth: true
-                Button { text: "VERIFY DEVICE"; onClicked: backendObject.verifyDeviceRig(root.selectedRigId) }
+                ThemedButton { theme: themeTokens; text: "VERIFY DEVICE"; tone: "secondary"; onTriggered: backendObject.verifyDeviceRig(root.selectedRigId) }
                 Item { Layout.fillWidth: true }
-                Button { visible: !(physicalDeviceDialog.detail.rigs || ""); text: "FORGET DEVICE"; onClicked: { backendObject.forgetController(root.selectedDeviceId); physicalDeviceDialog.close() } }
-                Button { text: "CLOSE"; onClicked: physicalDeviceDialog.close() }
+                ThemedButton { visible: !(physicalDeviceDialog.detail.rigs || ""); theme: themeTokens; text: "FORGET DEVICE"; tone: "danger"; onTriggered: { backendObject.forgetController(root.selectedDeviceId); physicalDeviceDialog.close() } }
+                ThemedButton { theme: themeTokens; text: "CLOSE"; tone: "secondary"; onTriggered: physicalDeviceDialog.close() }
             }
         }
     }
 
     Dialog {
         id: outputDetailDialog
+        objectName: "outputDetailDialog"
         modal: true
         title: "Virtual Output"
         anchors.centerIn: parent
         width: Math.min(620, root.width - 42)
         property var detail: backendObject ? backendObject.virtualOutputDetail(root.selectedOutputId) : ({})
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             Text { Layout.fillWidth: true; text: outputDetailDialog.detail.name || "Virtual output"; color: themeTokens.textStrong; font.pixelSize: 22; font.bold: true }
@@ -544,14 +591,14 @@ Page {
                 Text { text: outputDetailDialog.detail.managedVisibility ? "Managed" : "Not adopted"; color: themeTokens.text }
             }
             RowLayout { Layout.fillWidth: true
-                Button { text: "VERIFY / REPAIR OUTPUT"; onClicked: backendObject.verifyDeviceRig(root.selectedRigId) }
-                Button { text: "CONFIGURE VJOY"; onClicked: backendObject.openVjoyConfiguration() }
-                Button {
-                    text: "RENAME LAYOUT"; flat: true
-                    onClicked: { outputNameField.text = outputDetailDialog.detail.name || ""; renameOutputDialog.open() }
+                ThemedButton { theme: themeTokens; text: "VERIFY / REPAIR OUTPUT"; tone: "secondary"; onTriggered: backendObject.verifyDeviceRig(root.selectedRigId) }
+                ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: backendObject.openVjoyConfiguration() }
+                ThemedButton {
+                    theme: themeTokens; text: "RENAME LAYOUT"; tone: "secondary"
+                    onTriggered: { outputNameField.text = outputDetailDialog.detail.name || ""; renameOutputDialog.open() }
                 }
                 Item { Layout.fillWidth: true }
-                Button { text: "CLOSE"; onClicked: outputDetailDialog.close() }
+                ThemedButton { theme: themeTokens; text: "CLOSE"; tone: "secondary"; onTriggered: outputDetailDialog.close() }
             }
         }
     }
@@ -560,17 +607,17 @@ Page {
         id: renameOutputDialog
         modal: true; title: "Rename Virtual Output"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted
                 text: "This changes the saved output label only. Its vJoy device ID, routes, visibility, and runtime behavior are unchanged." }
-            TextField { id: outputNameField; Layout.fillWidth: true; selectByMouse: true }
+            ThemedTextInput { id: outputNameField; theme: themeTokens; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                Button { text: "CANCEL"; onClicked: renameOutputDialog.close() }
-                Button { text: "SAVE"; highlighted: true; enabled: outputNameField.text.trim().length > 0
-                    onClicked: if (backendObject.renameVirtualOutputLayout(root.selectedOutputId, outputNameField.text)) renameOutputDialog.close() }
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: renameOutputDialog.close() }
+                ThemedButton { theme: themeTokens; text: "SAVE"; commandEnabled: outputNameField.text.trim().length > 0
+                    onTriggered: if (backendObject.renameVirtualOutputLayout(root.selectedOutputId, outputNameField.text)) renameOutputDialog.close() }
             }
         }
     }
@@ -579,16 +626,16 @@ Page {
         id: renameRigDialog
         modal: true; title: "Rename Device Rig"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)
-        standardButtons: Dialog.Cancel
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 14
             Text { text: "A rig name changes only the saved organization and editing context."; color: themeTokens.textMuted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            TextField { id: rigNameField; Layout.fillWidth: true; selectByMouse: true }
+            ThemedTextInput { id: rigNameField; theme: themeTokens; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                Button { text: "SAVE"; highlighted: true; enabled: rigNameField.text.trim().length > 0
-                    onClicked: if (selectedRig && backendObject.renameDeviceRig(selectedRig.id, rigNameField.text)) renameRigDialog.close() }
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: renameRigDialog.close() }
+                ThemedButton { theme: themeTokens; text: "SAVE"; commandEnabled: rigNameField.text.trim().length > 0
+                    onTriggered: if (selectedRig && backendObject.renameDeviceRig(selectedRig.id, rigNameField.text)) renameRigDialog.close() }
             }
         }
     }
@@ -604,27 +651,29 @@ Page {
             preview = backendObject.editingAxisBatchPreview(axisIndex, "inverted", invertAll.checked)
         }
         onOpened: refreshPreview()
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             Text { Layout.fillWidth: true; text: batchAxisDialog.preview.summary || "Review selected inputs."; color: themeTokens.text; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 SmallLabel { text: "AXIS" }
-                ComboBox {
+                ThemedComboBox {
                     id: batchAxisChoice
+                    theme: themeTokens
                     model: ["X", "Y", "Z", "Rx", "Ry", "Rz", "Slider 1", "Slider 2"]
                     currentIndex: batchAxisDialog.axisIndex
-                    onActivated: { batchAxisDialog.axisIndex = currentIndex; batchAxisDialog.refreshPreview() }
+                    onActivated: function(index) { batchAxisDialog.axisIndex = index; batchAxisDialog.refreshPreview() }
                 }
-                CheckBox {
+                ThemedCheckBox {
                     id: invertAll; text: "Invert on selected inputs"
-                    onToggled: batchAxisDialog.refreshPreview()
+                    theme: themeTokens
+                    onToggled: function(value) { batchAxisDialog.refreshPreview() }
                 }
                 Item { Layout.fillWidth: true }
             }
-            Button { text: batchAxisDialog.showReview ? "HIDE REVIEW" : "REVIEW"; flat: true
-                onClicked: batchAxisDialog.showReview = !batchAxisDialog.showReview }
+            ThemedButton { theme: themeTokens; text: batchAxisDialog.showReview ? "HIDE REVIEW" : "REVIEW"; tone: "secondary"
+                onTriggered: batchAxisDialog.showReview = !batchAxisDialog.showReview }
             Repeater {
                 visible: batchAxisDialog.showReview
                 model: batchAxisDialog.preview.targets || []
@@ -639,11 +688,11 @@ Page {
             Text { Layout.fillWidth: true; text: "Only compatible processing settings are batched. Axis routes always require one explicit physical source."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                Button { text: "CANCEL"; onClicked: batchAxisDialog.close() }
-                Button {
-                    text: "APPLY COMPATIBLE ONLY"; highlighted: true
-                    enabled: !!batchAxisDialog.preview && !!batchAxisDialog.preview.valid
-                    onClicked: {
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: batchAxisDialog.close() }
+                ThemedButton {
+                    theme: themeTokens; text: "APPLY COMPATIBLE ONLY"
+                    commandEnabled: !!batchAxisDialog.preview && !!batchAxisDialog.preview.valid
+                    onTriggered: {
                         if (backendObject.applyEditingAxisBatch(batchAxisDialog.axisIndex, "inverted",
                                 invertAll.checked, "apply-compatible-only")) batchAxisDialog.close()
                     }
@@ -654,19 +703,21 @@ Page {
 
     Dialog {
         id: createRigDialog
+        objectName: "createRigDialog"
         modal: true; title: "Create Device Rig"
         anchors.centerIn: parent; width: Math.min(560, root.width - 48)
-        standardButtons: Dialog.Cancel
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.borderStrong; radius: themeTokens.panelRadius }
-        ColumnLayout {
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy; border.color: themeTokens.borderStrong }
+        contentItem: ColumnLayout {
             width: parent.width; spacing: 13
             Text { Layout.fillWidth: true; text: "Choose the physical devices that belong together. The default output combines them into one virtual controller."; wrapMode: Text.WordWrap; color: themeTokens.text }
-            TextField { id: rigName; Layout.fillWidth: true; placeholderText: "Rig name, for example BF6 Flight Rig" }
+            ThemedTextInput { id: rigName; theme: themeTokens; Layout.fillWidth: true; placeholderText: "Rig name, for example BF6 Flight Rig" }
             Repeater {
                 id: controllerRepeater
                 model: controllers
-                delegate: CheckBox {
+                delegate: ThemedCheckBox {
                     required property var modelData
+                    theme: themeTokens
+                    property string controllerId: modelData.id
                     visible: modelData.id !== "" && !modelData.ambiguous
                     text: modelData.name + (modelData.connected ? "  ·  Connected" : "  ·  Saved / Offline")
                     checked: !!modelData.selected
@@ -676,14 +727,14 @@ Page {
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                Button {
-                    text: "CREATE & VERIFY"; highlighted: true
-                    enabled: rigName.text.trim().length > 0
-                    onClicked: {
+                ThemedButton {
+                    theme: themeTokens; text: "CREATE & VERIFY"
+                    commandEnabled: rigName.text.trim().length > 0
+                    onTriggered: {
                         let ids = []
                         for (let i = 0; i < controllerRepeater.count; ++i) {
                             const item = controllerRepeater.itemAt(i)
-                            if (item && item.visible && item.checked) ids.push(item.modelData.id)
+                            if (item && item.visible && item.checked) ids.push(item.controllerId)
                         }
                         const created = backendObject.createDeviceRig(rigName.text, ids)
                         if (created !== "") {
@@ -707,7 +758,7 @@ Page {
         id: deleteRigDialog
         modal: true; title: "Delete Device Rig"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)
-        background: Rectangle { color: themeTokens.panel; border.color: themeTokens.danger; radius: themeTokens.panelRadius }
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy; border.color: themeTokens.danger }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             Text {
@@ -717,10 +768,10 @@ Page {
             }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                Button { text: "CANCEL"; onClicked: deleteRigDialog.close() }
-                Button {
-                    text: "DELETE RIG"; highlighted: true
-                    onClicked: {
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: deleteRigDialog.close() }
+                ThemedButton {
+                    theme: themeTokens; text: "DELETE RIG"; tone: "danger"
+                    onTriggered: {
                         if (root.selectedRig && backendObject.deleteDeviceRig(root.selectedRig.id)) {
                             root.selectedRigId = ""
                             deleteRigDialog.close()

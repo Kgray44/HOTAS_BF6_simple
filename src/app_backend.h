@@ -589,6 +589,7 @@ public:
     Q_INVOKABLE void verifyDeviceRig(const QString &rigId = {});
     Q_INVOKABLE bool setEditingDeviceContext(const QString &rigId,
                                              const QStringList &controllerRecordIds = {});
+    Q_INVOKABLE void recordCrashPresentationState(int page, const QString &theme);
     Q_INVOKABLE QVariantMap editingAxisBatchPreview(int physicalAxis, const QString &property,
                                                     const QVariant &value) const;
     Q_INVOKABLE bool applyEditingAxisBatch(int physicalAxis, const QString &property,
@@ -630,6 +631,7 @@ signals:
 private slots:
     void refreshUiSnapshot();
     void appendEvent(const QString &event);
+    QString crashPresentationContext() const;
     void initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity);
     void finishUpdateCheck(QNetworkReply *reply);
     void failUpdateCheck(const QString &reason);
@@ -957,6 +959,8 @@ private:
     QString m_curvePreviewLabel;
     CurveDefinition m_curvePreviewDefinition;
     EventLog m_events;
+    int m_crashPresentationPage = 8;
+    QString m_crashPresentationTheme = u"Standard"_qs;
     QString m_automationValidationMessage;
     std::unique_ptr<PortableConfigurationBundle> m_pendingPortableImport;
     QVariantMap m_portableImportPreview;

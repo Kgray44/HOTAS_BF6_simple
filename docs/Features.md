@@ -177,6 +177,8 @@ The application exposes physical input, transformed output, capacity, readiness,
 - vJoy readiness, button capacity, axis availability, and POV capability reporting.
 - HidHide installation/cloaking status when the supported CLI can answer.
 - Automation rule count, active count, invalid health, and evaluation timing.
+- Crash Reporter & Recovery Diagnostics writes bounded local crash metadata, recent control-plane events, and a Windows minidump where possible, then opens a separate local reporter with copy, folder, and user-initiated restart actions. Nothing is uploaded automatically.
+- A lightweight session marker distinguishes clean shutdown from a previous abnormal exit and offers local crash-report access on the next startup when a report could not be completed.
 - Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, motion state, reversal count, and safety-clamp count.
 - Actual parked disabled-axis output reported separately from raw physical input.
 - Configuration warnings for capability mismatch or unavailable targets.

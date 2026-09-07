@@ -8,6 +8,7 @@ QtObject {
 
     readonly property bool topGun: themeManager.topGun
     readonly property bool dayOps: themeManager.dayOps
+    readonly property bool legacy: false
     readonly property string name: themeManager.currentTheme
     readonly property string displayFont: topGun ? "Arial Narrow" : "Segoe UI Variable"
     readonly property string telemetryFont: topGun ? "Consolas" : "Consolas"
@@ -17,6 +18,12 @@ QtObject {
     // Foundation
     readonly property color background: topGun ? "#071217" : dayOps ? "#c8ced0" : "#0d1013"
     readonly property color backgroundLift: topGun ? "#0b1b21" : dayOps ? "#d5dad9" : "#11171b"
+    // Shell colors intentionally stand apart from page panels. Keeping this
+    // trio here prevents a light page from being framed by a dark root
+    // gradient or loader while Day Ops is selected.
+    readonly property color shellGradientTop: topGun ? "#102127" : dayOps ? "#e0e3df" : "#151a1e"
+    readonly property color shellGradientMiddle: topGun ? "#071217" : dayOps ? "#c8ced0" : "#0d1013"
+    readonly property color shellGradientBottom: topGun ? "#050b0f" : dayOps ? "#b7c1c3" : "#080b0d"
     readonly property color header: topGun ? "#09151a" : dayOps ? "#bbc5c8" : "#14191d"
     readonly property color panel: topGun ? "#0b1b21" : dayOps ? "#d9ddda" : "#1a1d23"
     readonly property color panelRaised: topGun ? "#10252c" : dayOps ? "#e9ece7" : "#20282d"
