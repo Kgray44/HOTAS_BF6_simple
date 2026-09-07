@@ -103,6 +103,17 @@ Page {
         color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true
         font.family: themeTokens.topGun ? themeTokens.displayFont : root.font.family
     }
+    // All Devices dialogs share a real application header. Without this
+    // wrapper Qt Quick Controls supplies a platform-default title strip,
+    // which is especially visible as an incorrect white bar in Day Ops.
+    component DeviceDialog: Dialog {
+        standardButtons: Dialog.NoButton
+        header: ThemedDialogHeader {
+            theme: root.themeTokens
+            legacy: root.legacy
+            heading: parent.title
+        }
+    }
 
     background: Rectangle { color: themeTokens.background }
 
@@ -504,7 +515,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: addMemberDialog
         objectName: "addMemberDialog"
         modal: true; title: "Add Input Device"
@@ -524,7 +535,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: addOutputDialog
         objectName: "addOutputDialog"
         modal: true; title: "Add Virtual Output"
@@ -545,7 +556,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: physicalDeviceDialog
         objectName: "physicalDeviceDialog"
         modal: true
@@ -592,7 +603,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: outputDetailDialog
         objectName: "outputDetailDialog"
         modal: true
@@ -637,7 +648,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: renameOutputDialog
         modal: true; title: "Rename Virtual Output"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)
@@ -656,7 +667,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: renameRigDialog
         modal: true; title: "Rename Device Rig"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)
@@ -674,7 +685,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: batchAxisDialog
         modal: true; title: "Review Multi-Device Axis Edit"
         anchors.centerIn: parent; width: Math.min(540, root.width - 48)
@@ -735,7 +746,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: createRigDialog
         objectName: "createRigDialog"
         modal: true; title: "Create Device Rig"
@@ -788,7 +799,7 @@ Page {
         }
     }
 
-    Dialog {
+    DeviceDialog {
         id: deleteRigDialog
         modal: true; title: "Delete Device Rig"
         anchors.centerIn: parent; width: Math.min(460, root.width - 48)

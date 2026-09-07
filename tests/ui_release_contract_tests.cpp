@@ -26,6 +26,7 @@ private slots:
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
     void unifiedVerifierUsesSharedThemedButtons();
+    void deviceDialogsUseSharedThemedHeaders();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
@@ -231,6 +232,24 @@ void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
     QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: \"warning\"")));
     QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
     QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
+}
+
+void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
+{
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString header = sourceFile(QStringLiteral("qml/ThemedDialogHeader.qml"));
+
+    // Devices owns eight transactional dialogs plus the batch-review dialog.
+    // They must all use the shared header; otherwise Day Ops can silently
+    // inherit a generic white Qt title bar even if its dialog body is themed.
+    QVERIFY(devices.contains(QStringLiteral("component DeviceDialog: Dialog")));
+    QVERIFY(devices.contains(QStringLiteral("header: ThemedDialogHeader")));
+    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 9);
+    QCOMPARE(devices.count(QStringLiteral("\n    Dialog {")), 0);
+    QVERIFY(header.contains(QStringLiteral("property bool legacy")));
+    QVERIFY(header.contains(QStringLiteral("theme.panelRaised")));
+    QVERIFY(header.contains(QStringLiteral("legacy ? \"#132027\"")));
+    QVERIFY(!header.contains(QStringLiteral("#ffffff")));
 }
 
 void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()

@@ -111,6 +111,7 @@ qt_add_qml_module(HOTASMapper
         qml/DevicesPage.qml
         qml/DevicePanel.qml
         qml/DeviceContextSelector.qml
+        qml/ThemedDialogHeader.qml
         qml/ThemedButton.qml
         qml/ThemedCheckBox.qml
         qml/ThemedComboBox.qml
@@ -465,6 +466,7 @@ if (BUILD_TESTING)
             qml/DevicesPage.qml
             qml/DevicePanel.qml
             qml/DeviceContextSelector.qml
+            qml/ThemedDialogHeader.qml
             qml/ThemedButton.qml
             qml/ThemedCheckBox.qml
             qml/ThemedComboBox.qml

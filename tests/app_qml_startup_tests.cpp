@@ -1081,7 +1081,8 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
     return selectPage(surface, 8);
 }
 
-bool captureDevicesSnapshot(QObject *surface, QWindow *shell, const QString &theme)
+bool captureDevicesSnapshot(hotas::AppBackend &backend, QObject *surface, QWindow *shell,
+                            const QString &theme)
 {
     // Snapshot capture is deliberately opt-in: normal CI keeps its existing
     // headless lifecycle contract, while a visual-review build can render the
@@ -1101,15 +1102,76 @@ bool captureDevicesSnapshot(QObject *surface, QWindow *shell, const QString &the
         return failPresentationLifecycleTest(QStringLiteral("Devices snapshot host was not a QQuickWindow for %1")
             .arg(theme));
     }
-    const QImage image = quickWindow->grabWindow();
-    if (image.isNull() || image.width() < 640 || image.height() < 480) {
-        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot was not rendered for %1").arg(theme));
-    }
     QString fileName = theme.toLower();
     fileName.replace(u' ', u'-');
-    const QString outputPath = directory.filePath(QStringLiteral("devices-%1.png").arg(fileName));
-    if (!image.save(outputPath)) {
-        return failPresentationLifecycleTest(QStringLiteral("Could not write Devices snapshot: %1").arg(outputPath));
+    const auto capture = [&](const QString &suffix) {
+        const QImage image = quickWindow->grabWindow();
+        if (image.isNull() || image.width() < 640 || image.height() < 480) {
+            return failPresentationLifecycleTest(QStringLiteral("Devices %1 snapshot was not rendered for %2")
+                .arg(suffix, theme));
+        }
+        const QString outputPath = directory.filePath(QStringLiteral("devices-%1-%2.png")
+            .arg(fileName, suffix));
+        if (!image.save(outputPath)) {
+            return failPresentationLifecycleTest(QStringLiteral("Could not write Devices %1 snapshot: %2")
+                .arg(suffix, outputPath));
+        }
+        return true;
+    };
+    // Keep the historical landing artifact name for existing review scripts.
+    const QImage landing = quickWindow->grabWindow();
+    if (landing.isNull() || landing.width() < 640 || landing.height() < 480
+        || !landing.save(directory.filePath(QStringLiteral("devices-%1.png").arg(fileName)))) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices landing snapshot was not rendered for %1")
+            .arg(theme));
+    }
+    if (!capture(QStringLiteral("landing"))) return false;
+
+    auto *devices = qobject_cast<QQuickItem *>(pageItem(surface, 10));
+    if (!devices) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot root was not available for %1").arg(theme));
+    }
+    const QVariantList rigs = backend.deviceRigs();
+    if (rigs.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot fixture had no rig for %1").arg(theme));
+    }
+    const QVariantMap rig = rigs.front().toMap();
+    const QVariantList members = rig.value(QStringLiteral("members")).toList();
+    const QVariantList outputs = rig.value(QStringLiteral("outputs")).toList();
+    if (members.isEmpty() || outputs.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot fixture was incomplete for %1").arg(theme));
+    }
+    // These selections are view-only test state. The fixture never activates
+    // a rig or invokes setup/repair while visual artifacts are captured.
+    devices->setProperty("selectedRigId", rig.value(QStringLiteral("id")).toString());
+    devices->setProperty("selectedDeviceId", members.front().toMap().value(QStringLiteral("id")).toString());
+    devices->setProperty("selectedOutputId", outputs.front().toMap().value(QStringLiteral("id")).toString());
+    settlePresentation();
+
+    const auto capturePopup = [&](QObject *popup, const QString &suffix) {
+        if (!popup || !QMetaObject::invokeMethod(popup, "open")) {
+            return failPresentationLifecycleTest(QStringLiteral("Devices %1 surface did not open for %2")
+                .arg(suffix, theme));
+        }
+        settlePresentation();
+        const bool captured = popup->property("visible").toBool() && capture(suffix);
+        QMetaObject::invokeMethod(popup, "close");
+        settlePresentation();
+        return captured;
+    };
+    if (!capturePopup(surface->findChild<QObject *>(QStringLiteral("deviceContextPopup")),
+            QStringLiteral("context"))
+        || !capturePopup(devices->findChild<QObject *>(QStringLiteral("rigDetailsActionsPopup")),
+            QStringLiteral("rig-actions"))
+        || !capturePopup(devices->findChild<QObject *>(QStringLiteral("physicalDeviceDialog")),
+            QStringLiteral("physical-device"))
+        || !capturePopup(devices->findChild<QObject *>(QStringLiteral("outputDetailDialog")),
+            QStringLiteral("virtual-output"))
+        || !capturePopup(devices->findChild<QObject *>(QStringLiteral("createRigDialog")),
+            QStringLiteral("create-rig"))
+        || !capturePopup(surface->findChild<QObject *>(QStringLiteral("controllerSetupDialog")),
+            QStringLiteral("rig-verifier"))) {
+        return false;
     }
     return selectPage(surface, 8);
 }
@@ -1424,7 +1486,7 @@ int main(int argc, char *argv[])
         if (!verifyPageLifecycle(backend, window, theme)) return 1;
         QObject *presentation = window->findChild<QObject *>(QStringLiteral("presentationLoader"));
         QObject *surface = presentation ? qvariant_cast<QObject *>(presentation->property("item")) : nullptr;
-        if (!surface || !captureDevicesSnapshot(surface, window, theme)) return 1;
+        if (!surface || !captureDevicesSnapshot(backend, surface, window, theme)) return 1;
     }
 
     // The Devices stress deliberately leaves the user-facing editing context
