@@ -491,7 +491,10 @@ Page {
         parent: Overlay.overlay
         x: Math.max(12, root.width - width - 24); y: 96; width: 210; padding: 8
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-        background: Rectangle { color: themeTokens.tooltip; border.color: themeTokens.borderStrong; radius: root.legacy ? 5 : themeTokens.panelRadius }
+        // The overflow is part of the Devices presentation system, not a
+        // generic Qt popup.  In particular, Legacy needs the same layered
+        // surface construction as its established cards and dialogs.
+        background: DevicePanel { theme: themeTokens; legacy: root.legacy; border.color: themeTokens.borderStrong }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 5
             ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.default ? "CLEAR DEFAULT" : "SET DEFAULT"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); if (rig) { if (rig.default) backendObject.clearDefaultDeviceRig(rig.id); else backendObject.setDefaultDeviceRig(rig.id) } } }

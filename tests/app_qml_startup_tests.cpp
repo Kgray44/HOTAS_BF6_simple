@@ -926,6 +926,38 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     return selectPage(surface, 8);
 }
 
+QString expectedDevicePanelTreatment(const QString &theme)
+{
+    if (theme == QStringLiteral("Legacy")) return QStringLiteral("legacy-layered");
+    if (theme == QStringLiteral("Top Gun")) return QStringLiteral("top-gun-instrument");
+    if (theme == QStringLiteral("Day Ops")) return QStringLiteral("day-ops-deck");
+    return QStringLiteral("standard-raised");
+}
+
+bool verifyThemedDeviceSurface(QObject *surface, const QString &theme, const QString &label)
+{
+    if (!surface) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 did not create a themed surface for %2")
+            .arg(label, theme));
+    }
+    const QString expected = expectedDevicePanelTreatment(theme);
+    if (surface->property("surfaceTreatment").toString() != expected) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 used %2 instead of %3 for %4")
+            .arg(label, surface->property("surfaceTreatment").toString(), expected, theme));
+    }
+    if (theme == QStringLiteral("Legacy")) {
+        const auto *topHighlight = surface->findChild<QQuickItem *>(
+            QStringLiteral("legacyPanelTopHighlight"), Qt::FindDirectChildrenOnly);
+        const auto *bottomEdge = surface->findChild<QQuickItem *>(
+            QStringLiteral("legacyPanelBottomEdge"), Qt::FindDirectChildrenOnly);
+        if (!topHighlight || !topHighlight->isVisible() || !bottomEdge || !bottomEdge->isVisible()) {
+            return failPresentationLifecycleTest(QStringLiteral("%1 lost the Legacy layered construction")
+                .arg(label));
+        }
+    }
+    return true;
+}
+
 bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QString &theme)
 {
     if (!shell || !selectPage(surface, 10)) {
@@ -944,6 +976,35 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
         return failPresentationLifecycleTest(QStringLiteral("Persistent Device Context was not available for %1").arg(theme));
     }
     const QSize original = shell->size();
+    // Exercise every first-class Device surface in every theme. This is
+    // intentionally presentation-only: no setup, repair, activation, or
+    // driver action is invoked while the dialogs are open.
+    const auto verifyPopupSurface = [&](QObject *popup, const QString &label) {
+        if (!popup || !QMetaObject::invokeMethod(popup, "open")) {
+            return failPresentationLifecycleTest(QStringLiteral("%1 did not open for %2").arg(label, theme));
+        }
+        settlePresentation();
+        QObject *background = qvariant_cast<QObject *>(popup->property("background"));
+        const bool valid = verifyThemedDeviceSurface(background, theme, label);
+        QMetaObject::invokeMethod(popup, "close");
+        settlePresentation();
+        return valid;
+    };
+    if (!verifyPopupSurface(contextSelector->findChild<QObject *>(QStringLiteral("deviceContextPopup")),
+            QStringLiteral("Device Context popup"))
+        || !verifyPopupSurface(devices->findChild<QObject *>(QStringLiteral("rigDetailsActionsPopup")),
+            QStringLiteral("Rig Details overflow popup"))) {
+        shell->resize(original);
+        return false;
+    }
+    const QStringList dialogNames{QStringLiteral("physicalDeviceDialog"),
+        QStringLiteral("outputDetailDialog"), QStringLiteral("createRigDialog")};
+    for (const QString &dialogName : dialogNames) {
+        if (!verifyPopupSurface(devices->findChild<QObject *>(dialogName), dialogName)) {
+            shell->resize(original);
+            return false;
+        }
+    }
     // 640px specifically guards the compact Device Context path. The
     // supported visual sizes below remain the product acceptance baseline.
     const QList<QSize> sizes{{640, 650}, {900, 650}, {1280, 720}, {1440, 900}, {1920, 1080}};
@@ -982,6 +1043,10 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
                     .arg(scroll ? scroll->width() : -1).arg(scroll ? scroll->height() : -1)
                     .arg(content ? content->width() : -1).arg(content ? content->height() : -1));
             }
+            if (!verifyThemedDeviceSurface(panel, theme, name)) {
+                shell->resize(original);
+                return false;
+            }
             if (theme == QStringLiteral("Legacy")) {
                 const QColor expectedLegacySurface(QStringLiteral("#e9161d23"));
                 if (panel->property("color").value<QColor>() != expectedLegacySurface) {
@@ -993,18 +1058,12 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
                     QStringLiteral("legacyPanelTopHighlight"), Qt::FindDirectChildrenOnly);
                 const auto *bottomEdge = panel->findChild<QQuickItem *>(
                     QStringLiteral("legacyPanelBottomEdge"), Qt::FindDirectChildrenOnly);
-                if (panel->property("surfaceTreatment").toString() != QStringLiteral("legacy-layered")
-                    || !topHighlight || !topHighlight->isVisible()
+                if (!topHighlight || !topHighlight->isVisible()
                     || !bottomEdge || !bottomEdge->isVisible()) {
                     shell->resize(original);
                     return failPresentationLifecycleTest(QStringLiteral("Legacy Devices panel %1 lost its established layered panel construction")
                         .arg(name));
                 }
-            } else if (theme == QStringLiteral("Standard")
-                       && panel->property("surfaceTreatment").toString() != QStringLiteral("standard-raised")) {
-                shell->resize(original);
-                return failPresentationLifecycleTest(QStringLiteral("Standard Devices panel %1 inherited Legacy panel construction")
-                    .arg(name));
             }
             resolved.append(panel);
         }
