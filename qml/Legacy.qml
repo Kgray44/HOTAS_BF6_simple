@@ -2054,6 +2054,7 @@ Page {
     }
     Dialog {
         id: controllerSetupDialog
+        objectName: "controllerSetupDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent
         modal: true

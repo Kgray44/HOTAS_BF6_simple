@@ -1053,12 +1053,32 @@ bool captureDevicesSnapshot(QObject *surface, QWindow *shell, const QString &the
     return selectPage(surface, 8);
 }
 
+bool verifyUnifiedVerifierPresentation(QObject *surface, const QString &theme)
+{
+    QObject *verifier = surface->findChild<QObject *>(QStringLiteral("controllerSetupDialog"));
+    if (!verifier) {
+        return failPresentationLifecycleTest(QStringLiteral("Unified rig verifier was not created for %1").arg(theme));
+    }
+    QMetaObject::invokeMethod(verifier, "open");
+    settlePresentation();
+    if (!verifier->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Unified rig verifier did not open for %1").arg(theme));
+    }
+    QMetaObject::invokeMethod(verifier, "close");
+    settlePresentation();
+    if (verifier->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Unified rig verifier did not close for %1").arg(theme));
+    }
+    return true;
+}
+
 bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QString &theme)
 {
     QObject *presentation = shell->findChild<QObject *>(QStringLiteral("presentationLoader"));
     if (!presentation) return failPresentationLifecycleTest(QStringLiteral("presentation Loader was not found"));
     QObject *surface = qvariant_cast<QObject *>(presentation->property("item"));
     if (!surface) return failPresentationLifecycleTest(QStringLiteral("theme surface was not loaded"));
+    if (!verifyUnifiedVerifierPresentation(surface, theme)) return false;
 
     // Device Rigs are a first-class V2.4 page, not an optional dialog. Keep
     // its loader in the same four-theme lifecycle qualification as the
