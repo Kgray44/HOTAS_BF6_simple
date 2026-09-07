@@ -5,10 +5,20 @@ import QtQuick 6.5
 // white/light platform title strip into a themed workflow.
 Rectangle {
     id: header
+    objectName: "themedDialogHeader"
     required property var theme
     property bool legacy: false
     property string heading: ""
     property string detail: ""
+    // This is intentionally observable in the presentation lifecycle test.
+    // A themed dialog body alone is insufficient: an unstyled Qt header is
+    // especially conspicuous in Day Ops and makes Legacy look imported from
+    // Standard. Keep the semantic identity explicit without changing the
+    // shared dialog geometry.
+    readonly property string surfaceTreatment: legacy ? "legacy-header"
+                                                    : theme.topGun ? "top-gun-header"
+                                                                   : theme.dayOps ? "day-ops-header"
+                                                                                  : "standard-header"
 
     implicitHeight: theme.topGun ? 62 : legacy ? 58 : 56
     radius: legacy ? 4 : theme.topGun ? 1 : theme.controlRadius

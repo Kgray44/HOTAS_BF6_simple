@@ -958,6 +958,42 @@ bool verifyThemedDeviceSurface(QObject *surface, const QString &theme, const QSt
     return true;
 }
 
+QString expectedThemedDialogHeaderTreatment(const QString &theme)
+{
+    if (theme == QStringLiteral("Legacy")) return QStringLiteral("legacy-header");
+    if (theme == QStringLiteral("Top Gun")) return QStringLiteral("top-gun-header");
+    if (theme == QStringLiteral("Day Ops")) return QStringLiteral("day-ops-header");
+    return QStringLiteral("standard-header");
+}
+
+bool verifyThemedDialogHeader(QObject *popup, const QString &theme, const QString &label)
+{
+    if (!popup) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 dialog was not available for %2")
+            .arg(label, theme));
+    }
+    QObject *header = qvariant_cast<QObject *>(popup->property("header"));
+    if (!header) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 used no application-owned dialog header for %2")
+            .arg(label, theme));
+    }
+    const QString expected = expectedThemedDialogHeaderTreatment(theme);
+    if (header->property("surfaceTreatment").toString() != expected) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 used %2 instead of %3 for %4")
+            .arg(label, header->property("surfaceTreatment").toString(), expected, theme));
+    }
+    // Legacy's original verifier/dialog vocabulary is deliberately a dark,
+    // layered cockpit header, not a recolored Standard panel. Check its
+    // durable base surface directly so shared component work cannot silently
+    // collapse the theme identities.
+    if (theme == QStringLiteral("Legacy")
+        && header->property("color").value<QColor>() != QColor(QStringLiteral("#132027"))) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 lost the established Legacy dialog header surface")
+            .arg(label));
+    }
+    return true;
+}
+
 bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QString &theme)
 {
     if (!shell || !selectPage(surface, 10)) {
@@ -1000,7 +1036,9 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
     const QStringList dialogNames{QStringLiteral("physicalDeviceDialog"),
         QStringLiteral("outputDetailDialog"), QStringLiteral("createRigDialog")};
     for (const QString &dialogName : dialogNames) {
-        if (!verifyPopupSurface(devices->findChild<QObject *>(dialogName), dialogName)) {
+        QObject *dialog = devices->findChild<QObject *>(dialogName);
+        if (!verifyThemedDialogHeader(dialog, theme, dialogName)
+            || !verifyPopupSurface(dialog, dialogName)) {
             shell->resize(original);
             return false;
         }
