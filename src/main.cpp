@@ -91,6 +91,9 @@ int main(int argc, char *argv[])
     // Development/test-only fatal-path exercise. It is not presented in QML
     // or Settings and never runs unless a caller supplies the explicit flag.
     if (hasArgument(argc, argv, "--crash-reporter-test")) {
+        hotas::CrashDiagnostics::recordControlPlaneEvent(
+            QStringLiteral("Controlled crash reporter test started"),
+            QStringLiteral("page=Controlled crash test\ntheme=Standard\nactiveRig=Test Flight Rig\neditingRig=Test Flight Rig\neditingScope=All Devices\nmappingRequested=false\nmappingEffective=false\nvJoy=unavailable\nHidHide=not evaluated"));
 #ifdef Q_OS_WIN
         RaiseException(0xE0424F53UL, 0, 0, nullptr);
 #endif
