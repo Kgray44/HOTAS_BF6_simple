@@ -70,6 +70,15 @@ QtObject {
     readonly property color destructive: topGun ? "#451e1b" : dayOps ? "#d9aaa4" : "#2c2223"
     readonly property color tooltip: topGun ? "#0b161a" : dayOps ? "#e7e9e2" : "#151e23"
 
+    // Devices use one shared semantic card.  These tokens deliberately make
+    // Standard a clean, raised technical workspace without borrowing the
+    // inset construction of Legacy; Top Gun and Day Ops retain their own
+    // instrument/deck readings.  Legacy keeps its immutable original values
+    // in the legacy presentation map.
+    readonly property color devicePanelSurface: topGun ? "#e80b1b21" : dayOps ? panel : "#26343a"
+    readonly property color devicePanelBorder: topGun ? border : dayOps ? border : "#5d7b87"
+    readonly property color devicePanelAccent: topGun ? orangeBright : dayOps ? borderStrong : "#76b4c2"
+
     // Standard-page legacy cockpit accents. Centralizing them lets the shared
     // geometry retain its established dark Standard treatment while Day Ops
     // substitutes readable aluminum-panel surfaces rather than sprinkling

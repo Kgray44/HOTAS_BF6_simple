@@ -8,7 +8,7 @@ TextField {
     implicitHeight: 34
     enabled: controlEnabled
     color: theme.legacy ? "#e7f0f1" : theme.text
-    placeholderTextColor: theme.legacy ? "#77919a" : theme.textFaint
+    placeholderTextColor: theme.legacy ? "#72848a" : theme.textFaint
     font.pixelSize: 11
     selectByMouse: true
     verticalAlignment: TextInput.AlignVCenter

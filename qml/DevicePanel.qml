@@ -9,9 +9,20 @@ Rectangle {
     id: panel
     required property var theme
     property bool legacy: false
-    radius: legacy ? 6 : theme.panelRadius
-    color: legacy ? "#e9161d23" : (theme.topGun ? "#e80b1b21" : theme.panel)
-    border.color: legacy ? "#41546770" : theme.border
+    // Exposed for presentation-contract tests.  The content geometry is
+    // shared, while every named theme resolves a deliberate surface system.
+    // In particular, Legacy must never silently fall through to Standard.
+    readonly property string surfaceTreatment: legacy ? "legacy-layered"
+                                                    : theme.topGun ? "top-gun-instrument"
+                                                                   : theme.dayOps ? "day-ops-deck"
+                                                                                  : "standard-raised"
+    // Standard is intentionally a clean, raised modern technical surface.
+    // Its generous corner treatment and opaque hierarchy keep it visibly
+    // separate from Legacy's inset, layered cockpit panel without changing
+    // any Devices content geometry.
+    radius: legacy ? 6 : theme.topGun ? theme.panelRadius : theme.dayOps ? theme.panelRadius : 9
+    color: legacy ? "#e9161d23" : theme.devicePanelSurface
+    border.color: legacy ? "#41546770" : theme.devicePanelBorder
     border.width: 1
     // A panel's content may have an intrinsically wide title or action row,
     // but the page, not that content, owns the viewport width.  Opt out of
@@ -33,7 +44,11 @@ Rectangle {
     // These two lines are an intentional part of the original Legacy card,
     // not generic decoration.  Hiding them for Standard keeps the two visual
     // systems recognisably different even though their data hierarchy matches.
-    Rectangle { visible: legacy; x: 1; y: 1; width: parent.width - 2; height: 1; radius: 1; color: "#5c9cafb8" }
-    Rectangle { visible: legacy; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#1026323a" }
+    Rectangle { objectName: "legacyPanelTopHighlight"; visible: legacy; x: 1; y: 1; width: parent.width - 2; height: 1; radius: 1; color: "#5c9cafb8" }
+    Rectangle { objectName: "legacyPanelBottomEdge"; visible: legacy; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: "#1026323a" }
+    // Standard receives a restrained technical inset rail rather than
+    // Legacy's edge highlight. It is paint-only: geometry and data hierarchy
+    // stay identical across themes.
+    Rectangle { visible: !legacy && !theme.topGun && !theme.dayOps; anchors.left: parent.left; anchors.leftMargin: 1; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 12; anchors.bottomMargin: 12; width: 3; radius: 2; color: theme.devicePanelAccent; opacity: 0.72 }
     Repeater { visible: !legacy && theme.topGun; model: 4; delegate: Rectangle { width: 4; height: 4; radius: 2; color: "#604a2b"; border.color: "#a27e46"; x: index < 2 ? 6 : parent.width - 10; y: index % 2 === 0 ? 6 : parent.height - 10 } }
 }

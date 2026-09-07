@@ -11,8 +11,9 @@ Item {
     signal manageDevices()
     // At the supported compact shell width this control keeps its affordance
     // but yields label detail before it crowds profile or mapping state.
+    readonly property bool standard: !legacy && !theme.topGun && !theme.dayOps
     implicitWidth: Math.max(174, contextLabel.implicitWidth + 58)
-    implicitHeight: 34
+    implicitHeight: legacy ? 31 : 34
 
     function healthColor(key) {
         if (key === "ready") return theme.ready
@@ -38,8 +39,9 @@ Item {
     function selectScope(ids) { backendObject.setEditingDeviceContext(backendObject.editingDeviceRigId, ids) }
 
     Rectangle {
-        anchors.fill: parent; radius: theme.controlRadius
-        color: trigger.containsMouse ? (control.legacy ? "#142128" : theme.controlHover) : theme.control
+        anchors.fill: parent; radius: control.legacy ? 4 : control.standard ? 8 : theme.controlRadius
+        color: trigger.containsMouse ? (control.legacy ? "#142128" : control.standard ? theme.buttonSecondaryHover : theme.controlHover)
+                                  : (control.legacy ? theme.control : control.standard ? theme.panelRaised : theme.control)
         border.color: popup.visible ? (control.legacy ? "#78aab9" : theme.orange)
                      : trigger.containsMouse ? (control.legacy ? "#527482" : theme.borderStrong)
                                            : (control.legacy ? "#435660" : theme.border)
@@ -124,7 +126,18 @@ Item {
         property bool selected: false
         signal triggered()
         Layout.fillWidth: true; implicitHeight: 30
-        Rectangle { anchors.fill: parent; radius: theme.controlRadius; color: rowHit.containsMouse ? theme.selection : parent.selected ? theme.selectionCurrent : "transparent"; border.color: parent.selected ? theme.borderStrong : "transparent" }
+        // Mirror Legacy's long-standing FlightComboBox delegate treatment.
+        // This is deliberately not the Standard selection fill with old
+        // colors: Legacy keeps its squarer inset and muted cyan outline.
+        Rectangle {
+            anchors.fill: parent; radius: control.legacy ? 3 : theme.controlRadius
+            color: control.legacy
+                   ? (rowHit.containsMouse ? "#1d333b" : parent.selected ? "#244650" : "transparent")
+                   : (rowHit.containsMouse ? theme.selection : parent.selected ? theme.selectionCurrent : "transparent")
+            border.color: control.legacy
+                          ? (rowHit.containsMouse ? "#6f9fac" : parent.selected ? "#527d88" : "transparent")
+                          : (parent.selected ? theme.borderStrong : "transparent")
+        }
         RowLayout { anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 7
             Text { text: selected ? "✓" : ""; color: theme.orange; font.bold: true; Layout.preferredWidth: 10 }
             Rectangle { visible: status !== ""; width: 6; height: 6; radius: theme.topGun ? 1 : 3; color: control.healthColor(status) }

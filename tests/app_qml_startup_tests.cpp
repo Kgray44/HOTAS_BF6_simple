@@ -987,6 +987,22 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
                     return failPresentationLifecycleTest(QStringLiteral("Legacy Devices panel %1 lost its established layered surface")
                         .arg(name));
                 }
+                const auto *topHighlight = panel->findChild<QQuickItem *>(
+                    QStringLiteral("legacyPanelTopHighlight"), Qt::FindDirectChildrenOnly);
+                const auto *bottomEdge = panel->findChild<QQuickItem *>(
+                    QStringLiteral("legacyPanelBottomEdge"), Qt::FindDirectChildrenOnly);
+                if (panel->property("surfaceTreatment").toString() != QStringLiteral("legacy-layered")
+                    || !topHighlight || !topHighlight->isVisible()
+                    || !bottomEdge || !bottomEdge->isVisible()) {
+                    shell->resize(original);
+                    return failPresentationLifecycleTest(QStringLiteral("Legacy Devices panel %1 lost its established layered panel construction")
+                        .arg(name));
+                }
+            } else if (theme == QStringLiteral("Standard")
+                       && panel->property("surfaceTreatment").toString() != QStringLiteral("standard-raised")) {
+                shell->resize(original);
+                return failPresentationLifecycleTest(QStringLiteral("Standard Devices panel %1 inherited Legacy panel construction")
+                    .arg(name));
             }
             resolved.append(panel);
         }
@@ -1001,6 +1017,39 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
         }
     }
     shell->resize(original);
+    return selectPage(surface, 8);
+}
+
+bool captureDevicesSnapshot(QObject *surface, QWindow *shell, const QString &theme)
+{
+    // Snapshot capture is deliberately opt-in: normal CI keeps its existing
+    // headless lifecycle contract, while a visual-review build can render the
+    // same fixture for every supported theme without attaching to a controller
+    // or starting the mapper executable.
+    const QString snapshotRoot = qEnvironmentVariable("HOTAS_QML_SNAPSHOT_DIR").trimmed();
+    if (snapshotRoot.isEmpty()) return true;
+    const QDir directory(snapshotRoot);
+    if (!directory.exists()) {
+        return failPresentationLifecycleTest(QStringLiteral("Requested QML snapshot directory does not exist: %1")
+            .arg(snapshotRoot));
+    }
+    if (!selectPage(surface, 10)) return false;
+    settlePresentation();
+    auto *quickWindow = qobject_cast<QQuickWindow *>(shell);
+    if (!quickWindow) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot host was not a QQuickWindow for %1")
+            .arg(theme));
+    }
+    const QImage image = quickWindow->grabWindow();
+    if (image.isNull() || image.width() < 640 || image.height() < 480) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices snapshot was not rendered for %1").arg(theme));
+    }
+    QString fileName = theme.toLower();
+    fileName.replace(u' ', u'-');
+    const QString outputPath = directory.filePath(QStringLiteral("devices-%1.png").arg(fileName));
+    if (!image.save(outputPath)) {
+        return failPresentationLifecycleTest(QStringLiteral("Could not write Devices snapshot: %1").arg(outputPath));
+    }
     return selectPage(surface, 8);
 }
 
@@ -1286,12 +1335,15 @@ int main(int argc, char *argv[])
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
         engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
         engine.loadFromModule(u"HOTASMapperStartupTest"_qs, u"Main"_qs);
-        if (engine.rootObjects().isEmpty()
-            || !qobject_cast<QWindow *>(engine.rootObjects().constFirst())) return 1;
+        auto *window = engine.rootObjects().isEmpty()
+            ? nullptr : qobject_cast<QWindow *>(engine.rootObjects().constFirst());
+        if (!window) return 1;
 
         settlePresentation();
-        if (!verifyPageLifecycle(backend,
-                qobject_cast<QWindow *>(engine.rootObjects().constFirst()), theme)) return 1;
+        if (!verifyPageLifecycle(backend, window, theme)) return 1;
+        QObject *presentation = window->findChild<QObject *>(QStringLiteral("presentationLoader"));
+        QObject *surface = presentation ? qvariant_cast<QObject *>(presentation->property("item")) : nullptr;
+        if (!surface || !captureDevicesSnapshot(surface, window, theme)) return 1;
     }
 
     // The Devices stress deliberately leaves the user-facing editing context
