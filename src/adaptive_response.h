@@ -160,6 +160,13 @@ const AdaptiveResponsePreset *findAdaptiveResponsePreset(
 const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets();
 RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     const MapperConfiguration &configuration, const ControllerProfile &profile, int axis);
+// V2.4 keeps the V2.3 response math unchanged while applying the existing
+// hierarchy to one explicitly identified physical controller.  The extra
+// layer is resolved while compiling a rig; it is never looked up from a
+// DirectInput report.
+RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
+    const MapperConfiguration &configuration, const ControllerProfile &profile,
+    const DeviceProfileMapping &deviceMapping, int axis);
 RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     RuntimeAdaptiveResponseConfig base, const RuntimeAdaptiveResponseOverride &override);
 

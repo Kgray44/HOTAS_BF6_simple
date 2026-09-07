@@ -16,13 +16,13 @@ Page {
     // Do not materialize telemetry-shaped models when their page is unloaded.
     property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3 || currentPage === 9) ? backend.axes : []
     readonly property var adaptiveThemeTokens: ({
-        panel: "#e61a282e", panelInset: "#10171b", border: "#52717c", borderStrong: "#78aab9",
+        topGun: false, background: "#0d1013", panel: "#1a1d23", panelRaised: "#20282d", panelInset: "#10171b", panelRadius: 6, border: "#52717c", borderStrong: "#78aab9",
         controlRadius: 4, textStrong: "#f3f7f7", text: "#d5e0e3", textMuted: "#9aa3a7",
         textFaint: "#77919a", telemetryFont: "Consolas", displayFont: "Segoe UI Variable",
         control: "#1b2a31", controlDisabled: "#142126", controlPressed: "#29414a",
         controlHover: "#22343c", buttonSurface: "#294a57", buttonSecondary: "#1b2a31",
         tooltip: "#16252b", selection: "#294a57", orange: "#78aab9", cyan: "#8fc8c0",
-        warning: "#d4ad69", divider: "#335268", ready: "#8fd5c9"
+        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9"
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
@@ -50,6 +50,7 @@ Page {
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
+        + (devicesPageLoader.item ? 1 : 0)
 
     function pageItem(page) {
         switch (page) {
@@ -63,6 +64,7 @@ Page {
         case 7: return automationPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
+        case 10: return devicesPageLoader.item
         }
         return null
     }
@@ -1098,6 +1100,59 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
+            FineLine { visible: root.width >= 1180; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            RowLayout {
+                visible: root.width >= 1180
+                spacing: 4
+                Button {
+                    text: backend.editingDeviceRigName + "  ▾"
+                    font.pixelSize: 10
+                    onClicked: legacyRigContextMenu.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Editing rig only. Runtime activation stays in Devices."
+                }
+                Button {
+                    text: backend.editingScopeLabel + "  ▾"
+                    font.pixelSize: 10
+                    onClicked: legacyScopeContextMenu.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Editing scope only. It never activates hardware."
+                }
+                Menu {
+                    id: legacyRigContextMenu
+                    Instantiator {
+                        model: backend.deviceRigs
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: (modelData.editing ? "✓  " : "") + modelData.name + "  ·  "
+                                  + modelData.healthLabel + (modelData.active ? "  ·  ACTIVE" : "")
+                            onTriggered: backend.setEditingDeviceContext(modelData.id, [])
+                        }
+                        onObjectAdded: function(index, object) { legacyRigContextMenu.insertItem(index, object) }
+                        onObjectRemoved: function(index, object) { legacyRigContextMenu.removeItem(object) }
+                    }
+                    MenuSeparator {}
+                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
+                }
+                Menu {
+                    id: legacyScopeContextMenu
+                    MenuItem { text: backend.editingScopeLabel === "All Devices" ? "✓  All Devices" : "All Devices"
+                        onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, []) }
+                    Instantiator {
+                        model: backend.editingDevices
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: (modelData.selected ? "✓  " : "") + modelData.name
+                                  + (modelData.required ? "" : "  ·  optional")
+                            onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, [modelData.id])
+                        }
+                        onObjectAdded: function(index, object) { legacyScopeContextMenu.insertItem(index + 1, object) }
+                        onObjectRemoved: function(index, object) { legacyScopeContextMenu.removeItem(object) }
+                    }
+                    MenuSeparator {}
+                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
+                }
+            }
             Item { Layout.fillWidth: true }
             Rectangle {
                 visible: backend.updateAvailable && root.width >= 980
@@ -1137,7 +1192,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 452
+        height: 487
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1183,7 +1238,7 @@ Page {
             }
             Repeater {
                 model: [
-                    { label: "OVERVIEW", page: 8, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
+                    { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
                     { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
@@ -1252,6 +1307,14 @@ Page {
             active: root.currentPage === 4
             sourceComponent: Component {
                 SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
+            }
+        }
+        Loader {
+            id: devicesPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 10
+            sourceComponent: Component {
+                DevicesPage { anchors.fill: parent; visible: root.currentPage === 10; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true }
             }
         }
         Loader {

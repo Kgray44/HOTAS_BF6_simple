@@ -305,6 +305,46 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     return runtime;
 }
 
+RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
+    const MapperConfiguration &configuration, const ControllerProfile &profile,
+    const DeviceProfileMapping &deviceMapping, int axis)
+{
+    AdaptiveResponseSettings settings;
+    applyLayer(settings, configuration.adaptiveResponseGlobal, configuration, axis);
+    if (const ProfileCategory *category = findProfileCategory(configuration, profile.categoryId)) {
+        applyLayer(settings, category->adaptiveResponse, configuration, axis);
+    }
+    applyLayer(settings, profile.adaptiveResponse, configuration, axis);
+    applyLayer(settings, deviceMapping.adaptiveResponse, configuration, axis);
+    settings = sanitizedAdaptiveResponseSettings(settings);
+    RuntimeAdaptiveResponseConfig runtime;
+    runtime.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
+    runtime.model = settings.model;
+    runtime.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
+    runtime.maximumLead = settings.maximumLead;
+    runtime.velocityResponse = settings.velocityResponse;
+    runtime.accelerationResponse = settings.accelerationResponse;
+    runtime.motionSensitivity = settings.motionSensitivity;
+    runtime.noiseRejection = settings.noiseRejection;
+    runtime.reversalDetection = settings.reversalDetection;
+    runtime.reversalResponse = settings.reversalResponse;
+    runtime.decelerationResponse = settings.decelerationResponse;
+    runtime.settlingResponse = settings.settlingResponse;
+    runtime.endpointTaper = settings.endpointTaper;
+    runtime.onsetAssist = settings.onsetAssist;
+    runtime.onsetCap = settings.onsetCap;
+    runtime.sustainedAssist = settings.sustainedAssist;
+    runtime.sustainedCap = settings.sustainedCap;
+    runtime.horizonExtension = settings.horizonExtension;
+    runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
+    runtime.turningPointProtection = settings.turningPointProtection;
+    runtime.turningPointMargin = settings.turningPointMargin;
+    const AxisMapping &mapping = deviceMapping.axes[static_cast<size_t>(std::clamp(axis, 0, kPhysicalAxisCount - 1))];
+    runtime.domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
+    runtime.domainMaximum = 1.0F;
+    return runtime;
+}
+
 RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     RuntimeAdaptiveResponseConfig base, const RuntimeAdaptiveResponseOverride &override)
 {

@@ -41,6 +41,12 @@ constexpr int kAutomationMaximumTapDurationMs = 500;
 // the input thread can retain every reported hat without allocating.
 constexpr int kMaximumPhysicalPovs = 4;
 constexpr int kPovDirectionCount = 8;
+// Device Rigs are deliberately bounded.  The limits are control-plane
+// configuration limits, not a statement about how many controllers Windows
+// can enumerate.  They let compilation reserve every report-path slot before
+// mapping begins, so adding a device never makes input handling unbounded.
+constexpr int kMaximumDeviceRigMembers = 8;
+constexpr int kMaximumDeviceRigOutputs = 4;
 constexpr int kCurveTransitionMinimumDurationMs = 0;
 constexpr int kCurveTransitionMaximumDurationMs = 1000;
 constexpr int kDefaultCurveTransitionDurationMs = 100;
@@ -554,6 +560,9 @@ struct AutomationConditionDefinition {
     int pressCount = 2;
     int multiPressWindowMs = 350;
     int longPressDurationMs = 600;
+    // Empty is the V2.3 compatibility sentinel. V2.4 migration resolves it
+    // to the proven active physical controller when one exists.
+    QString controllerRecordId;
 };
 
 struct AutomationActionDefinition {
@@ -569,6 +578,8 @@ struct AutomationActionDefinition {
     float minimum = -1.0F;
     float maximum = 1.0F;
     int tapDurationMs = 80;
+    QString sourceControllerRecordId;
+    QString outputLayoutId;
 };
 
 struct AutomationDefinition {
@@ -589,6 +600,84 @@ using PovProfileTriggerBindings = std::vector<std::array<ProfileTriggerBinding,
 
 using AxisMappings = std::array<AxisMapping, kPhysicalAxisCount>;
 
+// These stable keys are the V2.4 route identity.  Axis/POV/button indices
+// retain their native DirectInput meaning, while the saved-controller ID
+// makes the source unambiguous across a rig.  Neither USB enumeration order
+// nor a friendly name participates in routing identity.
+enum class PhysicalInputType : int {
+    Axis = 0,
+    Button,
+    Pov,
+};
+
+struct PhysicalInputKey {
+    QString controllerRecordId;
+    PhysicalInputType type = PhysicalInputType::Axis;
+    int index = 0;
+    PovDirection direction = PovDirection::Centered;
+};
+
+enum class VirtualOutputTargetType : int {
+    Axis = 0,
+    Button,
+    Pov,
+};
+
+struct VirtualOutputKey {
+    QString outputLayoutId;
+    VirtualOutputTargetType type = VirtualOutputTargetType::Axis;
+    int index = 0;
+};
+
+enum class DeviceRigDisconnectBehavior : int {
+    SuspendAffectedRoutes = 0,
+    DeactivateRig,
+    UseFallback,
+};
+
+struct DeviceRigMember {
+    QString controllerRecordId;
+    bool enabled = true;
+    bool required = true;
+    QString preferredOutputLayoutId;
+};
+
+struct DeviceRigOutputTarget {
+    QString outputLayoutId;
+    bool enabled = true;
+};
+
+struct DeviceRig {
+    QString id;
+    QString name;
+    bool enabled = true;
+    bool isDefault = false;
+    bool autoActivate = true;
+    int activationPriority = 50;
+    QString fallbackRigId;
+    DeviceRigDisconnectBehavior disconnectBehavior = DeviceRigDisconnectBehavior::SuspendAffectedRoutes;
+    std::vector<DeviceRigMember> members;
+    std::vector<DeviceRigOutputTarget> outputs;
+    // V2.4 preserves the existing opt-in HidHide ownership contract.  It is
+    // presentation/control-plane metadata only; reports never change it.
+    bool hidhideManaged = false;
+    int presentationOrder = 0;
+};
+
+// A profile still owns gameplay behavior, but each physical member owns a
+// separate mapping payload.  The legacy fields remain temporarily on
+// ControllerProfile to make the schema migration lossless and to preserve
+// portable V2.3 profiles; V2.4 runtime compilation selects these records.
+struct DeviceProfileMapping {
+    QString controllerRecordId;
+    bool enabled = true;
+    AxisMappings axes{};
+    ButtonBindings buttons;
+    PovBindings povs;
+    NativePovBindings nativePovBindings;
+    AdaptiveResponseLayer adaptiveResponse;
+};
+
 struct ControllerProfile {
     QString id;
     QString name;
@@ -597,6 +686,9 @@ struct ControllerProfile {
     // boundary and never reads categories while processing a report.
     QString categoryId;
     bool enabled = true;
+    // Empty means an unassigned portable/legacy profile.  A V2.4 migration
+    // fills it only when an existing active controller can be proven.
+    QString deviceRigId;
     // A profile chooses a reusable pre-provisioned virtual controller.  The
     // report loop receives only the already-resolved device ID at a
     // configuration boundary; it never looks this string up.
@@ -614,6 +706,7 @@ struct ControllerProfile {
     // Aliases are profile-local user-facing labels; VirtualAxis remains the
     // immutable vJoy HID identity used by the worker.
     std::array<QString, kVirtualAxisSlotCount> virtualAxisAliases{};
+    std::vector<DeviceProfileMapping> deviceMappings;
 };
 
 // Categories organise profiles without changing their mapping ownership.
@@ -713,6 +806,13 @@ struct MapperConfiguration {
     QString preferredDeviceId;
     std::vector<SavedControllerRecord> savedControllers;
     QString activeControllerRecordId;
+    std::vector<DeviceRig> deviceRigs;
+    QString activeDeviceRigId;
+    // The editing rig/scope is intentionally UI-only.  It is persisted for
+    // continuity across pages but never consulted by MappingWorker activation.
+    QString editingDeviceRigId;
+    QStringList editingDeviceRecordIds;
+    QString deviceRigMigrationWarning;
     bool autoSwitchVerifiedController = true;
     bool keepRunningInTray = true;
     int vjoyDeviceId = 1;
@@ -1113,6 +1213,56 @@ inline ControllerProfile *findProfile(MapperConfiguration &configuration, const 
     return nullptr;
 }
 
+inline const DeviceProfileMapping *findDeviceProfileMapping(const ControllerProfile &profile,
+                                                            const QString &controllerRecordId)
+{
+    const auto found = std::find_if(profile.deviceMappings.cbegin(), profile.deviceMappings.cend(),
+                                    [&controllerRecordId](const DeviceProfileMapping &mapping) {
+        return mapping.controllerRecordId == controllerRecordId;
+    });
+    return found == profile.deviceMappings.cend() ? nullptr : &*found;
+}
+
+inline DeviceProfileMapping *findDeviceProfileMapping(ControllerProfile &profile,
+                                                      const QString &controllerRecordId)
+{
+    const auto found = std::find_if(profile.deviceMappings.begin(), profile.deviceMappings.end(),
+                                    [&controllerRecordId](const DeviceProfileMapping &mapping) {
+        return mapping.controllerRecordId == controllerRecordId;
+    });
+    return found == profile.deviceMappings.end() ? nullptr : &*found;
+}
+
+inline DeviceProfileMapping &ensureDeviceProfileMapping(ControllerProfile &profile,
+                                                        const QString &controllerRecordId)
+{
+    if (DeviceProfileMapping *existing = findDeviceProfileMapping(profile, controllerRecordId)) return *existing;
+    DeviceProfileMapping mapping;
+    mapping.controllerRecordId = controllerRecordId;
+    // This copy makes the first V2.4 mapping deterministic and lossless for
+    // every V2.3 route, curve, button, POV, and Adaptive Response setting.
+    mapping.axes = profile.axes;
+    mapping.buttons = profile.buttons;
+    mapping.povs = profile.povs;
+    mapping.adaptiveResponse = profile.adaptiveResponse;
+    profile.deviceMappings.push_back(std::move(mapping));
+    return profile.deviceMappings.back();
+}
+
+inline const DeviceRig *findDeviceRig(const MapperConfiguration &configuration, const QString &id)
+{
+    const auto found = std::find_if(configuration.deviceRigs.cbegin(), configuration.deviceRigs.cend(),
+                                    [&id](const DeviceRig &rig) { return rig.id == id; });
+    return found == configuration.deviceRigs.cend() ? nullptr : &*found;
+}
+
+inline DeviceRig *findDeviceRig(MapperConfiguration &configuration, const QString &id)
+{
+    const auto found = std::find_if(configuration.deviceRigs.begin(), configuration.deviceRigs.end(),
+                                    [&id](const DeviceRig &rig) { return rig.id == id; });
+    return found == configuration.deviceRigs.end() ? nullptr : &*found;
+}
+
 inline const ControllerProfile &activeProfile(const MapperConfiguration &configuration)
 {
     if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
@@ -1167,6 +1317,13 @@ inline bool isProfileCategoryNameAvailable(const MapperConfiguration &configurat
 // Implemented by the response-curve subsystem so every active profile is
 // compiled to immutable LUTs before the mapping worker accepts it.
 RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration);
+// Compiles the profile payload for one durable physical controller.  This is
+// a configuration-boundary operation; the returned table is safe for the
+// report hot path and preserves V2.3 transform/Adaptive behavior per device.
+RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguration &configuration,
+                                                         const ControllerProfile &profile,
+                                                         const DeviceProfileMapping &deviceMapping,
+                                                         const SavedControllerRecord *record);
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration);
 
 inline QString profileTriggerModeLabel(ProfileTriggerMode mode)

@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.3.2 adds a ready-to-customize Battlefield 6 Helicopter starter profile through a one-time safe configuration migration, while v2.3.1 Adaptive Response telemetry, motion-aware center handling, and curve-aware mapped-output authority remain unchanged. Its global, category, profile, and temporary Automation layers compile before report processing; fixed latest-state telemetry, safety clamping, presets, portable dependencies, and schema-22 compatibility retain the allocation-free DirectInput-to-vJoy report path.",
+  "summary": "HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.4.0 introduces reusable Device Rigs, simultaneous multi-device and multi-output routing, a unified rig setup and verification experience, and a persistent view/edit context while preserving simple one-controller setup. Day Ops joins Legacy, Standard, and Top Gun as a dedicated bright naval-aviation presentation system. Device topology, verification, and themes remain outside the allocation-free DirectInput-to-vJoy report path.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {

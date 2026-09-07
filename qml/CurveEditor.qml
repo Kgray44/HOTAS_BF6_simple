@@ -183,7 +183,7 @@ Item {
     }
 
     component CardHeading: Text {
-        color: theme.topGun ? theme.ivory : "#edf6f6"
+        color: theme.topGun ? theme.ivory : theme.textStrong
         font.pixelSize: 15
         font.bold: true
     }
@@ -337,8 +337,8 @@ Item {
         AviationPanel {
             Layout.fillWidth: true
             Layout.preferredHeight: editor.width >= 1080 ? 198 : 270
-            color: theme.topGun ? "#d80b1b20" : "#e61a282e"
-            border.color: theme.topGun ? theme.borderStrong : "#4b70818a"
+            color: theme.topGun ? "#d80b1b20" : theme.dayOps ? theme.panel : "#e61a282e"
+            border.color: theme.topGun ? theme.borderStrong : theme.border
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
@@ -347,11 +347,11 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: "CURVE EDITOR"; color: theme.topGun ? theme.ivory : "#f1f7f7"; font.pixelSize: 23; font.bold: true; font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable" }
+                        Text { text: "CURVE EDITOR"; color: theme.topGun ? theme.ivory : theme.textStrong; font.pixelSize: 23; font.bold: true; font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable" }
                         Text {
                             text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
-                            color: theme.topGun ? theme.orange : "#a8d3d9"
+                            color: theme.topGun ? theme.orange : theme.cyan
                             font.pixelSize: 13
                             font.bold: true
                         }
@@ -480,12 +480,12 @@ Item {
             id: graphPanel
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(350, Math.min(480, editor.height * 0.58))
-            color: theme.topGun ? "#0b181d" : "#101a1f"
-            border.color: theme.topGun ? theme.graphFrame : "#486873"
+            color: theme.graphBackground
+            border.color: theme.graphFrame
             gradient: Gradient {
-                GradientStop { position: 0; color: theme.topGun ? "#20352f" : "#27383e" }
-                GradientStop { position: 0.08; color: theme.topGun ? "#132126" : "#17262b" }
-                GradientStop { position: 1; color: theme.topGun ? "#061116" : "#0b1114" }
+                GradientStop { position: 0; color: theme.dayOps ? "#3a4b52" : theme.topGun ? "#20352f" : "#27383e" }
+                GradientStop { position: 0.08; color: theme.dayOps ? "#2e4048" : theme.topGun ? "#132126" : "#17262b" }
+                GradientStop { position: 1; color: theme.dayOps ? "#202f36" : theme.topGun ? "#061116" : "#0b1114" }
             }
             Rectangle { anchors.fill: parent; anchors.margins: 8; radius: theme.controlRadius; color: theme.graphBackground; border.color: theme.graphFrame }
 

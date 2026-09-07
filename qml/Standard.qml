@@ -52,6 +52,7 @@ Page {
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
+        + (devicesPageLoader.item ? 1 : 0)
 
     function pageItem(page) {
         switch (page) {
@@ -65,6 +66,7 @@ Page {
         case 7: return automationPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
+        case 10: return devicesPageLoader.item
         }
         return null
     }
@@ -663,14 +665,14 @@ Page {
         property var samples: backend.selectedAxisCurve
         Layout.fillWidth: true
         Layout.preferredHeight: 356
-        color: theme.topGun ? "#d80a171b" : "#eb11171b"
-        border.color: theme.topGun ? theme.graphFrame : "#3b66747d"
+        color: theme.topGun ? "#d80a171b" : theme.cockpitGraphSurface
+        border.color: theme.topGun ? theme.graphFrame : theme.cockpitBorder
         Column {
             anchors.fill: parent
             anchors.margins: 14
             spacing: 6
             RowLayout { width: parent.width
-                Text { text: "LIVE TRANSFER"; color: theme.topGun ? theme.ivory : "#dce9eb"; font.pixelSize: 11; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "LIVE TRANSFER"; color: theme.topGun ? theme.ivory : theme.cockpitTelemetry; font.pixelSize: 11; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                 Text { text: curveViewer.info && curveViewer.info.unipolar ? "0–100% THROTTLE DOMAIN" : "−100% TO +100% NORMALIZED DOMAIN"
                     color: theme.textMuted; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
@@ -791,8 +793,8 @@ Page {
         }
         Layout.fillWidth: true
         Layout.preferredHeight: 166
-        color: info && info.pressed ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.pressed ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border
+        color: info && info.pressed ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : theme.cockpitSurface)
+        border.color: info && info.pressed ? (theme.topGun ? theme.orange : theme.cockpitActiveBorder) : theme.border
         ColumnLayout {
             id: buttonContent
             anchors.fill: parent
@@ -802,7 +804,7 @@ Page {
                 Item { Layout.fillWidth: true; Layout.preferredHeight: 29
                     Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width; visible: !buttonCard.nameEditing
                         text: buttonCard.info.customName ? buttonCard.info.customName.toUpperCase() : "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
-                        elide: Text.ElideRight; color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: theme.topGun ? 16 : 13; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family
+                        elide: Text.ElideRight; color: theme.topGun ? theme.ivory : theme.cockpitText; font.pixelSize: theme.topGun ? 16 : 13; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family
                         MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: buttonCard.beginNameEdit() }
                     }
                     LiveDraftTextInput { id: buttonNameEditor; anchors.fill: parent; visible: buttonCard.nameEditing
@@ -822,7 +824,7 @@ Page {
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : theme.cockpitSubtle; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox {
                     id: buttonDestination
@@ -931,7 +933,7 @@ Page {
         property var info: null
         Layout.fillWidth: true
         Layout.preferredHeight: 143
-        color: info && info.nativeEnabled ? Qt.rgba(theme.ready.r, theme.ready.g, theme.ready.b, 0.14) : (theme.topGun ? "#d80b1b20" : "#ed182128")
+        color: info && info.nativeEnabled ? Qt.rgba(theme.ready.r, theme.ready.g, theme.ready.b, 0.14) : (theme.topGun ? "#d80b1b20" : theme.cockpitSurface)
         border.color: info && info.nativeEnabled ? theme.ready : theme.border
         function targetIndex(key) {
             for (let index = 0; index < root.nativePovTargetChoices.length; ++index) {
@@ -942,7 +944,7 @@ Page {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 6
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: theme.topGun ? theme.ivory : theme.cockpitText; font.pixelSize: 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                 Item { Layout.fillWidth: true }
                 Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? theme.ready : theme.warning; font.pixelSize: 9; font.bold: true }
             }
@@ -978,17 +980,17 @@ Page {
         property var info: null
         Layout.fillWidth: true
         Layout.preferredHeight: 152
-        color: info && info.active ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : "#ed182128")
-        border.color: info && info.active ? (theme.topGun ? theme.orange : "#93a3cfda") : theme.border
+        color: info && info.active ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, theme.topGun ? 0.17 : 0.22) : (theme.topGun ? "#d80b1b20" : theme.cockpitSurface)
+        border.color: info && info.active ? (theme.topGun ? theme.orange : theme.cockpitActiveBorder) : theme.border
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 7
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : theme.cockpitText; font.pixelSize: 12; font.weight: Font.DemiBold; font.family: theme.topGun ? theme.displayFont : root.font.family }
                 Item { Layout.fillWidth: true }
                 Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? theme.cyan : theme.textMuted; font.pixelSize: 9; font.bold: true }
             }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: theme.topGun ? theme.ivory : theme.cockpitSubtle; font.pixelSize: 9; font.bold: true }
                 Item { Layout.fillWidth: true }
                 Text { visible: povCard.info.target > 0; text: "LEARN"; color: theme.textMuted; font.pixelSize: 9; font.bold: true
                     MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startPovLearning(povCard.info.target) }
@@ -1140,6 +1142,59 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
+            FineLine { visible: root.width >= 1180; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            RowLayout {
+                visible: root.width >= 1180
+                spacing: 4
+                Button {
+                    text: backend.editingDeviceRigName + "  ▾"
+                    font.pixelSize: 10
+                    onClicked: rigContextMenu.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Editing rig only. Runtime activation stays in Devices."
+                }
+                Button {
+                    text: backend.editingScopeLabel + "  ▾"
+                    font.pixelSize: 10
+                    onClicked: scopeContextMenu.open()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Editing scope only. It never activates hardware."
+                }
+                Menu {
+                    id: rigContextMenu
+                    Instantiator {
+                        model: backend.deviceRigs
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: (modelData.editing ? "✓  " : "") + modelData.name + "  ·  "
+                                  + modelData.healthLabel + (modelData.active ? "  ·  ACTIVE" : "")
+                            onTriggered: backend.setEditingDeviceContext(modelData.id, [])
+                        }
+                        onObjectAdded: function(index, object) { rigContextMenu.insertItem(index, object) }
+                        onObjectRemoved: function(index, object) { rigContextMenu.removeItem(object) }
+                    }
+                    MenuSeparator {}
+                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
+                }
+                Menu {
+                    id: scopeContextMenu
+                    MenuItem { text: backend.editingScopeLabel === "All Devices" ? "✓  All Devices" : "All Devices"
+                        onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, []) }
+                    Instantiator {
+                        model: backend.editingDevices
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: (modelData.selected ? "✓  " : "") + modelData.name
+                                  + (modelData.required ? "" : "  ·  optional")
+                            onTriggered: backend.setEditingDeviceContext(backend.editingDeviceRigId, [modelData.id])
+                        }
+                        onObjectAdded: function(index, object) { scopeContextMenu.insertItem(index + 1, object) }
+                        onObjectRemoved: function(index, object) { scopeContextMenu.removeItem(object) }
+                    }
+                    MenuSeparator {}
+                    MenuItem { text: "Manage Devices…"; onTriggered: root.currentPage = 10 }
+                }
+            }
             Item { Layout.fillWidth: true }
             Rectangle {
                 visible: backend.updateAvailable && root.width >= 980
@@ -1253,7 +1308,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 452
+        height: 487
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1299,7 +1354,7 @@ Page {
             }
             Repeater {
                 model: [
-                    { label: "OVERVIEW", page: 8, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
+                    { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
                     { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
@@ -1373,6 +1428,14 @@ Page {
             }
         }
         Loader {
+            id: devicesPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 10
+            sourceComponent: Component {
+                DevicesPage { anchors.fill: parent; visible: root.currentPage === 10; backendObject: backend; themeTokens: root.themeTokens; legacy: false }
+            }
+        }
+        Loader {
             id: profileLibraryLoader
             anchors.fill: parent
             active: root.currentPage === 5
@@ -1409,7 +1472,7 @@ Page {
                     CommandButton { label: "QUICK MAP"; onTriggered: quickAssignDialog.open() }
                 }
                 Panel { width: parent.width; height: 90
-                    color: theme.topGun ? "#e4191714" : "#e51a2328"; border.color: theme.topGun ? theme.orange : "#46657980"
+                    color: theme.topGun ? "#e4191714" : theme.cockpitSurfaceStrong; border.color: theme.topGun ? theme.orange : theme.cockpitBorder
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         Rectangle { visible: theme.topGun; Layout.preferredWidth: 142; Layout.fillHeight: true; color: "#4d211b"; border.color: theme.orange
                             clip: true
@@ -1461,11 +1524,11 @@ Page {
                             spacing: 14
                             Panel { id: axisIdentityPanel; Layout.fillWidth: true; Layout.preferredHeight: 144
                                 property var info: root.selectedAxisInfo
-                                color: theme.topGun ? "#de0b1a1f" : "#e61a282e"; border.color: theme.topGun ? theme.borderStrong : "#4b70818a"
+                                color: theme.topGun ? "#de0b1a1f" : theme.cockpitSurface; border.color: theme.topGun ? theme.borderStrong : theme.cockpitBorder
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
                                     RowLayout { Layout.fillWidth: true
                                         Column { spacing: 2
-                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : "#edf6f6"; font.pixelSize: theme.topGun ? 24 : 17; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: theme.topGun ? theme.ivory : theme.cockpitText; font.pixelSize: theme.topGun ? 24 : 17; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                                             Text { text: (axisIdentityPanel.info.fixed ? axisIdentityPanel.info.activityLabel + " · " + axisIdentityPanel.info.activityDetail : axisIdentityPanel.info.detail).toUpperCase(); color: axisIdentityPanel.info.fixed ? theme.warning : theme.textMuted; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                                         }
                                         Item { Layout.fillWidth: true }
@@ -1487,7 +1550,7 @@ Page {
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
                                         Text { text: "CALIBRATED INPUT"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.calibrated); color: theme.topGun ? theme.ivory : "#dce8ea"; font.pixelSize: 31; font.family: theme.telemetryFont; font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.calibrated); color: theme.topGun ? theme.ivory : theme.cockpitTelemetry; font.pixelSize: 31; font.family: theme.telemetryFont; font.bold: true }
                                         Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: theme.textFaint; font.pixelSize: 9; font.bold: true }
                                     }
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
@@ -1508,13 +1571,13 @@ Page {
                             // Processing controls grow with their content so the
                             // Curve description and action remain inside the panel.
                             Layout.preferredHeight: processingContent.implicitHeight + 32
-                            color: theme.topGun ? "#dc0a171c" : "#ed151d22"
+                            color: theme.topGun ? "#dc0a171c" : theme.cockpitSurface
                             ColumnLayout { id: processingContent; anchors.fill: parent; anchors.margins: 16; spacing: 12
-                                Text { text: (theme.topGun ? "✦  " : "") + "AXIS PROCESSING"; color: theme.topGun ? theme.ivory : "#e1eded"; font.pixelSize: theme.topGun ? 18 : 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                                Text { text: (theme.topGun ? "✦  " : "") + "AXIS PROCESSING"; color: theme.topGun ? theme.ivory : theme.cockpitText; font.pixelSize: theme.topGun ? 18 : 12; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
                                 Text { text: "Profile-specific settings compile into the worker between reports."; color: theme.textMuted; font.pixelSize: 9; font.bold: true }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "ROUTE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "ROUTE"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     CommandButton { visible: processingPanel.info.target !== "Disabled"; label: "LEARN INPUT"; subdued: true
                                         onTriggered: backend.startAxisLearning(processingPanel.info.target) }
                                     FlightComboBox {
@@ -1534,25 +1597,25 @@ Page {
                                     }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "AXIS NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "AXIS NAME"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.customName || ""; placeholderText: processingPanel.info.hardwareLabel || "Controller axis"
                                         onEditCommitted: function(value) { backend.setAxisCustomName(processingPanel.info.index, value) } }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "RANGE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "RANGE"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 31; model: ["Centered", "One-Sided"]
                                         currentIndex: processingPanel.info.rangeMode === "oneSided" ? 1 : 0
                                         onActivated: backend.setAxisRangeMode(processingPanel.info.index, currentText) }
                                 }
                                 RowLayout { Layout.fillWidth: true; visible: processingPanel.info.target !== "Disabled"
-                                    Text { text: "GAME OUTPUT NAME"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 132 }
+                                    Text { text: "GAME OUTPUT NAME"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 132 }
                                     LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.outputAlias || ""; placeholderText: processingPanel.info.target + " alias (e.g. R Up/Down)"
                                         onEditCommitted: function(value) { backend.setVirtualAxisAlias(processingPanel.info.target, value) } }
                                 }
                                 Text { visible: processingPanel.info.target !== "Disabled" && !processingPanel.info.targetAvailable
                                     text: "The selected vJoy device does not expose this axis."; color: theme.warning; font.pixelSize: 9; Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "INVERT"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "INVERT"; color: theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     Switch {
                                         id: selectedAxisInvert
                                         checked: processingPanel.info.inverted
@@ -1569,9 +1632,9 @@ Page {
                                 FineLine { Layout.fillWidth: true }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "DEADZONE"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "DEADZONE"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: theme.topGun ? theme.ivory : "#c8dce0"; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: theme.topGun ? theme.ivory : theme.cockpitMetric; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
                                     }
                                     Slider { id: selectedAxisDeadzone; Layout.fillWidth: true; from: 0; to: 0.25; value: Number(processingPanel.info.deadzone)
                                         onMoved: backend.setAxisDeadzone(processingPanel.info.index, value)
@@ -1584,9 +1647,9 @@ Page {
                                 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "HYSTERESIS"; color: theme.topGun ? theme.ivory : "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "HYSTERESIS"; color: theme.topGun ? theme.ivory : theme.cockpitLabel; font.pixelSize: 10; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: theme.topGun ? theme.ivory : "#c8dce0"; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: theme.topGun ? theme.ivory : theme.cockpitMetric; font.pixelSize: 11; font.family: theme.telemetryFont; font.bold: true }
                                     }
                                     Slider { id: selectedAxisHysteresis; Layout.fillWidth: true; from: 0; to: 0.05; value: Number(processingPanel.info.hysteresis)
                                         onMoved: backend.setAxisHysteresis(processingPanel.info.index, value)
@@ -1599,20 +1662,20 @@ Page {
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: processingPanel.info.unipolar ? "OUTPUT MIN" : "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: processingPanel.info.unipolar ? "OUTPUT MIN" : "OUTPUT MIN"; color: theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMinimum; from: processingPanel.info.unipolar ? 0 : -100; to: 99
                                         value: Number(processingPanel.info.outputMinimum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "OUTPUT MAX"; color: theme.cockpitLabel; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMaximum; from: processingPanel.info.unipolar ? 1 : -99; to: 100
                                         value: Number(processingPanel.info.outputMaximum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
-                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: theme.cockpitHelp; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2

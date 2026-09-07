@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.3.2**
+**Current release: v2.4.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps a selected physical DirectInput controller into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.3.2 adds a ready-to-customize Battlefield 6 Helicopter starter profile through a one-time safe configuration migration, while v2.3.1 Adaptive Response telemetry, motion-aware center handling, and curve-aware mapped-output authority remain unchanged. Its global, category, profile, and temporary Automation layers compile before report processing; fixed latest-state telemetry, safety clamping, presets, portable dependencies, and schema-22 compatibility retain the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.4.0 introduces reusable Device Rigs, simultaneous multi-device and multi-output routing, a unified rig setup and verification experience, and a persistent view/edit context while preserving simple one-controller setup. Day Ops joins Legacy, Standard, and Top Gun as a dedicated bright naval-aviation presentation system. Device topology, verification, and themes remain outside the allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 
@@ -60,7 +60,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 
 ## Main capabilities
 
-- **Real-Time Mapping Runtime** — A dedicated DirectInput-to-vJoy worker owns report processing so controller output is not scheduled by the UI.
+- **Real-Time Mapping Runtime** — A dedicated DirectInput-to-vJoy worker owns bounded single-device and Device Rig report processing so controller output is not scheduled by the UI.
 - **Axis Routing and Processing** — Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
 - **Mapping Safety Controls** — Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.
 - **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit, user-confirmed ownership or shared-output fan-in.
@@ -69,12 +69,12 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **Response Curves** — Each profile/axis can use compiled response curves with both preset-based and point-based editing.
 - **Automation Engine** — A deterministic, fixed-capacity Automation subsystem evaluates rules inside the mapper using data compiled before report processing.
 - **Automation Editor UX** — Automation is edited as readable full-page rules rather than raw condition/action arrays.
-- **Universal Controller Management** — HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.
+- **Universal Controller Management** — HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit inputs and groups them into reusable Device Rigs outside report processing.
 - **Diagnostics and Observability** — The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
-- **User Interface and Themes** — The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.
+- **User Interface and Themes** — The app provides four persistent visual systems without allowing presentation state to alter mapping semantics.
 - **vJoy Integration** — vJoy is dynamically loaded and queried so the application enforces the selected virtual-output layout configured on the machine.
 - **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
-- **HOTAS Setup & Verification** — Passive startup checks and Settings-accessible full verification explain the complete HOTAS chain without moving setup work into real-time mapping.
+- **HOTAS Setup & Verification** — One shared Device Rig setup and verification system explains a single controller or a full multi-device chain without moving setup work into real-time mapping.
 - **Launcher, Installer, and Updates** — A native launcher owns stable update checks and installation handoff so network/update work never remains active during mapping.
 - **Configuration and Migration** — Persistent configuration evolves through explicit schema migrations while transient runtime state remains outside saved data.
 - **Build, Test, and Release Engineering** — The repository contains a reproducible Windows build and release pipeline intended to catch both correctness and packaging regressions.

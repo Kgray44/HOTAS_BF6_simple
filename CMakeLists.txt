@@ -56,6 +56,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_store.cpp
     src/controller_manager.h
     src/controller_manager.cpp
+    src/device_rig.h
+    src/device_rig.cpp
     src/hid_device_identity.h
     src/hid_device_identity.cpp
     src/controller_discovery.h
@@ -99,6 +101,7 @@ qt_add_qml_module(HOTASMapper
         qml/Standard.qml
         qml/CurveEditor.qml
         qml/ControllerReadinessPanel.qml
+        qml/DevicesPage.qml
 )
 
 qt_add_resources(HOTASMapper hotas_icon_resources
@@ -229,6 +232,8 @@ if (BUILD_TESTING)
         src/config_store.cpp
         src/controller_manager.h
         src/controller_manager.cpp
+        src/device_rig.h
+        src/device_rig.cpp
         src/event_log.h
     )
     target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
@@ -425,6 +430,7 @@ if (BUILD_TESTING)
             qml/Standard.qml
             qml/CurveEditor.qml
             qml/ControllerReadinessPanel.qml
+            qml/DevicesPage.qml
     )
     target_link_libraries(app_qml_startup_tests PRIVATE
         hotas_update_core

@@ -115,6 +115,16 @@ struct AutomationEvaluationResult {
 std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
     const MapperConfiguration &configuration, const RuntimeProfileCache &cache);
 
+// A Device Rig evaluates Automation at each physical source, never after the
+// sources have been merged.  This compiler projects only the rules whose
+// durable source and output identities belong to one member/output pair.
+// Ambiguous legacy rules are rejected at this configuration boundary instead
+// of being allowed to follow DirectInput polling order.
+std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
+    const MapperConfiguration &configuration, const RuntimeProfileCache &cache,
+    const QString &controllerRecordId, const QString &outputLayoutId,
+    bool multiMemberRig, QString *qualificationIssue = nullptr);
+
 class AutomationRuntime final {
 public:
     void reset();

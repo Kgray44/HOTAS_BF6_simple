@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.3.2**
+**Current release: v2.4.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.4.0 — Device Rigs, simultaneous inputs, and Day Ops
+
+Introduces reusable hardware Device Rigs that combine several explicit DirectInput sources into one or more vJoy outputs while preserving simple one-controller setup, bounded mapper processing, and existing profile behavior.
+
+- Schema 23 migrates a safely resolved active or preferred saved controller into a one-member rig without treating offline state or missing verification as identity failure; calibration, mappings, output choice, and verification state are retained.
+- The mapper compiles fixed-size member/output topology outside report processing, independently polls connected physical sources, refuses ambiguous axis or native-POV destinations, and neutralizes affected output safely on configured disconnect behavior.
+- The Devices workspace adds overview, Physical Device, Device Rig, Virtual Output, guided create-rig, health, required/optional, multi-output, default/priority/fallback, and exact identity/visibility detail surfaces.
+- One themed Device Rig Setup & Verification system scales from a compact single HOTAS check to grouped multi-input and multi-output readiness, routing, visibility, and live evidence without a parallel verifier.
+- The persistent top-bar Device Rig and Editing Scope controls distinguish saved, connected, active-runtime, and editing states; changing editing context never activates hardware. Single-source route editing and reviewed compatible batch processing are explicit.
+- Day Ops is a persisted fourth presentation system with carrier-deck gray/aluminum surfaces, dark navy technical text, steel framing, safety-orange controls, and dark instrumentation insets. It preserves geometry and never affects mapper behavior.
 
 ## v2.3.2 — Battlefield 6 Helicopter starter profile
 

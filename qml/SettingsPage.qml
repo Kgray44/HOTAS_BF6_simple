@@ -269,7 +269,7 @@ Flickable {
             SettingRow { Layout.fillWidth: true; title: "KEEP RUNNING IN SYSTEM TRAY"; detail: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is unavailable in this Windows session."
                 Toggle { checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
             }
-            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: "Legacy, Standard, and Top Gun each use their own visual language."
+            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: themeManager.currentTheme === "Day Ops" ? "Day Ops — a bright naval aviation theme inspired by daytime carrier flight-deck equipment." : "Legacy, Standard, Top Gun, and Day Ops each use their own visual language."
                 ComboBox { id: appearance; implicitWidth: 138; model: themeManager.themeChoices; currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme)); onActivated: themeManager.setCurrentTheme(currentText)
                     contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
@@ -353,8 +353,8 @@ Flickable {
         onOpened: selectFirstTarget()
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
-            Text { Layout.fillWidth: true; text: theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"; color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
-            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Select the controller to set up. Existing active input remains unchanged." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Use Together creates one unverified Device Rig so its inputs can be configured and verified as a coherent flight setup. Set Up Separately keeps the existing one-device flow." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
                     color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? theme.selectionCurrent : root.insetColor; border.color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? root.accentColor : root.borderColor
@@ -374,7 +374,11 @@ Flickable {
             RowLayout { Layout.fillWidth: true; spacing: 8
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "NOT NOW"; subdued: true; onTriggered: detectedControllerDialog.close() }
-                ActionButton { label: detectedControllerDialog.selectedController() ? "SET UP " + detectedControllerDialog.selectedController().name.toUpperCase() : "SET UP CONTROLLER"; actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
+                ActionButton { visible: detectedControllerDialog.targetDirectInputIds.length === 1 && backend.deviceRigs.length === 1; label: "SET UP & ADD TO " + (backend.deviceRigs.length === 1 ? backend.deviceRigs[0].name.toUpperCase() : "RIG"); actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
+                    onTriggered: { if (backend.addDetectedDeviceToRig(backend.deviceRigs[0].id, detectedControllerDialog.selectedDirectInputId)) { detectedControllerDialog.close() } } }
+                ActionButton { visible: detectedControllerDialog.targetDirectInputIds.length > 1; label: "USE TOGETHER"; actionEnabled: detectedControllerDialog.targetDirectInputIds.length > 1
+                    onTriggered: { const rigId = backend.createDeviceRigFromDetected("New Flight Rig", detectedControllerDialog.targetDirectInputIds); if (rigId !== "") { backend.activateDeviceRig(rigId); detectedControllerDialog.close() } } }
+                ActionButton { label: detectedControllerDialog.targetDirectInputIds.length > 1 ? "SET UP SEPARATELY" : (detectedControllerDialog.selectedController() ? "SET UP " + detectedControllerDialog.selectedController().name.toUpperCase() : "SET UP CONTROLLER"); actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
                     onTriggered: { if (backend.selectNewController(detectedControllerDialog.selectedDirectInputId)) { detectedControllerDialog.close(); readinessDialog.open() } } }
             }
         }

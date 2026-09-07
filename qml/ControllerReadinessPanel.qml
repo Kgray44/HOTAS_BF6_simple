@@ -2,7 +2,7 @@ import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 
-// Shared by Legacy, Standard, and Top Gun. The caller supplies the existing
+// Shared by Legacy, Standard, Top Gun, and Day Ops. The caller supplies the existing
 // theme tokens, so readiness adds no competing visual system.
 Item {
     id: root
@@ -10,6 +10,7 @@ Item {
     property var themeTokens: null
     property bool legacy: false
     readonly property bool topGun: themeTokens && themeTokens.topGun
+    readonly property bool rigMode: backendObject && backendObject.activeDeviceRigId !== ""
     property bool instructionsExpanded: false
     signal closeRequested()
     readonly property color panelColor: themeTokens ? themeTokens.panel : "#1a1d23"
@@ -49,11 +50,14 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
-                Text { text: root.topGun ? "CONTROLLER SYSTEM CHECK" : "CONTROLLER SETUP & VERIFICATION"
+                Text { text: root.topGun ? "HOTAS RIG SYSTEM CHECK" : "HOTAS SETUP & VERIFICATION"
                     color: root.textColor; font.pixelSize: 17; font.bold: true
                     font.family: root.topGun ? root.themeTokens.displayFont : undefined }
-                Text { text: root.topGun ? "PHYSICAL INPUT · VJOY OUTPUT · HIDHIDE ISOLATION"
-                                         : "Verify your selected controller, vJoy, and HidHide configuration."
+                Text { text: root.rigMode
+                                 ? (root.topGun ? "INPUT DEVICES · VIRTUAL OUTPUTS · VISIBILITY · ROUTING"
+                                                : root.backendObject.activeDeviceRigName + " — verify inputs, outputs, visibility, and routing.")
+                                 : (root.topGun ? "PHYSICAL INPUT · VJOY OUTPUT · HIDHIDE ISOLATION"
+                                                : "Verify your selected controller, vJoy, and HidHide configuration.")
                     color: root.mutedColor; font.pixelSize: 10 }
             }
             Text { text: root.backendObject ? root.backendObject.controllerReadinessState : "NOT CHECKED"

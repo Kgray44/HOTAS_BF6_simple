@@ -2,7 +2,7 @@ import QtQuick 6.5
 import QtQuick.Controls 6.5
 
 // A single application window hosts exactly one presentation tree. Standard
-// and Top Gun are live token variants of Standard; Legacy loads the concrete
+// Top Gun, and Day Ops are live token variants of Standard; Legacy loads the concrete
 // v1.6.3 surface. Neither path owns mapper state or the worker.
 ApplicationWindow {
     id: shell

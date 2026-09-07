@@ -22,7 +22,9 @@ void ThemeManagerTests::missingValueMigratesToLegacy()
     hotas::ThemeManager manager(directory.filePath(u"settings.ini"_qs));
     QCOMPARE(manager.currentTheme(), u"Legacy"_qs);
     QVERIFY(!manager.isTopGun());
-    QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs}));
+    QVERIFY(!manager.isDayOps());
+    QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs,
+                                                  u"Day Ops"_qs}));
 }
 
 void ThemeManagerTests::selectionPersistsAndNormalizes()
@@ -41,6 +43,9 @@ void ThemeManagerTests::selectionPersistsAndNormalizes()
     QCOMPARE(restored.currentTheme(), u"Standard"_qs);
     restored.setCurrentTheme(u"unrecognized value"_qs);
     QCOMPARE(restored.currentTheme(), u"Standard"_qs);
+    restored.setCurrentTheme(u" day ops "_qs);
+    QCOMPARE(restored.currentTheme(), u"Day Ops"_qs);
+    QVERIFY(restored.isDayOps());
 }
 
 void ThemeManagerTests::themeStateDoesNotTouchMapperPayload()
@@ -55,11 +60,11 @@ void ThemeManagerTests::themeStateDoesNotTouchMapperPayload()
     }
 
     hotas::ThemeManager manager(path);
-    manager.setCurrentTheme(u"Top Gun"_qs);
+    manager.setCurrentTheme(u"Day Ops"_qs);
 
     const QSettings settings(path, QSettings::IniFormat);
     QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
-    QCOMPARE(settings.value(u"presentation/uiTheme"_qs).toString(), u"Top Gun"_qs);
+    QCOMPARE(settings.value(u"presentation/uiTheme"_qs).toString(), u"Day Ops"_qs);
 }
 
 QTEST_APPLESS_MAIN(ThemeManagerTests)

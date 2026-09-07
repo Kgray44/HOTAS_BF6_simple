@@ -831,18 +831,22 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     QObject *surface = qvariant_cast<QObject *>(presentation->property("item"));
     if (!surface) return failPresentationLifecycleTest(QStringLiteral("theme surface was not loaded"));
 
-    // QML may finish one-time component-cache initialization when each page
-    // is first visited. Warm every page once, then measure repeated navigation
-    // so the contract detects retained state rather than first-use setup.
-    for (int page = 0; page <= 9; ++page) {
-        if (!selectPage(surface, page)) return false;
+    // Device Rigs are a first-class V2.4 page, not an optional dialog. Keep
+    // its loader in the same four-theme lifecycle qualification as the
+    // established workspaces. Qt Quick may defer one-time control-template
+    // construction until the event loop has completed a number of page
+    // changes, so use a complete stress traversal as a burn-in before taking
+    // the exact steady-state baseline below.
+    for (int cycle = 0; cycle < 20; ++cycle) {
+        for (int page = 0; page <= 10; ++page) {
+            if (!selectPage(surface, page)) return false;
+        }
     }
     if (!selectPage(surface, 8)) return false;
-    settlePresentation();
     const ProcessMemoryFootprint fresh = currentProcessMemoryFootprint();
     const int freshObjectCount = surface->findChildren<QObject *>().size();
     for (int cycle = 0; cycle < 20; ++cycle) {
-        for (int page = 0; page <= 9; ++page) {
+        for (int page = 0; page <= 10; ++page) {
             if (!selectPage(surface, page)) return false;
         }
     }
@@ -1046,6 +1050,7 @@ int main(int argc, char *argv[])
         QStringLiteral("Legacy"),
         QStringLiteral("Standard"),
         QStringLiteral("Top Gun"),
+        QStringLiteral("Day Ops"),
     };
 
     for (const QString &theme : themes) {

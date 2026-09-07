@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "device_rig.h"
 #include "adaptive_response.h"
 #include "axis_transform.h"
 #include "input_learning.h"
@@ -81,6 +82,15 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)
     Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)
     Q_PROPERTY(QString activeControllerRecordId READ activeControllerRecordId NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList deviceRigs READ deviceRigs NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString activeDeviceRigId READ activeDeviceRigId NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString activeDeviceRigName READ activeDeviceRigName NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString editingDeviceRigId READ editingDeviceRigId NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString editingDeviceRigName READ editingDeviceRigName NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString editingScopeLabel READ editingScopeLabel NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QVariantList editingDevices READ editingDevices NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString deviceRigMigrationWarning READ deviceRigMigrationWarning NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString deviceRigDetectionMessage READ deviceRigDetectionMessage NOTIFY deviceRigsChanged)
     Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
     Q_PROPERTY(bool keepRunningInTray READ keepRunningInTray NOTIFY stateChanged)
     Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY stateChanged)
@@ -241,6 +251,17 @@ public:
     QVariantList controllers() const;
     int connectedControllerCount() const { return m_connectedControllerCount; }
     QString activeControllerRecordId() const;
+    QVariantList deviceRigs() const;
+    QString activeDeviceRigId() const;
+    QString activeDeviceRigName() const;
+    QString editingDeviceRigId() const;
+    QString editingDeviceRigName() const;
+    QString editingScopeLabel() const;
+    QVariantList editingDevices() const;
+    QString deviceRigMigrationWarning() const;
+    QString deviceRigDetectionMessage() const;
+    Q_INVOKABLE QVariantMap physicalDeviceDetail(const QString &recordId) const;
+    Q_INVOKABLE QVariantMap virtualOutputDetail(const QString &layoutId) const;
     bool autoSwitchVerifiedController() const;
     bool keepRunningInTray() const;
     bool trayAvailable() const;
@@ -501,6 +522,7 @@ public:
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
     Q_INVOKABLE bool assignProfileOutputLayout(const QString &profileId, const QString &layoutId);
     Q_INVOKABLE QString createFiveAxisOutputLayout(const QString &name, int deviceId);
+    Q_INVOKABLE bool renameVirtualOutputLayout(const QString &layoutId, const QString &name);
     Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
                                                   const QString &deviceInstanceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
@@ -534,6 +556,44 @@ public:
     Q_INVOKABLE void acknowledgeControllerSetup();
     Q_INVOKABLE void useConnectedDevice();
     Q_INVOKABLE void refreshControllers();
+    Q_INVOKABLE QString createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
+                                        const QString &outputLayoutId = {});
+    Q_INVOKABLE QString createDeviceRigFromDetected(const QString &name,
+                                                    const QStringList &directInputIds,
+                                                    const QString &outputLayoutId = {});
+    Q_INVOKABLE bool addDetectedDeviceToRig(const QString &rigId, const QString &directInputId,
+                                            bool required = true);
+    Q_INVOKABLE bool activateDeviceRig(const QString &rigId);
+    Q_INVOKABLE bool deactivateDeviceRig(const QString &rigId);
+    Q_INVOKABLE bool setDefaultDeviceRig(const QString &rigId);
+    Q_INVOKABLE bool clearDefaultDeviceRig(const QString &rigId);
+    Q_INVOKABLE bool setDeviceRigAutoActivate(const QString &rigId, bool enabled);
+    Q_INVOKABLE bool setDeviceRigActivationPriority(const QString &rigId, int priority);
+    Q_INVOKABLE bool setDeviceRigMemberRequired(const QString &rigId, const QString &controllerRecordId,
+                                                bool required);
+    Q_INVOKABLE bool setDeviceRigMemberEnabled(const QString &rigId, const QString &controllerRecordId,
+                                               bool enabled);
+    Q_INVOKABLE bool setDeviceRigMemberOutput(const QString &rigId, const QString &controllerRecordId,
+                                              const QString &outputLayoutId);
+    Q_INVOKABLE bool addDeviceRigOutput(const QString &rigId, const QString &outputLayoutId);
+    Q_INVOKABLE bool removeDeviceRigOutput(const QString &rigId, const QString &outputLayoutId);
+    Q_INVOKABLE bool setDeviceRigOutputEnabled(const QString &rigId, const QString &outputLayoutId,
+                                               bool enabled);
+    Q_INVOKABLE bool addDeviceRigMember(const QString &rigId, const QString &controllerRecordId,
+                                        bool required = true);
+    Q_INVOKABLE bool removeDeviceRigMember(const QString &rigId, const QString &controllerRecordId);
+    Q_INVOKABLE bool renameDeviceRig(const QString &rigId, const QString &name);
+    Q_INVOKABLE bool setDeviceRigEnabled(const QString &rigId, bool enabled);
+    Q_INVOKABLE bool setDeviceRigFallback(const QString &rigId, const QString &fallbackRigId);
+    Q_INVOKABLE bool setDeviceRigDisconnectBehavior(const QString &rigId, int behavior);
+    Q_INVOKABLE void verifyDeviceRig(const QString &rigId = {});
+    Q_INVOKABLE bool setEditingDeviceContext(const QString &rigId,
+                                             const QStringList &controllerRecordIds = {});
+    Q_INVOKABLE QVariantMap editingAxisBatchPreview(int physicalAxis, const QString &property,
+                                                    const QVariant &value) const;
+    Q_INVOKABLE bool applyEditingAxisBatch(int physicalAxis, const QString &property,
+                                           const QVariant &value, const QString &mode);
+    Q_INVOKABLE bool deleteDeviceRig(const QString &rigId);
     Q_INVOKABLE bool setActiveController(const QString &recordId);
     Q_INVOKABLE bool selectNewController(const QString &directInputId);
     Q_INVOKABLE bool forgetController(const QString &recordId);
@@ -557,6 +617,7 @@ signals:
     void inputTelemetryChanged();
     void buttonTelemetryChanged();
     void controllersChanged();
+    void deviceRigsChanged();
     void runningApplicationsChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
@@ -704,6 +765,7 @@ private:
     void evaluateGameDetection();
     void refreshNumericTelemetry();
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
+    void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
@@ -722,6 +784,9 @@ private:
     const DiscoveredController *discoveredController(const QString &directInputId) const;
     SavedControllerRecord *activeControllerRecord();
     const SavedControllerRecord *activeControllerRecord() const;
+    const SavedControllerRecord *savedControllerRecord(const QString &recordId) const;
+    DeviceRig *activeDeviceRig();
+    const DeviceRig *activeDeviceRig() const;
     ControllerVJoyRequirements currentVjoyRequirements() const;
     void rememberCurrentController();
     void tryAutoSwitchVerifiedController();
@@ -731,6 +796,12 @@ private:
     bool fallBackToAvailableAxis();
     AxisMapping *selectedAxisMapping();
     const AxisMapping *selectedAxisMapping() const;
+    // The persistent top-bar context selects a physical source for editors.
+    // Multi-source route edits must be an explicit transaction, never an
+    // accidental mutation of the legacy profile payload.
+    bool editingScopeHasSinglePhysicalSource() const;
+    DeviceProfileMapping *editingDeviceMappingForWrite();
+    const DeviceProfileMapping *editingDeviceMapping() const;
     AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
     const AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope,
                                                        const QString &targetId = {}) const;
@@ -788,6 +859,8 @@ private:
     bool m_controllerSetupSuggested = false;
     bool m_physicalControllerWasConnected = false;
     QList<DiscoveredController> m_discoveredControllers;
+    QList<DeviceRigStatus> m_deviceRigStatuses;
+    QString m_deviceRigDetectionMessage;
     QVariantList m_controllerUiModel;
     QString m_controllerUiModelLiveDeviceId;
     int m_connectedControllerCount = 0;

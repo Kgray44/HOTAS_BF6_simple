@@ -35,9 +35,14 @@ bool ThemeManager::isTopGun() const
     return m_currentTheme == u"Top Gun"_qs;
 }
 
+bool ThemeManager::isDayOps() const
+{
+    return m_currentTheme == u"Day Ops"_qs;
+}
+
 QStringList ThemeManager::themeChoices() const
 {
-    return {u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs};
+    return {u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs, u"Day Ops"_qs};
 }
 
 void ThemeManager::setCurrentTheme(const QString &theme)
@@ -57,6 +62,7 @@ QString ThemeManager::normalizedTheme(const QString &theme)
     const QString normalized = theme.trimmed();
     if (normalized.compare(u"Legacy"_qs, Qt::CaseInsensitive) == 0) return u"Legacy"_qs;
     if (normalized.compare(u"Top Gun"_qs, Qt::CaseInsensitive) == 0) return u"Top Gun"_qs;
+    if (normalized.compare(u"Day Ops"_qs, Qt::CaseInsensitive) == 0) return u"Day Ops"_qs;
     // v1.7.0 development builds stored the name Classic. Preserve that
     // explicit in-progress selection as the revised Standard presentation.
     return u"Standard"_qs;
