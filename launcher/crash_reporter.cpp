@@ -128,7 +128,7 @@ void setTechnicalDetailsVisible(bool visible)
     }
 }
 
-LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM)
+LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == WM_CTLCOLORSTATIC) {
         HDC dc = reinterpret_cast<HDC>(wParam);
@@ -152,7 +152,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM)
         }
     }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
-    return DefWindowProcW(window, message, wParam, 0);
+    // WM_NCCREATE and several standard control messages carry creation state
+    // in lParam. Forward it unchanged; dropping it can make the independent
+    // reporter window fail before it is ever shown.
+    return DefWindowProcW(window, message, wParam, lParam);
 }
 
 HWND staticText(HWND parent, const wchar_t *text, int x, int y, int width, int height, HFONT font)
