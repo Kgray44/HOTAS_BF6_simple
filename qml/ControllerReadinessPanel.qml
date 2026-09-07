@@ -229,55 +229,51 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Item { Layout.fillWidth: true }
-            Button {
+            ThemedButton {
                 id: recheckButton
+                theme: root.themeTokens
                 text: root.backendObject && root.backendObject.controllerSetupInProgress ? "VERIFYING..." : "VERIFY AGAIN"
-                enabled: root.backendObject && !root.backendObject.controllerSetupInProgress
-                onClicked: root.backendObject.verifyHotasSetup()
-                contentItem: Text { text: recheckButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.borderColor }
+                tone: "secondary"
+                commandEnabled: root.backendObject && !root.backendObject.controllerSetupInProgress
+                onTriggered: root.backendObject.verifyHotasSetup()
             }
-            Button {
+            ThemedButton {
                 id: undoButton
+                theme: root.themeTokens
                 visible: root.backendObject && root.backendObject.controllerSetupCanUndo
                 text: "UNDO AUTOMATIC REPAIR"
-                onClicked: undoDialog.open()
-                contentItem: Text { text: undoButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.warningColor }
+                tone: "secondary"
+                emphasis: "warning"
+                onTriggered: undoDialog.open()
             }
-            Button {
+            ThemedButton {
                 id: contextualActionButton
+                theme: root.themeTokens
                 visible: root.backendObject && root.backendObject.controllerReadinessRecommendedAction.length > 0
                 text: root.backendObject ? root.backendObject.controllerReadinessRecommendedAction : ""
-                enabled: root.backendObject && !root.backendObject.controllerSetupInProgress
-                onClicked: {
+                emphasis: "ready"
+                commandEnabled: root.backendObject && !root.backendObject.controllerSetupInProgress
+                onTriggered: {
                     if (text === "FIX AUTOMATICALLY") repairConfirmation.open()
                     else if (text === "RUN FULL VERIFICATION") root.backendObject.verifyHotasSetup()
                     else root.instructionsExpanded = true
                 }
-                contentItem: Text { text: contextualActionButton.text; color: contextualActionButton.enabled ? root.textColor : root.mutedColor; font.pixelSize: 10; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: contextualActionButton.enabled ? root.buttonColor : root.insetColor
-                    border.color: contextualActionButton.enabled ? root.readyColor : root.borderColor }
             }
-            Button {
+            ThemedButton {
                 id: diagnosticsButton
+                theme: root.themeTokens
                 visible: root.backendObject && root.backendObject.controllerDiagnosticsAvailable
                 text: "COPY DIAGNOSTICS"
-                onClicked: root.backendObject.copyControllerDiagnostics()
-                contentItem: Text { text: diagnosticsButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.warningColor }
+                tone: "secondary"
+                emphasis: "warning"
+                onTriggered: root.backendObject.copyControllerDiagnostics()
             }
-            Button {
+            ThemedButton {
                 id: closeButton
+                theme: root.themeTokens
                 text: "CLOSE"
-                onClicked: root.closeRequested()
-                contentItem: Text { text: closeButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true
-                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.borderColor }
+                tone: "secondary"
+                onTriggered: root.closeRequested()
             }
         }
     }
@@ -328,14 +324,10 @@ Item {
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 Item { Layout.fillWidth: true }
-                Button { id: cancelApplyButton; text: "CANCEL"
-                    onClicked: repairConfirmation.close()
-                    contentItem: Text { text: cancelApplyButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.borderColor } }
-                Button { id: confirmApplyButton; text: "FIX AUTOMATICALLY"
-                    onClicked: { repairConfirmation.close(); root.backendObject.applyControllerReadiness() }
-                contentItem: Text { text: confirmApplyButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.buttonColor; border.color: root.readyColor } }
+                ThemedButton { id: cancelApplyButton; theme: root.themeTokens; text: "CANCEL"; tone: "secondary"
+                    onTriggered: repairConfirmation.close() }
+                ThemedButton { id: confirmApplyButton; theme: root.themeTokens; text: "FIX AUTOMATICALLY"; emphasis: "ready"
+                    onTriggered: { repairConfirmation.close(); root.backendObject.applyControllerReadiness() } }
             }
         }
     }
@@ -345,16 +337,19 @@ Item {
         parent: Overlay.overlay
         modal: true
         title: "Undo automatic controller repair?"
-        standardButtons: Dialog.Cancel
+        standardButtons: Dialog.NoButton
         width: Math.min(540, root.width)
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: root.radius }
         contentItem: ColumnLayout {
             spacing: 10
             Text { Layout.fillWidth: true; text: "HOTAS BF6 will reverse only the entries it added in this session. Existing HidHide allowlist entries, hidden devices, and unrelated vJoy devices are preserved."; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11 }
-            Button { id: confirmUndoButton; text: "UNDO AUTOMATIC REPAIR"; Layout.alignment: Qt.AlignRight
-                onClicked: { undoDialog.close(); root.backendObject.undoControllerReadiness() }
-                contentItem: Text { text: confirmUndoButton.text; color: root.textColor; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: root.radius; color: root.secondaryButtonColor; border.color: root.warningColor } }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                ThemedButton { theme: root.themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: undoDialog.close() }
+                ThemedButton { id: confirmUndoButton; theme: root.themeTokens; text: "UNDO AUTOMATIC REPAIR"; tone: "secondary"; emphasis: "warning"
+                    onTriggered: { undoDialog.close(); root.backendObject.undoControllerReadiness() } }
+            }
         }
     }
 }

@@ -2063,7 +2063,7 @@ Page {
         padding: 18
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: "#182a30"; border.color: "#536975"; radius: 4 }
-        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; legacy: true
+        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
             onCloseRequested: controllerSetupDialog.close() }
     }
 

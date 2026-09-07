@@ -6,6 +6,10 @@ Rectangle {
     property string text: "ACTION"
     property bool commandEnabled: true
     property string tone: "primary" // primary, secondary, danger
+    // A bounded semantic outline for actions such as verification, repair,
+    // and undo.  It lets shared dialogs retain meaningful emphasis without
+    // dropping back to a native Qt Button just to customize a border.
+    property string emphasis: "" // ready, warning, danger, or empty
     property bool compact: false
     property bool legacy: !!theme.legacy
     // Keep a typed color at the boundary. Legacy passes a compact token map
@@ -13,6 +17,13 @@ Rectangle {
     // Accessing `.r` directly on the map was therefore unsafe in Legacy.
     property color dangerColor: theme.danger
     signal triggered()
+
+    function emphasisColor() {
+        if (emphasis === "ready") return theme.ready
+        if (emphasis === "warning") return theme.warning
+        if (emphasis === "danger") return theme.danger
+        return "transparent"
+    }
 
     implicitWidth: Math.max(compact ? 34 : (legacy ? 110 : 92), caption.implicitWidth + (compact ? 18 : (legacy ? 30 : 24)))
     implicitHeight: compact ? 30 : (legacy ? 36 : 34)
@@ -26,6 +37,7 @@ Rectangle {
            : tone === "secondary" ? (mouse.containsMouse ? theme.buttonSecondaryHover : theme.buttonSecondary)
            : (mouse.containsMouse ? theme.buttonHover : theme.buttonSurface)
     border.color: !commandEnabled ? (legacy ? "#182f3539" : theme.border)
+                  : emphasis !== "" ? emphasisColor()
                   : tone === "danger" ? theme.danger
                   : tone === "secondary" ? (legacy ? "#536975" : theme.border)
                   : theme.orange

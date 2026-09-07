@@ -25,6 +25,7 @@ private slots:
     void presentationLifecycleSleepsOnlyTheGuiControlPlane();
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
+    void unifiedVerifierUsesSharedThemedButtons();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
@@ -212,6 +213,24 @@ void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
     QVERIFY(library.contains(QStringLiteral("id: deleteProfileDialog")));
     QVERIFY(library.contains(QStringLiteral("legacy ? \"#182126\"")));
     QVERIFY(library.contains(QStringLiteral("theme.danger")));
+}
+
+void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
+{
+    const QString readinessPanel = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
+    const QString themedButton = sourceFile(QStringLiteral("qml/ThemedButton.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+
+    // The rig verifier is a V2.4 surface in every theme. Its repair and undo
+    // workflow must use the shared themed primitive, not visually skinned
+    // native Qt buttons or a Dialog-generated Cancel action.
+    QVERIFY(readinessPanel.contains(QStringLiteral("ThemedButton")));
+    QVERIFY(!readinessPanel.contains(QStringLiteral("\n            Button {")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("standardButtons: Dialog.NoButton")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: \"ready\"")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: \"warning\"")));
+    QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
+    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
 }
 
 void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()
