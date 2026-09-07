@@ -1102,12 +1102,16 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 640; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
             DeviceContextSelector {
                 objectName: "legacyDeviceContextSelector"
-                visible: root.width >= 640
-                Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
-                Layout.maximumWidth: 272
+                // Preserve an editing-only Device Context at compact widths.
+                // It contracts to the selector affordance below 720px rather
+                // than vanishing at the former arbitrary 640px breakpoint.
+                visible: root.width >= 480
+                compact: root.width < 720
+                Layout.preferredWidth: compact ? implicitWidth : Math.min(272, Math.max(174, root.width - 900))
+                Layout.maximumWidth: compact ? implicitWidth : 272
                 backendObject: backend
                 theme: root.adaptiveThemeTokens
                 legacy: true

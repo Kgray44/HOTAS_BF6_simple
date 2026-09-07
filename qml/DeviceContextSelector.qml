@@ -8,11 +8,16 @@ Item {
     required property var backendObject
     required property var theme
     property bool legacy: !!theme.legacy
+    // The header keeps this selector present on compact shells.  At widths
+    // where its full rig/scope text would compete with mapping status, it
+    // becomes a small, still-obvious status/dropdown affordance rather than
+    // disappearing behind a breakpoint.
+    property bool compact: false
     signal manageDevices()
     // At the supported compact shell width this control keeps its affordance
     // but yields label detail before it crowds profile or mapping state.
     readonly property bool standard: !legacy && !theme.topGun && !theme.dayOps
-    implicitWidth: Math.max(174, contextLabel.implicitWidth + 58)
+    implicitWidth: compact ? 36 : Math.max(174, contextLabel.implicitWidth + 58)
     implicitHeight: legacy ? 31 : 34
 
     function healthColor(key) {
@@ -45,13 +50,20 @@ Item {
         border.color: popup.visible ? (control.legacy ? "#78aab9" : theme.orange)
                      : trigger.containsMouse ? (control.legacy ? "#527482" : theme.borderStrong)
                                            : (control.legacy ? "#435660" : theme.border)
-        RowLayout { anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 8; spacing: 6
+        RowLayout { anchors.fill: parent; anchors.leftMargin: compact ? 7 : 9; anchors.rightMargin: compact ? 6 : 8; spacing: compact ? 4 : 6
             Rectangle { width: 7; height: 7; radius: theme.topGun ? 1 : 4; color: control.healthColor((control.currentRig() || {}).health || "offline") }
-            Text { id: contextLabel; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
+            Text { id: contextLabel; visible: !control.compact; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
             Text { text: popup.visible ? "⌃" : "⌄"; color: theme.textMuted; font.pixelSize: 14 }
         }
     }
     MouseArea { id: trigger; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: popup.visible ? popup.close() : popup.open() }
+    ToolTip {
+        visible: control.compact && trigger.containsMouse && !popup.visible
+        delay: 350
+        text: "Device Context — " + backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel
+        background: DevicePanel { theme: control.theme; legacy: control.legacy }
+        contentItem: Text { text: parent.text; color: control.theme.text; font.pixelSize: 10 }
+    }
     Popup {
         id: popup
         objectName: "deviceContextPopup"

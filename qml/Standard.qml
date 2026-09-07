@@ -1144,15 +1144,16 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
-            FineLine { visible: root.width >= 640; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
             DeviceContextSelector {
                 objectName: "standardDeviceContextSelector"
                 // Keep editing context at compact sizes. The label elides,
                 // while secondary telemetry yields first, rather than making
                 // this persistent control disappear at a magic threshold.
-                visible: root.width >= 640
-                Layout.preferredWidth: Math.min(272, Math.max(174, root.width - 900))
-                Layout.maximumWidth: 272
+                visible: root.width >= 480
+                compact: root.width < 720
+                Layout.preferredWidth: compact ? implicitWidth : Math.min(272, Math.max(174, root.width - 900))
+                Layout.maximumWidth: compact ? implicitWidth : 272
                 backendObject: backend
                 theme: root.themeTokens
                 legacy: false
@@ -1238,10 +1239,13 @@ Page {
             }
             DeviceContextSelector {
                 objectName: "topGunDeviceContextSelector"
-                visible: root.width >= 560
-                x: Math.min(772, parent.width - width - 12)
+                // The Top Gun header has its own geometry, but retains the
+                // same compact context affordance instead of hiding it.
+                visible: root.width >= 360
+                compact: root.width < 760
+                x: compact ? parent.width - width - 12 : Math.min(772, parent.width - width - 12)
                 y: 29
-                width: Math.min(240, Math.max(186, root.width - 1070))
+                width: compact ? implicitWidth : Math.min(240, Math.max(186, root.width - 1070))
                 height: 34
                 backendObject: backend
                 theme: root.themeTokens

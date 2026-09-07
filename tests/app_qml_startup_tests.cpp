@@ -944,7 +944,9 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
         return failPresentationLifecycleTest(QStringLiteral("Persistent Device Context was not available for %1").arg(theme));
     }
     const QSize original = shell->size();
-    const QList<QSize> sizes{{900, 650}, {1280, 720}, {1440, 900}, {1920, 1080}};
+    // 640px specifically guards the compact Device Context path. The
+    // supported visual sizes below remain the product acceptance baseline.
+    const QList<QSize> sizes{{640, 650}, {900, 650}, {1280, 720}, {1440, 900}, {1920, 1080}};
     const QStringList panels{QStringLiteral("activeRigPanel"), QStringLiteral("deviceRigListPanel"),
         QStringLiteral("rigDetailsPanel"), QStringLiteral("automaticBehaviorPanel"),
         QStringLiteral("knownDevicesPanel")};
