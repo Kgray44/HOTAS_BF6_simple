@@ -8,6 +8,9 @@ Button {
     property string label: ""
     property string detail: ""
     property bool selected: false
+    // The offscreen startup-test capture neutralizes transient pointer/focus
+    // decoration after exercising routes. It is always false in the product.
+    property bool suppressTransientEmphasis: false
     implicitHeight: tokens.navigationRowHeight
     leftPadding: tokens.space12
     rightPadding: tokens.space12
@@ -37,9 +40,9 @@ Button {
     }
     background: Rectangle {
         radius: control.tokens.radiusControl
-        color: !control.enabled ? "transparent" : control.down ? control.tokens.accentMuted : control.selected ? control.tokens.selected : control.hovered ? control.tokens.secondarySurface : "transparent"
-        border.width: control.activeFocus ? 2 : (control.selected ? 1 : 0)
-        border.color: control.activeFocus ? control.tokens.focus : control.selected ? control.tokens.accent : "transparent"
+        color: !control.enabled ? "transparent" : control.selected ? control.tokens.selected : (!control.suppressTransientEmphasis && (control.down || control.hovered)) ? (control.down ? control.tokens.accentMuted : control.tokens.secondarySurface) : "transparent"
+        border.width: !control.suppressTransientEmphasis && control.activeFocus ? 2 : (control.selected ? 1 : 0)
+        border.color: !control.suppressTransientEmphasis && control.activeFocus ? control.tokens.focus : control.selected ? control.tokens.accent : "transparent"
         Behavior on color {
             ColorAnimation {
                 duration: control.tokens.hoverDuration

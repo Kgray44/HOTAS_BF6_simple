@@ -25,6 +25,10 @@ Page {
     // proof. Hiding only Standard's chrome preserves the existing page and
     // dialog behavior without forking backend-facing QML.
     property bool embedded: false
+    // Flight Deck owns one native Overview composition while this established
+    // host continues to own every route, dialog, and backend command.
+    property bool flightDeckMode: false
+    property var flightDeckReadiness: null
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -1453,9 +1457,19 @@ Page {
             id: overviewPageLoader
             anchors.fill: parent
             active: root.currentPage === 8
-            sourceComponent: Component {
-                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
-                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+            sourceComponent: root.flightDeckMode ? flightDeckOverviewComponent : standardOverviewComponent
+        }
+        Component {
+            id: standardOverviewComponent
+            OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
+                onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+        }
+        Component {
+            id: flightDeckOverviewComponent
+            FlightDeckOverview {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: root.currentPage = page
             }
         }
         Loader {

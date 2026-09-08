@@ -53,10 +53,8 @@ Item {
         }
         return "Overview";
     }
-    function readinessTone() {
-        if (!backend.physicalConnected || !backend.vjoyReady)
-            return "attention";
-        return backend.mappingActive ? "healthy" : "informational";
+    FlightDeckReadiness {
+        id: readinessModel
     }
 
     onCurrentPageChanged: standardPageHost.currentPage = currentPage
@@ -125,7 +123,7 @@ Item {
                             Layout.fillWidth: true
                             spacing: 1
                             Text {
-                                text: "Flight Deck"
+                                text: "HOTAS BF6"
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
                                 font.pixelSize: 16
@@ -134,7 +132,7 @@ Item {
                                 Layout.fillWidth: true
                             }
                             Text {
-                                text: "PREVIEW · PRESENTATION ONLY"
+                                text: "FLIGHT DECK · PREVIEW"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
                                 font.pixelSize: 8
@@ -227,27 +225,26 @@ Item {
                             }
                             FlightDeckStatusChip {
                                 tokens: deck
-                                label: backend.mappingStatus.toUpperCase()
-                                value: backend.mappingActive ? "LIVE" : "STANDBY"
-                                tone: root.readinessTone()
+                                label: readinessModel.readiness.label
+                                tone: readinessModel.readiness.tone
                                 Layout.fillWidth: true
                             }
                             Text {
-                                text: backend.connectedControllerCount + " controller" + (backend.connectedControllerCount === 1 ? "" : "s")
+                                text: readinessModel.input.title
                                 color: deck.textSecondary
                                 font.pixelSize: 10
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
                             Text {
-                                text: "vJoy " + backend.vjoyDeviceId + " · " + backend.vjoyStatus
+                                text: readinessModel.output.title
                                 color: deck.textSecondary
                                 font.pixelSize: 10
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
                             Text {
-                                text: backend.effectiveProfileDisplayName
+                                text: readinessModel.game.title + " · " + readinessModel.profile.title
                                 color: deck.textMuted
                                 font.pixelSize: 9
                                 Layout.fillWidth: true
@@ -272,7 +269,8 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    Layout.preferredHeight: visible ? 42 : 0
+                    visible: root.currentPage !== 8
                     Text {
                         text: root.pageTitle(root.currentPage)
                         color: deck.textPrimary
@@ -312,6 +310,8 @@ Item {
                         id: standardPageHost
                         anchors.fill: parent
                         embedded: true
+                        flightDeckMode: true
+                        flightDeckReadiness: readinessModel
                         currentPage: 8
                         onCurrentPageChanged: {
                             if (root.currentPage !== currentPage)

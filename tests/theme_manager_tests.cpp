@@ -26,6 +26,7 @@ void ThemeManagerTests::missingValueMigratesToLegacy()
     QVERIFY(!manager.isDayOps());
     QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs,
                                                   u"Day Ops"_qs}));
+    QVERIFY(!manager.themeChoices().contains(u"Flight Deck"_qs));
 }
 
 void ThemeManagerTests::selectionPersistsAndNormalizes()

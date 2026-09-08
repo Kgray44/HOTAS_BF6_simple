@@ -2258,6 +2258,71 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance));
     }
 
+    QObject *readinessModel = surface->findChild<QObject *>(QStringLiteral("flightDeckReadinessModel"));
+    QObject *overview = pageItem(surface, 8);
+    if (!readinessModel || !overview || overview->objectName() != QStringLiteral("flightDeckOverview")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck did not load its native Overview state page"));
+    }
+    const auto readinessValue = [&](const QString &expression) {
+        QQmlExpression call(qmlContext(readinessModel), readinessModel, expression);
+        const QVariant value = call.evaluate();
+        if (call.hasError()) {
+            qCritical().noquote() << call.error().toString();
+            return QVariant{};
+        }
+        return value;
+    };
+    const auto hasPresentation = [&](const QString &state, const QString &label, const QString &tone) {
+        const QVariantMap presentation = readinessValue(
+            QStringLiteral("presentationFor(%1)").arg(state)).toMap();
+        return presentation.value(QStringLiteral("label")).toString() == label
+            && presentation.value(QStringLiteral("tone")).toString() == tone;
+    };
+    if (!hasPresentation(QStringLiteral("({physicalConnected:true, vjoyReady:true, vjoyStatusSeverity:'ready', controllerReadinessState:'READY', mappingActive:true, mappingRequested:true})"),
+            QStringLiteral("READY"), QStringLiteral("healthy"))
+        || !hasPresentation(QStringLiteral("({physicalConnected:false, vjoyReady:true, vjoyStatusSeverity:'ready', controllerReadinessState:'READY', mappingActive:false, mappingRequested:false})"),
+            QStringLiteral("NO CONTROLLER"), QStringLiteral("fault"))
+        || !hasPresentation(QStringLiteral("({physicalConnected:true, vjoyReady:false, vjoyStatusSeverity:'error', controllerReadinessState:'READY', mappingActive:false, mappingRequested:true})"),
+            QStringLiteral("ACTION NEEDED"), QStringLiteral("fault"))
+        || !hasPresentation(QStringLiteral("({physicalConnected:true, vjoyReady:true, vjoyStatusSeverity:'ready', controllerReadinessState:'ATTENTION', mappingActive:false, mappingRequested:true})"),
+            QStringLiteral("ACTION NEEDED"), QStringLiteral("attention"))
+        || !hasPresentation(QStringLiteral("({physicalConnected:true, vjoyReady:true, vjoyStatusSeverity:'ready', controllerReadinessState:'READY', mappingActive:false, mappingRequested:true})"),
+            QStringLiteral("PARTIALLY READY"), QStringLiteral("attention"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck readiness states are not classified consistently"));
+    }
+    const QVariantMap multipleInput = readinessValue(
+        QStringLiteral("inputFor({physicalConnected:true, connectedControllerCount:3, deviceName:'Long controller name'})")).toMap();
+    const QVariantMap noProfile = readinessValue(
+        QStringLiteral("profileFor({effectiveProfileDisplayName:'', profileSourceLabel:''})")).toMap();
+    const QVariantMap noGame = readinessValue(
+        QStringLiteral("gameFor({automaticGameDetection:true, activeCategoryRules:['bf6.exe'], runningApplications:[]})")).toMap();
+    const QVariantMap detectedGame = readinessValue(
+        QStringLiteral("gameFor({automaticGameDetection:true, activeCategoryName:'Battlefield', activeCategoryRules:['bf6.exe'], runningApplications:[{name:'Battlefield 6', executable:'bf6.exe'}]})")).toMap();
+    const QVariantMap hidHideAttention = readinessValue(
+        QStringLiteral("isolationFor({checks:[{name:'HIDHIDE ISOLATION', state:'Attention', message:'Review access', severity:'warning'}]})")).toMap();
+    if (multipleInput.value(QStringLiteral("title")).toString() != QStringLiteral("3 input devices")
+        || noProfile.value(QStringLiteral("title")).toString() != QStringLiteral("No active profile")
+        || noGame.value(QStringLiteral("title")).toString() != QStringLiteral("No supported game detected")
+        || detectedGame.value(QStringLiteral("title")).toString() != QStringLiteral("Battlefield 6")
+        || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
+    }
+    QObject *inputHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthInput"));
+    QObject *gameHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame"));
+    if (!inputHealth || !gameHealth
+        || !QMetaObject::invokeMethod(inputHealth, "actionRequested")
+        || surface->property("currentPage").toInt() != 2) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input action did not route to the existing setup page"));
+    }
+    if (!selectPage(surface, 8)) return false;
+    overview = pageItem(surface, 8);
+    gameHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame")) : nullptr;
+    if (!gameHealth || !QMetaObject::invokeMethod(gameHealth, "actionRequested")
+        || surface->property("currentPage").toInt() != 5) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck game action did not route to the existing Profiles page"));
+    }
+    if (!selectPage(surface, 8)) return false;
+
     for (const int page : {8, 0, 5, 9}) {
         auto *nav = findVisualItemByObjectName(window->contentItem(),
             QStringLiteral("flightDeckNav_%1").arg(page));
@@ -2280,6 +2345,20 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     settlePresentation();
     const QString visualOutputDirectory = qEnvironmentVariable("HOTAS_FLIGHT_DECK_VISUAL_OUTPUT_DIR");
     const auto captureShell = [&](const QString &sizeLabel) {
+        // Navigation route clicks intentionally receive focus during the
+        // interaction test. Clear that transient focus/hover before capture
+        // so a previously visited route cannot look selected beside Overview.
+        for (const int page : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+            if (auto *nav = findVisualItemByObjectName(window->contentItem(),
+                    QStringLiteral("flightDeckNav_%1").arg(page))) {
+                nav->setFocus(false);
+                nav->setProperty("suppressTransientEmphasis", true);
+            }
+        }
+        window->contentItem()->forceActiveFocus(Qt::OtherFocusReason);
+        QTest::mouseMove(window, QPoint(window->width() - 2, window->height() - 2));
+        QTest::qWait(160);
+        settlePresentation();
         const QImage capture = window->grabWindow();
         if (capture.isNull() || capture.width() < 880 || capture.height() < 620) return false;
         if (!visualOutputDirectory.isEmpty()) {
@@ -2293,6 +2372,48 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!captureShell(QStringLiteral("normal"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at normal size")
             .arg(appearance));
+    }
+    if (!visualOutputDirectory.isEmpty()) {
+        // This deterministic visual-only state exercises the ready hierarchy.
+        // Production Flight Deck never assigns this override; its visible
+        // readiness remains solely derived from AppBackend's published state.
+        const QVariantMap readyVisualState{
+            {QStringLiteral("physicalConnected"), true},
+            {QStringLiteral("connectedControllerCount"), 1},
+            {QStringLiteral("deviceName"), QStringLiteral("Flight Stick")},
+            {QStringLiteral("mappingActive"), true},
+            {QStringLiteral("mappingRequested"), true},
+            {QStringLiteral("mappingStatus"), QStringLiteral("MAPPING ACTIVE")},
+            {QStringLiteral("vjoyReady"), true},
+            {QStringLiteral("vjoyStatus"), QStringLiteral("vJoy 1 online")},
+            {QStringLiteral("vjoyStatusSeverity"), QStringLiteral("ready")},
+            {QStringLiteral("vjoyDeviceId"), QStringLiteral("1")},
+            {QStringLiteral("outputLayoutName"), QStringLiteral("BF6 Output")},
+            {QStringLiteral("controllerReadinessState"), QStringLiteral("READY")},
+            {QStringLiteral("checks"), QVariantList{QVariant::fromValue(QVariantMap{
+                {QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")},
+                {QStringLiteral("state"), QStringLiteral("READY")},
+                {QStringLiteral("message"), QStringLiteral("Exact-device isolation is verified.")},
+                {QStringLiteral("severity"), QStringLiteral("ready")},
+            })}},
+            {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("BF6 Helicopter")},
+            {QStringLiteral("profileSourceLabel"), QStringLiteral("Automatic game profile")},
+            {QStringLiteral("automaticGameDetection"), true},
+            {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield 6")},
+            {QStringLiteral("activeCategoryRules"), QStringList{QStringLiteral("bf6.exe")}},
+            {QStringLiteral("runningApplications"), QVariantList{QVariant::fromValue(QVariantMap{
+                {QStringLiteral("name"), QStringLiteral("Battlefield 6")},
+                {QStringLiteral("executable"), QStringLiteral("bf6.exe")},
+            })}},
+        };
+        readinessModel->setProperty("presentationStateOverride", readyVisualState);
+        settlePresentation();
+        if (!captureShell(QStringLiteral("ready-normal"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 ready state did not render")
+                .arg(appearance));
+        }
+        readinessModel->setProperty("presentationStateOverride", {});
+        settlePresentation();
     }
     window->resize(900, 650);
     window->requestUpdate();
