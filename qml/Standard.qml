@@ -17,6 +17,10 @@ Page {
     readonly property var themeTokens: theme
 
     property int currentPage: 8
+    // Flight Deck consumes this established page host during its Phase 1
+    // proof. Hiding only Standard's chrome preserves the existing page and
+    // dialog behavior without forking backend-facing QML.
+    property bool embedded: false
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -1039,7 +1043,8 @@ Page {
 
     header: Rectangle {
         id: headerBar
-        height: theme.topGun ? 92 : 58
+        visible: !root.embedded
+        height: visible ? (theme.topGun ? 92 : 58) : 0
         color: theme.header
         border.color: theme.border
         border.width: 1
@@ -1227,7 +1232,7 @@ Page {
     }
 
     footer: Rectangle {
-        visible: theme.topGun
+        visible: theme.topGun && !root.embedded
         height: visible ? 78 : 0
         color: "#0a1519"
         border.color: theme.border
@@ -1245,7 +1250,7 @@ Page {
 
     MouseArea { anchors.fill: parent
  z: 40
- visible: root.menuOpen
+ visible: root.menuOpen && !root.embedded
  onClicked: root.menuOpen = false }
     Panel {
         id: navigationOverlay
@@ -1256,7 +1261,7 @@ Page {
         height: 452
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
-        visible: root.menuOpen
+        visible: root.menuOpen && !root.embedded
         color: theme.tooltip
         border.color: theme.borderStrong
         Behavior on opacity { NumberAnimation { duration: 130
@@ -1353,7 +1358,7 @@ Page {
     Item {
         id: pageHost
         anchors.fill: parent
- anchors.margins: 24
+ anchors.margins: root.embedded ? 0 : 24
         // Only the selected page owns a QML object tree. Editor and import
         // drafts are copied into lightweight root-owned state before unload.
         Loader {
