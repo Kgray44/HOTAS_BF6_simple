@@ -38,6 +38,7 @@ private slots:
     void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
     void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
+    void setupAssistantAndOutputCreationExposeObservableContracts();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -548,6 +549,34 @@ void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSaf
     QVERIFY(worker.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability(plan, inputStates,")));
     QVERIFY(rigSource.contains(QStringLiteral("deactivateForRequiredLoss = disconnectBehavior")));
     QVERIFY(rigSource.contains(QStringLiteral("availability.mappingAllowed = mappingRequested")));
+}
+
+void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableContracts()
+{
+    const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString assistant = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+
+    QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantIssues READ setupAssistantIssues")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
+    QVERIFY(backend.contains(QStringLiteral("Connect or select at least one physical device to create a Device Rig.")));
+    QVERIFY(backend.contains(QStringLiteral("match-physical")));
+    QVERIFY(backend.contains(QStringLiteral("copy-output")));
+    QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
+    QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
+    QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
+    QVERIFY(assistant.contains(QStringLiteral("VIEW TECHNICAL DETAILS")));
+    QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
+    QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
+    QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
+    QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
+    QVERIFY(!devices.contains(QStringLiteral("CREATE & VERIFY")));
+    QVERIFY(overview.contains(QStringLiteral("systemReadinessList")));
+    QVERIFY(overview.contains(QStringLiteral("CHECK SETUP")));
 }
 
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()

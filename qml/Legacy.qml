@@ -8,6 +8,7 @@ Page {
     padding: 0
 
     property int currentPage: 8
+    property bool setupAssistantReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, "Legacy")
     Component.onCompleted: backend.recordCrashPresentationState(currentPage, "Legacy")
     property bool menuOpen: false
@@ -1263,7 +1264,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 8
             sourceComponent: Component {
-                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true
+                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheck() } }
             }
         }
         Loader {
@@ -1283,10 +1285,11 @@ Page {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
                     onVerificationRequested: function(rigId, deviceId) {
-                        if (rigId === "") return
-                        backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
                         controllerSetupDialog.open()
-                        backend.verifyDeviceRig(rigId)
+                        if (rigId !== "") {
+                            backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
+                            backend.verifyDeviceRig(rigId)
+                        } else backend.startSetupAssistantCheck()
                     }
                 }
             }
@@ -2078,14 +2081,21 @@ Page {
         header: ThemedDialogHeader {
             theme: root.adaptiveThemeTokens
             legacy: true
-            heading: "Rig Setup & Verification"
+            heading: "HOTAS BF6 SETUP ASSISTANT"
             detail: backend.activeDeviceRigName
             dialog: controllerSetupDialog
         }
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: "#182a30"; border.color: "#536975"; radius: 4 }
         contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
-            onCloseRequested: controllerSetupDialog.close() }
+            onCloseRequested: controllerSetupDialog.close()
+            onCalibrationRequested: {
+                root.setupAssistantReturnAfterCalibration = true
+                controllerSetupDialog.close()
+                root.currentPage = 2
+                backend.beginCalibration()
+            }
+        }
     }
 
     Dialog {
@@ -2184,6 +2194,15 @@ Page {
             }
         }
         background: Panel { color: "#241b1b"; border.color: "#44bd7777" }
+    }
+    Connections {
+        target: backend
+        function onStateChanged() {
+            if (root.setupAssistantReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
+                root.setupAssistantReturnAfterCalibration = false
+                controllerSetupDialog.open()
+            }
+        }
     }
     Connections {
         target: backend

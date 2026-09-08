@@ -123,6 +123,12 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessChecks READ controllerReadinessChecks NOTIFY stateChanged)
+    // A beginner-facing projection of readiness.  It is intentionally a
+    // structured control-plane model rather than a list of UI sentences, so
+    // every themed Setup Assistant can present the same issue and action.
+    Q_PROPERTY(QVariantList setupAssistantIssues READ setupAssistantIssues NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap setupAssistantSummary READ setupAssistantSummary NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList controllerReadinessProposedChanges READ controllerReadinessProposedChanges NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerRepairOperationResults READ controllerRepairOperationResults NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessState READ controllerReadinessState NOTIFY stateChanged)
@@ -295,6 +301,9 @@ public:
     bool hidhideCloaked() const;
     bool hidhideMapperAllowed() const;
     QVariantList controllerReadinessChecks() const;
+    QVariantList setupAssistantIssues() const;
+    QVariantMap setupAssistantSummary() const;
+    QVariantMap setupAssistantLiveTest() const;
     QVariantList controllerReadinessProposedChanges() const;
     QVariantList controllerRepairOperationResults() const;
     QString controllerReadinessState() const;
@@ -525,6 +534,16 @@ public:
     Q_INVOKABLE int suggestedVirtualOutputDeviceId() const;
     Q_INVOKABLE QString createVirtualOutputLayout(const QString &name, int deviceId,
                                                   const QString &preset = QStringLiteral("bf6-4-axis"));
+    // Devices actions return an explicit, presentation-safe result.  The old
+    // QString creators remain for compatibility with existing callers, but a
+    // QML command must never have to infer why an empty ID was returned.
+    Q_INVOKABLE QVariantMap createVirtualOutputLayoutResult(const QString &name, int deviceId,
+                                                            const QString &mode,
+                                                            const QString &sourceId = {},
+                                                            const QVariantList &customAxes = {},
+                                                            int buttons = 0,
+                                                            int continuousPovs = 0,
+                                                            int discretePovs = 0);
     Q_INVOKABLE bool renameVirtualOutputLayout(const QString &layoutId, const QString &name);
     Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
                                                    const QString &deviceInstanceId);
@@ -553,6 +572,9 @@ public:
     Q_INVOKABLE bool openHidHideConfiguration();
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
+    Q_INVOKABLE QVariantMap startSetupAssistantCheck();
+    Q_INVOKABLE QVariantMap applySetupAssistantFix();
+    Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
     Q_INVOKABLE bool copyControllerDiagnostics();
@@ -561,6 +583,9 @@ public:
     Q_INVOKABLE void refreshControllers();
     Q_INVOKABLE QString createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
                                         const QString &outputLayoutId = {});
+    Q_INVOKABLE QVariantMap createDeviceRigResult(const QString &name,
+                                                  const QStringList &controllerRecordIds,
+                                                  const QString &outputLayoutId = {});
     Q_INVOKABLE QString createDeviceRigFromDetected(const QString &name,
                                                     const QStringList &directInputIds,
                                                     const QString &outputLayoutId = {});
@@ -863,6 +888,14 @@ private:
     // a suspended presentation state without asking the worker to acquire
     // vJoy or modify a physical device.
     bool m_liveInputTestSuspended = false;
+    // Setup Assistant sessions are UI/control-plane observations.  They
+    // snapshot the worker's existing fixed counters only when the user starts
+    // a test; the report loop performs no session bookkeeping or allocation.
+    bool m_setupAssistantLiveTestActive = false;
+    quint64 m_setupAssistantInputBaseline = 0;
+    quint64 m_setupAssistantOutputBaseline = 0;
+    std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
+    std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.

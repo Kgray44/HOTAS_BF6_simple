@@ -23,6 +23,7 @@ Flickable {
     readonly property color dangerColor: legacy ? "#c98e97" : theme.danger
     readonly property color primaryColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 900
+    signal setupRequested()
 
     function statusLabel() {
         if (!backend.physicalConnected) return "WAITING FOR INPUT"
@@ -97,7 +98,7 @@ Flickable {
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 1
                 Text { Layout.fillWidth: true; text: check.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                Text { Layout.fillWidth: true; text: check.detail || "Current setup status"; color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: check.message || "Current setup status"; color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
             }
             StatusBadge {
                 label: check.state
@@ -223,14 +224,14 @@ Flickable {
         }
 
         Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
-            GridLayout { objectName: "systemReadinessGrid"; Layout.fillWidth: true; columns: root.width >= 1180 ? 2 : 1; columnSpacing: 12; rowSpacing: 8
+            ColumnLayout { objectName: "systemReadinessList"; Layout.fillWidth: true; spacing: 8
                 Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: backend.controllerReadinessChecks
                     delegate: ReadinessCheck { check: modelData }
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Live setup checks for the selected controller and virtual output."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                DashboardButton { objectName: "systemReadinessVerifyButton"; label: "VERIFY SETUP"; onTriggered: backend.verifyHotasSetup() }
+                Text { Layout.fillWidth: true; text: backend.physicalConnected || backend.activeDeviceRigId !== "" ? "One guided Setup Assistant can check your physical controller, virtual controller, visibility, and controls." : "Connect a physical controller or create a Device Rig to start setup."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                DashboardButton { objectName: "systemReadinessVerifyButton"; label: "CHECK SETUP"; enabledAction: backend.physicalConnected || backend.activeDeviceRigId !== ""; onTriggered: root.setupRequested() }
             }
         }
 

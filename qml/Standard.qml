@@ -17,6 +17,7 @@ Page {
     readonly property var themeTokens: theme
 
     property int currentPage: 8
+    property bool setupAssistantReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     Component.onCompleted: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     property bool menuOpen: false
@@ -1399,7 +1400,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 8
             sourceComponent: Component {
-                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false }
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
+                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheck() } }
             }
         }
         Loader {
@@ -1419,10 +1421,11 @@ Page {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.themeTokens; legacy: false
                     onVerificationRequested: function(rigId, deviceId) {
-                        if (rigId === "") return
-                        backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
                         controllerSetupDialog.open()
-                        backend.verifyDeviceRig(rigId)
+                        if (rigId !== "") {
+                            backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
+                            backend.verifyDeviceRig(rigId)
+                        } else backend.startSetupAssistantCheck()
                     }
                 }
             }
@@ -2232,14 +2235,21 @@ Page {
         padding: 14
         header: ThemedDialogHeader {
             theme: root.themeTokens
-            heading: "Rig Setup & Verification"
+            heading: "HOTAS BF6 SETUP ASSISTANT"
             detail: backend.activeDeviceRigName
             dialog: controllerSetupDialog
         }
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: theme.panel; border.color: theme.borderStrong; radius: theme.panelRadius }
         contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.themeTokens
-            onCloseRequested: controllerSetupDialog.close() }
+            onCloseRequested: controllerSetupDialog.close()
+            onCalibrationRequested: {
+                root.setupAssistantReturnAfterCalibration = true
+                controllerSetupDialog.close()
+                root.currentPage = 2
+                backend.beginCalibration()
+            }
+        }
     }
 
     Dialog {
@@ -2341,6 +2351,15 @@ Page {
             }
         }
         background: Panel { color: theme.cockpitDangerSurface; border.color: theme.cockpitDangerBorder }
+    }
+    Connections {
+        target: backend
+        function onStateChanged() {
+            if (root.setupAssistantReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
+                root.setupAssistantReturnAfterCalibration = false
+                controllerSetupDialog.open()
+            }
+        }
     }
     Connections {
         target: backend

@@ -883,10 +883,37 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     const QString firstMember = members.at(0).toMap().value(QStringLiteral("id")).toString();
     const QString secondMember = members.at(1).toMap().value(QStringLiteral("id")).toString();
     const QString secondName = members.at(1).toMap().value(QStringLiteral("name")).toString();
+    const QString outputId = outputs.front().toMap().value(QStringLiteral("id")).toString();
     const QString activeRigBeforeEdit = backend.activeDeviceRigId();
     if (members.at(1).toMap().value(QStringLiteral("connected")).toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("EDIT THIS fixture requires its second saved device to be offline"));
     }
+
+    // Critical Devices actions must provide an observable result on both the
+    // invalid and valid path. Invoke the same QML helper used by CREATE RIG;
+    // a bare backend bool or empty ID is not sufficient UI feedback.
+    QObject *feedback = devices->findChild<QObject *>(QStringLiteral("deviceActionFeedback"));
+    QQmlExpression invalidCreate(qmlContext(devices), devices,
+        QStringLiteral("createRigWithInputs('Missing Input Fixture', [], '%1')").arg(outputId));
+    const QVariant invalidResult = invalidCreate.evaluate();
+    if (!feedback || invalidCreate.hasError() || invalidResult.toMap().value(QStringLiteral("success")).toBool()
+        || !devices->property("actionFeedback").toMap().value(QStringLiteral("message")).toString().contains(
+            QStringLiteral("Connect or select at least one physical device"))
+        || !feedback->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Invalid CREATE RIG did not expose its physical-controller error"));
+    }
+    QQmlExpression validCreate(qmlContext(devices), devices,
+        QStringLiteral("createRigWithInputs('Observable Result Fixture Rig', ['%1'], '%2')")
+            .arg(firstMember, outputId));
+    const QVariant validResult = validCreate.evaluate();
+    const QString createdByAction = validResult.toMap().value(QStringLiteral("objectId")).toString();
+    if (validCreate.hasError() || !validResult.toMap().value(QStringLiteral("success")).toBool()
+        || createdByAction.isEmpty() || !devices->property("actionFeedback").toMap().value(
+            QStringLiteral("title")).toString().contains(QStringLiteral("Device Rig created"))
+        || !backend.deleteDeviceRig(createdByAction)) {
+        return failPresentationLifecycleTest(QStringLiteral("Valid CREATE RIG did not expose a success result"));
+    }
+    settlePresentation();
 
     // Invoke the exact Devices-page helper that the EDIT THIS control calls.
     // Repeater delegates are visual children, so inspect their visible QML
@@ -1221,10 +1248,10 @@ bool verifyOverviewReadinessLayout(QObject *surface, QWindow *shell, const QStri
     }
     auto *overview = qobject_cast<QQuickItem *>(pageItem(surface, 8));
     auto *panel = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessPanel")) : nullptr;
-    auto *grid = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessGrid")) : nullptr;
+    auto *list = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessList")) : nullptr;
     auto *verify = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessVerifyButton")) : nullptr;
     QObject *repeater = overview ? overview->findChild<QObject *>(QStringLiteral("systemReadinessRepeater")) : nullptr;
-    if (!overview || !panel || !grid || !verify || !repeater) {
+    if (!overview || !panel || !list || !verify || !repeater) {
         return failPresentationLifecycleTest(QStringLiteral("Overview System readiness controls were unavailable for %1").arg(theme));
     }
 
@@ -1234,12 +1261,10 @@ bool verifyOverviewReadinessLayout(QObject *surface, QWindow *shell, const QStri
     for (const QSize &size : sizes) {
         shell->resize(size);
         settlePresentation();
-        const int expectedColumns = overview->width() >= 1180 ? 2 : 1;
         if (!panel->isVisible() || panel->width() <= 0 || panel->height() <= 0
-            || grid->width() <= 0 || grid->height() <= 0 || repeater->property("count").toInt() <= 0
-            || grid->property("columns").toInt() != expectedColumns) {
+            || list->width() <= 0 || list->height() <= 0 || repeater->property("count").toInt() <= 0) {
             shell->resize(original);
-            return failPresentationLifecycleTest(QStringLiteral("Overview System readiness did not use its responsive grid at %1x%2 for %3")
+            return failPresentationLifecycleTest(QStringLiteral("Overview System readiness did not keep its concise readiness list at %1x%2 for %3")
                 .arg(size.width()).arg(size.height()).arg(theme));
         }
         const QRectF panelBounds(panel->mapToItem(overview, QPointF{}), panel->size());
@@ -1656,12 +1681,16 @@ int main(int argc, char *argv[])
 
     hotas::AppBackend backend;
     hotas::ThemeManager themeManager;
-    const QStringList themes{
+    QStringList themes{
         QStringLiteral("Legacy"),
         QStringLiteral("Standard"),
         QStringLiteral("Top Gun"),
         QStringLiteral("Day Ops"),
     };
+    // Keep the default release contract across all themes, while allowing a
+    // focused theme rerun when a visual failure is being diagnosed locally.
+    const QString requestedTheme = qEnvironmentVariable("HOTAS_QML_TEST_THEME").trimmed();
+    if (!requestedTheme.isEmpty()) themes = {requestedTheme};
 
     for (const QString &theme : themes) {
         themeManager.setCurrentTheme(theme);
