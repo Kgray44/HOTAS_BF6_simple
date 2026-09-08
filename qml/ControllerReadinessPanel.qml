@@ -107,15 +107,12 @@ Item {
             }
         }
 
-        Rectangle {
+        ThemedActionFeedback {
             objectName: "setupAssistantActionResult"
-            visible: !!root.actionResult.title
-            Layout.fillWidth: true; Layout.preferredHeight: visible ? actionResultText.implicitHeight + 24 : 0
-            color: root.actionResult.success ? Qt.rgba(root.readyColor.r, root.readyColor.g, root.readyColor.b, 0.10) : Qt.rgba(root.dangerColor.r, root.dangerColor.g, root.dangerColor.b, 0.10)
-            border.color: root.actionResult.success ? root.readyColor : root.dangerColor; radius: root.radius
-            Text { id: actionResultText; anchors.fill: parent; anchors.margins: 12
-                text: (root.actionResult.title || "") + (root.actionResult.message ? "\n" + root.actionResult.message : "")
-                color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            Layout.fillWidth: true
+            result: root.actionResult
+            theme: root.themeTokens
+            legacy: root.legacy
         }
 
         ColumnLayout {

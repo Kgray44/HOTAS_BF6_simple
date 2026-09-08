@@ -180,6 +180,67 @@ QString automationBehaviorLabel(AutomationActivationMode mode)
     return u"UNKNOWN"_qs;
 }
 
+QVariantMap issueNavigationTarget(const QString &code, const QString &objectType,
+                                  const QString &objectId)
+{
+    int page = 3; // Diagnostics is the safe technical fallback.
+    if (objectType == u"physicalDevice"_qs || objectType == u"deviceRig"_qs
+        || objectType == u"virtualOutput"_qs || objectType == u"gameVisibility"_qs) {
+        page = 10;
+    } else if (objectType == u"profile"_qs) {
+        page = 5;
+    } else if (objectType == u"automation"_qs) {
+        page = 7;
+    } else if (objectType == u"axis"_qs || code == u"RoutingConflict"_qs) {
+        page = 0;
+    } else if (objectType == u"calibration"_qs || code == u"CalibrationRequired"_qs) {
+        page = 2;
+    }
+    return {{u"page"_qs, page}, {u"objectType"_qs, objectType},
+            {u"objectId"_qs, objectId}, {u"issueCode"_qs, code}};
+}
+
+QVariantMap actionResult(bool success, const QString &title, const QString &message,
+                         const QString &objectType = {}, const QString &objectId = {},
+                         const QString &nextAction = {}, const QString &nextActionLabel = {},
+                         const QString &technicalDetails = {}, bool inProgress = false)
+{
+    AppActionResult result;
+    result.success = success;
+    result.severity = success ? (inProgress ? u"in-progress"_qs : u"success"_qs) : u"error"_qs;
+    result.title = title;
+    result.message = message;
+    result.affectedObjectType = objectType;
+    result.affectedObjectId = objectId;
+    result.nextAction = nextAction;
+    result.nextActionLabel = nextActionLabel;
+    result.technicalDetails = technicalDetails;
+    result.inProgress = inProgress;
+    return result.toVariantMap();
+}
+
+bool hasMappedControl(const CompiledDeviceRigMember &member)
+{
+    if (std::any_of(member.mapping.axes.cbegin(), member.mapping.axes.cend(),
+            [](const RuntimeAxisMapping &axis) {
+                return axis.profile.target != VirtualAxis::Disabled;
+            })) return true;
+    if (std::any_of(member.mapping.buttons.cbegin(), member.mapping.buttons.cend(),
+            [](const ButtonBinding &binding) {
+                return binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+            })) return true;
+    for (const PovDirectionBindings &pov : member.mapping.povs) {
+        if (std::any_of(pov.cbegin(), pov.cend(), [](const ButtonBinding &binding) {
+                return binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+            })) return true;
+    }
+    return std::any_of(member.nativePovBindings.cbegin(), member.nativePovBindings.cend(),
+        [](const NativePovBinding &binding) {
+            return binding.enabled && binding.targetType != NativePovTargetType::Disabled
+                && binding.targetIndex > 0;
+        });
+}
+
 QString automationConditionSummary(const AutomationConditionDefinition &condition,
                                    const MapperConfiguration &configuration)
 {
@@ -1368,6 +1429,14 @@ QVariantList AppBackend::runtimeAxisRoutesForTest() const
 void AppBackend::setSetupAssistantFactsForTest(const QVariantMap &facts)
 {
     m_setupAssistantTestFacts = facts;
+    // Synthetic scenarios describe an app-wide readiness snapshot. Keep a
+    // preceding Device Rig action from leaking a stale presentation scope
+    // into the test-only seam.
+    if (!facts.isEmpty()) {
+        m_setupAssistantScopeType = u"application"_qs;
+        m_setupAssistantScopeId.clear();
+        m_setupAssistantLiveTestActive = false;
+    }
     emit stateChanged();
 }
 
@@ -2807,6 +2876,31 @@ const DeviceRig *AppBackend::activeDeviceRig() const
     return findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
 }
 
+const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
+                                                      const QString &scopeId) const
+{
+    if (scopeType == u"deviceRig"_qs) return findDeviceRig(m_configuration, scopeId);
+    if (scopeType == u"device"_qs) {
+        const auto found = std::find_if(m_configuration.deviceRigs.cbegin(),
+            m_configuration.deviceRigs.cend(), [&scopeId](const DeviceRig &rig) {
+                return std::any_of(rig.members.cbegin(), rig.members.cend(), [&scopeId](const DeviceRigMember &member) {
+                    return member.controllerRecordId == scopeId;
+                });
+            });
+        return found == m_configuration.deviceRigs.cend() ? nullptr : &*found;
+    }
+    if (scopeType == u"virtualOutput"_qs) {
+        const auto found = std::find_if(m_configuration.deviceRigs.cbegin(),
+            m_configuration.deviceRigs.cend(), [&scopeId](const DeviceRig &rig) {
+                return std::any_of(rig.outputs.cbegin(), rig.outputs.cend(), [&scopeId](const DeviceRigOutputTarget &output) {
+                    return output.outputLayoutId == scopeId;
+                });
+            });
+        return found == m_configuration.deviceRigs.cend() ? nullptr : &*found;
+    }
+    return activeDeviceRig();
+}
+
 QVariantList AppBackend::deviceRigs() const
 {
     QVariantList result;
@@ -3117,9 +3211,7 @@ QVariantMap AppBackend::createDeviceRigResult(const QString &name,
 {
     const auto result = [](bool success, const QString &title, const QString &message,
                            const QString &objectId = {}, const QString &nextAction = {}) {
-        return QVariantMap{{u"success"_qs, success}, {u"title"_qs, title},
-            {u"message"_qs, message}, {u"objectId"_qs, objectId},
-            {u"nextAction"_qs, nextAction}};
+        return actionResult(success, title, message, u"deviceRig"_qs, objectId, nextAction);
     };
     const QString trimmedName = name.trimmed().left(64);
     if (trimmedName.isEmpty()) {
@@ -3974,7 +4066,8 @@ QVariantList AppBackend::controllerReadinessChecks() const
     // rig therefore remains compact, while a multi-input rig contributes one
     // clear row per physical member/output plus a compiled-routing result.
     // This projection is control-plane only; no mapper report constructs it.
-    if (const DeviceRig *rig = activeDeviceRig()) {
+    if (const DeviceRig *rig = setupAssistantDeviceRig(m_setupAssistantScopeType,
+                                                       m_setupAssistantScopeId)) {
         const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
             [rig](const DeviceRigStatus &status) { return status.rigId == rig->id; });
         const DeviceRigStatus status = found == m_deviceRigStatuses.cend()
@@ -4053,12 +4146,12 @@ QVariantList AppBackend::controllerReadinessChecks() const
                 });
             if (compiledMember != compiled.members.cbegin() + compiled.memberCount) {
                 const int memberIndex = static_cast<int>(std::distance(compiled.members.cbegin(), compiledMember));
-                const bool reports = m_worker.runtime().deviceRigInputReports[
+                const bool reports = m_worker.runtime().deviceRigMeaningfulInputSequence[
                     static_cast<size_t>(memberIndex)].load(std::memory_order_relaxed) > 0;
                 appendRigCheck(checks, u"LIVE INPUT · "_qs + name,
                     reports ? u"PASSED"_qs : u"WAITING"_qs,
-                    reports ? u"Fresh physical reports are arriving from this Device Rig input."_qs
-                            : u"Move a control on this input to prove its live report path."_qs,
+                    reports ? u"Meaningful physical control movement has arrived from this Device Rig input."_qs
+                            : u"Move an axis about 2% or press and release a button to prove this live input path."_qs,
                     reports ? u"ready"_qs : u"warning"_qs);
             }
         }
@@ -4069,7 +4162,7 @@ QVariantList AppBackend::controllerReadinessChecks() const
             const CompiledDeviceRigMember &member = compiled.members[static_cast<size_t>(memberIndex)];
             if (!status.connectedMemberIds.contains(member.controllerRecordId)) continue;
             everyConnectedInputReported = everyConnectedInputReported
-                && m_worker.runtime().deviceRigInputReports[static_cast<size_t>(memberIndex)]
+                && m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)]
                        .load(std::memory_order_relaxed) > 0;
         }
         for (const DeviceRigOutputTarget &target : rig->outputs) {
@@ -4103,7 +4196,7 @@ QVariantList AppBackend::controllerReadinessChecks() const
                 !layout || !layout->hidhideManaged || outputHidden ? u"warning"_qs : u"ready"_qs);
             if (target.enabled) {
                 const bool writes = enabledOutputIndex < compiled.outputCount
-                    && m_worker.runtime().deviceRigOutputWrites[static_cast<size_t>(enabledOutputIndex)]
+                    && m_worker.runtime().deviceRigMeaningfulOutputSequence[static_cast<size_t>(enabledOutputIndex)]
                            .load(std::memory_order_relaxed) > 0;
                 appendRigCheck(checks, u"LIVE OUTPUT · "_qs + outputName,
                     writes ? u"PASSED"_qs : u"WAITING"_qs,
@@ -4123,8 +4216,8 @@ QVariantList AppBackend::controllerReadinessChecks() const
             && everyEnabledOutputChanged;
         appendRigCheck(checks, u"LIVE MAPPING"_qs,
             liveInput && liveOutput ? u"PASSED"_qs : liveInput ? u"INPUT ACTIVE"_qs : u"WAITING"_qs,
-            liveInput && liveOutput ? u"Fresh input reports have reached the active Device Rig output."_qs
-                : liveInput ? u"Fresh input is arriving; move a mapped control to confirm output activity."_qs
+            liveInput && liveOutput ? u"Meaningful input movement has reached the active Device Rig output."_qs
+                : liveInput ? u"Meaningful input is arriving; move a mapped control to confirm output activity."_qs
                             : u"Move each required connected input during verification to prove the live chain."_qs,
             liveInput && liveOutput ? u"ready"_qs : u"warning"_qs);
         return checks;
@@ -4154,6 +4247,22 @@ QVariantList AppBackend::controllerReadinessChecks() const
 
 QVariantList AppBackend::setupAssistantIssues() const
 {
+    return setupAssistantIssuesForScope(m_setupAssistantScopeType, m_setupAssistantScopeId);
+}
+
+QString AppBackend::setupAssistantScopeType() const
+{
+    return m_setupAssistantScopeType;
+}
+
+QString AppBackend::setupAssistantScopeId() const
+{
+    return m_setupAssistantScopeId;
+}
+
+QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
+                                                       const QString &scopeId) const
+{
     QVariantList issues;
     // Setup decisions are derived from durable records and typed readiness
     // facts.  controllerReadinessChecks() remains a concise dashboard
@@ -4175,6 +4284,7 @@ QVariantList AppBackend::setupAssistantIssues() const
     bool outputHidden = false;
     bool routingConflict = false;
     QString routingDetails;
+    bool noMappedControl = false;
     bool liveInputPending = false;
     bool liveOutputPending = false;
     bool vjoyInstalled = false;
@@ -4193,6 +4303,7 @@ QVariantList AppBackend::setupAssistantIssues() const
         outputHidden = boolFact(u"outputHidden"_qs, false);
         routingConflict = boolFact(u"routingConflict"_qs, false);
         routingDetails = stringFact(u"routingDetails"_qs, u"Two controls need the same output assignment."_qs);
+        noMappedControl = boolFact(u"noMappedControl"_qs, false);
         liveInputPending = boolFact(u"liveInputPending"_qs, false);
         liveOutputPending = boolFact(u"liveOutputPending"_qs, false);
         vjoyInstalled = boolFact(u"vjoyInstalled"_qs, true);
@@ -4202,7 +4313,7 @@ QVariantList AppBackend::setupAssistantIssues() const
         vjoySufficient = boolFact(u"vjoySufficient"_qs, true);
         missingCapabilities = stringFact(u"missingCapabilities"_qs, QString{});
     } else {
-        const DeviceRig *rig = activeDeviceRig();
+        const DeviceRig *rig = setupAssistantDeviceRig(scopeType, scopeId);
         const DeviceRigStatus *status = nullptr;
         if (rig) {
             const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
@@ -4211,6 +4322,8 @@ QVariantList AppBackend::setupAssistantIssues() const
             int inputIndex = 0;
             for (const DeviceRigMember &member : rig->members) {
                 if (!member.enabled) continue;
+                const int runtimeIndex = inputIndex++;
+                if (scopeType == u"device"_qs && member.controllerRecordId != scopeId) continue;
                 const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
                 const bool connected = status && status->connectedMemberIds.contains(member.controllerRecordId);
                 const bool current = record && (record->lastDirectInputId == deviceId()
@@ -4222,11 +4335,13 @@ QVariantList AppBackend::setupAssistantIssues() const
                     {u"verified"_qs, record && !record->lastVerified.isEmpty()},
                     {u"ambiguous"_qs, status && status->ambiguousMemberIds.contains(member.controllerRecordId)},
                     {u"calibrationRequired"_qs, current && calibrationNeedsSetup(currentPhysicalCapabilities())},
-                    {u"runtimeIndex"_qs, inputIndex++}});
+                    {u"runtimeIndex"_qs, runtimeIndex}});
             }
             int outputIndex = 0;
             for (const DeviceRigOutputTarget &target : rig->outputs) {
                 if (!target.enabled) continue;
+                const int runtimeIndex = outputIndex++;
+                if (scopeType == u"virtualOutput"_qs && target.outputLayoutId != scopeId) continue;
                 const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
                 if (!layout) continue;
                 outputs.append(QVariantMap{{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
@@ -4234,10 +4349,23 @@ QVariantList AppBackend::setupAssistantIssues() const
                     {u"buttons"_qs, layout->requirements.buttons},
                     {u"continuousPovs"_qs, layout->requirements.continuousPovs},
                     {u"discretePovs"_qs, layout->requirements.discretePovs},
-                    {u"runtimeIndex"_qs, outputIndex++}});
+                    {u"runtimeIndex"_qs, runtimeIndex}});
             }
-            routingConflict = !compileDeviceRigRuntime(m_configuration, rig->id).valid;
-            routingDetails = routingConflict ? compileDeviceRigRuntime(m_configuration, rig->id).issue : QString{};
+            const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+            if (scopeType == u"application"_qs || scopeType == u"deviceRig"_qs) {
+                routingConflict = !compiled.valid;
+                routingDetails = routingConflict ? compiled.issue : QString{};
+            }
+            if (compiled.valid) {
+                bool mappedControlFound = false;
+                for (int memberIndex = 0; memberIndex < compiled.memberCount; ++memberIndex) {
+                    const CompiledDeviceRigMember &member = compiled.members[static_cast<size_t>(memberIndex)];
+                    if (scopeType == u"device"_qs && member.controllerRecordId != scopeId) continue;
+                    if (scopeType == u"virtualOutput"_qs && member.outputLayoutId != scopeId) continue;
+                    mappedControlFound = mappedControlFound || hasMappedControl(member);
+                }
+                noMappedControl = !mappedControlFound;
+            }
             liveInputPending = !m_setupAssistantLiveTestActive;
             liveOutputPending = !m_setupAssistantLiveTestActive;
             if (m_setupAssistantLiveTestActive) {
@@ -4246,13 +4374,13 @@ QVariantList AppBackend::setupAssistantIssues() const
                     const int index = input.value(u"runtimeIndex"_qs, -1).toInt();
                     return input.value(u"connected"_qs).toBool() && input.value(u"required"_qs).toBool()
                         && (index < 0 || index >= kMaximumDeviceRigMembers
-                            || m_worker.runtime().deviceRigInputReports[static_cast<size_t>(index)].load(
+                            || m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(index)].load(
                                 std::memory_order_relaxed) <= m_setupAssistantMemberBaselines[static_cast<size_t>(index)]);
                 });
                 liveOutputPending = std::any_of(outputs.cbegin(), outputs.cend(), [this](const QVariant &entry) {
                     const int index = entry.toMap().value(u"runtimeIndex"_qs, -1).toInt();
                     return index < 0 || index >= kMaximumDeviceRigOutputs
-                        || m_worker.runtime().deviceRigOutputWrites[static_cast<size_t>(index)].load(
+                        || m_worker.runtime().deviceRigMeaningfulOutputSequence[static_cast<size_t>(index)].load(
                             std::memory_order_relaxed) <= m_setupAssistantOutputBaselines[static_cast<size_t>(index)];
                 });
             }
@@ -4263,7 +4391,9 @@ QVariantList AppBackend::setupAssistantIssues() const
                 const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
                 const SavedControllerRecord *record = match.recordId.isEmpty() || match.ambiguous
                     ? nullptr : savedControllerRecord(match.recordId);
-                inputs.append(QVariantMap{{u"id"_qs, record ? record->id : controller.directInputId},
+                const QString inputId = record ? record->id : controller.directInputId;
+                if (scopeType == u"device"_qs && inputId != scopeId) continue;
+                inputs.append(QVariantMap{{u"id"_qs, inputId},
                     {u"name"_qs, controller.name}, {u"saved"_qs, record != nullptr},
                     {u"connected"_qs, controller.connected}, {u"required"_qs, true},
                     {u"verified"_qs, record && !record->lastVerified.isEmpty()},
@@ -4271,13 +4401,16 @@ QVariantList AppBackend::setupAssistantIssues() const
                 if (record) represented.insert(record->id);
             }
             for (const SavedControllerRecord &record : m_configuration.savedControllers) {
-                if (represented.contains(record.id)) continue;
+                if (represented.contains(record.id) || (scopeType == u"device"_qs && record.id != scopeId)) continue;
                 inputs.append(QVariantMap{{u"id"_qs, record.id}, {u"name"_qs, record.displayName},
                     {u"saved"_qs, true}, {u"connected"_qs, false}, {u"required"_qs, true},
                     {u"verified"_qs, !record.lastVerified.isEmpty()}, {u"ambiguous"_qs, false},
                     {u"calibrationRequired"_qs, false}});
             }
-            if (const VirtualOutputLayout *layout = activeOutputLayout()) {
+            const VirtualOutputLayout *scopeOutput = scopeType == u"virtualOutput"_qs
+                ? findOutputLayout(m_configuration, scopeId) : activeOutputLayout();
+            if (scopeOutput) {
+                const VirtualOutputLayout *layout = scopeOutput;
                 outputs.append(QVariantMap{{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
                     {u"deviceId"_qs, layout->requirements.deviceId},
                     {u"buttons"_qs, layout->requirements.buttons},
@@ -4317,22 +4450,33 @@ QVariantList AppBackend::setupAssistantIssues() const
     }
 
     int sequence = 0;
-    const auto append = [&issues, &sequence](const QString &category, const QString &code,
+    const auto append = [&issues, &sequence, &scopeType, &scopeId](const QString &category, const QString &code,
                                               const QString &severity, const QString &objectType,
                                               const QString &objectId, const QString &title,
                                               const QString &explanation, const QString &action,
                                               const QString &actionLabel, bool automaticallyFixable,
                                               bool requiresLiveHardware, int priority,
                                               const QString &technicalDetails = {}) {
-        issues.append(QVariantMap{{u"id"_qs, QString(u"%1-%2"_qs).arg(code).arg(sequence++)},
-            {u"category"_qs, category}, {u"code"_qs, code}, {u"severity"_qs, severity},
-            {u"affectedObjectType"_qs, objectType}, {u"affectedObjectId"_qs, objectId},
-            {u"title"_qs, title}, {u"explanation"_qs, explanation},
-            {u"recommendedAction"_qs, action}, {u"recommendedActionLabel"_qs, actionLabel},
-            {u"alternativeActions"_qs, QVariantList{u"view-all-details"_qs}},
-            {u"automaticallyFixable"_qs, automaticallyFixable},
-            {u"requiresLiveHardware"_qs, requiresLiveHardware}, {u"priority"_qs, priority},
-            {u"technicalDetails"_qs, technicalDetails}});
+        AppIssue issue;
+        issue.id = QString(u"%1-%2"_qs).arg(code).arg(sequence++);
+        issue.category = category;
+        issue.code = code;
+        issue.severity = severity;
+        issue.scopeType = scopeType;
+        issue.scopeId = scopeId;
+        issue.affectedObjectType = objectType;
+        issue.affectedObjectId = objectId;
+        issue.title = title;
+        issue.explanation = explanation;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = actionLabel;
+        issue.alternativeActions = QVariantList{u"view-all-details"_qs};
+        issue.automaticallyFixable = automaticallyFixable;
+        issue.requiresLiveHardware = requiresLiveHardware;
+        issue.priority = priority;
+        issue.technicalDetails = technicalDetails;
+        issue.navigationTarget = issueNavigationTarget(code, objectType, objectId);
+        issues.append(issue.toVariantMap());
     };
 
     if (inputs.isEmpty()) {
@@ -4449,17 +4593,27 @@ QVariantList AppBackend::setupAssistantIssues() const
             u"review-routing"_qs, u"REVIEW ROUTING"_qs, false, false, 80);
         return issues;
     }
+    if (noMappedControl) {
+        const QString affectedType = scopeType == u"device"_qs ? u"physicalDevice"_qs
+            : scopeType == u"virtualOutput"_qs ? u"virtualOutput"_qs : u"deviceRig"_qs;
+        const QString affectedId = scopeType == u"application"_qs ? activeDeviceRigId() : scopeId;
+        append(u"Routing"_qs, u"NoMappedControl"_qs, u"setup-needed"_qs,
+            affectedType, affectedId, u"No mapped control to test"_qs,
+            u"This setup has no enabled axis, button, or POV route for the selected scope. Assign a control before running live output proof."_qs,
+            u"review-routing"_qs, u"OPEN MAPPING"_qs, false, false, 85);
+        return issues;
+    }
     if (liveInputPending) {
         append(u"LiveInput"_qs, u"LiveInputNotTested"_qs, u"waiting"_qs,
             u"physicalDevice"_qs, {}, u"Setup looks good — let's test it"_qs,
-            u"Move a control on your physical controller so HOTAS BF6 can confirm that input is arriving."_qs,
+            u"Move a control meaningfully (about 2% axis travel) or press and release a button so HOTAS BF6 can confirm that input is arriving."_qs,
             u"start-live-test"_qs, u"START LIVE TEST"_qs, false, true, 90);
         return issues;
     }
     if (liveOutputPending) {
         append(u"LiveOutput"_qs, u"LiveOutputNotTested"_qs, u"waiting"_qs,
             u"virtualOutput"_qs, outputId, u"Setup looks good — let's test it"_qs,
-            u"Move a mapped control so HOTAS BF6 can confirm that the virtual controller responds."_qs,
+            u"Move a mapped control meaningfully so HOTAS BF6 can confirm that the virtual controller responds."_qs,
             u"start-live-test"_qs, u"START LIVE TEST"_qs, false, true, 95);
     }
     return issues;
@@ -4482,9 +4636,19 @@ QVariantMap AppBackend::setupAssistantSummary() const
             primaryIssue = issue;
         }
     }
-    const QString scope = !m_configuration.activeDeviceRigId.isEmpty()
-        ? activeDeviceRig() ? activeDeviceRig()->name : u"Device Rig"_qs
-        : activeOutputLayout() ? activeOutputLayout()->name : deviceName();
+    const QString scope = m_setupAssistantScopeType == u"deviceRig"_qs
+        ? (setupAssistantDeviceRig(m_setupAssistantScopeType, m_setupAssistantScopeId)
+               ? setupAssistantDeviceRig(m_setupAssistantScopeType, m_setupAssistantScopeId)->name
+               : u"Device Rig"_qs)
+        : m_setupAssistantScopeType == u"device"_qs
+            ? (savedControllerRecord(m_setupAssistantScopeId)
+                   ? savedControllerRecord(m_setupAssistantScopeId)->displayName : u"Physical controller"_qs)
+        : m_setupAssistantScopeType == u"virtualOutput"_qs
+            ? (findOutputLayout(m_configuration, m_setupAssistantScopeId)
+                   ? findOutputLayout(m_configuration, m_setupAssistantScopeId)->name : u"Virtual Output"_qs)
+        : !m_configuration.activeDeviceRigId.isEmpty()
+            ? activeDeviceRig() ? activeDeviceRig()->name : u"Device Rig"_qs
+            : activeOutputLayout() ? activeOutputLayout()->name : deviceName();
     QString state = u"READY"_qs;
     QString title = u"Your setup is ready"_qs;
     QString message = scope + u" is ready to use."_qs;
@@ -4516,8 +4680,100 @@ QVariantMap AppBackend::setupAssistantSummary() const
         {u"scope"_qs, scope}, {u"issueCount"_qs, issues.size()},
         {u"primaryIssue"_qs, primaryIssue}, {u"visibleSteps"_qs, visibleSteps},
         {u"secondaryMessage"_qs, notes.join(u"\n"_qs)},
+        {u"scopeType"_qs, m_setupAssistantScopeType}, {u"scopeId"_qs, m_setupAssistantScopeId},
         {u"primaryAction"_qs, primaryIssue.value(u"recommendedAction"_qs, u"done"_qs)},
         {u"primaryActionLabel"_qs, primaryIssue.value(u"recommendedActionLabel"_qs, u"DONE"_qs)}};
+}
+
+QVariantList AppBackend::appIssues() const
+{
+    // The Setup Assistant is the canonical source for device/output/visibility
+    // findings. App Health deliberately omits its user-requested live-test
+    // reminders: the header surfaces structural problems, not an invitation
+    // to run an optional proof session.
+    QVariantList issues;
+    for (const QVariant &entry : setupAssistantIssuesForScope(u"application"_qs, {})) {
+        const QVariantMap issue = entry.toMap();
+        const QString code = issue.value(u"code"_qs).toString();
+        if (code == u"LiveInputNotTested"_qs || code == u"LiveOutputNotTested"_qs) continue;
+        issues.append(issue);
+    }
+
+    const auto append = [&issues](const QString &code, const QString &category,
+                                  const QString &severity, const QString &objectType,
+                                  const QString &objectId, const QString &title,
+                                  const QString &explanation, const QString &action,
+                                  const QString &actionLabel, int priority,
+                                  const QString &technicalDetails = {}) {
+        AppIssue issue;
+        issue.id = u"app-"_qs + code + u"-"_qs + objectId;
+        issue.code = code;
+        issue.category = category;
+        issue.severity = severity;
+        issue.scopeType = objectType;
+        issue.scopeId = objectId;
+        issue.affectedObjectType = objectType;
+        issue.affectedObjectId = objectId;
+        issue.title = title;
+        issue.explanation = explanation;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = actionLabel;
+        issue.alternativeActions = QVariantList{u"view-technical-details"_qs};
+        issue.priority = priority;
+        issue.technicalDetails = technicalDetails;
+        issue.navigationTarget = issueNavigationTarget(code, objectType, objectId);
+        issues.append(issue.toVariantMap());
+    };
+
+    if (m_mappingDesired && !m_worker.runtime().mappingActive.load(std::memory_order_relaxed)
+        && static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load(
+               std::memory_order_relaxed)) == MappingEffectiveState::Suspended) {
+        const QString rigId = activeDeviceRigId();
+        append(u"MappingSuspended"_qs, u"Mapping"_qs, u"warning"_qs, u"deviceRig"_qs, rigId,
+               u"Mapping is suspended"_qs,
+               activeDeviceRig() ? activeDeviceRig()->name + u" needs attention before its routes can run."_qs
+                                 : u"Choose a ready Device Rig before mapping can run."_qs,
+               u"open-devices"_qs, u"OPEN DEVICES"_qs, 5, mappingStatus());
+    }
+
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        if (!profile.enabled) continue;
+        if (!profile.deviceRigId.isEmpty() && !findDeviceRig(m_configuration, profile.deviceRigId)) {
+            append(u"ProfileRigMissing"_qs, u"Profile"_qs, u"warning"_qs, u"profile"_qs, profile.id,
+                   u"Profile needs a Device Rig"_qs,
+                   profile.name + u" references a Device Rig that is no longer available."_qs,
+                   u"choose-rig"_qs, u"CHOOSE RIG"_qs, 110, profile.deviceRigId);
+        }
+        if (!profile.outputLayoutId.isEmpty() && !findOutputLayout(m_configuration, profile.outputLayoutId)) {
+            append(u"ProfileOutputMissing"_qs, u"Profile"_qs, u"warning"_qs, u"profile"_qs, profile.id,
+                   u"Profile needs a Virtual Output"_qs,
+                   profile.name + u" references a virtual output that is no longer available."_qs,
+                   u"choose-output"_qs, u"CHOOSE OUTPUT"_qs, 115, profile.outputLayoutId);
+        }
+    }
+
+    for (const AutomationDefinition &automation : m_configuration.automations) {
+        if (!automation.enabled || (!automation.conditions.empty() && !automation.actions.empty())) continue;
+        append(u"AutomationInvalid"_qs, u"Automation"_qs, u"warning"_qs, u"automation"_qs,
+               automation.id, u"Automation needs a complete rule"_qs,
+               automation.name + (automation.conditions.empty()
+                   ? u" has no trigger. Choose when it should run."_qs
+                   : u" has no action. Choose what HOTAS BF6 should do."_qs),
+               u"edit-automation"_qs,
+               automation.conditions.empty() ? u"ADD CONDITION"_qs : u"ADD ACTION"_qs, 120);
+    }
+    if (m_updateCheckFailed) {
+        append(u"UpdateCheckFailed"_qs, u"Update"_qs, u"note"_qs, u"application"_qs, {},
+               u"Could not check for updates"_qs,
+               u"The update server could not be reached. Your installed version is unchanged."_qs,
+               u"retry-update"_qs, u"TRY AGAIN"_qs, 900, m_updateStatusText);
+    }
+    return issues;
+}
+
+QVariantMap AppBackend::appHealthSummary() const
+{
+    return AppHealthService::summarize(appIssues());
 }
 
 QVariantMap AppBackend::setupAssistantLiveTest() const
@@ -4534,30 +4790,35 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
         int memberIndex = 0;
         for (const DeviceRigMember &member : rig->members) {
             if (!member.enabled) continue;
+            const int runtimeIndex = memberIndex++;
+            if (m_setupAssistantScopeType == u"device"_qs
+                && member.controllerRecordId != m_setupAssistantScopeId) continue;
             const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
             const QString name = record ? record->displayName : u"Physical controller"_qs;
             const bool connected = status && status->connectedMemberIds.contains(member.controllerRecordId);
-            const bool changed = m_setupAssistantLiveTestActive && memberIndex < kMaximumDeviceRigMembers
-                && runtime.deviceRigInputReports[static_cast<size_t>(memberIndex)].load(std::memory_order_relaxed)
-                    > m_setupAssistantMemberBaselines[static_cast<size_t>(memberIndex)];
+            const bool changed = m_setupAssistantLiveTestActive && runtimeIndex < kMaximumDeviceRigMembers
+                && runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
+                    > m_setupAssistantMemberBaselines[static_cast<size_t>(runtimeIndex)];
             const QString stepState = !connected ? u"offline"_qs : changed ? u"ready"_qs : u"waiting"_qs;
             steps.append(QVariantMap{{u"id"_qs, member.controllerRecordId}, {u"kind"_qs, u"input"_qs},
                 {u"title"_qs, name}, {u"optional"_qs, !member.required}, {u"state"_qs, stepState},
                 {u"message"_qs, !connected ? (member.required ? u"Required controller is offline."_qs
                                                                : u"Optional controller is offline."_qs)
                                      : changed ? u"Controller input detected."_qs
-                                               : u"Move any axis or press any button."_qs}});
+                                               : u"Move an axis about 2% or press and release a button."_qs}});
             if (member.required) everyRequiredInputReady = everyRequiredInputReady && changed;
             if (member.required && !changed) allComplete = false;
-            ++memberIndex;
         }
         int outputIndex = 0;
         for (const DeviceRigOutputTarget &target : rig->outputs) {
             if (!target.enabled) continue;
+            const int runtimeIndex = outputIndex++;
+            if (m_setupAssistantScopeType == u"virtualOutput"_qs
+                && target.outputLayoutId != m_setupAssistantScopeId) continue;
             const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
-            const bool changed = m_setupAssistantLiveTestActive && outputIndex < kMaximumDeviceRigOutputs
-                && runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)].load(std::memory_order_relaxed)
-                    > m_setupAssistantOutputBaselines[static_cast<size_t>(outputIndex)];
+            const bool changed = m_setupAssistantLiveTestActive && runtimeIndex < kMaximumDeviceRigOutputs
+                && runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
+                    > m_setupAssistantOutputBaselines[static_cast<size_t>(runtimeIndex)];
             steps.append(QVariantMap{{u"id"_qs, target.outputLayoutId}, {u"kind"_qs, u"output"_qs},
                 {u"title"_qs, layout ? layout->name : u"Virtual controller"_qs}, {u"optional"_qs, false},
                 {u"state"_qs, changed ? u"ready"_qs : u"waiting"_qs},
@@ -4565,18 +4826,18 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
                                           : everyRequiredInputReady ? u"Move a mapped control to test the virtual controller."_qs
                                                                      : u"Finish testing the physical controllers first."_qs}});
             allComplete = allComplete && changed;
-            ++outputIndex;
         }
     } else {
         const bool inputChanged = m_setupAssistantLiveTestActive
-            && runtime.inputReports.load(std::memory_order_relaxed) > m_setupAssistantInputBaseline;
+            && runtime.meaningfulInputSequence.load(std::memory_order_relaxed) > m_setupAssistantInputBaseline;
         const bool outputChanged = m_setupAssistantLiveTestActive
-            && runtime.vjoyWrites.load(std::memory_order_relaxed) > m_setupAssistantOutputBaseline;
+            && runtime.deviceRigMeaningfulOutputSequence[0].load(std::memory_order_relaxed)
+                > m_setupAssistantOutputBaseline;
         steps.append(QVariantMap{{u"id"_qs, u"physical"_qs}, {u"kind"_qs, u"input"_qs},
             {u"title"_qs, u"Physical controller"_qs}, {u"optional"_qs, false},
             {u"state"_qs, inputChanged ? u"ready"_qs : u"waiting"_qs},
             {u"message"_qs, inputChanged ? u"Controller input detected."_qs
-                                           : u"Move any axis or press any button."_qs}});
+                                           : u"Move an axis about 2% or press and release a button."_qs}});
         steps.append(QVariantMap{{u"id"_qs, u"virtual"_qs}, {u"kind"_qs, u"output"_qs},
             {u"title"_qs, u"Virtual controller"_qs}, {u"optional"_qs, false},
             {u"state"_qs, outputChanged ? u"ready"_qs : u"waiting"_qs},
@@ -7073,9 +7334,8 @@ QVariantMap AppBackend::createVirtualOutputLayoutResult(const QString &name, int
     const auto result = [](bool success, const QString &title, const QString &message,
                            const QString &objectId = {}, const QString &nextStep = {},
                            const QString &technicalDetails = {}) {
-        return QVariantMap{{u"success"_qs, success}, {u"title"_qs, title},
-            {u"message"_qs, message}, {u"objectId"_qs, objectId},
-            {u"nextStep"_qs, nextStep}, {u"technicalDetails"_qs, technicalDetails}};
+        return actionResult(success, title, message, u"virtualOutput"_qs, objectId, nextStep,
+                            {}, technicalDetails);
     };
     const QString trimmed = name.trimmed().left(64);
     const QString normalizedMode = mode.trimmed().toLower();
@@ -7690,51 +7950,76 @@ void AppBackend::inspectControllerReadiness()
 QVariantMap AppBackend::startSetupAssistantCheck()
 {
     if (m_verificationInProgress) {
-        return {{u"success"_qs, false}, {u"title"_qs, u"Setup check is already running"_qs},
-                {u"message"_qs, u"HOTAS BF6 is still checking the current setup."_qs},
-                {u"nextStep"_qs, u"wait"_qs}};
+        return actionResult(false, u"Setup check is already running"_qs,
+                            u"HOTAS BF6 is still checking the current setup."_qs,
+                            u"application"_qs, {}, u"wait"_qs, {}, {}, true);
     }
     verifyHotasSetup();
-    return {{u"success"_qs, true}, {u"title"_qs, u"Checking setup"_qs},
-            {u"message"_qs, u"HOTAS BF6 is checking your physical controller, virtual controller, and game visibility."_qs},
-            {u"nextStep"_qs, u"wait"_qs}};
+    return actionResult(true, u"Checking setup"_qs,
+                        u"HOTAS BF6 is checking your physical controller, virtual controller, and game visibility."_qs,
+                        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::startSetupAssistantCheckForScope(const QString &scopeType,
+                                                          const QString &scopeId)
+{
+    const QString normalizedType = scopeType.trimmed().isEmpty()
+        ? u"application"_qs : scopeType.trimmed();
+    const QString normalizedId = scopeId.trimmed();
+    const bool validType = normalizedType == u"application"_qs || normalizedType == u"device"_qs
+        || normalizedType == u"deviceRig"_qs || normalizedType == u"virtualOutput"_qs;
+    const bool validTarget = normalizedType == u"application"_qs
+        || (normalizedType == u"device"_qs && savedControllerRecord(normalizedId))
+        || (normalizedType == u"deviceRig"_qs && findDeviceRig(m_configuration, normalizedId))
+        || (normalizedType == u"virtualOutput"_qs && findOutputLayout(m_configuration, normalizedId));
+    if (!validType || !validTarget) {
+        return actionResult(false, u"Setup target is no longer available"_qs,
+                            u"Refresh Devices, choose the saved controller, Device Rig, or Virtual Output again, then retry."_qs,
+                            u"application"_qs, normalizedId, u"open-devices"_qs, u"OPEN DEVICES"_qs);
+    }
+    m_setupAssistantScopeType = normalizedType;
+    m_setupAssistantScopeId = normalizedType == u"application"_qs ? QString{} : normalizedId;
+    m_setupAssistantLiveTestActive = false;
+    emit stateChanged();
+    return startSetupAssistantCheck();
 }
 
 QVariantMap AppBackend::applySetupAssistantFix()
 {
     if (!m_readiness.plan().canApplyAutomatically) {
-        return {{u"success"_qs, false}, {u"title"_qs, u"HOTAS BF6 cannot fix this automatically"_qs},
-                {u"message"_qs, u"Review the next step or open Technical Details for the exact requirement."_qs},
-                {u"nextStep"_qs, u"details"_qs}};
+        return actionResult(false, u"HOTAS BF6 cannot fix this automatically"_qs,
+                            u"Review the next step or open Technical Details for the exact requirement."_qs,
+                            u"application"_qs, {}, u"details"_qs);
     }
     if (!applyControllerReadiness()) {
-        return {{u"success"_qs, false}, {u"title"_qs, u"HOTAS BF6 could not start the fix"_qs},
-                {u"message"_qs, u"No changes were applied. Check the setup status and try again."_qs},
-                {u"nextStep"_qs, u"check"_qs}};
+        return actionResult(false, u"HOTAS BF6 could not start the fix"_qs,
+                            u"No changes were applied. Check the setup status and try again."_qs,
+                            u"application"_qs, {}, u"check"_qs);
     }
-    return {{u"success"_qs, true}, {u"title"_qs, u"Fix started"_qs},
-            {u"message"_qs, u"HOTAS BF6 is applying the recommended setup change and will check the result."_qs},
-            {u"nextStep"_qs, u"wait"_qs}};
+    return actionResult(true, u"Fix started"_qs,
+                        u"HOTAS BF6 is applying the recommended setup change and will check the result."_qs,
+                        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
 }
 
 QVariantMap AppBackend::startSetupAssistantLiveTest()
 {
     const AtomicRuntimeState &runtime = m_worker.runtime();
     m_setupAssistantLiveTestActive = true;
-    m_setupAssistantInputBaseline = runtime.inputReports.load(std::memory_order_relaxed);
-    m_setupAssistantOutputBaseline = runtime.vjoyWrites.load(std::memory_order_relaxed);
+    m_setupAssistantInputBaseline = runtime.meaningfulInputSequence.load(std::memory_order_relaxed);
+    m_setupAssistantOutputBaseline = runtime.deviceRigMeaningfulOutputSequence[0].load(std::memory_order_relaxed);
     for (int index = 0; index < kMaximumDeviceRigMembers; ++index) {
-        m_setupAssistantMemberBaselines[static_cast<size_t>(index)] = runtime.deviceRigInputReports[
+        m_setupAssistantMemberBaselines[static_cast<size_t>(index)] = runtime.deviceRigMeaningfulInputSequence[
             static_cast<size_t>(index)].load(std::memory_order_relaxed);
     }
     for (int index = 0; index < kMaximumDeviceRigOutputs; ++index) {
-        m_setupAssistantOutputBaselines[static_cast<size_t>(index)] = runtime.deviceRigOutputWrites[
+        m_setupAssistantOutputBaselines[static_cast<size_t>(index)] = runtime.deviceRigMeaningfulOutputSequence[
             static_cast<size_t>(index)].load(std::memory_order_relaxed);
     }
     emit inputTelemetryChanged();
-    return {{u"success"_qs, true}, {u"title"_qs, u"Live control test started"_qs},
-            {u"message"_qs, u"Move a control on the highlighted physical controller."_qs},
-            {u"nextStep"_qs, u"live-test"_qs}};
+    return actionResult(true, u"Live control test started"_qs,
+                        u"Move an axis about 2% or press and release a mapped button on the highlighted physical controller."_qs,
+                        m_setupAssistantScopeType, m_setupAssistantScopeId,
+                        u"live-test"_qs, {}, {}, true);
 }
 
 void AppBackend::verifyHotasSetup()

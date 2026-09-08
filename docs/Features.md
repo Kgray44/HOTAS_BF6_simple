@@ -166,6 +166,8 @@ HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, e
 - Device Rigs persist required/optional physical members, enabled multi-output targets, default/priority/fallback policy, disconnect behavior, and exact member-to-output assignments.
 - Smart inventory reconciliation retains a healthy active rig, selects complete eligible rigs by saved default/priority policy, recognizes partial rigs, and never infers an identity from a friendly name.
 - The Devices workspace provides landing, physical-device, rig, and virtual-output detail surfaces with progressive disclosure rather than duplicating device management in Settings.
+- Setup Assistant can be opened at application, Device Rig, physical-device, or Virtual Output scope. It diagnoses structured issues with an exact next action, shows when an offline device is only an offline state, and asks for meaningful input movement plus a causally changed mapped output before live proof passes.
+- A compact global App Health control summarizes actionable device, mapping, profile, automation, update, and runtime findings and deep-links to the owning workspace without turning normal pages into permanent warning banners.
 
 ## Diagnostics and Observability
 
@@ -196,6 +198,7 @@ The app provides four persistent visual systems without allowing presentation st
 - Adaptive Response page with per-axis preset strip, Global/Category/Profile scope selection, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
 - Curve Transition Smoothing, Device Rigs, top-bar device context, and unified verification use the same shared themed surfaces in Legacy, Standard, Top Gun, and Day Ops.
+- Overview names the active Device Rig and effective profile; Settings is limited to application preferences and global maintenance, while physical devices and Virtual Outputs are owned by Devices.
 - Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces.
 
 ## vJoy Integration

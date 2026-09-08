@@ -1,6 +1,8 @@
 #pragma once
 
 #include "event_log.h"
+#include "app_issue.h"
+#include "app_health_service.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
 #include "device_rig.h"
@@ -129,6 +131,13 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList setupAssistantIssues READ setupAssistantIssues NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantSummary READ setupAssistantSummary NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
+    Q_PROPERTY(QString setupAssistantScopeId READ setupAssistantScopeId NOTIFY stateChanged)
+    // App Health reuses the Setup Assistant issue contract for every normal
+    // surface.  It updates only with control-plane stateChanged, never the
+    // high-frequency telemetry signals.
+    Q_PROPERTY(QVariantList appIssues READ appIssues NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap appHealthSummary READ appHealthSummary NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessProposedChanges READ controllerReadinessProposedChanges NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerRepairOperationResults READ controllerRepairOperationResults NOTIFY stateChanged)
     Q_PROPERTY(QString controllerReadinessState READ controllerReadinessState NOTIFY stateChanged)
@@ -309,6 +318,10 @@ public:
     QVariantList setupAssistantIssues() const;
     QVariantMap setupAssistantSummary() const;
     QVariantMap setupAssistantLiveTest() const;
+    QString setupAssistantScopeType() const;
+    QString setupAssistantScopeId() const;
+    QVariantList appIssues() const;
+    QVariantMap appHealthSummary() const;
     QVariantList controllerReadinessProposedChanges() const;
     QVariantList controllerRepairOperationResults() const;
     QString controllerReadinessState() const;
@@ -578,6 +591,8 @@ public:
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();
+    Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
+                                                             const QString &scopeId = {});
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
     Q_INVOKABLE bool applyControllerReadiness();
@@ -828,6 +843,10 @@ private:
     const SavedControllerRecord *savedControllerRecord(const QString &recordId) const;
     DeviceRig *activeDeviceRig();
     const DeviceRig *activeDeviceRig() const;
+    const DeviceRig *setupAssistantDeviceRig(const QString &scopeType,
+                                             const QString &scopeId) const;
+    QVariantList setupAssistantIssuesForScope(const QString &scopeType,
+                                              const QString &scopeId) const;
     ControllerVJoyRequirements currentVjoyRequirements() const;
     void rememberCurrentController();
     void tryAutoSwitchVerifiedController();
@@ -902,6 +921,8 @@ private:
     std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
     std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
     QVariantMap m_setupAssistantTestFacts;
+    QString m_setupAssistantScopeType = u"application"_qs;
+    QString m_setupAssistantScopeId;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.

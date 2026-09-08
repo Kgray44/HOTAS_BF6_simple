@@ -72,6 +72,11 @@ Page {
         return null
     }
     function loadedPage(page) { return pageItem(page) !== null }
+    function navigateToIssue(target) {
+        const destination = target && target.page !== undefined ? Number(target.page) : 3
+        currentPage = destination
+        menuOpen = false
+    }
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -252,6 +257,16 @@ Page {
                 radius: 5
             }
         }
+    }
+
+    AppHealthPopup {
+        id: appHealthPopup
+        objectName: "legacyAppHealthPopup"
+        health: backend.appHealthSummary
+        issues: backend.appIssues
+        theme: root.adaptiveThemeTokens
+        legacy: true
+        onNavigationRequested: function(target) { root.navigateToIssue(target) }
     }
     component FlightTextInput: TextField {
         id: flightTextInput
@@ -1120,6 +1135,20 @@ Page {
             }
             Item { Layout.fillWidth: true }
             Rectangle {
+                id: appHealthControl
+                objectName: "legacyAppHealthControl"
+                visible: root.width >= 780
+                implicitWidth: appHealthRow.implicitWidth + 16; implicitHeight: 30; radius: 3
+                color: appHealthMouse.containsMouse ? "#263f49" : "#18242a"
+                border.color: backend.appHealthSummary.ready ? "#52717c" : "#d6bd78"
+                Row { id: appHealthRow; anchors.centerIn: parent; spacing: 6
+                    StatusDot { tone: backend.appHealthSummary.ready ? "#9fcbbf" : "#d6bd78" }
+                    Text { text: backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? "#a5afb3" : "#e1c887"; font.pixelSize: 9; font.bold: true }
+                }
+                MouseArea { id: appHealthMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appHealthPopup.open() }
+                ToolTip { visible: appHealthMouse.containsMouse; delay: 350; text: backend.appHealthSummary.ready ? "Open App Health" : "Review issues that need attention" }
+            }
+            Rectangle {
                 visible: backend.updateAvailable && root.width >= 980
                 width: 27; height: 24; radius: 3
                 color: updateIndicatorMouse.containsMouse ? "#345864" : "#263f49"
@@ -1265,7 +1294,7 @@ Page {
             active: root.currentPage === 8
             sourceComponent: Component {
                 OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true
-                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheck() } }
+                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
             }
         }
         Loader {
@@ -1273,7 +1302,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 4
             sourceComponent: Component {
-                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
+                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true
+                    onManageDevicesRequested: root.currentPage = 10 }
             }
         }
         Loader {
@@ -1288,8 +1318,8 @@ Page {
                         controllerSetupDialog.open()
                         if (rigId !== "") {
                             backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
-                            backend.verifyDeviceRig(rigId)
-                        } else backend.startSetupAssistantCheck()
+                            backend.startSetupAssistantCheckForScope(deviceId === "" ? "deviceRig" : "device", deviceId === "" ? rigId : deviceId)
+                        } else backend.startSetupAssistantCheckForScope("application")
                     }
                 }
             }

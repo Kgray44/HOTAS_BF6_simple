@@ -165,9 +165,9 @@ Flickable {
                 GridLayout { Layout.fillWidth: true; Layout.fillHeight: true; columns: root.narrow ? 1 : 5; columnSpacing: root.narrow ? 5 : 10; rowSpacing: 5
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
                         Column { anchors.centerIn: parent; width: parent.width - 22; spacing: 4
-                            Text { text: theme.topGun ? "PHYSICAL INPUT" : "Physical Controller"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                            Text { width: parent.width; text: backend.physicalConnected ? backend.deviceName : "No controller connected"; color: root.textColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
-                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : "CONNECT TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
+                            Text { text: theme.topGun ? "DEVICE RIG INPUT" : "Device Rig Input"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
+                            Text { width: parent.width; text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : backend.physicalConnected ? backend.deviceName : "No Device Rig active"; color: root.textColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
+                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : backend.activeDeviceRigId !== "" ? "RIG NEEDS INPUT" : "CREATE RIG TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
                         }
                     }
                     Item { visible: !root.narrow; Layout.preferredWidth: 56; Layout.fillHeight: true
@@ -195,13 +195,14 @@ Flickable {
         }
 
         GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 14; rowSpacing: 14
-            Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONTROLLER"; title: backend.physicalConnected ? backend.deviceName : "Controller disconnected"; accent: backend.physicalConnected ? root.readyColor : root.warningColor
+            Panel { Layout.fillWidth: true; eyebrow: "ACTIVE DEVICE RIG"; title: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : "No Device Rig active"; accent: backend.activeDeviceRigId !== "" ? root.readyColor : root.warningColor
                 RowLayout { Layout.fillWidth: true
-                    StatusBadge { label: backend.physicalConnected ? "CONNECTED" : "OFFLINE"; tone: backend.physicalConnected ? root.readyColor : root.warningColor }
+                    StatusBadge { label: backend.activeDeviceRigId !== "" ? "ACTIVE" : "NOT SELECTED"; tone: backend.activeDeviceRigId !== "" ? root.readyColor : root.warningColor }
+                    StatusBadge { label: backend.physicalConnected ? "INPUT CONNECTED" : "INPUT OFFLINE"; tone: backend.physicalConnected ? root.readyColor : root.warningColor }
                     StatusBadge { label: backend.controllerReadinessState; tone: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor }
                     Item { Layout.fillWidth: true }
                 }
-                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Connect or select a controller from Settings to begin verification."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
+                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Create or manage Device Rigs in Devices, then run Check Setup."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
                 GridLayout { Layout.fillWidth: true; columns: 3; columnSpacing: 7
                     Capability { value: backend.axisCount; label: "AXES" }
                     Capability { value: backend.buttonCount; label: "BUTTONS" }
@@ -248,11 +249,11 @@ Flickable {
             }
         }
 
-        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.activeProfileDisplayName; accent: root.primaryColor
+        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.effectiveProfileDisplayName; accent: root.primaryColor
             RowLayout { Layout.fillWidth: true; spacing: 22
                 Column { spacing: 3
                     Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.activeProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    Text { text: backend.effectiveProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
                 }
                 Column { spacing: 3
                     Text { text: "MAPPED AXES"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }

@@ -85,7 +85,7 @@ For the full sectioned feature catalog, see [docs/Features.md](docs/Features.md)
 
 1. Install the latest HOTAS BF6 setup package from GitHub Releases.
 2. Open HOTAS BF6 at Overview. A newly connected controller is passively checked against the selected device, vJoy, and HidHide state; healthy remembered controllers reconnect silently, while only a genuinely new or attention-needed controller opens setup.
-3. Open Settings and choose VERIFY CONTROLLER SETUP to deeply verify the selected physical controller, the active profile's virtual-output layout, and HidHide configuration.
+3. Open Devices and choose CHECK SETUP for the relevant Device Rig, physical controller, or Virtual Output. The guided check verifies the selected scope's physical input, resolved output capability, game visibility, and meaningful live input-to-output proof.
 4. Review any exact proposed repair, then choose FIX AUTOMATICALLY only if it matches your intent. HOTAS BF6 executes required vJoy/HidHide changes through one approved elevated transaction and restores the Mapping On/Off state that preceded the repair.
 5. Confirm READY, then select or create a profile.
 6. Configure axis routes, domains, output limits, curves, button routes, POV behavior, and game-facing labels.

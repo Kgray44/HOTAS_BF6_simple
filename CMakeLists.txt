@@ -71,6 +71,10 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_readiness.cpp
     src/controller_diagnostics.h
     src/controller_diagnostics.cpp
+    src/app_issue.h
+    src/app_issue.cpp
+    src/app_health_service.h
+    src/app_health_service.cpp
     src/setup_repair_helper.h
     src/setup_repair_helper.cpp
     src/crash_diagnostics.h
@@ -117,6 +121,8 @@ qt_add_qml_module(HOTASMapper
         qml/ThemedComboBox.qml
         qml/ThemedStepper.qml
         qml/ThemedTextInput.qml
+        qml/ThemedActionFeedback.qml
+        qml/AppHealthPopup.qml
 )
 
 qt_add_resources(HOTASMapper hotas_icon_resources
@@ -476,6 +482,8 @@ if (BUILD_TESTING)
             qml/ThemedComboBox.qml
             qml/ThemedStepper.qml
             qml/ThemedTextInput.qml
+            qml/ThemedActionFeedback.qml
+            qml/AppHealthPopup.qml
     )
     target_link_libraries(app_qml_startup_tests PRIVATE
         hotas_update_core

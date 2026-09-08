@@ -128,9 +128,14 @@ struct AtomicRuntimeState {
     std::atomic_bool hidhideMapperAllowed{false};
     std::atomic_uint64_t inputReports{0};
     // A Device Rig is verified as a collection of independent physical
-    // sources.  These fixed counters let the control-plane verifier prove
-    // fresh reports from each member and writes to each output without
-    // asking the report path for strings, locks, or UI events.
+    // sources. These fixed sequence values carry meaningful changes only:
+    // an axis crosses the configured evidence threshold, a button changes,
+    // or a POV changes. They never build strings, allocate, lock, or signal
+    // QML from MappingWorker's report loop.
+    std::atomic_uint64_t meaningfulInputSequence{0};
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigMembers> deviceRigMeaningfulInputSequence{};
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigOutputs> deviceRigMeaningfulOutputSequence{};
+    // Report/write counters remain diagnostics, not user-movement proof.
     std::array<std::atomic_uint64_t, kMaximumDeviceRigMembers> deviceRigInputReports{};
     std::array<std::atomic_uint64_t, kMaximumDeviceRigOutputs> deviceRigOutputWrites{};
     // This resets at a DirectInput acquisition boundary. It lets setup prove

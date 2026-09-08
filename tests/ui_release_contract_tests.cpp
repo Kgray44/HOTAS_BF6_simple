@@ -87,10 +87,15 @@ void UiReleaseContractTests::controllerSetupRetainsItsExplicitTargetAndSuccessfu
 void UiReleaseContractTests::sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit()
 {
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
-    QVERIFY(settings.contains(QStringLiteral("NO CONTROLLERS CONNECTED")));
-    QVERIFY(settings.contains(QStringLiteral("SELECTED")));
-    QVERIFY(settings.contains(QStringLiteral("OFFLINE")));
+    // Device ownership is now singular: Settings offers an intentional
+    // handoff, while Devices owns selected/offline physical-controller state.
+    QVERIFY(settings.contains(QStringLiteral("Device setup belongs in Devices")));
+    QVERIFY(settings.contains(QStringLiteral("OPEN DEVICES")));
+    QVERIFY(!settings.contains(QStringLiteral("NO CONTROLLERS CONNECTED")));
+    QVERIFY(devices.contains(QStringLiteral("EDIT THIS")));
+    QVERIFY(devices.contains(QStringLiteral("OFFLINE")));
     QVERIFY(settings.contains(QStringLiteral("up.indicator")));
     QVERIFY(settings.contains(QStringLiteral("down.indicator")));
     QVERIFY(backend.contains(QStringLiteral("Selected · Offline · Verified")));
@@ -101,6 +106,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
@@ -128,7 +134,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(backend.contains(QStringLiteral("ControllerDiscovery::enumerate()")));
     QVERIFY(backend.contains(QStringLiteral("startRunningApplicationSnapshot(false)")));
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
-    QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
+    QVERIFY(devices.contains(QStringLiteral("readonly property var controllers: backendObject ? backendObject.controllers : []")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
 }
 
@@ -559,8 +565,13 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString issue = sourceFile(QStringLiteral("src/app_issue.h"));
+    const QString health = sourceFile(QStringLiteral("qml/AppHealthPopup.qml"));
 
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantIssues READ setupAssistantIssues")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantScopeType READ setupAssistantScopeType")));
+    QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
+    QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
     QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
     QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
@@ -573,9 +584,14 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("OptionalDeviceOffline")));
     QVERIFY(backend.contains(QStringLiteral("VirtualOutputBusy")));
     QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
+    QVERIFY(backend.contains(QStringLiteral("NoMappedControl")));
+    QVERIFY(backend.contains(QStringLiteral("meaningfulInputSequence")));
+    QVERIFY(backend.contains(QStringLiteral("deviceRigMeaningfulOutputSequence")));
     QVERIFY(!backend.contains(QStringLiteral("name.startsWith(u\"INPUT")));
     QVERIFY(!backend.contains(QStringLiteral("name.contains(u\"VISIBILITY")));
     QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
+    QVERIFY(standard.contains(QStringLiteral("standardAppHealthControl")));
+    QVERIFY(standard.contains(QStringLiteral("navigateToIssue(target)")));
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
     QVERIFY(assistant.contains(QStringLiteral("summary.visibleSteps")));
@@ -594,6 +610,10 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(!devices.contains(QStringLiteral("CREATE & VERIFY")));
     QVERIFY(overview.contains(QStringLiteral("systemReadinessList")));
     QVERIFY(overview.contains(QStringLiteral("CHECK SETUP")));
+    QVERIFY(issue.contains(QStringLiteral("struct AppIssue")));
+    QVERIFY(issue.contains(QStringLiteral("navigationTarget")));
+    QVERIFY(health.contains(QStringLiteral("APP HEALTH")));
+    QVERIFY(health.contains(QStringLiteral("navigationRequested")));
 }
 
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()

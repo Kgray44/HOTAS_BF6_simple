@@ -230,20 +230,12 @@ Page {
                     onTriggered: createRigDialog.open() }
             }
 
-            Panel {
+            ThemedActionFeedback {
                 objectName: "deviceActionFeedback"
                 Layout.fillWidth: true
-                visible: !!root.actionFeedback.title
-                implicitHeight: visible ? deviceActionFeedbackText.implicitHeight + 28 : 0
-                color: root.actionFeedback.success ? Qt.rgba(readyColor.r, readyColor.g, readyColor.b, 0.10)
-                                                   : Qt.rgba(dangerColor.r, dangerColor.g, dangerColor.b, 0.10)
-                border.color: root.actionFeedback.success ? readyColor : dangerColor
-                Text {
-                    id: deviceActionFeedbackText
-                    anchors.fill: parent; anchors.margins: 14
-                    text: root.actionFeedback.title + (root.actionFeedback.message ? "\n" + root.actionFeedback.message : "")
-                    color: themeTokens.text; wrapMode: Text.WordWrap; font.pixelSize: 12
-                }
+                result: root.actionFeedback
+                theme: root.themeTokens
+                legacy: root.legacy
             }
 
             Panel {

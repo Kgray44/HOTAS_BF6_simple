@@ -74,6 +74,11 @@ Page {
         return null
     }
     function loadedPage(page) { return pageItem(page) !== null }
+    function navigateToIssue(target) {
+        const destination = target && target.page !== undefined ? Number(target.page) : 3
+        currentPage = destination
+        menuOpen = false
+    }
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -258,6 +263,16 @@ Page {
                 radius: theme.controlRadius
             }
         }
+    }
+
+    AppHealthPopup {
+        id: appHealthPopup
+        objectName: "standardAppHealthPopup"
+        health: backend.appHealthSummary
+        issues: backend.appIssues
+        theme: root.themeTokens
+        legacy: false
+        onNavigationRequested: function(target) { root.navigateToIssue(target) }
     }
     component FlightTextInput: TextField {
         id: flightTextInput
@@ -1162,6 +1177,21 @@ Page {
             }
             Item { Layout.fillWidth: true }
             Rectangle {
+                id: appHealthControl
+                objectName: "standardAppHealthControl"
+                visible: root.width >= 780
+                implicitWidth: appHealthRow.implicitWidth + 16; implicitHeight: 30
+                radius: theme.topGun ? 1 : theme.controlRadius
+                color: appHealthMouse.containsMouse ? theme.controlHover : theme.control
+                border.color: backend.appHealthSummary.ready ? theme.border : theme.warning
+                Row { id: appHealthRow; anchors.centerIn: parent; spacing: 6
+                    StatusDot { tone: backend.appHealthSummary.ready ? theme.ready : theme.warning }
+                    Text { text: backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? theme.textMuted : theme.warning; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
+                }
+                MouseArea { id: appHealthMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appHealthPopup.open() }
+                ToolTip { visible: appHealthMouse.containsMouse; delay: 350; text: backend.appHealthSummary.ready ? "Open App Health" : "Review issues that need attention" }
+            }
+            Rectangle {
                 visible: backend.updateAvailable && root.width >= 980
                 width: theme.topGun ? 31 : 27; height: 24; radius: theme.controlRadius
                 color: updateIndicatorMouse.containsMouse ? theme.controlHover : theme.control
@@ -1252,6 +1282,18 @@ Page {
                 theme: root.themeTokens
                 legacy: false
                 onManageDevices: root.currentPage = 10
+            }
+            Rectangle {
+                id: topGunAppHealthControl
+                objectName: "topGunAppHealthControl"
+                visible: root.width >= 1180
+                x: parent.width - 456; y: 29; width: 160; height: 34
+                color: "#0a1519"; border.color: backend.appHealthSummary.ready ? theme.border : theme.orange; radius: 1
+                Row { anchors.centerIn: parent; spacing: 7
+                    Rectangle { width: 7; height: 7; color: backend.appHealthSummary.ready ? theme.ready : theme.orange; radius: 1; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: backend.appHealthSummary.ready ? "READY" : backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? theme.ivory : theme.orangeBright; font.family: theme.displayFont; font.pixelSize: 10; font.bold: true }
+                }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: appHealthPopup.open() }
             }
             Item { visible: root.width >= 1420; anchors.right: parent.right; anchors.rightMargin: 18; y: 8; width: 278; height: 76
                 Image { anchors.right: parent.right; y: 3; width: 66; height: 62; source: "qrc:/assets/themes/topgun/fighter-silhouette.svg"; fillMode: Image.PreserveAspectFit; opacity: 0.94 }
@@ -1401,7 +1443,7 @@ Page {
             active: root.currentPage === 8
             sourceComponent: Component {
                 OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
-                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheck() } }
+                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
             }
         }
         Loader {
@@ -1409,7 +1451,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 4
             sourceComponent: Component {
-                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
+                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false
+                    onManageDevicesRequested: root.currentPage = 10 }
             }
         }
         Loader {
@@ -1424,8 +1467,8 @@ Page {
                         controllerSetupDialog.open()
                         if (rigId !== "") {
                             backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
-                            backend.verifyDeviceRig(rigId)
-                        } else backend.startSetupAssistantCheck()
+                            backend.startSetupAssistantCheckForScope(deviceId === "" ? "deviceRig" : "device", deviceId === "" ? rigId : deviceId)
+                        } else backend.startSetupAssistantCheckForScope("application")
                     }
                 }
             }

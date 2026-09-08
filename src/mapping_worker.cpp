@@ -51,6 +51,56 @@ constexpr int kVjoyStatusBusy = 2;
 constexpr int kVjoyStatusMissing = 3;
 constexpr int kVjoyStatusUnknown = 4;
 constexpr DWORD kPhysicalPollIntervalMs = 4; // 250 Hz bounded worker cadence.
+constexpr float kMeaningfulInputAxisDelta = 0.02F;
+
+struct MeaningfulInputEvidence {
+    std::array<float, kPhysicalAxisCount> axes{};
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    std::array<int, kMaximumPhysicalPovs> povs{};
+    bool initialized = false;
+
+    MeaningfulInputEvidence() { povs.fill(-1); }
+};
+
+bool observeMeaningfulInput(MeaningfulInputEvidence &evidence,
+                            const PhysicalInputSnapshot &snapshot,
+                            const std::array<bool, kPhysicalAxisCount> &availableAxes,
+                            const std::array<bool, kMaximumPhysicalButtons> &availableButtons,
+                            int povCount)
+{
+    if (!evidence.initialized) {
+        evidence.axes = snapshot.axes;
+        evidence.buttons = snapshot.buttons;
+        evidence.povs = snapshot.povs;
+        evidence.initialized = true;
+        return false;
+    }
+    bool changed = false;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const size_t index = static_cast<size_t>(axis);
+        if (!availableAxes[index]) continue;
+        if (std::abs(snapshot.axes[index] - evidence.axes[index]) >= kMeaningfulInputAxisDelta) {
+            evidence.axes[index] = snapshot.axes[index];
+            changed = true;
+        }
+    }
+    for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
+        const size_t index = static_cast<size_t>(button);
+        if (!availableButtons[index]) continue;
+        if (snapshot.buttons[index] != evidence.buttons[index]) {
+            evidence.buttons[index] = snapshot.buttons[index];
+            changed = true;
+        }
+    }
+    for (int pov = 0; pov < std::min(povCount, kMaximumPhysicalPovs); ++pov) {
+        const size_t index = static_cast<size_t>(pov);
+        if (snapshot.povs[index] != evidence.povs[index]) {
+            evidence.povs[index] = snapshot.povs[index];
+            changed = true;
+        }
+    }
+    return changed;
+}
 
 bool sameAdaptiveResponseOverlay(const RuntimeAdaptiveResponseOverride &left,
                                  const RuntimeAdaptiveResponseOverride &right)
@@ -973,6 +1023,16 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     std::array<bool, kPhysicalAxisCount> fixedAxes{};
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
+    MeaningfulInputEvidence meaningfulInput;
+    quint64 latestMeaningfulInputSequence = 0;
+    quint64 lastPublishedMeaningfulInputSequence = 0;
+    m_runtime.meaningfulInputSequence.store(0, std::memory_order_relaxed);
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulInputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulOutputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
     auto preparedConfiguration = preparedConfigurationCopy();
     MapperConfiguration configuration = std::move(preparedConfiguration.first);
     std::shared_ptr<const RuntimeProfileCache> activeProfileCache
@@ -1197,6 +1257,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         availableAxes.fill(false);
         availableButtons.fill(false);
         physicalMonitor.disconnect();
+        meaningfulInput = {};
+        latestMeaningfulInputSequence = 0;
+        lastPublishedMeaningfulInputSequence = 0;
         for (auto &axis : m_runtime.axisAvailable) axis = false;
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
@@ -1548,6 +1611,13 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
         ++m_runtime.physicalReportsSinceAcquisition;
+        if (observeMeaningfulInput(meaningfulInput, physicalSnapshot, availableAxes, availableButtons,
+                                   m_runtime.povCount.load(std::memory_order_relaxed))) {
+            latestMeaningfulInputSequence = m_runtime.meaningfulInputSequence.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+            m_runtime.deviceRigMeaningfulInputSequence[0].store(latestMeaningfulInputSequence,
+                                                                  std::memory_order_relaxed);
+        }
 
         // Global mapping controls are intentionally evaluated from the fixed
         // physical snapshot before profile/game routing. The first post-
@@ -1905,6 +1975,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
         }
         if (m_runtime.mappingActive.load()) {
+            bool outputChanged = false;
             for (int target = 1; target < static_cast<int>(output.size()); ++target) {
                 if (!vjoyAxisAvailable[static_cast<size_t>(target)]
                     || !outputLayoutAxes[static_cast<size_t>(target)]) continue;
@@ -1919,6 +1990,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                     const int source = virtualAxisSources[target];
                     if (source >= 0) m_runtime.virtualValues[source] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
             }
 
@@ -1941,6 +2013,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                     lastVirtualButtonStates[target] = desired;
                     m_runtime.virtualButtonPressed[target - 1] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
             }
             // Native POV passthrough is deliberately a separate path from
@@ -1959,7 +2032,13 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 if (vjoy.setPov(binding, desired)) {
                     lastNativePovValues[static_cast<size_t>(hat)] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
+            }
+            if (outputChanged && latestMeaningfulInputSequence > lastPublishedMeaningfulInputSequence) {
+                m_runtime.deviceRigMeaningfulOutputSequence[0].store(latestMeaningfulInputSequence,
+                                                                       std::memory_order_relaxed);
+                lastPublishedMeaningfulInputSequence = latestMeaningfulInputSequence;
             }
         }
 
@@ -2022,6 +2101,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         std::array<RuntimeAdaptiveResponseOverride, kPhysicalAxisCount> activeAutomationOverlays{};
         std::array<float, kPhysicalAxisCount> transformed{};
         std::array<int, kMaximumPhysicalPovs> lastNativePovs{};
+        MeaningfulInputEvidence meaningfulInput;
+        quint64 latestMeaningfulInputSequence = 0;
         int axisCount = 0;
         int buttonCount = 0;
         int povCount = 0;
@@ -2048,6 +2129,13 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
 
     std::array<InputSession, kMaximumDeviceRigMembers> inputs{};
     std::array<OutputSession, kMaximumDeviceRigOutputs> outputs{};
+    m_runtime.meaningfulInputSequence.store(0, std::memory_order_relaxed);
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulInputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulOutputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
     for (std::atomic_uint64_t &reports : m_runtime.deviceRigInputReports) {
         reports.store(0, std::memory_order_relaxed);
     }
@@ -2094,6 +2182,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         session.activeAutomationOverlays = {};
         session.transformed.fill(0.0F);
         session.lastNativePovs.fill(-2);
+        session.meaningfulInput = {};
+        session.latestMeaningfulInputSequence = 0;
     };
     const auto releaseOutput = [](OutputSession &output) {
         output.vjoy.release();
@@ -2322,6 +2412,13 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             }
             session.monitor.accept(report);
             const PhysicalInputSnapshot &snapshot = session.monitor.snapshot();
+            if (observeMeaningfulInput(session.meaningfulInput, snapshot, session.availableAxes,
+                                       session.availableButtons, session.povCount)) {
+                session.latestMeaningfulInputSequence = m_runtime.meaningfulInputSequence.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
+                m_runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(index)].store(
+                    session.latestMeaningfulInputSequence, std::memory_order_relaxed);
+            }
             const auto timestamp = std::chrono::steady_clock::now();
             AutomationInputSnapshot automationInput;
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -2498,9 +2595,12 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     std::array<float, kVirtualAxisSlotCount> desiredAxes{};
                     desiredAxes.fill(sanitizedDisabledAxisValue(configuration.disabledAxisValue));
                     VirtualButtonStates desiredButtons{};
+                    bool outputChanged = false;
+                    quint64 mappedInputSequence = 0;
                     for (int memberIndex = 0; memberIndex < plan.memberCount; ++memberIndex) {
                         InputSession &input = inputs[static_cast<size_t>(memberIndex)];
                         if (!input.connected || input.member->outputIndex != outputIndex) continue;
+                        mappedInputSequence = std::max(mappedInputSequence, input.latestMeaningfulInputSequence);
                         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
                             const int target = static_cast<int>(input.member->mapping.axes[static_cast<size_t>(axis)].profile.target);
                             if (input.availableAxes[static_cast<size_t>(axis)]
@@ -2538,6 +2638,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                 input.lastNativePovs[static_cast<size_t>(pov)] = desired;
                                 ++m_runtime.vjoyWrites;
                                 ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                                outputChanged = true;
                             }
                         }
                     }
@@ -2550,6 +2651,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                             output.lastAxes[static_cast<size_t>(axis)] = desired;
                             ++m_runtime.vjoyWrites;
                             ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                            outputChanged = true;
                         }
                     }
                     for (int button = 1; button <= output.buttonCapacity; ++button) {
@@ -2559,7 +2661,12 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                             output.lastButtons[static_cast<size_t>(button)] = desired;
                             ++m_runtime.vjoyWrites;
                             ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                            outputChanged = true;
                         }
+                    }
+                    if (outputChanged && mappedInputSequence > 0) {
+                        m_runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(outputIndex)].store(
+                            mappedInputSequence, std::memory_order_relaxed);
                     }
                 }
                 m_runtime.mappingActive = true;

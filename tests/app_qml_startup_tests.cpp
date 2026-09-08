@@ -909,6 +909,8 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
     QVariantMap routingConflict = healthyFacts();
     routingConflict.insert(QStringLiteral("routingConflict"), true);
     routingConflict.insert(QStringLiteral("routingDetails"), QStringLiteral("Two controls are using the same output."));
+    QVariantMap noMappedControl = healthyFacts();
+    noMappedControl.insert(QStringLiteral("noMappedControl"), true);
     QVariantMap liveInput = healthyFacts();
     liveInput.insert(QStringLiteral("liveInputPending"), true);
     QVariantMap liveOutput = healthyFacts();
@@ -932,6 +934,7 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
         {QStringLiteral("vJoy misconfigured"), vjoyMisconfigured, QStringLiteral("VirtualOutputMisconfigured"), QStringLiteral("BF6 Output needs different capabilities"), QStringLiteral("reconfigure-output"), QStringLiteral("VirtualOutput"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("vJoy busy"), vjoyBusy, QStringLiteral("VirtualOutputBusy"), QStringLiteral("BF6 Output is already in use"), QStringLiteral("check-again"), QStringLiteral("VirtualOutput"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("routing conflict"), routingConflict, QStringLiteral("RoutingConflict"), QStringLiteral("Review routing"), QStringLiteral("review-routing"), QStringLiteral("Routing"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("no mapped control"), noMappedControl, QStringLiteral("NoMappedControl"), QStringLiteral("No mapped control to test"), QStringLiteral("review-routing"), QStringLiteral("Routing"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("live input pending"), liveInput, QStringLiteral("LiveInputNotTested"), QStringLiteral("Setup looks good — let's test it"), QStringLiteral("start-live-test"), QStringLiteral("LiveInput"), QStringLiteral("WAITING")},
         {QStringLiteral("live output pending"), liveOutput, QStringLiteral("LiveOutputNotTested"), QStringLiteral("Setup looks good — let's test it"), QStringLiteral("start-live-test"), QStringLiteral("LiveOutput"), QStringLiteral("WAITING")},
         {QStringLiteral("fully ready"), healthyFacts(), QString(), QStringLiteral("Your setup is ready"), QStringLiteral("done"), QString(), QStringLiteral("READY")},
@@ -948,6 +951,11 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
             || summary.value(QStringLiteral("primaryAction")).toString() != scenario.action
             || primary.value(QStringLiteral("code")).toString() != scenario.code
             || primary.value(QStringLiteral("category")).toString() != scenario.category
+            || (!scenario.code.isEmpty()
+                && (primary.value(QStringLiteral("scopeType")).toString() != QStringLiteral("application")
+                    || primary.value(QStringLiteral("affectedObjectType")).toString().isEmpty()
+                    || !primary.value(QStringLiteral("navigationTarget")).toMap().contains(
+                        QStringLiteral("page"))))
             || (scenario.code.isEmpty() ? !steps.isEmpty() : steps.isEmpty()
                 || steps.front().toMap().value(QStringLiteral("category")).toString().isEmpty())) {
             backend.setSetupAssistantFactsForTest({});
@@ -1004,14 +1012,40 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     // the page presents, then compare the stored capability projection. This
     // is software-only: these calls save output layouts but do not configure
     // a vJoy driver.
+    // This lifecycle run shares one backend across themes. Reserve distinct
+    // output identities so the same durable creation paths are exercised for
+    // every themed surface instead of succeeding only in the first pass.
+    const auto nextFreeOutputDeviceId = [&backend](int firstCandidate) {
+        for (int candidate = firstCandidate; candidate <= 16; ++candidate) {
+            bool used = false;
+            for (const QVariant &entry : backend.virtualOutputLayouts()) {
+                if (entry.toMap().value(QStringLiteral("deviceId")).toInt() == candidate) {
+                    used = true;
+                    break;
+                }
+            }
+            if (!used) return candidate;
+        }
+        return 0;
+    };
+    const int matchedDeviceId = nextFreeOutputDeviceId(2);
+    const int copiedDeviceId = nextFreeOutputDeviceId(matchedDeviceId + 1);
+    const int customDeviceId = nextFreeOutputDeviceId(copiedDeviceId + 1);
+    if (matchedDeviceId == 0 || copiedDeviceId == 0 || customDeviceId == 0) {
+        return failPresentationLifecycleTest(QStringLiteral("Virtual Output fixture exhausted vJoy Device IDs"));
+    }
+    const QString outputFixtureSuffix = QString::number(matchedDeviceId);
     const QVariantMap matchedOutput = backend.createVirtualOutputLayoutResult(
-        QStringLiteral("Matched Output Fixture"), 2, QStringLiteral("match-physical"), firstMember);
+        QStringLiteral("Matched Output Fixture %1").arg(outputFixtureSuffix), matchedDeviceId,
+        QStringLiteral("match-physical"), firstMember);
     const QString matchedOutputId = matchedOutput.value(QStringLiteral("objectId")).toString();
     const QVariantMap copiedOutput = backend.createVirtualOutputLayoutResult(
-        QStringLiteral("Copied Output Fixture"), 3, QStringLiteral("copy-output"), matchedOutputId);
+        QStringLiteral("Copied Output Fixture %1").arg(outputFixtureSuffix), copiedDeviceId,
+        QStringLiteral("copy-output"), matchedOutputId);
     const QString copiedOutputId = copiedOutput.value(QStringLiteral("objectId")).toString();
     const QVariantMap customOutput = backend.createVirtualOutputLayoutResult(
-        QStringLiteral("Custom Output Fixture"), 4, QStringLiteral("custom"), QString(),
+        QStringLiteral("Custom Output Fixture %1").arg(outputFixtureSuffix), customDeviceId,
+        QStringLiteral("custom"), QString(),
         QVariantList{QVariant{1}, QVariant{4}, QVariant{8}}, 64, 0, 2);
     const QString customOutputId = customOutput.value(QStringLiteral("objectId")).toString();
     const auto outputLayout = [&backend](const QString &id) {
@@ -1027,6 +1061,8 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     if (!matchedOutput.value(QStringLiteral("success")).toBool() || matchedOutputId.isEmpty()
         || !copiedOutput.value(QStringLiteral("success")).toBool() || copiedOutputId.isEmpty()
         || !customOutput.value(QStringLiteral("success")).toBool() || customOutputId.isEmpty()
+        || matchedOutput.value(QStringLiteral("affectedObjectType")).toString() != QStringLiteral("virtualOutput")
+        || matchedOutput.value(QStringLiteral("severity")).toString() != QStringLiteral("success")
         || matchedLayout.value(QStringLiteral("buttons")) != copiedLayout.value(QStringLiteral("buttons"))
         || matchedLayout.value(QStringLiteral("continuousPovs")) != copiedLayout.value(QStringLiteral("continuousPovs"))
         || matchedLayout.value(QStringLiteral("discretePovs")) != copiedLayout.value(QStringLiteral("discretePovs"))
@@ -1352,6 +1388,34 @@ bool verifyThemedDialogHeader(QObject *popup, const QString &theme, const QStrin
         && header->property("color").value<QColor>() != QColor(QStringLiteral("#132027"))) {
         return failPresentationLifecycleTest(QStringLiteral("%1 lost the established Legacy dialog header surface")
             .arg(label));
+    }
+    return true;
+}
+
+bool verifyAppHealthSurface(QObject *surface, const QString &theme)
+{
+    if (!surface) return failPresentationLifecycleTest(QStringLiteral("App Health has no presentation surface"));
+    const QString controlName = theme == QStringLiteral("Legacy")
+        ? QStringLiteral("legacyAppHealthControl")
+        : theme == QStringLiteral("Top Gun") ? QStringLiteral("topGunAppHealthControl")
+                                            : QStringLiteral("standardAppHealthControl");
+    const QString popupName = theme == QStringLiteral("Legacy")
+        ? QStringLiteral("legacyAppHealthPopup") : QStringLiteral("standardAppHealthPopup");
+    QObject *control = surface->findChild<QObject *>(controlName);
+    QObject *popup = surface->findChild<QObject *>(popupName);
+    if (!control || !popup || !control->property("visible").toBool()
+        || !QMetaObject::invokeMethod(popup, "open")) {
+        return failPresentationLifecycleTest(QStringLiteral("App Health control was not available for %1").arg(theme));
+    }
+    settlePresentation();
+    const bool popupVisible = popup->property("visible").toBool();
+    QMetaObject::invokeMethod(popup, "close");
+    QQmlExpression navigate(qmlContext(surface), surface,
+        QStringLiteral("navigateToIssue({ page: 10, objectType: 'deviceRig', objectId: 'fixture-rig' }); currentPage"));
+    const QVariant navigationValue = navigate.evaluate();
+    const bool routedToDevices = !navigate.hasError() && navigationValue.toInt() == 10;
+    if (!popupVisible || !routedToDevices) {
+        return failPresentationLifecycleTest(QStringLiteral("App Health did not open or route its Device Rig review for %1").arg(theme));
     }
     return true;
 }
@@ -1750,6 +1814,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     }
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
     if (!verifyAdaptiveSetupAssistantScenarios(backend)) return false;
+    if (!verifyAppHealthSurface(surface, theme)) return false;
     if (!verifyDevicesInteractionStress(backend, surface)) return false;
     if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
     if (!verifyOverviewReadinessLayout(surface, shell, theme)) return false;
