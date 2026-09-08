@@ -52,7 +52,7 @@ Item {
                                            : (control.legacy ? "#435660" : theme.border)
         RowLayout { anchors.fill: parent; anchors.leftMargin: compact ? 7 : 9; anchors.rightMargin: compact ? 6 : 8; spacing: compact ? 4 : 6
             Rectangle { width: 7; height: 7; radius: theme.topGun ? 1 : 4; color: control.healthColor((control.currentRig() || {}).health || "offline") }
-            Text { id: contextLabel; visible: !control.compact; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
+            Text { id: contextLabel; objectName: "deviceContextLabel"; visible: !control.compact; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
             Text { text: popup.visible ? "⌃" : "⌄"; color: theme.textMuted; font.pixelSize: 14 }
         }
     }

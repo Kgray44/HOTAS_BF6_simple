@@ -360,7 +360,11 @@ if (BUILD_TESTING)
     add_test(NAME ui_release_contract_tests COMMAND ui_release_contract_tests)
     if (WIN32)
         set_tests_properties(ui_release_contract_tests PROPERTIES
-            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            # Preserve the invoking MSVC runtime search path. CTest treats
+            # semicolons in ENVIRONMENT values as property separators, which
+            # can otherwise leave this source-contract test unable to launch
+            # before it produces a QtTest result.
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
     qt_add_executable(widgets_startup_contract_tests tests/widgets_startup_contract_tests.cpp)

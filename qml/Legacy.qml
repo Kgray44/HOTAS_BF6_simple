@@ -1279,7 +1279,16 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 10
             sourceComponent: Component {
-                DevicesPage { anchors.fill: parent; visible: root.currentPage === 10; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true }
+                DevicesPage {
+                    anchors.fill: parent; visible: root.currentPage === 10
+                    backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
+                    onVerificationRequested: function(rigId, deviceId) {
+                        if (rigId === "") return
+                        backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
+                        controllerSetupDialog.open()
+                        backend.verifyDeviceRig(rigId)
+                    }
+                }
             }
         }
         Loader {
@@ -2065,7 +2074,14 @@ Page {
         width: Math.min(740, root.width - 36)
         title: ""
         standardButtons: Dialog.NoButton
-        padding: 18
+        padding: 14
+        header: ThemedDialogHeader {
+            theme: root.adaptiveThemeTokens
+            legacy: true
+            heading: "Rig Setup & Verification"
+            detail: backend.activeDeviceRigName
+            dialog: controllerSetupDialog
+        }
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: "#182a30"; border.color: "#536975"; radius: 4 }
         contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true

@@ -10,6 +10,9 @@ Rectangle {
     property bool legacy: false
     property string heading: ""
     property string detail: ""
+    // The dialog owns its chrome. Supplying the shell explicitly keeps close
+    // behavior consistent without ever falling back to an OS title bar.
+    property var dialog: null
     // This is intentionally observable in the presentation lifecycle test.
     // A themed dialog body alone is insufficient: an unstyled Qt header is
     // especially conspicuous in Day Ops and makes Legacy look imported from
@@ -69,5 +72,35 @@ Rectangle {
         width: 34
         height: 2
         color: theme.cyan
+    }
+    Rectangle {
+        id: closeControl
+        objectName: "themedDialogClose"
+        anchors.right: parent.right
+        anchors.rightMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        width: 30
+        height: 30
+        radius: header.legacy ? 3 : header.theme.controlRadius
+        color: closeHit.containsMouse
+               ? (header.legacy ? "#244650" : header.theme.controlHover)
+               : "transparent"
+        border.color: closeHit.containsMouse
+                      ? (header.legacy ? "#78aab9" : header.theme.borderStrong)
+                      : "transparent"
+        Text {
+            anchors.centerIn: parent
+            text: "×"
+            color: header.legacy ? "#dce7e8" : header.theme.textStrong
+            font.pixelSize: 20
+            font.bold: true
+        }
+        MouseArea {
+            id: closeHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: if (header.dialog && header.dialog.close) header.dialog.close()
+        }
     }
 }

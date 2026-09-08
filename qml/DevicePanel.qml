@@ -50,5 +50,8 @@ Rectangle {
     // Legacy's edge highlight. It is paint-only: geometry and data hierarchy
     // stay identical across themes.
     Rectangle { visible: !legacy && !theme.topGun && !theme.dayOps; anchors.left: parent.left; anchors.leftMargin: 1; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 12; anchors.bottomMargin: 12; width: 3; radius: 2; color: theme.devicePanelAccent; opacity: 0.72 }
-    Repeater { visible: !legacy && theme.topGun; model: 4; delegate: Rectangle { width: 4; height: 4; radius: 2; color: "#604a2b"; border.color: "#a27e46"; x: index < 2 ? 6 : parent.width - 10; y: index % 2 === 0 ? 6 : parent.height - 10 } }
+    // Fasteners are an instrument-panel detail, never a Standard or Legacy
+    // decoration. Naming the group makes this exclusion assertable in the
+    // rendered Devices fixture as well as visually obvious in Legacy.
+    Repeater { objectName: "topGunCornerFasteners"; visible: !legacy && theme.topGun; model: 4; delegate: Rectangle { width: 4; height: 4; radius: 2; color: "#604a2b"; border.color: "#a27e46"; x: index < 2 ? 6 : parent.width - 10; y: index % 2 === 0 ? 6 : parent.height - 10 } }
 }

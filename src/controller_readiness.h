@@ -92,6 +92,17 @@ struct OutputVisibilitySwitchResult {
     QString status;
 };
 
+// A Devices-page visibility action is deliberately a bounded control-plane
+// transaction. It carries the same observable outcome as output switching,
+// but can be scoped to one or more already-adopted physical HID interfaces.
+// No report-path code calls this API.
+struct ManagedVisibilityTransactionResult {
+    bool available = false;
+    bool changed = false;
+    bool succeeded = true;
+    QString status;
+};
+
 struct MapperOutputRequirements {
     std::array<bool, kVirtualAxisSlotCount> axes{};
     int buttons = 0;
@@ -312,6 +323,16 @@ public:
                                               QString *status) const;
     OutputVisibilitySwitchResult applyManagedOutputVisibility(
         const MapperConfiguration &configuration, const QString &activeLayoutId) const;
+    // Validate only fully-qualified, currently enumerated physical HID
+    // instances. Friendly names and virtual vJoy identities are rejected so a
+    // rig action can never expand into an unrelated HidHide rule.
+    bool validateManagedPhysicalInputIdentities(const QStringList &instanceIds,
+                                                QStringList *normalizedInstanceIds,
+                                                QString *status) const;
+    ManagedVisibilityTransactionResult applyManagedPhysicalInputVisibility(
+        const QStringList &instanceIds, bool hidden) const;
+    ManagedVisibilityTransactionResult applyManagedVirtualOutputVisibility(
+        const QStringList &instanceIds, bool hidden) const;
     bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }

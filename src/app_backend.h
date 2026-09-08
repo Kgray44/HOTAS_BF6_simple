@@ -522,9 +522,12 @@ public:
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
     Q_INVOKABLE bool assignProfileOutputLayout(const QString &profileId, const QString &layoutId);
     Q_INVOKABLE QString createFiveAxisOutputLayout(const QString &name, int deviceId);
+    Q_INVOKABLE int suggestedVirtualOutputDeviceId() const;
+    Q_INVOKABLE QString createVirtualOutputLayout(const QString &name, int deviceId,
+                                                  const QString &preset = QStringLiteral("bf6-4-axis"));
     Q_INVOKABLE bool renameVirtualOutputLayout(const QString &layoutId, const QString &name);
     Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
-                                                  const QString &deviceInstanceId);
+                                                   const QString &deviceInstanceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
     // These return the newly-created stable ID so the presentation can open a
     // full-page draft editor without ever deriving identity from list order.
@@ -579,6 +582,12 @@ public:
     Q_INVOKABLE bool removeDeviceRigOutput(const QString &rigId, const QString &outputLayoutId);
     Q_INVOKABLE bool setDeviceRigOutputEnabled(const QString &rigId, const QString &outputLayoutId,
                                                bool enabled);
+    Q_INVOKABLE bool setDeviceRigInputVisibility(const QString &rigId,
+                                                 const QStringList &controllerRecordIds,
+                                                 bool hidden);
+    Q_INVOKABLE bool setDeviceRigOutputVisibility(const QString &rigId,
+                                                  const QStringList &outputLayoutIds,
+                                                  bool visible);
     Q_INVOKABLE bool addDeviceRigMember(const QString &rigId, const QString &controllerRecordId,
                                         bool required = true);
     Q_INVOKABLE bool removeDeviceRigMember(const QString &rigId, const QString &controllerRecordId);

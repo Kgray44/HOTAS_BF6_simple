@@ -2813,6 +2813,7 @@ QVariantList AppBackend::deviceRigs() const
         QVariantList members;
         for (const DeviceRigMember &member : rig.members) {
             const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            const QVariantMap detail = physicalDeviceDetail(member.controllerRecordId);
             const bool connected = health.connectedMemberIds.contains(member.controllerRecordId);
             members.append(QVariantMap{{u"id"_qs, member.controllerRecordId},
                 {u"name"_qs, record ? record->displayName : u"Unknown device"_qs},
@@ -2820,8 +2821,16 @@ QVariantList AppBackend::deviceRigs() const
                 {u"connected"_qs, connected},
                 {u"ambiguous"_qs, health.ambiguousMemberIds.contains(member.controllerRecordId)},
                 {u"verified"_qs, record && !record->lastVerified.isEmpty()},
+                // The Devices page and the persistent Device Context use this
+                // one configuration-owned scope. It deliberately says
+                // nothing about the active runtime rig.
+                {u"editing"_qs, rig.id == m_configuration.editingDeviceRigId
+                    && m_configuration.editingDeviceRecordIds.contains(member.controllerRecordId)},
                 {u"needsVerification"_qs, health.needsVerificationMemberIds.contains(member.controllerRecordId)},
-                {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId}});
+                {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId},
+                {u"visibilityManaged"_qs, detail.value(u"managedVisibility"_qs, false)},
+                {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
+                {u"visibilityKnown"_qs, detail.value(u"visibilityKnown"_qs, false)}});
         }
         QVariantList outputs;
         for (const DeviceRigOutputTarget &target : rig.outputs) {
@@ -2836,7 +2845,10 @@ QVariantList AppBackend::deviceRigs() const
                 {u"enabled"_qs, target.enabled},
                 {u"ready"_qs, detail.value(u"ready"_qs, false)},
                 {u"status"_qs, detail.value(u"status"_qs, u"Output unavailable"_qs)},
-                {u"routeCount"_qs, detail.value(u"routeCount"_qs, 0)}});
+                {u"routeCount"_qs, detail.value(u"routeCount"_qs, 0)},
+                {u"visibilityManaged"_qs, detail.value(u"managedVisibility"_qs, false)},
+                {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
+                {u"visibilityKnown"_qs, detail.value(u"visibilityKnown"_qs, false)}});
         }
         result.append(QVariantMap{{u"id"_qs, rig.id}, {u"name"_qs, rig.name},
             {u"enabled"_qs, rig.enabled}, {u"default"_qs, rig.isDefault},
@@ -2942,6 +2954,20 @@ QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
             ++calibratedAxes;
         }
     }
+    const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
+    QStringList managedInstances = record->ownedHidHideDeviceInstances;
+    for (QString &instance : managedInstances) {
+        instance = ControllerReadinessService::normalizeDeviceInstanceId(instance);
+    }
+    managedInstances.removeAll(QString{});
+    const bool managed = !managedInstances.isEmpty();
+    const bool hidden = managed && hidhide.cloakKnown && std::all_of(
+        managedInstances.cbegin(), managedInstances.cend(), [&hidhide](const QString &instance) {
+            return std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(), hidhide.hiddenDeviceInstanceIds.cend(),
+                [&instance](const QString &entry) {
+                    return ControllerReadinessService::normalizeDeviceInstanceId(entry) == instance;
+                });
+        });
     return {{u"id"_qs, record->id}, {u"name"_qs, record->displayName},
             {u"connected"_qs, discovered && discovered->connected},
             {u"verified"_qs, !record->lastVerified.isEmpty()},
@@ -2950,7 +2976,9 @@ QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
             {u"povCount"_qs, record->povCount}, {u"calibratedAxes"_qs, calibratedAxes},
             {u"rigs"_qs, rigNames.join(u" · "_qs)}, {u"mappedAxes"_qs, mappedAxes},
             {u"mappedButtons"_qs, mappedButtons}, {u"mappedPovs"_qs, mappedPovs},
-            {u"hidhideManaged"_qs, !record->ownedHidHideDeviceInstances.isEmpty()},
+            {u"hidhideManaged"_qs, managed}, {u"managedVisibility"_qs, managed},
+            {u"visibilityKnown"_qs, managed && hidhide.cloakKnown},
+            {u"hiddenFromGames"_qs, hidden},
             {u"hidInstanceId"_qs, record->hidInstanceId},
             {u"hidContainerId"_qs, record->hidContainerId},
             {u"directInputId"_qs, record->lastDirectInputId},
@@ -3007,6 +3035,15 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
             if (target == layout->id) countMappingRoutes(mapping);
         }
     }
+    const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
+    const QString normalizedOutputInstance = ControllerReadinessService::normalizeDeviceInstanceId(
+        layout->hidHideDeviceInstanceId);
+    const bool hidden = layout->hidhideManaged && hidhide.cloakKnown
+        && !normalizedOutputInstance.isEmpty()
+        && std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(), hidhide.hiddenDeviceInstanceIds.cend(),
+            [&normalizedOutputInstance](const QString &entry) {
+                return ControllerReadinessService::normalizeDeviceInstanceId(entry) == normalizedOutputInstance;
+            });
     const bool isCurrentOutput = layout->requirements.deviceId == m_configuration.vjoyDeviceId;
     return {{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
             {u"deviceId"_qs, layout->requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
@@ -3016,6 +3053,8 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
             {u"rigs"_qs, rigNames.join(u" · "_qs)}, {u"routeCount"_qs, routeCount},
             {u"managedVisibility"_qs, layout->hidhideManaged},
             {u"visibilityPrepared"_qs, !layout->hidHideDeviceInstanceId.isEmpty()},
+            {u"visibilityKnown"_qs, layout->hidhideManaged && hidhide.cloakKnown},
+            {u"hiddenFromGames"_qs, hidden},
             {u"ready"_qs, isCurrentOutput && m_worker.runtime().vjoyReady.load()},
             {u"status"_qs, isCurrentOutput ? m_worker.vjoyStatus()
                                                : u"Verify this output from its Device Rig."_qs}};
@@ -3324,7 +3363,7 @@ bool AppBackend::removeDeviceRigOutput(const QString &rigId, const QString &outp
 }
 
 bool AppBackend::setDeviceRigOutputEnabled(const QString &rigId, const QString &outputLayoutId,
-                                           bool enabled)
+                                            bool enabled)
 {
     DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
     const QString outputId = outputLayoutId.trimmed();
@@ -3343,6 +3382,114 @@ bool AppBackend::setDeviceRigOutputEnabled(const QString &rigId, const QString &
     target->enabled = enabled;
     persistAndApply();
     emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigInputVisibility(const QString &rigId,
+                                             const QStringList &controllerRecordIds, bool hidden)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || controllerRecordIds.isEmpty()) return false;
+
+    QStringList instances;
+    QList<SavedControllerRecord *> adoptedRecords;
+    QSet<QString> seenRecords;
+    for (const QString &value : controllerRecordIds) {
+        const QString recordId = value.trimmed();
+        if (recordId.isEmpty() || seenRecords.contains(recordId)) continue;
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&recordId](const DeviceRigMember &item) {
+            return item.controllerRecordId == recordId;
+        });
+        const auto recordFound = std::find_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &item) {
+                return item.id == recordId;
+            });
+        if (member == rig->members.cend() || recordFound == m_configuration.savedControllers.end()) {
+            appendEvent(u"Visibility actions can only target saved inputs in the selected Device Rig."_qs);
+            return false;
+        }
+        SavedControllerRecord *record = &*recordFound;
+        QStringList owned = record->ownedHidHideDeviceInstances;
+        if (owned.isEmpty()) {
+            // Selecting Hide in Devices is an explicit adoption choice. Show
+            // never adopts an unmanaged input, so upgraded users are not
+            // silently brought under isolation management.
+            if (!hidden || record->hidInstanceId.trimmed().isEmpty()) {
+                appendEvent(QString(u"%1 has not been explicitly adopted for managed game visibility."_qs)
+                    .arg(record->displayName));
+                return false;
+            }
+            owned = {record->hidInstanceId};
+        }
+        for (const QString &instance : owned) instances.append(instance);
+        adoptedRecords.append(record);
+        seenRecords.insert(recordId);
+    }
+    if (instances.isEmpty()) return false;
+
+    ControllerReadinessService visibility;
+    QStringList normalized;
+    QString validation;
+    if (!visibility.validateManagedPhysicalInputIdentities(instances, &normalized, &validation)) {
+        appendEvent(validation);
+        return false;
+    }
+    const ManagedVisibilityTransactionResult result = visibility.applyManagedPhysicalInputVisibility(normalized, hidden);
+    appendEvent(result.status);
+    if (!result.succeeded) return false;
+
+    if (hidden) {
+        // Store only exact identities just proved by HidHide. No broad
+        // friendly-name, VID, or unrelated-device rule enters this model.
+        for (SavedControllerRecord *record : adoptedRecords) {
+            if (!record->ownedHidHideDeviceInstances.isEmpty()) continue;
+            const QString identity = ControllerReadinessService::normalizeDeviceInstanceId(record->hidInstanceId);
+            if (!identity.isEmpty()) record->ownedHidHideDeviceInstances = {identity};
+        }
+    }
+    persistAndApply();
+    emit deviceRigsChanged();
+    // Command exit is not acceptance: re-inspect live HidHide state through
+    // the existing low-frequency verification path.
+    startQuickVerification();
+    return true;
+}
+
+bool AppBackend::setDeviceRigOutputVisibility(const QString &rigId,
+                                              const QStringList &outputLayoutIds, bool visible)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || outputLayoutIds.isEmpty()) return false;
+
+    QStringList instances;
+    QSet<QString> seenLayouts;
+    for (const QString &value : outputLayoutIds) {
+        const QString layoutId = value.trimmed();
+        if (layoutId.isEmpty() || seenLayouts.contains(layoutId)) continue;
+        const auto target = std::find_if(rig->outputs.cbegin(), rig->outputs.cend(), [&layoutId](const DeviceRigOutputTarget &item) {
+            return item.outputLayoutId == layoutId;
+        });
+        VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+        if (target == rig->outputs.cend() || !layout || !layout->hidhideManaged
+            || layout->hidHideDeviceInstanceId.trimmed().isEmpty()) {
+            appendEvent(u"Adopt an exact vJoy HID identity before changing virtual-output visibility."_qs);
+            return false;
+        }
+        if (!visible && rig->id == m_configuration.activeDeviceRigId && target->enabled) {
+            appendEvent(u"An enabled active-rig output must stay visible to games. Disable it or select another active output first."_qs);
+            return false;
+        }
+        instances.append(layout->hidHideDeviceInstanceId);
+        seenLayouts.insert(layoutId);
+    }
+    if (instances.isEmpty()) return false;
+
+    ControllerReadinessService visibility;
+    const ManagedVisibilityTransactionResult result = visibility.applyManagedVirtualOutputVisibility(instances, !visible);
+    appendEvent(result.status);
+    if (!result.succeeded) return false;
+    emit deviceRigsChanged();
+    startQuickVerification();
     return true;
 }
 
@@ -3483,6 +3630,12 @@ bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList
     m_configuration.editingDeviceRigId = rig->id;
     m_configuration.editingDeviceRecordIds = selected;
     persistAndApply();
+    // Editing context is a low-frequency control-plane action, but axes,
+    // buttons, POVs, curves, and Adaptive Response all consume the selected
+    // device mapping. Notify their QML properties immediately rather than
+    // waiting for the next telemetry snapshot.
+    emit inputTelemetryChanged();
+    emit buttonTelemetryChanged();
     emit deviceRigsChanged();
     return true;
 }
@@ -6327,6 +6480,68 @@ QString AppBackend::createFiveAxisOutputLayout(const QString &name, int deviceId
     persistAndApply();
     appendEvent(QString(u"Created 5-axis virtual output %1 on vJoy Device %2; provision it once in vJoy setup before use"_qs)
         .arg(trimmed).arg(normalizedDeviceId));
+    return id;
+}
+
+int AppBackend::suggestedVirtualOutputDeviceId() const
+{
+    for (int deviceId = 1; deviceId <= 16; ++deviceId) {
+        const bool used = std::any_of(m_configuration.outputLayouts.cbegin(),
+            m_configuration.outputLayouts.cend(), [deviceId](const VirtualOutputLayout &layout) {
+                return layout.requirements.deviceId == deviceId;
+            });
+        if (!used) return deviceId;
+    }
+    return 0;
+}
+
+QString AppBackend::createVirtualOutputLayout(const QString &name, int deviceId, const QString &preset)
+{
+    const QString trimmed = name.trimmed().left(64);
+    const QString normalizedPreset = preset.trimmed().toLower();
+    if (trimmed.isEmpty() || deviceId < 1 || deviceId > 16
+        || static_cast<int>(m_configuration.outputLayouts.size()) >= 16) {
+        appendEvent(u"Create virtual output needs a name and an unused vJoy device ID from 1 through 16."_qs);
+        return {};
+    }
+    if (normalizedPreset != u"bf6-4-axis"_qs && normalizedPreset != u"full-8-axis"_qs
+        && normalizedPreset != u"custom"_qs) {
+        appendEvent(u"Choose a supported virtual-output capability preset."_qs);
+        return {};
+    }
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        if (layout.name.compare(trimmed, Qt::CaseInsensitive) == 0
+            || layout.requirements.deviceId == deviceId) {
+            appendEvent(u"That virtual-output name or vJoy device ID is already in use."_qs);
+            return {};
+        }
+    }
+
+    VirtualOutputLayout layout;
+    layout.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    layout.name = trimmed;
+    layout.requirements.deviceId = deviceId;
+    layout.requirements.buttons = normalizedPreset == u"custom"_qs ? 16 : 32;
+    if (normalizedPreset == u"full-8-axis"_qs) {
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            layout.requirements.axes[static_cast<size_t>(axis)] = true;
+        }
+    } else {
+        // BF6's everyday flight layout remains the intentionally simple
+        // default. Custom starts from the same safe, compact descriptor; the
+        // output editor/verifier remains the place to expand it before it is
+        // activated against a driver.
+        for (const VirtualAxis axis : {VirtualAxis::X, VirtualAxis::Y, VirtualAxis::Z,
+                                       VirtualAxis::Rz}) {
+            layout.requirements.axes[static_cast<size_t>(axis)] = true;
+        }
+    }
+    const QString id = layout.id;
+    m_configuration.outputLayouts.push_back(std::move(layout));
+    persistAndApply();
+    appendEvent(QString(u"Created virtual output %1 on vJoy Device %2. Its descriptor is saved; verify and approve any required vJoy provisioning before using it."_qs)
+        .arg(trimmed).arg(deviceId));
+    emit deviceRigsChanged();
     return id;
 }
 

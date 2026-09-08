@@ -874,8 +874,103 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
         || !outputs.front().toMap().contains(QStringLiteral("routeCount"))) {
         return failPresentationLifecycleTest(QStringLiteral("Devices output card projection is missing readiness or route summary"));
     }
+    if (!backend.setEditingDeviceContext(rigId, {})
+        || backend.editingDeviceRigId() != rigId
+        || backend.editingScopeLabel() != QStringLiteral("All Devices")) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS fixture could not begin in the selected rig's All Devices context"));
+    }
+    settlePresentation();
     const QString firstMember = members.at(0).toMap().value(QStringLiteral("id")).toString();
     const QString secondMember = members.at(1).toMap().value(QStringLiteral("id")).toString();
+    const QString secondName = members.at(1).toMap().value(QStringLiteral("name")).toString();
+    const QString activeRigBeforeEdit = backend.activeDeviceRigId();
+    if (members.at(1).toMap().value(QStringLiteral("connected")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS fixture requires its second saved device to be offline"));
+    }
+
+    // Invoke the exact Devices-page helper that the EDIT THIS control calls.
+    // Repeater delegates are visual children, so inspect their visible QML
+    // properties through the page's lexical helper instead of unsafe QObject
+    // parent traversal.
+    QString escapedSecondMember = secondMember;
+    escapedSecondMember.replace(u'\\', QStringLiteral("\\\\"));
+    escapedSecondMember.replace(u'\"', QStringLiteral("\\\""));
+    const auto memberProperty = [&escapedSecondMember](QObject *root, const QString &property,
+                                                        bool *available = nullptr) -> QVariant {
+        if (available) *available = false;
+        if (!root) return {};
+        QQmlExpression expression(qmlContext(root), root, QStringLiteral(
+            "(function() { const card = rigMemberCardFor(\"%1\");"
+            " return card ? card.%2 : undefined; })()")
+            .arg(escapedSecondMember, property));
+        const QVariant value = expression.evaluate();
+        if (available) *available = !expression.hasError() && value.isValid();
+        return value;
+    };
+    QObject *contextLabel = surface->findChild<QObject *>(QStringLiteral("deviceContextLabel"));
+    bool initialTextAvailable = false;
+    const QVariant initialText = memberProperty(devices, QStringLiteral("editControl.text"), &initialTextAvailable);
+    QQmlExpression activateEditThis(qmlContext(devices), devices,
+                                    QStringLiteral("editThisDevice(\"%1\")").arg(escapedSecondMember));
+    const QVariant activation = activateEditThis.evaluate();
+    if (!contextLabel || !initialTextAvailable || initialText.toString() != QStringLiteral("EDIT THIS")
+        || activateEditThis.hasError() || !activation.toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS or its initial visible Device Context state was unavailable"));
+    }
+    settlePresentation();
+    const QVariantList editScope = backend.editingDevices();
+    if (backend.editingDeviceRigId() != rigId || backend.editingScopeLabel() != secondName
+        || editScope.size() != 2 || !editScope.at(1).toMap().value(QStringLiteral("selected")).toBool()
+        || editScope.at(0).toMap().value(QStringLiteral("selected")).toBool()
+        || backend.activeDeviceRigId() != activeRigBeforeEdit
+        || memberProperty(devices, QStringLiteral("editControl.text")).toString() != QStringLiteral("EDITING")
+        || !memberProperty(devices, QStringLiteral("editingTarget")).toBool()
+        || !contextLabel->property("text").toString().contains(secondName)) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS did not immediately update the shared single-device context and visible target state"));
+    }
+
+    // The editing scope is authoritative across every device-aware page. The
+    // selected fixture is offline, so this also proves that saved
+    // configuration remains selectable without changing the runtime rig.
+    for (const int page : {0, 1, 6, 9, 3}) {
+        if (!selectPage(surface, page) || backend.editingDeviceRigId() != rigId
+            || backend.editingScopeLabel() != secondName || backend.activeDeviceRigId() != activeRigBeforeEdit) {
+            return failPresentationLifecycleTest(QStringLiteral("Device-aware page %1 did not retain the shared EDIT THIS context").arg(page));
+        }
+    }
+    if (!selectPage(surface, 10)) return false;
+    devices = pageItem(surface, 10);
+    if (!devices || !memberProperty(devices, QStringLiteral("editingTarget")).toBool()
+        || memberProperty(devices, QStringLiteral("editControl.text")).toString() != QStringLiteral("EDITING")) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS visible state was stale after device-aware page navigation"));
+    }
+
+    // Use the top-bar selector's own All Devices path; a fresh controller
+    // snapshot exercises its value-model replacement without losing scope.
+    QObject *contextSelector = nullptr;
+    for (QObject *candidate : surface->findChildren<QObject *>()) {
+        if (candidate->objectName().endsWith(QStringLiteral("DeviceContextSelector"))) {
+            contextSelector = candidate;
+            break;
+        }
+    }
+    if (!contextSelector) return failPresentationLifecycleTest(QStringLiteral("Persistent Device Context selector was unavailable"));
+    backend.refreshControllers();
+    settlePresentation();
+    if (!memberProperty(devices, QStringLiteral("editingTarget")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("EDIT THIS target was lost during an offline controller model refresh"));
+    }
+    QQmlExpression clearScope(qmlContext(contextSelector), contextSelector, QStringLiteral("selectScope([])"));
+    clearScope.evaluate();
+    if (clearScope.hasError()) return failPresentationLifecycleTest(clearScope.error().toString());
+    settlePresentation();
+    if (backend.editingDeviceRigId() != rigId || backend.editingScopeLabel() != QStringLiteral("All Devices")
+        || backend.activeDeviceRigId() != activeRigBeforeEdit
+        || memberProperty(devices, QStringLiteral("editingTarget")).toBool()
+        || memberProperty(devices, QStringLiteral("editControl.text")).toString() != QStringLiteral("EDIT THIS")) {
+        return failPresentationLifecycleTest(QStringLiteral("Device Context All Devices return path did not clear EDIT THIS state"));
+    }
+
     QObject *contextPopup = surface->findChild<QObject *>(QStringLiteral("deviceContextPopup"));
     QObject *physicalDialog = devices->findChild<QObject *>(QStringLiteral("physicalDeviceDialog"));
     QObject *outputDialog = devices->findChild<QObject *>(QStringLiteral("outputDetailDialog"));
@@ -1119,6 +1214,46 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
     return selectPage(surface, 8);
 }
 
+bool verifyOverviewReadinessLayout(QObject *surface, QWindow *shell, const QString &theme)
+{
+    if (!shell || !selectPage(surface, 8)) {
+        return failPresentationLifecycleTest(QStringLiteral("Overview readiness layout could not enter its page"));
+    }
+    auto *overview = qobject_cast<QQuickItem *>(pageItem(surface, 8));
+    auto *panel = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessPanel")) : nullptr;
+    auto *grid = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessGrid")) : nullptr;
+    auto *verify = overview ? overview->findChild<QQuickItem *>(QStringLiteral("systemReadinessVerifyButton")) : nullptr;
+    QObject *repeater = overview ? overview->findChild<QObject *>(QStringLiteral("systemReadinessRepeater")) : nullptr;
+    if (!overview || !panel || !grid || !verify || !repeater) {
+        return failPresentationLifecycleTest(QStringLiteral("Overview System readiness controls were unavailable for %1").arg(theme));
+    }
+
+    const QSize original = shell->size();
+    QList<QSize> sizes{{1280, 720}, {1440, 900}, {1920, 1080}};
+    if (!sizes.contains(original)) sizes.append(original);
+    for (const QSize &size : sizes) {
+        shell->resize(size);
+        settlePresentation();
+        const int expectedColumns = overview->width() >= 1180 ? 2 : 1;
+        if (!panel->isVisible() || panel->width() <= 0 || panel->height() <= 0
+            || grid->width() <= 0 || grid->height() <= 0 || repeater->property("count").toInt() <= 0
+            || grid->property("columns").toInt() != expectedColumns) {
+            shell->resize(original);
+            return failPresentationLifecycleTest(QStringLiteral("Overview System readiness did not use its responsive grid at %1x%2 for %3")
+                .arg(size.width()).arg(size.height()).arg(theme));
+        }
+        const QRectF panelBounds(panel->mapToItem(overview, QPointF{}), panel->size());
+        const QRectF verifyBounds(verify->mapToItem(overview, QPointF{}), verify->size());
+        if (!panelBounds.contains(verifyBounds) || verifyBounds.width() <= 0 || verifyBounds.height() <= 0) {
+            shell->resize(original);
+            return failPresentationLifecycleTest(QStringLiteral("Overview Verify Setup did not fit its System readiness card at %1x%2 for %3")
+                .arg(size.width()).arg(size.height()).arg(theme));
+        }
+    }
+    shell->resize(original);
+    return selectPage(surface, 8);
+}
+
 bool captureDevicesSnapshot(hotas::AppBackend &backend, QObject *surface, QWindow *shell,
                             const QString &theme)
 {
@@ -1185,6 +1320,24 @@ bool captureDevicesSnapshot(hotas::AppBackend &backend, QObject *surface, QWindo
     devices->setProperty("selectedDeviceId", members.front().toMap().value(QStringLiteral("id")).toString());
     devices->setProperty("selectedOutputId", outputs.front().toMap().value(QStringLiteral("id")).toString());
     settlePresentation();
+
+    // Capture the visible EDITING treatment separately from the landing
+    // state. This uses the same shared editing context as the real control,
+    // while remaining an offline, presentation-only fixture action.
+    if (members.size() > 1) {
+        const QString targetId = members.at(1).toMap().value(QStringLiteral("id")).toString();
+        if (targetId.isEmpty() || !backend.setEditingDeviceContext(rig.value(QStringLiteral("id")).toString(), {targetId})) {
+            return failPresentationLifecycleTest(QStringLiteral("Devices editing-target snapshot could not select its fixture member for %1")
+                .arg(theme));
+        }
+        settlePresentation();
+        if (!capture(QStringLiteral("editing-target"))
+            || !backend.setEditingDeviceContext(rig.value(QStringLiteral("id")).toString(), {})) {
+            return failPresentationLifecycleTest(QStringLiteral("Devices editing-target snapshot could not return to All Devices for %1")
+                .arg(theme));
+        }
+        settlePresentation();
+    }
 
     const auto capturePopup = [&](QObject *popup, const QString &suffix) {
         if (!popup || !QMetaObject::invokeMethod(popup, "open")) {
@@ -1333,6 +1486,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
     if (!verifyDevicesInteractionStress(backend, surface)) return false;
     if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
+    if (!verifyOverviewReadinessLayout(surface, shell, theme)) return false;
     if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
     return selectPage(surface, 8);
 }

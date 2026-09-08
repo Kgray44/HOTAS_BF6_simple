@@ -238,18 +238,32 @@ void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
 {
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString header = sourceFile(QStringLiteral("qml/ThemedDialogHeader.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString context = sourceFile(QStringLiteral("qml/DeviceContextSelector.qml"));
 
-    // Devices owns eight transactional dialogs plus the batch-review dialog.
+    // Devices owns ten transactional dialogs plus the batch-review dialog.
     // They must all use the shared header; otherwise Day Ops can silently
     // inherit a generic white Qt title bar even if its dialog body is themed.
     QVERIFY(devices.contains(QStringLiteral("component DeviceDialog: Dialog")));
     QVERIFY(devices.contains(QStringLiteral("header: ThemedDialogHeader")));
-    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 9);
+    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 11);
     QCOMPARE(devices.count(QStringLiteral("\n    Dialog {")), 0);
     QVERIFY(header.contains(QStringLiteral("property bool legacy")));
     QVERIFY(header.contains(QStringLiteral("theme.panelRaised")));
     QVERIFY(header.contains(QStringLiteral("legacy ? \"#132027\"")));
     QVERIFY(!header.contains(QStringLiteral("#ffffff")));
+
+    // EDIT THIS replaces the shared scope with exactly one saved member. It
+    // must be visible in both the persistent header and the rig row.
+    QVERIFY(devices.contains(QStringLiteral("function editThisDevice(id)")));
+    QVERIFY(devices.contains(QStringLiteral("setEditingDeviceContext(rig.id, [id])")));
+    QVERIFY(devices.contains(QStringLiteral("property bool editingTarget: !!modelData.editing")));
+    QVERIFY(devices.contains(QStringLiteral("text: editingTarget ? \"EDITING\" : \"EDIT THIS\"")));
+    QVERIFY(!devices.contains(QStringLiteral("entries[i].id === modelData.id ? !modelData.selected")));
+    QVERIFY(backend.contains(QStringLiteral("{u\"editing\"_qs, rig.id == m_configuration.editingDeviceRigId")));
+    QVERIFY(backend.contains(QStringLiteral("emit inputTelemetryChanged();")));
+    QVERIFY(backend.contains(QStringLiteral("emit buttonTelemetryChanged();")));
+    QVERIFY(context.contains(QStringLiteral("objectName: \"deviceContextLabel\"")));
 }
 
 void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()

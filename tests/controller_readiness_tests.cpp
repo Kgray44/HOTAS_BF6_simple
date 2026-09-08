@@ -80,6 +80,7 @@ public:
     bool failHide = false;
     bool failRollback = false;
     bool failRuntimeUnhide = false;
+    bool failRuntimeSecondVisibilityOperation = false;
     bool cancelElevation = false;
     bool repairApplied = false;
     bool cloakEnabled = false;
@@ -91,13 +92,27 @@ public:
     QStringList gamingDevices;
     QStringList hiddenDevices;
     QStringList allowlistedApplications;
+    int runtimeVisibilityOperations = 0;
 
     SetupProcessResult run(const QString &program, const QStringList &arguments, int) override
     {
         Q_UNUSED(program)
         calls.append(arguments.join(u' '));
-        if (failRuntimeUnhide && arguments.contains(QStringLiteral("--dev-unhide"))) {
+        const bool visibilityOperation = arguments.contains(QStringLiteral("--dev-hide"))
+            || arguments.contains(QStringLiteral("--dev-unhide"));
+        if (visibilityOperation) ++runtimeVisibilityOperations;
+        if ((failRuntimeUnhide && arguments.contains(QStringLiteral("--dev-unhide")))
+            || (failRuntimeSecondVisibilityOperation && runtimeVisibilityOperations == 2)) {
             return {true, true, 5, {}, QStringLiteral("Access denied")};
+        }
+        for (int index = 0; index < arguments.size(); ++index) {
+            const QString &argument = arguments.at(index);
+            if (argument == QStringLiteral("--dev-hide") && index + 1 < arguments.size()) {
+                const QString &instance = arguments.at(++index);
+                if (!hiddenDevices.contains(instance, Qt::CaseInsensitive)) hiddenDevices.append(instance);
+            } else if (argument == QStringLiteral("--dev-unhide") && index + 1 < arguments.size()) {
+                hiddenDevices.removeAll(arguments.at(++index));
+            }
         }
         return result(arguments);
     }
@@ -321,6 +336,7 @@ private slots:
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
     void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
+    void managedPhysicalInputsRequireExactIdentityAndRollBackOnFailure();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -1127,6 +1143,62 @@ void ControllerReadinessTests::managedVirtualOutputsSwitchWithoutElevationAndRol
     // only the completed hide of the old output needs reversal.
     QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-unhide ") + bf6Instance));
     QVERIFY(!failingProbe->calls.contains(QStringLiteral("--dev-hide ") + starInstance));
+}
+
+void ControllerReadinessTests::managedPhysicalInputsRequireExactIdentityAndRollBackOnFailure()
+{
+    const QString primary = QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance");
+    const QString secondary = QStringLiteral("HID\\VID_044F&PID_B68D\\second-interface");
+    const QString normalizedPrimary = QStringLiteral("HID\\VID_044F&PID_B68D\\EXACT-INSTANCE");
+    const QString normalizedSecondary = QStringLiteral("HID\\VID_044F&PID_B68D\\SECOND-INTERFACE");
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    // Keep the fake's visibility list literal for this transaction. Its
+    // repair fixture otherwise synthesizes one unrelated default hidden HID.
+    probe->cloakEnabled = true;
+    probe->allowlistedApplications = {QCoreApplication::applicationFilePath()};
+    probe->gamingDevices = {primary, secondary};
+    ControllerReadinessService service(std::move(fake), utilities);
+    QStringList normalized;
+    QString status;
+    QVERIFY(service.validateManagedPhysicalInputIdentities({primary, secondary}, &normalized, &status));
+    QCOMPARE(normalized, QStringList({normalizedPrimary, normalizedSecondary}));
+    QVERIFY(!service.validateManagedPhysicalInputIdentities(
+        {primary, QStringLiteral("HID\\VID_1234&PID_BEAD\\vJoy")}, &normalized, &status));
+    QVERIFY(status.contains(QStringLiteral("non-vJoy"), Qt::CaseInsensitive));
+
+    const ManagedVisibilityTransactionResult hidden = service.applyManagedPhysicalInputVisibility(
+        {primary, secondary}, true);
+    QVERIFY(hidden.succeeded);
+    QVERIFY(hidden.changed);
+    QVERIFY(probe->hiddenDevices.contains(primary, Qt::CaseInsensitive));
+    QVERIFY(probe->hiddenDevices.contains(secondary, Qt::CaseInsensitive));
+    QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("elevated:"));
+    }));
+
+    auto failingFake = std::make_unique<FakeRunner>();
+    FakeRunner *failingProbe = failingFake.get();
+    failingProbe->cloakEnabled = true;
+    failingProbe->allowlistedApplications = {QCoreApplication::applicationFilePath()};
+    failingProbe->gamingDevices = {primary, secondary};
+    failingProbe->hiddenDevices = {primary, secondary};
+    failingProbe->failRuntimeSecondVisibilityOperation = true;
+    ControllerReadinessService failingService(std::move(failingFake), utilities);
+    const ManagedVisibilityTransactionResult shown = failingService.applyManagedPhysicalInputVisibility(
+        {primary, secondary}, false);
+    QVERIFY(!shown.succeeded);
+    QVERIFY(shown.status.contains(QStringLiteral("rolled back"), Qt::CaseInsensitive));
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-unhide ") + normalizedPrimary));
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-unhide ") + normalizedSecondary));
+    QVERIFY(failingProbe->calls.contains(QStringLiteral("--dev-hide ") + normalizedPrimary));
+    QVERIFY(failingProbe->hiddenDevices.contains(primary, Qt::CaseInsensitive));
+    QVERIFY(failingProbe->hiddenDevices.contains(secondary, Qt::CaseInsensitive));
 }
 
 int main(int argc, char *argv[])

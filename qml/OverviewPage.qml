@@ -76,6 +76,37 @@ Flickable {
         MouseArea { id: buttonMouse; anchors.fill: parent; enabled: parent.enabledAction; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
 
+    // Readiness is intentionally a small, stable dashboard row rather than a
+    // four-column mosaic. The old fixed grid made its final check compete with
+    // the verify command at ordinary desktop widths.
+    component ReadinessCheck: Rectangle {
+        required property var check
+        objectName: "readinessCheckCard"
+        Layout.fillWidth: true
+        implicitHeight: root.width < 700 ? 64 : 50
+        radius: theme.topGun ? 1 : theme.controlRadius
+        color: root.insetColor
+        border.color: root.borderColor
+        RowLayout {
+            anchors.fill: parent; anchors.margins: 9; spacing: 8
+            Rectangle {
+                width: 8; height: 8; radius: theme.topGun ? 0 : 4
+                color: check.severity === "ready" ? root.readyColor
+                     : check.severity === "error" ? root.dangerColor : root.warningColor
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 1
+                Text { Layout.fillWidth: true; text: check.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: check.detail || "Current setup status"; color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
+            }
+            StatusBadge {
+                label: check.state
+                tone: check.severity === "ready" ? root.readyColor
+                      : check.severity === "error" ? root.dangerColor : root.warningColor
+            }
+        }
+    }
+
     component Capability: Rectangle {
         property string value: "0"
         property string label: "AXES"
@@ -191,20 +222,15 @@ Flickable {
             }
         }
 
-        Panel { Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
-            GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 4; columnSpacing: 12; rowSpacing: 8
-                Repeater { model: backend.controllerReadinessChecks
-                    delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 44; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
-                        RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
-                            Rectangle { width: 8; height: 8; radius: theme.topGun ? 0 : 4; color: modelData.severity === "ready" ? root.readyColor : modelData.severity === "error" ? root.dangerColor : root.warningColor }
-                            ColumnLayout { Layout.fillWidth: true; spacing: 1
-                                Text { text: modelData.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: modelData.state; color: root.textColor; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                            }
-                        }
-                    }
+        Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
+            GridLayout { objectName: "systemReadinessGrid"; Layout.fillWidth: true; columns: root.width >= 1180 ? 2 : 1; columnSpacing: 12; rowSpacing: 8
+                Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: backend.controllerReadinessChecks
+                    delegate: ReadinessCheck { check: modelData }
                 }
-                DashboardButton { label: "VERIFY SETUP"; Layout.alignment: Qt.AlignVCenter; onTriggered: backend.verifyHotasSetup() }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: "Live setup checks for the selected controller and virtual output."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                DashboardButton { objectName: "systemReadinessVerifyButton"; label: "VERIFY SETUP"; onTriggered: backend.verifyHotasSetup() }
             }
         }
 
