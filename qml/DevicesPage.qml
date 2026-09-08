@@ -84,6 +84,28 @@ Page {
     }
     function openDevice(id) { if (rigDetailsActions.visible) rigDetailsActions.close(); selectedDeviceId = id; physicalDeviceDialog.open() }
     function openOutput(id) { if (rigDetailsActions.visible) rigDetailsActions.close(); selectedOutputId = id; outputDetailDialog.open() }
+    // The App Health shell sets the backend's editing context before this
+    // page is loaded. Complete the deep link here, where the relevant
+    // physical-device or Virtual Output detail surface actually exists.
+    function focusIssueTarget(target) {
+        const type = target && target.objectType !== undefined ? String(target.objectType) : ""
+        const id = target && target.objectId !== undefined ? String(target.objectId) : ""
+        if (!id) return false
+        const rig = selectedRig
+        if (type === "physicalDevice" && rig && rigHasMember(rig, id)) {
+            openDevice(id)
+            return true
+        }
+        if (type === "virtualOutput" && rig && hasOutput(rig, id)) {
+            openOutput(id)
+            return true
+        }
+        if (type === "gameVisibility" && rig) {
+            if (rigHasMember(rig, id)) { openDevice(id); return true }
+            if (hasOutput(rig, id)) { openOutput(id); return true }
+        }
+        return type === "deviceRig" && rig && rig.id === id
+    }
     // Device Context owns the editing scope. Keep this helper deliberately
     // single-target: multi-device selection remains available only through
     // the explicit top-bar picker.

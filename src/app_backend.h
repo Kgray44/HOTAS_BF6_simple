@@ -643,6 +643,10 @@ public:
     Q_INVOKABLE void verifyDeviceRig(const QString &rigId = {});
     Q_INVOKABLE bool setEditingDeviceContext(const QString &rigId,
                                              const QStringList &controllerRecordIds = {});
+    // App Health actions enter a persistent editing context before navigating
+    // to an owning page. This is intentionally a control-plane operation;
+    // input reports never call it.
+    Q_INVOKABLE bool focusIssueTarget(const QString &objectType, const QString &objectId);
     Q_INVOKABLE void recordCrashPresentationState(int page, const QString &theme);
     Q_INVOKABLE QVariantMap editingAxisBatchPreview(int physicalAxis, const QString &property,
                                                     const QVariant &value) const;

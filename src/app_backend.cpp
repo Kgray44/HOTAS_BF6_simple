@@ -184,15 +184,16 @@ QVariantMap issueNavigationTarget(const QString &code, const QString &objectType
                                   const QString &objectId)
 {
     int page = 3; // Diagnostics is the safe technical fallback.
-    if (objectType == u"physicalDevice"_qs || objectType == u"deviceRig"_qs
+    if (code == u"RoutingConflict"_qs || code == u"NoMappedControl"_qs
+        || objectType == u"axis"_qs) {
+        page = 0;
+    } else if (objectType == u"physicalDevice"_qs || objectType == u"deviceRig"_qs
         || objectType == u"virtualOutput"_qs || objectType == u"gameVisibility"_qs) {
         page = 10;
     } else if (objectType == u"profile"_qs) {
         page = 5;
     } else if (objectType == u"automation"_qs) {
         page = 7;
-    } else if (objectType == u"axis"_qs || code == u"RoutingConflict"_qs) {
-        page = 0;
     } else if (objectType == u"calibration"_qs || code == u"CalibrationRequired"_qs) {
         page = 2;
     }
@@ -3840,6 +3841,34 @@ bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList
     emit buttonTelemetryChanged();
     emit deviceRigsChanged();
     return true;
+}
+
+bool AppBackend::focusIssueTarget(const QString &objectType, const QString &objectId)
+{
+    const QString type = objectType.trimmed();
+    const QString id = objectId.trimmed();
+    if (type == u"deviceRig"_qs) return setEditingDeviceContext(id, {});
+    if (id.isEmpty()) return false;
+
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(), [&id](const DeviceRigMember &candidate) {
+            return candidate.controllerRecordId == id;
+        });
+        const auto output = std::find_if(rig.outputs.cbegin(), rig.outputs.cend(), [&id](const DeviceRigOutputTarget &candidate) {
+            return candidate.outputLayoutId == id;
+        });
+        if (type == u"physicalDevice"_qs && member != rig.members.cend()) {
+            return setEditingDeviceContext(rig.id, {id});
+        }
+        if (type == u"virtualOutput"_qs && output != rig.outputs.cend()) {
+            return setEditingDeviceContext(rig.id, {});
+        }
+        if (type == u"gameVisibility"_qs) {
+            if (member != rig.members.cend()) return setEditingDeviceContext(rig.id, {id});
+            if (output != rig.outputs.cend()) return setEditingDeviceContext(rig.id, {});
+        }
+    }
+    return false;
 }
 
 void AppBackend::recordCrashPresentationState(int page, const QString &theme)

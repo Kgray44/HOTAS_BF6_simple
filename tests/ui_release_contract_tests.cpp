@@ -572,6 +572,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantScopeType READ setupAssistantScopeType")));
     QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
     QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
+    QVERIFY(backendHeader.contains(QStringLiteral("focusIssueTarget")));
     QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
     QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
@@ -592,6 +593,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
     QVERIFY(standard.contains(QStringLiteral("standardAppHealthControl")));
     QVERIFY(standard.contains(QStringLiteral("navigateToIssue(target)")));
+    QVERIFY(standard.contains(QStringLiteral("backend.focusIssueTarget")));
+    QVERIFY(standard.contains(QStringLiteral("devices.focusIssueTarget(target)")));
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
     QVERIFY(assistant.contains(QStringLiteral("summary.visibleSteps")));
@@ -602,6 +605,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(devices.contains(QStringLiteral("Copy ")));
     QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
     QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
+    QVERIFY(devices.contains(QStringLiteral("function focusIssueTarget(target)")));
     QVERIFY(devices.contains(QStringLiteral("REFRESH DEVICES")));
     QVERIFY(devices.contains(QStringLiteral("SAVED / OFFLINE")));
     QVERIFY(devices.contains(QStringLiteral("savedOfflineControllerRepeater")));

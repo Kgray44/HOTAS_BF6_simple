@@ -76,8 +76,14 @@ Page {
     function loadedPage(page) { return pageItem(page) !== null }
     function navigateToIssue(target) {
         const destination = target && target.page !== undefined ? Number(target.page) : 3
+        if (target && backend && target.objectType !== undefined && target.objectId !== undefined)
+            backend.focusIssueTarget(String(target.objectType), String(target.objectId))
         currentPage = destination
         menuOpen = false
+        if (destination === 10 && target) Qt.callLater(function() {
+            const devices = pageItem(10)
+            if (devices && devices.focusIssueTarget) devices.focusIssueTarget(target)
+        })
     }
 
     function axisAt(index) { return allAxes[index] }

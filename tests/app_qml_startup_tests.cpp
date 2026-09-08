@@ -1392,7 +1392,7 @@ bool verifyThemedDialogHeader(QObject *popup, const QString &theme, const QStrin
     return true;
 }
 
-bool verifyAppHealthSurface(QObject *surface, const QString &theme)
+bool verifyAppHealthSurface(hotas::AppBackend &backend, QObject *surface, const QString &theme)
 {
     if (!surface) return failPresentationLifecycleTest(QStringLiteral("App Health has no presentation surface"));
     const QString controlName = theme == QStringLiteral("Legacy")
@@ -1413,8 +1413,20 @@ bool verifyAppHealthSurface(QObject *surface, const QString &theme)
     QQmlExpression navigate(qmlContext(surface), surface,
         QStringLiteral("navigateToIssue({ page: 10, objectType: 'deviceRig', objectId: 'fixture-rig' }); currentPage"));
     const QVariant navigationValue = navigate.evaluate();
-    const bool routedToDevices = !navigate.hasError() && navigationValue.toInt() == 10;
-    if (!popupVisible || !routedToDevices) {
+    const bool routedToDevices = !navigate.hasError() && navigationValue.toInt() == 10
+        && backend.editingDeviceRigId() == QStringLiteral("fixture-rig");
+    QQmlExpression deepLink(qmlContext(surface), surface,
+        QStringLiteral("navigateToIssue({ page: 10, objectType: 'physicalDevice', objectId: 'fixture-throttle' }); currentPage"));
+    const QVariant deepLinkValue = deepLink.evaluate();
+    settlePresentation();
+    QObject *devices = pageItem(surface, 10);
+    QObject *physicalDialog = surface->findChild<QObject *>(QStringLiteral("physicalDeviceDialog"));
+    const bool openedPhysicalTarget = !deepLink.hasError() && deepLinkValue.toInt() == 10
+        && backend.editingScopeLabel() == QStringLiteral("Fixture STECS") && devices
+        && devices->property("selectedDeviceId").toString() == QStringLiteral("fixture-throttle")
+        && physicalDialog && physicalDialog->property("visible").toBool();
+    if (physicalDialog) QMetaObject::invokeMethod(physicalDialog, "close");
+    if (!popupVisible || !routedToDevices || !openedPhysicalTarget) {
         return failPresentationLifecycleTest(QStringLiteral("App Health did not open or route its Device Rig review for %1").arg(theme));
     }
     return true;
@@ -1814,7 +1826,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     }
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
     if (!verifyAdaptiveSetupAssistantScenarios(backend)) return false;
-    if (!verifyAppHealthSurface(surface, theme)) return false;
+    if (!verifyAppHealthSurface(backend, surface, theme)) return false;
     if (!verifyDevicesInteractionStress(backend, surface)) return false;
     if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
     if (!verifyOverviewReadinessLayout(surface, shell, theme)) return false;
