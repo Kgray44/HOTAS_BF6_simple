@@ -853,6 +853,116 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
     return true;
 }
 
+bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
+{
+    const auto input = [](const QString &name, bool connected, bool verified, bool required = true,
+                          bool calibrationRequired = false) {
+        return QVariantMap{{QStringLiteral("id"), name.toLower().replace(u' ', u'-')},
+            {QStringLiteral("name"), name}, {QStringLiteral("saved"), true},
+            {QStringLiteral("connected"), connected}, {QStringLiteral("verified"), verified},
+            {QStringLiteral("required"), required}, {QStringLiteral("calibrationRequired"), calibrationRequired},
+            {QStringLiteral("ambiguous"), false}};
+    };
+    const auto healthyFacts = [&input]() {
+        return QVariantMap{{QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, true)}},
+            {QStringLiteral("outputs"), QVariantList{QVariantMap{{QStringLiteral("id"), QStringLiteral("bf6-output")}, {QStringLiteral("name"), QStringLiteral("BF6 Output")}}}},
+            {QStringLiteral("vjoyInstalled"), true}, {QStringLiteral("vjoyPresent"), true},
+            {QStringLiteral("vjoySufficient"), true}, {QStringLiteral("hidhideInstalled"), true},
+            {QStringLiteral("hidhideReady"), true}, {QStringLiteral("physicalVisible"), false},
+            {QStringLiteral("outputHidden"), false}, {QStringLiteral("routingConflict"), false},
+            {QStringLiteral("liveInputPending"), false}, {QStringLiteral("liveOutputPending"), false}};
+    };
+    struct SetupCase {
+        QString label;
+        QVariantMap facts;
+        QString code;
+        QString title;
+        QString action;
+        QString category;
+        QString state;
+    };
+    QVariantMap firstTime = healthyFacts();
+    firstTime.insert(QStringLiteral("inputs"), QVariantList{});
+    QVariantMap savedOffline = healthyFacts();
+    savedOffline.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), false, true)});
+    QVariantMap savedUnverifiedOffline = healthyFacts();
+    savedUnverifiedOffline.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("Xbox Controller"), false, false)});
+    QVariantMap unverified = healthyFacts();
+    unverified.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, false)});
+    QVariantMap calibration = healthyFacts();
+    calibration.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, true, true, true)});
+    QVariantMap hidHideMissing = healthyFacts();
+    hidHideMissing.insert(QStringLiteral("hidhideInstalled"), false);
+    hidHideMissing.insert(QStringLiteral("hidhideReady"), false);
+    QVariantMap physicalVisible = healthyFacts();
+    physicalVisible.insert(QStringLiteral("physicalVisible"), true);
+    QVariantMap outputHidden = healthyFacts();
+    outputHidden.insert(QStringLiteral("outputHidden"), true);
+    QVariantMap vjoyMissing = healthyFacts();
+    vjoyMissing.insert(QStringLiteral("vjoyInstalled"), false);
+    vjoyMissing.insert(QStringLiteral("vjoyPresent"), false);
+    QVariantMap vjoyMisconfigured = healthyFacts();
+    vjoyMisconfigured.insert(QStringLiteral("vjoySufficient"), false);
+    vjoyMisconfigured.insert(QStringLiteral("missingCapabilities"), QStringLiteral("This output needs Rz and 15 buttons for the current setup."));
+    QVariantMap vjoyBusy = healthyFacts();
+    vjoyBusy.insert(QStringLiteral("vjoyBusy"), true);
+    QVariantMap routingConflict = healthyFacts();
+    routingConflict.insert(QStringLiteral("routingConflict"), true);
+    routingConflict.insert(QStringLiteral("routingDetails"), QStringLiteral("Two controls are using the same output."));
+    QVariantMap liveInput = healthyFacts();
+    liveInput.insert(QStringLiteral("liveInputPending"), true);
+    QVariantMap liveOutput = healthyFacts();
+    liveOutput.insert(QStringLiteral("liveOutputPending"), true);
+    QVariantMap requiredOfflineMulti = healthyFacts();
+    requiredOfflineMulti.insert(QStringLiteral("inputs"), QVariantList{
+        input(QStringLiteral("Gladiator"), false, true, true), input(QStringLiteral("T-Rudder"), false, true, false)});
+    QVariantMap optionalOfflineMulti = healthyFacts();
+    optionalOfflineMulti.insert(QStringLiteral("inputs"), QVariantList{
+        input(QStringLiteral("Gladiator"), true, true, true), input(QStringLiteral("T-Rudder"), false, true, false)});
+    const QList<SetupCase> cases{
+        {QStringLiteral("first-time no device"), firstTime, QStringLiteral("PhysicalDeviceMissing"), QStringLiteral("Let's set up your controller"), QStringLiteral("check-again"), QStringLiteral("PhysicalInput"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("saved device offline"), savedOffline, QStringLiteral("PhysicalDeviceOffline"), QStringLiteral("Reconnect your T.Flight HOTAS One"), QStringLiteral("check-again"), QStringLiteral("PhysicalInput"), QStringLiteral("OFFLINE")},
+        {QStringLiteral("saved unverified device offline"), savedUnverifiedOffline, QStringLiteral("PhysicalDeviceOffline"), QStringLiteral("Reconnect your Xbox Controller"), QStringLiteral("check-again"), QStringLiteral("PhysicalInput"), QStringLiteral("OFFLINE")},
+        {QStringLiteral("unverified connected device"), unverified, QStringLiteral("PhysicalDeviceUnverified"), QStringLiteral("Finish setting up your T.Flight HOTAS One"), QStringLiteral("set-up-device"), QStringLiteral("PhysicalInput"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("calibration required"), calibration, QStringLiteral("CalibrationRequired"), QStringLiteral("Calibrate your controller"), QStringLiteral("start-calibration"), QStringLiteral("Calibration"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("HidHide unavailable"), hidHideMissing, QStringLiteral("HidHideUnavailable"), QStringLiteral("Game visibility protection needs setup"), QStringLiteral("setup-hidhide"), QStringLiteral("Driver"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("physical input visible"), physicalVisible, QStringLiteral("PhysicalInputVisible"), QStringLiteral("Hide your physical controller from games"), QStringLiteral("hide-from-games"), QStringLiteral("Visibility"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("virtual output hidden"), outputHidden, QStringLiteral("VirtualOutputHidden"), QStringLiteral("Show your virtual controller to games"), QStringLiteral("check-again"), QStringLiteral("Visibility"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("vJoy missing"), vjoyMissing, QStringLiteral("VirtualOutputMissing"), QStringLiteral("Virtual controller driver needed"), QStringLiteral("setup-vjoy"), QStringLiteral("Driver"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("vJoy misconfigured"), vjoyMisconfigured, QStringLiteral("VirtualOutputMisconfigured"), QStringLiteral("BF6 Output needs different capabilities"), QStringLiteral("reconfigure-output"), QStringLiteral("VirtualOutput"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("vJoy busy"), vjoyBusy, QStringLiteral("VirtualOutputBusy"), QStringLiteral("BF6 Output is already in use"), QStringLiteral("check-again"), QStringLiteral("VirtualOutput"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("routing conflict"), routingConflict, QStringLiteral("RoutingConflict"), QStringLiteral("Review routing"), QStringLiteral("review-routing"), QStringLiteral("Routing"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("live input pending"), liveInput, QStringLiteral("LiveInputNotTested"), QStringLiteral("Setup looks good — let's test it"), QStringLiteral("start-live-test"), QStringLiteral("LiveInput"), QStringLiteral("WAITING")},
+        {QStringLiteral("live output pending"), liveOutput, QStringLiteral("LiveOutputNotTested"), QStringLiteral("Setup looks good — let's test it"), QStringLiteral("start-live-test"), QStringLiteral("LiveOutput"), QStringLiteral("WAITING")},
+        {QStringLiteral("fully ready"), healthyFacts(), QString(), QStringLiteral("Your setup is ready"), QStringLiteral("done"), QString(), QStringLiteral("READY")},
+        {QStringLiteral("multi-device required offline"), requiredOfflineMulti, QStringLiteral("PhysicalDeviceOffline"), QStringLiteral("Reconnect your Gladiator"), QStringLiteral("check-again"), QStringLiteral("PhysicalInput"), QStringLiteral("OFFLINE")},
+        {QStringLiteral("multi-device optional offline"), optionalOfflineMulti, QString(), QStringLiteral("Your setup is ready"), QStringLiteral("done"), QString(), QStringLiteral("READY")},
+    };
+    for (const SetupCase &scenario : cases) {
+        backend.setSetupAssistantFactsForTest(scenario.facts);
+        const QVariantMap summary = backend.setupAssistantSummary();
+        const QVariantMap primary = summary.value(QStringLiteral("primaryIssue")).toMap();
+        const QVariantList steps = summary.value(QStringLiteral("visibleSteps")).toList();
+        if (summary.value(QStringLiteral("state")).toString() != scenario.state
+            || summary.value(QStringLiteral("title")).toString() != scenario.title
+            || summary.value(QStringLiteral("primaryAction")).toString() != scenario.action
+            || primary.value(QStringLiteral("code")).toString() != scenario.code
+            || primary.value(QStringLiteral("category")).toString() != scenario.category
+            || (scenario.code.isEmpty() ? !steps.isEmpty() : steps.isEmpty()
+                || steps.front().toMap().value(QStringLiteral("category")).toString().isEmpty())) {
+            backend.setSetupAssistantFactsForTest({});
+            return failPresentationLifecycleTest(QStringLiteral("Setup Assistant scenario did not present the expected diagnosis: %1").arg(scenario.label));
+        }
+        if (scenario.label == QStringLiteral("multi-device optional offline")
+            && !summary.value(QStringLiteral("secondaryMessage")).toString().contains(QStringLiteral("optional and currently offline"))) {
+            backend.setSetupAssistantFactsForTest({});
+            return failPresentationLifecycleTest(QStringLiteral("Optional offline controller was not presented as a non-blocking note"));
+        }
+    }
+    backend.setSetupAssistantFactsForTest({});
+    return true;
+}
+
 bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface)
 {
     if (!selectPage(surface, 10)) return false;
@@ -937,7 +1047,7 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     const QVariant invalidResult = invalidCreate.evaluate();
     if (!feedback || invalidCreate.hasError() || invalidResult.toMap().value(QStringLiteral("success")).toBool()
         || !devices->property("actionFeedback").toMap().value(QStringLiteral("message")).toString().contains(
-            QStringLiteral("Connect or select at least one physical device"))
+            QStringLiteral("Connect a controller to create your first Device Rig"))
         || !feedback->property("visible").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("Invalid CREATE RIG did not expose its physical-controller error"));
     }
@@ -951,6 +1061,18 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
             QStringLiteral("title")).toString().contains(QStringLiteral("Device Rig created"))
         || !backend.deleteDeviceRig(createdByAction)) {
         return failPresentationLifecycleTest(QStringLiteral("Valid CREATE RIG did not expose a success result"));
+    }
+    // Saved offline controllers are configuration targets, not a mere history
+    // list.  This deliberately uses the known-offline, unverified fixture and
+    // verifies that the new rig proceeds to guided setup instead of requiring
+    // a current DirectInput connection.
+    const QVariantMap offlineRig = backend.createDeviceRigResult(
+        QStringLiteral("Offline Configuration Fixture Rig"), {secondMember}, outputId);
+    const QString offlineRigId = offlineRig.value(QStringLiteral("objectId")).toString();
+    if (!offlineRig.value(QStringLiteral("success")).toBool() || offlineRigId.isEmpty()
+        || offlineRig.value(QStringLiteral("nextAction")).toString() != QStringLiteral("setup")
+        || !backend.deleteDeviceRig(offlineRigId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Saved offline controller could not create a configurable Device Rig"));
     }
     settlePresentation();
 
@@ -1627,6 +1749,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
         return failPresentationLifecycleTest(QStringLiteral("profile import state was not preserved across unload"));
     }
     if (!verifyAxisRouteTransactionAndPresentation(backend, surface)) return false;
+    if (!verifyAdaptiveSetupAssistantScenarios(backend)) return false;
     if (!verifyDevicesInteractionStress(backend, surface)) return false;
     if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
     if (!verifyOverviewReadinessLayout(surface, shell, theme)) return false;

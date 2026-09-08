@@ -16,6 +16,7 @@ Item {
     property var actionResult: ({})
     readonly property var summary: backendObject ? backendObject.setupAssistantSummary : ({})
     readonly property var issues: backendObject ? backendObject.setupAssistantIssues : []
+    readonly property var primaryIssue: summary.primaryIssue || (issues.length > 0 ? issues[0] : ({}))
     readonly property var liveTest: {
         liveTick
         return backendObject ? backendObject.setupAssistantLiveTest : ({ active: false, complete: false, steps: [] })
@@ -40,16 +41,34 @@ Item {
         if (state === "ERROR" || state === "error" || state === "offline") return dangerColor
         return warningColor
     }
-    function firstIssue() { return issues.length > 0 ? issues[0] : ({}) }
+    function firstIssue() { return primaryIssue }
     function showActionResult(result) {
         actionResult = result || ({ success: false, title: "Action did not complete", message: "Try checking setup again." })
     }
     function performPrimaryAction() {
         if (!backendObject) return
-        const action = summary.primaryAction || "check-setup"
+        const action = summary.primaryAction || "check-again"
         if (action === "done") { closeRequested(); return }
-        if (action === "fix") { fixConfirmation.open(); return }
+        if (action === "hide-from-games") { fixConfirmation.open(); return }
         if (action === "start-live-test") { showActionResult(backendObject.startSetupAssistantLiveTest()); detailsExpanded = true; return }
+        if (action === "start-calibration") { calibrationRequested(); return }
+        if (action === "setup-vjoy" || action === "reconfigure-output") {
+            const opened = backendObject.openVjoyConfiguration()
+            showActionResult({ success: opened, title: opened ? "vJoy configuration opened" : "vJoy configuration could not open",
+                message: opened ? "Configure the requested virtual controller, then return here and choose Check Again." : "Install or repair the vJoy configuration tool, then try again." })
+            return
+        }
+        if (action === "setup-hidhide") {
+            const opened = backendObject.openHidHideConfiguration()
+            showActionResult({ success: opened, title: opened ? "Game visibility setup opened" : "Game visibility setup could not open",
+                message: opened ? "Complete the game visibility setup, then return here and choose Check Again." : "Install or repair HidHide, then try again." })
+            return
+        }
+        if (action === "review-routing") {
+            detailsExpanded = true
+            showActionResult({ success: true, title: "Review routing", message: "The routing details below identify the controls that need attention." })
+            return
+        }
         showActionResult(backendObject.startSetupAssistantCheck())
     }
     function nextLivePrompt() {
@@ -101,22 +120,44 @@ Item {
 
         ColumnLayout {
             Layout.fillWidth: true; spacing: 8; visible: root.summary.state !== "READY"
-            Text { Layout.fillWidth: true; text: root.firstIssue().title || "What needs attention"; color: root.textColor; font.pixelSize: 15; font.bold: true; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: root.firstIssue().explanation || "HOTAS BF6 will guide you through the next step."; color: root.mutedColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; visible: root.firstIssue().recommendedAction === "fix"; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap
+            Text { Layout.fillWidth: true; text: root.primaryIssue.title || "What needs attention"; color: root.textColor; font.pixelSize: 15; font.bold: true; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.primaryIssue.explanation || "HOTAS BF6 will guide you through the next step."; color: root.mutedColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; visible: root.primaryIssue.recommendedAction === "hide-from-games"; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap
                 text: "HOTAS BF6 will keep reading your controller, change only the selected game-visibility settings, and leave unrelated devices alone." }
         }
 
         ColumnLayout {
             Layout.fillWidth: true; spacing: 7; visible: root.summary.state === "READY"
             Text { Layout.fillWidth: true; text: "✓ Physical controller detected\n✓ Virtual controller ready\n✓ Game visibility checked\n✓ Controls ready to test"; color: root.textColor; font.pixelSize: 11; lineHeight: 1.4 }
+            Text { Layout.fillWidth: true; visible: !!root.summary.secondaryMessage; text: root.summary.secondaryMessage || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+        }
+
+        // The backend chooses these from the structured setup issue.  Keep the
+        // first view focused on the relevant next task rather than making a
+        // new HOTAS owner decode a fixed diagnostics checklist.
+        Repeater {
+            model: root.summary.visibleSteps || []
+            delegate: Rectangle {
+                required property var modelData
+                objectName: "setupAssistantRelevantStep"
+                Layout.fillWidth: true
+                Layout.preferredHeight: relevantStepContents.implicitHeight + 20
+                color: root.panelColor; border.color: root.borderColor; radius: root.radius
+                ColumnLayout {
+                    id: relevantStepContents
+                    anchors.fill: parent; anchors.margins: 10; spacing: 4
+                    Text { text: "NEXT STEP  ·  " + (modelData.category || "SETUP").toUpperCase(); color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                    Text { Layout.fillWidth: true; text: modelData.title || "Continue setup"; color: root.textColor; font.pixelSize: 12; font.bold: true; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: modelData.message || "HOTAS BF6 will guide you through this step."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                }
+            }
         }
 
         RowLayout {
             Layout.fillWidth: true; spacing: 8
             ThemedButton { theme: root.themeTokens; text: root.summary.primaryActionLabel || "CHECK SETUP"; emphasis: "ready"
                 commandEnabled: root.backendObject && !root.backendObject.controllerSetupInProgress; onTriggered: root.performPrimaryAction() }
-            ThemedButton { theme: root.themeTokens; text: root.detailsExpanded ? "HIDE STEPS" : "VIEW DETAILS"; tone: "secondary"; onTriggered: root.detailsExpanded = !root.detailsExpanded }
+            ThemedButton { theme: root.themeTokens; text: root.detailsExpanded ? "HIDE ALL SETUP DETAILS" : "VIEW ALL SETUP DETAILS"; tone: "secondary"; onTriggered: root.detailsExpanded = !root.detailsExpanded }
             Item { Layout.fillWidth: true }
             ThemedButton { theme: root.themeTokens; text: root.summary.state === "READY" ? "DONE" : "CLOSE"; tone: "secondary"; onTriggered: root.closeRequested() }
         }
@@ -156,7 +197,7 @@ Item {
                 ColumnLayout { id: visibilityStep; anchors.fill: parent; anchors.margins: 11; spacing: 6
                     Text { text: "STEP 3  ·  GAME VISIBILITY"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
                     Text { Layout.fillWidth: true; text: root.issues.filter(function(issue) { return issue.category === "Visibility" }).length > 0 ? "A physical controller is visible to games. This can cause duplicate controls." : "Physical controllers are checked so games can use the clean virtual controller."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                    ThemedButton { theme: root.themeTokens; visible: root.issues.filter(function(issue) { return issue.category === "Visibility" }).length > 0; text: "HIDE FROM GAMES"; emphasis: "ready"; commandEnabled: root.backendObject && root.firstIssue().automaticallyFixable; onTriggered: fixConfirmation.open() }
+                    ThemedButton { theme: root.themeTokens; visible: root.primaryIssue.code === "PhysicalInputVisible"; text: "HIDE FROM GAMES"; emphasis: "ready"; commandEnabled: root.backendObject && root.primaryIssue.automaticallyFixable; onTriggered: fixConfirmation.open() }
                 }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: liveSteps.implicitHeight + 22; color: root.panelColor; border.color: root.borderColor; radius: root.radius
@@ -172,7 +213,7 @@ Item {
                     }
                     RowLayout { Layout.fillWidth: true
                         ThemedButton { theme: root.themeTokens; text: root.liveTest.active ? "TEST RUNNING" : "START LIVE TEST"; emphasis: "ready"; commandEnabled: root.backendObject && !root.liveTest.active; onTriggered: root.showActionResult(root.backendObject.startSetupAssistantLiveTest()) }
-                        ThemedButton { theme: root.themeTokens; text: "START CALIBRATION"; tone: "secondary"; emphasis: "warning"; commandEnabled: root.backendObject && !root.backendObject.calibrationActive; onTriggered: root.calibrationRequested() }
+                        ThemedButton { theme: root.themeTokens; visible: root.primaryIssue.code === "CalibrationRequired"; text: "START CALIBRATION"; tone: "secondary"; emphasis: "warning"; commandEnabled: root.backendObject && !root.backendObject.calibrationActive; onTriggered: root.calibrationRequested() }
                         Item { Layout.fillWidth: true }
                         Text { visible: root.liveTest.complete; text: "✓ COMPLETE"; color: root.readyColor; font.pixelSize: 10; font.bold: true }
                     }

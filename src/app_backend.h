@@ -238,6 +238,11 @@ public:
     // compare editor/configuration state with the runtime route at a safe
     // control-plane boundary, never from a DirectInput report.
     QVariantList runtimeAxisRoutesForTest() const;
+    // Test-only structured Setup Assistant input. Production derives the
+    // same facts from durable device records and low-frequency readiness
+    // snapshots; tests use this seam to cover each user-visible diagnosis
+    // without requiring real controllers or driver installation state.
+    void setSetupAssistantFactsForTest(const QVariantMap &facts);
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
@@ -896,6 +901,7 @@ private:
     quint64 m_setupAssistantOutputBaseline = 0;
     std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
     std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
+    QVariantMap m_setupAssistantTestFacts;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.

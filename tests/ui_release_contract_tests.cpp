@@ -561,16 +561,24 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
 
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantIssues READ setupAssistantIssues")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
     QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
-    QVERIFY(backend.contains(QStringLiteral("Connect or select at least one physical device to create a Device Rig.")));
+    QVERIFY(backend.contains(QStringLiteral("Connect a controller to create your first Device Rig.")));
     QVERIFY(backend.contains(QStringLiteral("match-physical")));
     QVERIFY(backend.contains(QStringLiteral("copy-output")));
     QVERIFY(backend.contains(QStringLiteral("continuousPovs")));
     QVERIFY(backend.contains(QStringLiteral("discretePovs")));
+    QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceOffline")));
+    QVERIFY(backend.contains(QStringLiteral("OptionalDeviceOffline")));
+    QVERIFY(backend.contains(QStringLiteral("VirtualOutputBusy")));
+    QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
+    QVERIFY(!backend.contains(QStringLiteral("name.startsWith(u\"INPUT")));
+    QVERIFY(!backend.contains(QStringLiteral("name.contains(u\"VISIBILITY")));
     QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
+    QVERIFY(assistant.contains(QStringLiteral("summary.visibleSteps")));
     QVERIFY(assistant.contains(QStringLiteral("VIEW TECHNICAL DETAILS")));
     QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
     QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
@@ -579,6 +587,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
     QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("REFRESH DEVICES")));
+    QVERIFY(devices.contains(QStringLiteral("SAVED / OFFLINE")));
+    QVERIFY(devices.contains(QStringLiteral("savedOfflineControllerRepeater")));
     QVERIFY(!devices.contains(QStringLiteral("NOT ADOPTED")));
     QVERIFY(!devices.contains(QStringLiteral("HID identity")));
     QVERIFY(!devices.contains(QStringLiteral("CREATE & VERIFY")));

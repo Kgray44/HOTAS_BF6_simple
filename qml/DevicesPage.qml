@@ -34,6 +34,19 @@ Page {
             if (!controllers[i].ambiguous && (controllers[i].id !== "" || controllers[i].directInputId !== "")) ++count
         return count
     }
+    function connectedPhysicalControllers() {
+        return controllers.filter(function(item) { return !!item.connected && !item.ambiguous && (item.id !== "" || item.directInputId !== "") })
+    }
+    function savedOfflinePhysicalControllers() {
+        return controllers.filter(function(item) { return !item.connected && item.id !== "" && !item.ambiguous })
+    }
+    function availableRigMemberChoices() {
+        return controllers.filter(function(item) {
+            return item.id !== "" && !item.ambiguous && !root.rigHasMember(root.selectedRig, item.id)
+        }).map(function(item) {
+            return { id: item.id, name: item.name + (item.connected ? " · Connected" : " · Saved / Offline") }
+        })
+    }
     function showActionFeedback(result, fallbackTitle, fallbackMessage) {
         actionFeedback = result && result.title ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage })
         return actionFeedback
@@ -244,11 +257,11 @@ Page {
                     anchors.fill: parent; anchors.margins: 16; spacing: 8
                     SmallLabel { text: "BUILD YOUR FIRST DEVICE RIG" }
                     Text { Layout.fillWidth: true; text: "No physical controllers detected"; color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true }
-                    Text { Layout.fillWidth: true; text: "Connect a physical controller, then create a Device Rig and choose a virtual controller for your game."; color: themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "Connect a controller to create your first Device Rig."; color: themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true
                         ThemedButton { objectName: "refreshDevicesButton"; theme: themeTokens; text: "REFRESH DEVICES"; tone: "secondary"
                             onTriggered: { backendObject.refreshControllers(); root.showActionFeedback({ success: true, title: "Refreshing devices", message: "HOTAS BF6 is looking for connected physical controllers." }) } }
-                        Text { Layout.fillWidth: true; text: "Connect or select a physical controller first."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: "No saved or connected physical controllers are available yet."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     }
                 }
             }
@@ -762,7 +775,7 @@ Page {
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             Text { Layout.fillWidth: true; text: "Add a saved physical controller to this rig. Its calibration and existing mappings remain intact."; color: themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            ThemedComboBox { id: memberPicker; theme: themeTokens; Layout.fillWidth: true; model: controllers.filter(function(item) { return item.id !== "" && !item.ambiguous && !root.rigHasMember(root.selectedRig, item.id) }); textRole: "name"; valueRole: "id" }
+            ThemedComboBox { id: memberPicker; theme: themeTokens; Layout.fillWidth: true; model: root.availableRigMemberChoices(); textRole: "name"; valueRole: "id" }
             ThemedCheckBox { id: addMemberOptional; theme: themeTokens; text: "Optional accessory"; checked: false }
             RowLayout {
                 Layout.fillWidth: true
@@ -1176,18 +1189,23 @@ Page {
         modal: true; title: "Create Device Rig"
         anchors.centerIn: parent; width: Math.min(560, root.width - 48)
         property string outputLayoutId: ""
-        function selectedControllerIds() {
+        function selectedFrom(repeater) {
             let ids = []
-            for (let i = 0; i < controllerRepeater.count; ++i) {
-                const item = controllerRepeater.itemAt(i)
-                if (item && item.visible && item.checked) ids.push(item.controllerId)
+            for (let i = 0; i < repeater.count; ++i) {
+                const item = repeater.itemAt(i)
+                if (item && item.checked) ids.push(item.controllerId)
             }
             return ids
         }
+        function selectedControllerIds() {
+            return selectedFrom(connectedControllerRepeater).concat(selectedFrom(savedOfflineControllerRepeater))
+        }
         function selectedControllersNeedSetup() {
-            for (let i = 0; i < controllerRepeater.count; ++i) {
-                const item = controllerRepeater.itemAt(i)
-                if (item && item.visible && item.checked && !item.verified) return true
+            for (const repeater of [connectedControllerRepeater, savedOfflineControllerRepeater]) {
+                for (let i = 0; i < repeater.count; ++i) {
+                    const item = repeater.itemAt(i)
+                    if (item && item.checked && !item.verified) return true
+                }
             }
             return false
         }
@@ -1209,16 +1227,29 @@ Page {
             Text { Layout.fillWidth: true; text: "Choose the physical controllers and virtual controller that belong together. HOTAS BF6 will guide you through setup after the rig is created."; wrapMode: Text.WordWrap; color: themeTokens.text }
             SmallLabel { text: "1  ·  RIG AND INPUTS" }
             ThemedTextInput { id: rigName; theme: themeTokens; Layout.fillWidth: true; placeholderText: "Rig name, for example BF6 Flight Rig" }
+            SmallLabel { visible: root.connectedPhysicalControllers().length > 0; text: "CONNECTED" }
             Repeater {
-                id: controllerRepeater
-                model: controllers
+                id: connectedControllerRepeater
+                model: root.connectedPhysicalControllers()
                 delegate: ThemedCheckBox {
                     required property var modelData
                     theme: themeTokens
                     property string controllerId: modelData.id || modelData.directInputId || ""
                     property bool verified: !!modelData.verified
-                    visible: controllerId !== "" && !modelData.ambiguous
-                    text: modelData.name + (modelData.connected ? (verified ? "  ·  Connected" : "  ·  Connected · Setup needed") : "  ·  Saved / Offline")
+                    text: modelData.name + (verified ? "  ·  Connected · Verified" : "  ·  Connected · Needs setup")
+                    checked: !!modelData.selected
+                }
+            }
+            SmallLabel { visible: root.savedOfflinePhysicalControllers().length > 0; text: "SAVED / OFFLINE" }
+            Repeater {
+                id: savedOfflineControllerRepeater
+                model: root.savedOfflinePhysicalControllers()
+                delegate: ThemedCheckBox {
+                    required property var modelData
+                    theme: themeTokens
+                    property string controllerId: modelData.id
+                    property bool verified: !!modelData.verified
+                    text: modelData.name + (verified ? "  ·  Offline · Verified" : "  ·  Offline · Needs setup")
                     checked: !!modelData.selected
                 }
             }
@@ -1237,7 +1268,7 @@ Page {
             SmallLabel { text: "3  ·  REVIEW" }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 11
                 text: createRigDialog.selectedControllerIds().length === 0
-                    ? "Connect or select at least one physical device to create a Device Rig."
+                    ? "Connect a controller to create your first Device Rig."
                     : "This rig will use “" + createRigDialog.selectedOutputName() + "”. If a selected controller needs setup, the Setup Assistant will open next." }
             RowLayout {
                 Layout.fillWidth: true
