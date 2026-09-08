@@ -29,6 +29,7 @@ Page {
     // host continues to own every route, dialog, and backend command.
     property bool flightDeckMode: false
     property var flightDeckReadiness: null
+    property string flightDeckDevicesContext: ""
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -1470,6 +1471,10 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 onNavigateToPage: root.currentPage = page
+                onNavigateToDevices: function(context) {
+                    root.flightDeckDevicesContext = context
+                    root.currentPage = 2
+                }
             }
         }
         Loader {
@@ -1860,8 +1865,20 @@ Page {
             id: calibrationPageLoader
             anchors.fill: parent
             active: root.currentPage === 2
-            sourceComponent: Component {
-        Flickable {
+            sourceComponent: root.flightDeckMode ? flightDeckDevicesComponent : calibrationPageComponent
+        }
+        Component {
+            id: flightDeckDevicesComponent
+            FlightDeckDevices {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                requestedContext: root.flightDeckDevicesContext
+                onNavigateToPage: function(page) { root.currentPage = page }
+            }
+        }
+        Component {
+            id: calibrationPageComponent
+            Flickable {
             id: calibrationPage
             anchors.fill: parent
  visible: root.currentPage === 2

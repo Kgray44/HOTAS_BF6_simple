@@ -2314,6 +2314,56 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input action did not route to the existing setup page"));
     }
+    settlePresentation();
+    QObject *devices = pageItem(surface, 2);
+    if (!devices || devices->objectName() != QStringLiteral("flightDeckDevices")
+        || devices->property("requestedContext").toString() != QStringLiteral("controllers")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input recovery did not load native Devices in controller context"));
+    }
+    const auto deviceValue = [&](const QString &expression) {
+        QQmlExpression call(qmlContext(devices), devices, expression);
+        const QVariant value = call.evaluate();
+        if (call.hasError()) {
+            qCritical().noquote() << call.error().toString();
+            return QVariant{};
+        }
+        return value;
+    };
+    if (!devices->findChild<QObject *>(QStringLiteral("flightDeckNoControllers"))
+        || deviceValue(QStringLiteral("controllerState({connected:false, verified:true})")).toString()
+            != QStringLiteral("Disconnected")
+        || deviceValue(QStringLiteral("controllerState({connected:true, verified:false, ambiguous:false})")).toString()
+            != QStringLiteral("Setup required")
+        || deviceValue(QStringLiteral("controllerState({connected:true, verified:true, active:true})")).toString()
+            != QStringLiteral("Connected · active")
+        || deviceValue(QStringLiteral("toneFor({state:'ACTION REQUIRED', severity:'error'})")).toString()
+            != QStringLiteral("fault")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Devices state presentation is incomplete"));
+    }
+    if (!selectPage(surface, 8)) return false;
+    overview = pageItem(surface, 8);
+    QObject *outputHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthOutput")) : nullptr;
+    if (!outputHealth || !QMetaObject::invokeMethod(outputHealth, "actionRequested")
+        || surface->property("currentPage").toInt() != 2) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck virtual-output recovery did not deep-link to Devices"));
+    }
+    settlePresentation();
+    devices = pageItem(surface, 2);
+    if (!devices || devices->property("requestedContext").toString() != QStringLiteral("virtual-output")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck virtual-output recovery did not target virtual output"));
+    }
+    if (!selectPage(surface, 8)) return false;
+    overview = pageItem(surface, 8);
+    QObject *isolationHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthIsolation")) : nullptr;
+    if (!isolationHealth || !QMetaObject::invokeMethod(isolationHealth, "actionRequested")
+        || surface->property("currentPage").toInt() != 2) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck isolation recovery did not deep-link to Devices"));
+    }
+    settlePresentation();
+    devices = pageItem(surface, 2);
+    if (!devices || devices->property("requestedContext").toString() != QStringLiteral("isolation")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck isolation recovery did not target isolation"));
+    }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
     gameHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame")) : nullptr;
@@ -2373,6 +2423,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at normal size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices empty state did not render")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 8)) return false;
     if (!visualOutputDirectory.isEmpty()) {
         // This deterministic visual-only state exercises the ready hierarchy.
         // Production Flight Deck never assigns this override; its visible
@@ -2423,6 +2478,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at minimum size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices minimum state did not render")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 8)) return false;
     auto *navigationViewport = surface->findChild<QQuickItem *>(
         QStringLiteral("flightDeckNavigationViewport"));
     auto *readiness = surface->findChild<QQuickItem *>(QStringLiteral("flightDeckReadiness"));
@@ -2450,6 +2510,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at expanded size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices expanded state did not render")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 8)) return false;
     return true;
 }
 

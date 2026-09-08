@@ -10,6 +10,7 @@ Flickable {
     objectName: "flightDeckOverview"
     property var readinessModel
     signal navigateToPage(int page)
+    signal navigateToDevices(string context)
 
     readonly property bool wide: width >= 900
     readonly property var readiness: readinessModel ? readinessModel.readiness : ({})
@@ -271,7 +272,7 @@ Flickable {
                 detail: input.detail || ""
                 tone: input.tone || "informational"
                 actionLabel: "OPEN SETUP"
-                onActionRequested: root.navigateToPage(2)
+                onActionRequested: root.navigateToDevices("controllers")
             }
             FlightDeckHealthCard {
                 objectName: "flightDeckHealthOutput"
@@ -280,13 +281,8 @@ Flickable {
                 title: output.title || "Checking"
                 detail: output.detail || ""
                 tone: output.tone || "informational"
-                actionLabel: backend.vjoyReady ? "OPEN DIAGNOSTICS" : "OPEN VJOY SETUP"
-                onActionRequested: {
-                    if (backend.vjoyReady)
-                        root.navigateToPage(3);
-                    else
-                        backend.openVjoyConfiguration();
-                }
+                actionLabel: "OPEN VIRTUAL OUTPUT"
+                onActionRequested: root.navigateToDevices("virtual-output")
             }
             FlightDeckHealthCard {
                 objectName: "flightDeckHealthIsolation"
@@ -295,13 +291,8 @@ Flickable {
                 title: isolation.title || "Checking"
                 detail: isolation.detail || ""
                 tone: isolation.tone || "informational"
-                actionLabel: isolation.tone === "healthy" ? "OPEN DIAGNOSTICS" : "OPEN HIDHIDE"
-                onActionRequested: {
-                    if (isolation.tone === "healthy")
-                        root.navigateToPage(3);
-                    else
-                        backend.openHidHideConfiguration();
-                }
+                actionLabel: "OPEN ISOLATION"
+                onActionRequested: root.navigateToDevices("isolation")
             }
             FlightDeckHealthCard {
                 objectName: "flightDeckHealthGame"
