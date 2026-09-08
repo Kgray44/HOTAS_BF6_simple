@@ -2234,6 +2234,104 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     return selectPage(surface, 8);
 }
 
+bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &themeManager,
+                           const QString &appearance)
+{
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapperStartupTest"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return failPresentationLifecycleTest(QStringLiteral("Flight Deck window did not load"));
+
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    QObject *tokens = window->findChild<QObject *>(QStringLiteral("flightDeckTheme"));
+    if (!surface || !tokens || tokens->property("light").toBool()
+        != (appearance == QStringLiteral("Light"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 resources did not resolve")
+            .arg(appearance));
+    }
+
+    for (const int page : {8, 0, 5, 9}) {
+        auto *nav = findVisualItemByObjectName(window->contentItem(),
+            QStringLiteral("flightDeckNav_%1").arg(page));
+        if (!nav) return failPresentationLifecycleTest(QStringLiteral("Flight Deck route %1 has no nav item")
+            .arg(page));
+        const QPoint clickPoint = nav->mapToScene(QPointF(nav->width() * 0.5,
+            nav->height() * 0.5)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
+        settlePresentation();
+        if (surface->property("currentPage").toInt() != page
+            || !nav->property("selected").toBool()
+            || !pageItem(surface, page)) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck route %1 did not update selected state and page host").arg(page));
+        }
+    }
+    if (!surface->setProperty("currentPage", 8)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck could not return to Overview"));
+    }
+    settlePresentation();
+    const QString visualOutputDirectory = qEnvironmentVariable("HOTAS_FLIGHT_DECK_VISUAL_OUTPUT_DIR");
+    const auto captureShell = [&](const QString &sizeLabel) {
+        const QImage capture = window->grabWindow();
+        if (capture.isNull() || capture.width() < 880 || capture.height() < 620) return false;
+        if (!visualOutputDirectory.isEmpty()) {
+            QDir().mkpath(visualOutputDirectory);
+            const QString capturePath = QDir(visualOutputDirectory).filePath(
+                QStringLiteral("flight-deck-%1-%2.png").arg(appearance.toLower(), sizeLabel));
+            if (!capture.save(capturePath)) return false;
+        }
+        return true;
+    };
+    if (!captureShell(QStringLiteral("normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at normal size")
+            .arg(appearance));
+    }
+    window->resize(900, 650);
+    window->requestUpdate();
+    QTest::qWait(60);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at minimum size")
+            .arg(appearance));
+    }
+    auto *navigationViewport = surface->findChild<QQuickItem *>(
+        QStringLiteral("flightDeckNavigationViewport"));
+    auto *readiness = surface->findChild<QQuickItem *>(QStringLiteral("flightDeckReadiness"));
+    if (!navigationViewport || !readiness
+        || navigationViewport->property("contentHeight").toReal() <= navigationViewport->height()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 minimum rail did not expose its constrained-layout scroll path")
+            .arg(appearance));
+    }
+    navigationViewport->setProperty("contentY", navigationViewport->property("contentHeight").toReal()
+        - navigationViewport->height());
+    settlePresentation();
+    const qreal readinessTop = readiness->mapToScene(QPointF{}).y();
+    const qreal railTop = navigationViewport->mapToScene(QPointF{}).y();
+    if (readinessTop < railTop || readinessTop >= railTop + navigationViewport->height()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 minimum rail could not reach the readiness card")
+            .arg(appearance));
+    }
+    window->resize(1600, 980);
+    window->requestUpdate();
+    QTest::qWait(60);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at expanded size")
+            .arg(appearance));
+    }
+    return true;
+}
+
 QVariantMap draftRow(QObject *root, const char *collection, int index)
 {
     const QVariantList rows = root->property("draft").toMap().value(QString::fromLatin1(collection)).toList();
@@ -2398,7 +2496,7 @@ int main(int argc, char *argv[])
     if (!seedDeviceRigFixture()) return 1;
 
     hotas::AppBackend backend;
-    hotas::ThemeManager themeManager;
+    hotas::ThemeManager themeManager({}, true);
     QStringList themes{
         QStringLiteral("Legacy"),
         QStringLiteral("Standard"),
@@ -2438,6 +2536,11 @@ int main(int argc, char *argv[])
         failPresentationLifecycleTest(QStringLiteral("fixture Device Rig context was not safely cleared"));
         return 1;
     }
+
+    for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
+        if (!verifyFlightDeckShell(backend, themeManager, appearance)) return 1;
+    }
+    themeManager.setCurrentExperience(QStringLiteral("Existing"));
 
     if (!verifyAdaptiveResponseSimulator(backend)) return 1;
     if (!verifyAdaptiveResponsePreviewTruth(backend)) return 1;

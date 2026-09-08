@@ -1,9 +1,9 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 
-// A single application window hosts exactly one presentation tree. Standard
-// Top Gun, and Day Ops are live token variants of Standard; Legacy loads the concrete
-// v1.6.3 surface. Neither path owns mapper state or the worker.
+// A single application window hosts exactly one presentation tree. Themes
+// remain token variants of the established surfaces; a UX experience may own
+// a different shell while consuming the same backend and page host.
 ApplicationWindow {
     id: shell
     objectName: "hotasShell"
@@ -20,7 +20,7 @@ ApplicationWindow {
         }
     }
     Theme { id: shellTheme }
-    color: shellTheme.background
+    color: themeManager.currentExperience === "Flight Deck" ? "#0b1219" : shellTheme.background
     font.family: shellTheme.displayFont
     Component.onCompleted: backend.setTrayTheme(themeManager.currentTheme)
     Connections {
@@ -34,11 +34,14 @@ ApplicationWindow {
 
     Component { id: legacySurface; Legacy { } }
     Component { id: standardSurface; Standard { } }
+    Component { id: flightDeckSurface; FlightDeck { } }
 
     Loader {
         id: presentation
         objectName: "presentationLoader"
         anchors.fill: parent
-        sourceComponent: themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface
+        sourceComponent: themeManager.currentExperience === "Flight Deck"
+            ? flightDeckSurface
+            : (themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface)
     }
 }

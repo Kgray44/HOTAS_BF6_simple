@@ -104,6 +104,12 @@ qt_add_qml_module(HOTASMapper
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
         qml/Legacy.qml
+        qml/FlightDeck.qml
+        qml/FlightDeckTheme.qml
+        qml/FlightDeckSurface.qml
+        qml/FlightDeckCard.qml
+        qml/FlightDeckNavItem.qml
+        qml/FlightDeckStatusChip.qml
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
@@ -466,6 +472,12 @@ if (BUILD_TESTING)
             qml/LegacyAviationPanel.qml
             qml/LegacyCurveEditor.qml
             qml/Legacy.qml
+            qml/FlightDeck.qml
+            qml/FlightDeckTheme.qml
+            qml/FlightDeckSurface.qml
+            qml/FlightDeckCard.qml
+            qml/FlightDeckNavItem.qml
+            qml/FlightDeckStatusChip.qml
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml

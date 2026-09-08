@@ -13,6 +13,7 @@ private slots:
     void missingValueMigratesToLegacy();
     void selectionPersistsAndNormalizes();
     void themeStateDoesNotTouchMapperPayload();
+    void flightDeckExperienceIsPreviewGatedAndDoesNotTouchMapperPayload();
 };
 
 void ThemeManagerTests::missingValueMigratesToLegacy()
@@ -65,6 +66,37 @@ void ThemeManagerTests::themeStateDoesNotTouchMapperPayload()
     const QSettings settings(path, QSettings::IniFormat);
     QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
     QCOMPARE(settings.value(u"presentation/uiTheme"_qs).toString(), u"Day Ops"_qs);
+}
+
+void ThemeManagerTests::flightDeckExperienceIsPreviewGatedAndDoesNotTouchMapperPayload()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(u"settings.ini"_qs);
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(u"mapper/config"_qs, QByteArrayLiteral("mapping-payload"));
+        settings.setValue(u"profiles/active"_qs, QByteArrayLiteral("profile-payload"));
+        settings.sync();
+    }
+
+    hotas::ThemeManager normal(path);
+    QCOMPARE(normal.experienceChoices(), QStringList({u"Existing"_qs}));
+    normal.setCurrentExperience(u"Flight Deck"_qs);
+    QCOMPARE(normal.currentExperience(), u"Existing"_qs);
+
+    hotas::ThemeManager preview(path, true);
+    QCOMPARE(preview.experienceChoices(), QStringList({u"Existing"_qs, u"Flight Deck"_qs}));
+    preview.setCurrentExperience(u" flight deck "_qs);
+    preview.setFlightDeckAppearance(u" light "_qs);
+    QCOMPARE(preview.currentExperience(), u"Flight Deck"_qs);
+    QCOMPARE(preview.flightDeckAppearance(), u"Light"_qs);
+
+    const QSettings settings(path, QSettings::IniFormat);
+    QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
+    QCOMPARE(settings.value(u"profiles/active"_qs).toByteArray(), QByteArrayLiteral("profile-payload"));
+    QCOMPARE(settings.value(u"presentation/uxExperience"_qs).toString(), u"Flight Deck"_qs);
+    QCOMPARE(settings.value(u"presentation/flightDeckAppearance"_qs).toString(), u"Light"_qs);
 }
 
 QTEST_APPLESS_MAIN(ThemeManagerTests)

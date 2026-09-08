@@ -1,0 +1,49 @@
+import QtQuick 6.5
+import QtQuick.Controls 6.5
+
+Button {
+    id: control
+    required property var tokens
+    required property var modelData
+    property string label: ""
+    property string detail: ""
+    property bool selected: false
+    implicitHeight: tokens.navigationRowHeight
+    leftPadding: tokens.space12
+    rightPadding: tokens.space12
+    focusPolicy: Qt.StrongFocus
+    Accessible.name: label
+
+    contentItem: Row {
+        spacing: tokens.space8
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 7
+            height: 7
+            radius: width / 2
+            color: control.selected ? control.tokens.accent : control.tokens.textMuted
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, control.availableWidth - 26)
+            text: control.label
+            color: control.enabled ? (control.selected ? control.tokens.textPrimary : control.tokens.textSecondary) : control.tokens.disabled
+            font.family: control.tokens.displayFont
+            font.pixelSize: 12
+            font.bold: control.selected
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+    background: Rectangle {
+        radius: control.tokens.radiusControl
+        color: !control.enabled ? "transparent" : control.down ? control.tokens.accentMuted : control.selected ? control.tokens.selected : control.hovered ? control.tokens.secondarySurface : "transparent"
+        border.width: control.activeFocus ? 2 : (control.selected ? 1 : 0)
+        border.color: control.activeFocus ? control.tokens.focus : control.selected ? control.tokens.accent : "transparent"
+        Behavior on color {
+            ColorAnimation {
+                duration: control.tokens.hoverDuration
+            }
+        }
+    }
+}
