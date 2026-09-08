@@ -1,4 +1,5 @@
 #include "mapping_worker.h"
+#include "crash_diagnostics.h"
 #include "device_rig.h"
 #include "hid_device_identity.h"
 
@@ -150,6 +151,12 @@ QString inputErrorMessage(HRESULT result)
 
 class VJoyAdapter final {
 public:
+    // The vJoy interface is process-global inside the vendor DLL, even though
+    // individual virtual devices are acquired and relinquished by this
+    // worker.  Releasing the module for every rig topology change allowed
+    // callbacks/window state in the DLL to outlive its code mapping.  Keep
+    // one worker-only interface loaded until process shutdown; adapters still
+    // relinquish only their owned device when the output itself is retired.
     ~VJoyAdapter() { unload(); }
 
     bool checkDevice(int deviceId, QString *status)
@@ -330,9 +337,71 @@ private:
     using SetContinuousPovFn = BOOL(__cdecl *)(DWORD, UINT, UCHAR);
     using SetDiscretePovFn = BOOL(__cdecl *)(int, UINT, UCHAR);
 
+    struct PersistentInterface {
+        HMODULE library = nullptr;
+        GetVJDStatusFn getStatus = nullptr;
+        GetVJDAxisExistFn axisExists = nullptr;
+        AcquireVJDFn acquire = nullptr;
+        RelinquishVJDFn relinquish = nullptr;
+        SetAxisFn setAxis = nullptr;
+        GetVJDButtonNumberFn getButtonNumber = nullptr;
+        SetBtnFn setButton = nullptr;
+        GetPovNumberFn getContinuousPovNumber = nullptr;
+        GetPovNumberFn getDiscretePovNumber = nullptr;
+        SetContinuousPovFn setContinuousPov = nullptr;
+        SetDiscretePovFn setDiscretePov = nullptr;
+    };
+
+    static PersistentInterface &persistentWorkerInterface()
+    {
+        // VJoyAdapter is instantiated only from MappingWorker's DirectInput
+        // thread.  This function-local state therefore gives that worker one
+        // DLL interface for its whole process lifetime without introducing
+        // GUI-thread driver ownership or report-path synchronization.
+        static PersistentInterface api;
+        return api;
+    }
+
+    void attachPersistentInterface(const PersistentInterface &api)
+    {
+        m_library = api.library;
+        m_getStatus = api.getStatus;
+        m_axisExists = api.axisExists;
+        m_acquire = api.acquire;
+        m_relinquish = api.relinquish;
+        m_setAxis = api.setAxis;
+        m_getButtonNumber = api.getButtonNumber;
+        m_setButton = api.setButton;
+        m_getContinuousPovNumber = api.getContinuousPovNumber;
+        m_getDiscretePovNumber = api.getDiscretePovNumber;
+        m_setContinuousPov = api.setContinuousPov;
+        m_setDiscretePov = api.setDiscretePov;
+    }
+
+    void detachInterface()
+    {
+        m_library = nullptr;
+        m_getStatus = nullptr;
+        m_axisExists = nullptr;
+        m_acquire = nullptr;
+        m_relinquish = nullptr;
+        m_setAxis = nullptr;
+        m_getButtonNumber = nullptr;
+        m_setButton = nullptr;
+        m_getContinuousPovNumber = nullptr;
+        m_getDiscretePovNumber = nullptr;
+        m_setContinuousPov = nullptr;
+        m_setDiscretePov = nullptr;
+    }
+
     bool load(QString *status)
     {
         if (m_library) {
+            return true;
+        }
+        PersistentInterface &persistent = persistentWorkerInterface();
+        if (persistent.library) {
+            attachPersistentInterface(persistent);
             return true;
         }
         QStringList candidates{u"vJoyInterface.dll"_qs};
@@ -365,28 +434,36 @@ private:
         m_setDiscretePov = reinterpret_cast<SetDiscretePovFn>(GetProcAddress(m_library, "SetDiscPov"));
         if (!m_getStatus || !m_axisExists || !m_acquire || !m_relinquish || !m_setAxis) {
             if (status) *status = u"vJoyInterface.dll is missing a required API"_qs;
-            unload();
+            // No device was acquired yet, so it is safe to discard this
+            // failed initial load.  Successful loads are intentionally kept
+            // by persistentWorkerInterface() until the process exits.
+            FreeLibrary(m_library);
+            detachInterface();
             return false;
         }
+        persistent.library = m_library;
+        persistent.getStatus = m_getStatus;
+        persistent.axisExists = m_axisExists;
+        persistent.acquire = m_acquire;
+        persistent.relinquish = m_relinquish;
+        persistent.setAxis = m_setAxis;
+        persistent.getButtonNumber = m_getButtonNumber;
+        persistent.setButton = m_setButton;
+        persistent.getContinuousPovNumber = m_getContinuousPovNumber;
+        persistent.getDiscretePovNumber = m_getDiscretePovNumber;
+        persistent.setContinuousPov = m_setContinuousPov;
+        persistent.setDiscretePov = m_setDiscretePov;
         return true;
     }
 
     void unload()
     {
         release();
-        if (m_library) FreeLibrary(m_library);
-        m_library = nullptr;
-        m_getStatus = nullptr;
-        m_axisExists = nullptr;
-        m_acquire = nullptr;
-        m_relinquish = nullptr;
-        m_setAxis = nullptr;
-        m_getButtonNumber = nullptr;
-        m_setButton = nullptr;
-        m_getContinuousPovNumber = nullptr;
-        m_getDiscretePovNumber = nullptr;
-        m_setContinuousPov = nullptr;
-        m_setDiscretePov = nullptr;
+        // Do not call FreeLibrary here.  A topology transaction may destroy
+        // this small adapter while the vendor interface still owns internal
+        // window/callback state.  The persistent worker interface owns the
+        // single module reference through orderly process shutdown.
+        detachInterface();
     }
 
     HMODULE m_library = nullptr;
@@ -2116,6 +2193,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
 
     bool lastMappingAllowed = false;
     std::uint64_t processedReports = 0;
+    std::uint64_t handledReacquireRequest = m_reacquireInputAcknowledged.load();
     const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
     if (!plan.valid) {
         setVjoyStatus(u"Device Rig needs attention: "_qs + plan.issue);
@@ -2128,6 +2206,43 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             break;
         }
         const auto now = std::chrono::steady_clock::now();
+        if (m_releaseVjoyRequested.exchange(false)) {
+            // A full verification or explicit driver-configuration
+            // transaction is the only control-plane case that relinquishes
+            // an output.  Ordinary member loss and membership edits retain
+            // the persistent worker vJoy interface and never touch the
+            // driver configuration.
+            for (int index = 0; index < plan.outputCount; ++index) {
+                quiesceOutput(outputs[static_cast<size_t>(index)]);
+                releaseOutput(outputs[static_cast<size_t>(index)]);
+            }
+            lastMappingAllowed = false;
+            m_runtime.mappingActive = false;
+            m_runtime.outputNeutralized = true;
+            m_runtime.vjoyReady = false;
+            m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
+            setVjoyStatus(u"vJoy released for controller verification"_qs);
+            m_vjoyReleasedForControlPlane = true;
+            emit hardwareStateChanged();
+        }
+        const std::uint64_t requestedReacquire = m_reacquireInputRequested.load();
+        if (requestedReacquire != handledReacquireRequest) {
+            // A successful HidHide/identity transaction must reopen every
+            // affected DirectInput session.  Acknowledge the control-plane
+            // handoff only after old sessions and their pressed state have
+            // been released; the caller separately waits for a fresh report.
+            for (int index = 0; index < plan.memberCount; ++index) {
+                InputSession &session = inputs[static_cast<size_t>(index)];
+                releaseInput(session);
+                session.nextDiscovery = now;
+            }
+            clearPrimarySnapshot();
+            m_runtime.physicalConnected = false;
+            m_runtime.physicalReportsSinceAcquisition = 0;
+            handledReacquireRequest = requestedReacquire;
+            m_reacquireInputAcknowledged = requestedReacquire;
+            emit workerEvent(u"Device Rig DirectInput sessions released for controlled reacquisition"_qs);
+        }
         if (!plan.valid) {
             m_runtime.mappingActive = false;
             m_runtime.physicalConnected = false;
@@ -2139,9 +2254,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             continue;
         }
 
-        bool anyConnected = false;
-        bool allRequiredConnected = true;
-        int connectedCount = 0;
+        std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> inputStates{};
+        inputStates.fill(DeviceRigInputSessionState::Disconnected);
         int activeAutomationRules = 0;
         for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
         for (int index = 0; index < plan.memberCount; ++index) {
@@ -2154,20 +2268,39 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 session.nextDiscovery = now + std::chrono::seconds(1);
             }
             if (!session.connected) {
-                if (session.member->required) allRequiredConnected = false;
                 continue;
             }
-            anyConnected = true;
-            ++connectedCount;
+            inputStates[static_cast<size_t>(index)] = DeviceRigInputSessionState::Connected;
             const HRESULT poll = session.device->Poll();
             DIJOYSTATE2 state{};
             const HRESULT read = SUCCEEDED(poll)
                 ? session.device->GetDeviceState(sizeof(state), &state) : poll;
             if (read == DIERR_INPUTLOST || read == DIERR_NOTACQUIRED || FAILED(read)) {
-                emit workerEvent(QString(u"Device Rig input disconnected: %1"_qs)
-                    .arg(session.member->displayName));
+                const QString phase = SUCCEEDED(poll) ? u"GetDeviceState"_qs : u"Poll"_qs;
+                const int outputIndex = session.member->outputIndex;
+                const int vjoyDeviceId = outputIndex >= 0 && outputIndex < plan.outputCount
+                    ? plan.outputs[static_cast<size_t>(outputIndex)].vjoyDeviceId : 0;
+                const QString detail = QString(u"runtime=device-rig\nmember=%1\nmemberId=%2\noutputIndex=%3\noutputLayout=%4\nvjoyDevice=%5\nphase=%6\nhresult=0x%7"_qs)
+                    .arg(session.member->displayName)
+                    .arg(session.member->controllerRecordId)
+                    .arg(outputIndex)
+                    .arg(session.member->outputLayoutId)
+                    .arg(vjoyDeviceId)
+                    .arg(phase)
+                    .arg(static_cast<quint32>(read), 8, 16, QLatin1Char('0'));
+                // This is a disconnect boundary, never a report-path log.
+                // Record it before releasing the DirectInput object so an
+                // unexpected native fault leaves the actual member/phase in
+                // the crash reporter's bounded event history.
+                CrashDiagnostics::recordControlPlaneEvent(
+                    u"Device Rig DirectInput loss: "_qs + session.member->displayName, detail);
+                emit workerEvent(QString(u"Device Rig input disconnected during %1: %2"_qs)
+                    .arg(phase, session.member->displayName));
+                inputStates[static_cast<size_t>(index)] = read == DIERR_INPUTLOST
+                    ? DeviceRigInputSessionState::InputLost
+                    : read == DIERR_NOTACQUIRED ? DeviceRigInputSessionState::NotAcquired
+                                             : DeviceRigInputSessionState::Disconnected;
                 releaseInput(session);
-                if (session.member->required) allRequiredConnected = false;
                 continue;
             }
 
@@ -2293,6 +2426,13 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         }
         m_runtime.automationActiveRuleCount = activeAutomationRules;
 
+        const DeviceRigDisconnectBehavior disconnectBehavior = activeRig
+            ? activeRig->disconnectBehavior : DeviceRigDisconnectBehavior::SuspendAffectedRoutes;
+        const DeviceRigRuntimeAvailability availability = evaluateDeviceRigRuntimeAvailability(
+            plan, inputStates, m_mappingRequested.load(), true, disconnectBehavior);
+        const bool anyConnected = availability.anyConnected;
+        const int connectedCount = availability.connectedMemberCount;
+
         QString outputStatus;
         bool allOutputsReady = plan.outputCount > 0;
         for (int index = 0; index < plan.outputCount; ++index) {
@@ -2327,10 +2467,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             setDeviceSnapshot({});
         }
 
-        const bool deactivateOnRequiredLoss = activeRig
-            && activeRig->disconnectBehavior == DeviceRigDisconnectBehavior::DeactivateRig;
-        const bool mappingAllowed = m_mappingRequested.load() && anyConnected && allOutputsReady
-            && (!deactivateOnRequiredLoss || allRequiredConnected);
+        const bool mappingAllowed = evaluateDeviceRigRuntimeAvailability(plan, inputStates,
+            m_mappingRequested.load(), allOutputsReady, disconnectBehavior).mappingAllowed;
         if (!mappingAllowed && lastMappingAllowed) {
             for (int index = 0; index < plan.outputCount; ++index) quiesceOutput(outputs[static_cast<size_t>(index)]);
             emit workerEvent(u"Device Rig mapping suspended; affected routes were neutralized."_qs);

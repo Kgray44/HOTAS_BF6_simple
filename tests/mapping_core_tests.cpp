@@ -800,6 +800,7 @@ private slots:
     void deviceRigRuntimeRejectsAmbiguousAxisDestination();
     void deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput();
     void deviceRigRuntimeRejectsUnqualifiedMultiDeviceAutomation();
+    void deviceRigRuntimeDisconnectGateHandlesLostSessionsAndReconnect();
     void deviceRigHealthKeepsOptionalOfflineNonBlocking();
     void deviceRigDetectionUsesSavedPolicyAndRefusesTrueTie();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
@@ -3723,6 +3724,72 @@ void MappingCoreTests::deviceRigRuntimeRejectsUnqualifiedMultiDeviceAutomation()
     const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id);
     QVERIFY(!runtime.valid);
     QVERIFY(runtime.issue.contains(QStringLiteral("explicit Device Rig input")));
+}
+
+void MappingCoreTests::deviceRigRuntimeDisconnectGateHandlesLostSessionsAndReconnect()
+{
+    // This exercises the same post-poll gate MappingWorker uses.  The states
+    // model actual HRESULT boundaries without requiring a physical controller:
+    // DIERR_INPUTLOST, DIERR_NOTACQUIRED, a fully disconnected session, and
+    // a later exact-session reconnect.
+    CompiledDeviceRigRuntime runtime;
+    runtime.memberCount = 3;
+    runtime.outputCount = 1;
+    runtime.valid = true;
+    runtime.members[0].required = true;
+    runtime.members[1].required = true;
+    runtime.members[2].required = false;
+    std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> inputs{};
+    inputs.fill(DeviceRigInputSessionState::Disconnected);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[1] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::Connected;
+
+    DeviceRigRuntimeAvailability state = evaluateDeviceRigRuntimeAvailability(runtime, inputs,
+        true, true, DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QCOMPARE(state.connectedMemberCount, 3);
+    QVERIFY(state.anyConnected);
+    QVERIFY(state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // A required member's DIERR_INPUTLOST parks only its contribution.  The
+    // surviving required + optional sessions keep their compiled routes live
+    // under the normal Suspend Affected Routes policy.
+    inputs[0] = DeviceRigInputSessionState::InputLost;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QCOMPARE(state.connectedMemberCount, 2);
+    QVERIFY(state.anyConnected);
+    QVERIFY(!state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // The strict policy instead suspends the complete rig after a required
+    // loss, while DIERR_NOTACQUIRED on an optional member remains nonblocking.
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::DeactivateRig);
+    QVERIFY(!state.mappingAllowed);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::NotAcquired;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::DeactivateRig);
+    QVERIFY(state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // All members lost always neutralizes the mapping gate.  A later
+    // reconnect restores the same compiled topology without a vJoy rebuild.
+    inputs[0] = DeviceRigInputSessionState::Disconnected;
+    inputs[1] = DeviceRigInputSessionState::InputLost;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QVERIFY(state.allMembersLost);
+    QVERIFY(!state.anyConnected);
+    QVERIFY(!state.mappingAllowed);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[1] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::Connected;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QVERIFY(state.mappingAllowed);
 }
 
 void MappingCoreTests::deviceRigHealthKeepsOptionalOfflineNonBlocking()

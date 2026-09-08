@@ -73,6 +73,25 @@ struct CompiledDeviceRigRuntime {
     QString issue;
 };
 
+// This is the fixed, worker-facing outcome of one DirectInput session after a
+// poll/read boundary.  Keeping DIERR_INPUTLOST and DIERR_NOTACQUIRED distinct
+// makes disconnect behaviour deterministic in tests while both safely remove
+// that member from the current output composition.
+enum class DeviceRigInputSessionState {
+    Connected,
+    InputLost,
+    NotAcquired,
+    Disconnected,
+};
+
+struct DeviceRigRuntimeAvailability {
+    int connectedMemberCount = 0;
+    bool anyConnected = false;
+    bool allRequiredConnected = true;
+    bool allMembersLost = false;
+    bool mappingAllowed = false;
+};
+
 QString deviceRigHealthKey(DeviceRigHealth health);
 QString deviceRigHealthLabel(DeviceRigHealth health);
 
@@ -89,5 +108,13 @@ DeviceRigActivationDecision chooseDeviceRigActivation(const MapperConfiguration 
 CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &configuration,
                                                  const QString &rigId,
                                                  const QString &profileId = {});
+// Worker policy seam: evaluates a post-poll set of member states without
+// DirectInput, vJoy, GUI work, or allocations.  MappingWorker uses this exact
+// gate after every bounded input pass; unit tests can therefore reproduce
+// input-loss, reconnect, required/optional, and all-members-lost outcomes.
+DeviceRigRuntimeAvailability evaluateDeviceRigRuntimeAvailability(
+    const CompiledDeviceRigRuntime &runtime,
+    const std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> &inputStates,
+    bool mappingRequested, bool outputsReady, DeviceRigDisconnectBehavior disconnectBehavior);
 
 } // namespace hotas

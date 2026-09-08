@@ -371,4 +371,28 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
     return runtime;
 }
 
+DeviceRigRuntimeAvailability evaluateDeviceRigRuntimeAvailability(
+    const CompiledDeviceRigRuntime &runtime,
+    const std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> &inputStates,
+    bool mappingRequested, bool outputsReady, DeviceRigDisconnectBehavior disconnectBehavior)
+{
+    DeviceRigRuntimeAvailability availability;
+    for (int index = 0; index < runtime.memberCount; ++index) {
+        const bool connected = inputStates[static_cast<size_t>(index)]
+            == DeviceRigInputSessionState::Connected;
+        if (connected) {
+            ++availability.connectedMemberCount;
+            availability.anyConnected = true;
+        } else if (runtime.members[static_cast<size_t>(index)].required) {
+            availability.allRequiredConnected = false;
+        }
+    }
+    availability.allMembersLost = runtime.memberCount > 0 && !availability.anyConnected;
+    const bool deactivateForRequiredLoss = disconnectBehavior
+        == DeviceRigDisconnectBehavior::DeactivateRig;
+    availability.mappingAllowed = mappingRequested && availability.anyConnected && outputsReady
+        && (!deactivateForRequiredLoss || availability.allRequiredConnected);
+    return availability;
+}
+
 } // namespace hotas

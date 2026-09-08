@@ -37,6 +37,7 @@ private slots:
     void allThemeSelectorsUseSkinnedDarkPopups();
     void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
+    void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -511,6 +512,42 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulatorRecording")));
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(
         QStringLiteral("adaptiveResponseSimulator")));
+}
+
+void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts()
+{
+    const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+    const QString rigHeader = sourceFile(QStringLiteral("src/device_rig.h"));
+    const QString rigSource = sourceFile(QStringLiteral("src/device_rig.cpp"));
+
+    // Successful vJoy API loads stay process-resident while the mapping worker
+    // opens/closes DirectInput and output-device sessions.  Releasing output
+    // ownership is still explicit; unloading the vendor DLL between sessions
+    // is deliberately not part of the control-plane contract.
+    QVERIFY(worker.contains(QStringLiteral("persistentWorkerInterface()")));
+    QVERIFY(worker.contains(QStringLiteral("// Do not call FreeLibrary here.  A topology transaction may destroy")));
+    QVERIFY(!worker.contains(QStringLiteral("release();\n        FreeLibrary(m_library)")));
+
+    // A multi-member Device Rig has to service the same setup/reacquisition
+    // handshake as the compatibility path.  This prevents full verification
+    // from racing an acquired vJoy device or stale DirectInput handles.
+    QVERIFY(worker.contains(QStringLiteral("if (m_releaseVjoyRequested.exchange(false))")));
+    QVERIFY(worker.contains(QStringLiteral("m_vjoyReleasedForControlPlane = true;")));
+    QVERIFY(worker.contains(QStringLiteral("Device Rig DirectInput sessions released for controlled reacquisition")));
+    QVERIFY(worker.contains(QStringLiteral("m_reacquireInputAcknowledged = requestedReacquire;")));
+
+    // The per-member state must be captured after the DirectInput poll/read
+    // boundary, then used for the common mapping gate.  This keeps a lost or
+    // not-acquired member from contributing stale output on the current pass.
+    QVERIFY(rigHeader.contains(QStringLiteral("enum class DeviceRigInputSessionState")));
+    QVERIFY(rigHeader.contains(QStringLiteral("InputLost")));
+    QVERIFY(rigHeader.contains(QStringLiteral("NotAcquired")));
+    QVERIFY(rigHeader.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability")));
+    QVERIFY(worker.contains(QStringLiteral("Device Rig DirectInput loss:")));
+    QVERIFY(worker.contains(QStringLiteral("inputStates[static_cast<size_t>(index)] = read == DIERR_INPUTLOST")));
+    QVERIFY(worker.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability(plan, inputStates,")));
+    QVERIFY(rigSource.contains(QStringLiteral("deactivateForRequiredLoss = disconnectBehavior")));
+    QVERIFY(rigSource.contains(QStringLiteral("availability.mappingAllowed = mappingRequested")));
 }
 
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
