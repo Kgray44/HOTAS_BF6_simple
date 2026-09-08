@@ -23,7 +23,11 @@ void ThemeManagerTests::missingValueMigratesToLegacy()
     hotas::ThemeManager manager(directory.filePath(u"settings.ini"_qs));
     QCOMPARE(manager.currentTheme(), u"Legacy"_qs);
     QVERIFY(!manager.isTopGun());
-    QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs}));
+    const QStringList choices = manager.themeChoices();
+    QVERIFY(choices.contains(u"Legacy"_qs));
+    QVERIFY(choices.contains(u"Standard"_qs));
+    QVERIFY(choices.contains(u"Top Gun"_qs));
+    QVERIFY(!choices.contains(u"Flight Deck"_qs));
 }
 
 void ThemeManagerTests::selectionPersistsAndNormalizes()

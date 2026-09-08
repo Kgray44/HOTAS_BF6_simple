@@ -46,6 +46,11 @@ bool ThemeManager::isTopGun() const
 
 QStringList ThemeManager::themeChoices() const
 {
+    // These are the token themes implemented by this source snapshot. Flight
+    // Deck deliberately stays outside this list because it owns an alternate
+    // shell. Day Ops is concurrent V2.4.0 work and must be added here with its
+    // real tokens when that implementation lands, not fabricated by Flight
+    // Deck.
     return {u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs};
 }
 

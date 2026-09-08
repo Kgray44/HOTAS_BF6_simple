@@ -7,10 +7,12 @@ commands, services, and validation. It must not introduce a parallel mapper,
 profile store, controller manager, Automation engine, or Adaptive Response
 engine.
 
-The protected baseline inspected for this phase exposes three selectable theme
-labels: Legacy, Standard, and Top Gun. The Phase 1 brief refers to four
-existing experiences, but no fourth selectable theme is present in
-`ThemeManager` at baseline; this record deliberately does not invent one.
+The protected snapshot inspected for Phase 1 exposes three selectable theme
+labels: Legacy, Standard, and Top Gun. Day Ops is the fourth existing product
+theme under concurrent V2.4.0 implementation and was not present in this
+baseline. This record deliberately does not invent its absent implementation;
+Flight Deck remains a separately gated alternate UX shell rather than a member
+of the established theme family.
 
 | Capability | Current location / authority | Flight Deck destination or strategy | Class and variants that must remain reachable |
 | --- | --- | --- | --- |
