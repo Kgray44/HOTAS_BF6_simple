@@ -889,6 +889,45 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
         return failPresentationLifecycleTest(QStringLiteral("EDIT THIS fixture requires its second saved device to be offline"));
     }
 
+    // The output wizard has three distinct durable creation paths. Exercise
+    // their structured results directly with the same saved physical fixture
+    // the page presents, then compare the stored capability projection. This
+    // is software-only: these calls save output layouts but do not configure
+    // a vJoy driver.
+    const QVariantMap matchedOutput = backend.createVirtualOutputLayoutResult(
+        QStringLiteral("Matched Output Fixture"), 2, QStringLiteral("match-physical"), firstMember);
+    const QString matchedOutputId = matchedOutput.value(QStringLiteral("objectId")).toString();
+    const QVariantMap copiedOutput = backend.createVirtualOutputLayoutResult(
+        QStringLiteral("Copied Output Fixture"), 3, QStringLiteral("copy-output"), matchedOutputId);
+    const QString copiedOutputId = copiedOutput.value(QStringLiteral("objectId")).toString();
+    const QVariantMap customOutput = backend.createVirtualOutputLayoutResult(
+        QStringLiteral("Custom Output Fixture"), 4, QStringLiteral("custom"), QString(),
+        QVariantList{QVariant{1}, QVariant{4}, QVariant{8}}, 64, 0, 2);
+    const QString customOutputId = customOutput.value(QStringLiteral("objectId")).toString();
+    const auto outputLayout = [&backend](const QString &id) {
+        for (const QVariant &entry : backend.virtualOutputLayouts()) {
+            const QVariantMap layout = entry.toMap();
+            if (layout.value(QStringLiteral("id")).toString() == id) return layout;
+        }
+        return QVariantMap{};
+    };
+    const QVariantMap matchedLayout = outputLayout(matchedOutputId);
+    const QVariantMap copiedLayout = outputLayout(copiedOutputId);
+    const QVariantMap customLayout = outputLayout(customOutputId);
+    if (!matchedOutput.value(QStringLiteral("success")).toBool() || matchedOutputId.isEmpty()
+        || !copiedOutput.value(QStringLiteral("success")).toBool() || copiedOutputId.isEmpty()
+        || !customOutput.value(QStringLiteral("success")).toBool() || customOutputId.isEmpty()
+        || matchedLayout.value(QStringLiteral("buttons")) != copiedLayout.value(QStringLiteral("buttons"))
+        || matchedLayout.value(QStringLiteral("continuousPovs")) != copiedLayout.value(QStringLiteral("continuousPovs"))
+        || matchedLayout.value(QStringLiteral("discretePovs")) != copiedLayout.value(QStringLiteral("discretePovs"))
+        || matchedLayout.value(QStringLiteral("axes")) != copiedLayout.value(QStringLiteral("axes"))
+        || customLayout.value(QStringLiteral("buttons")).toInt() != 64
+        || customLayout.value(QStringLiteral("continuousPovs")).toInt() != 0
+        || customLayout.value(QStringLiteral("discretePovs")).toInt() != 2
+        || customLayout.value(QStringLiteral("axes")).toString() != QStringLiteral("X · Rx · Slider 1")) {
+        return failPresentationLifecycleTest(QStringLiteral("Virtual Output modes did not save the promised capability configuration"));
+    }
+
     // Critical Devices actions must provide an observable result on both the
     // invalid and valid path. Invoke the same QML helper used by CREATE RIG;
     // a bare backend bool or empty ID is not sufficient UI feedback.
@@ -914,6 +953,85 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
         return failPresentationLifecycleTest(QStringLiteral("Valid CREATE RIG did not expose a success result"));
     }
     settlePresentation();
+
+    // Exercise the same controls a user presses, not only their backing
+    // helpers. Every major Devices path must either open its next step or
+    // render an actionable result. The fixture identities are deliberately
+    // synthetic, so Apply Visibility fails before any driver command can be
+    // issued; that makes the failure-result contract safe to test here.
+    const auto triggerDevicesControl = [&devices](const QString &objectName, const QString &label) {
+        QObject *control = devices ? devices->findChild<QObject *>(objectName) : nullptr;
+        if (!control || !control->property("commandEnabled").toBool()
+            || !QMetaObject::invokeMethod(control, "triggered")) {
+            return failPresentationLifecycleTest(QStringLiteral("%1 was not an enabled Devices control").arg(label));
+        }
+        return true;
+    };
+    const auto requireVisibleDialog = [&devices](const QString &objectName, const QString &label) {
+        QObject *dialog = devices ? devices->findChild<QObject *>(objectName) : nullptr;
+        if (!dialog || !dialog->property("visible").toBool()) {
+            return failPresentationLifecycleTest(QStringLiteral("%1 did not present its next step").arg(label));
+        }
+        return true;
+    };
+    QObject *addMemberDialog = devices->findChild<QObject *>(QStringLiteral("addMemberDialog"));
+    QObject *addOutputDialog = devices->findChild<QObject *>(QStringLiteral("addOutputDialog"));
+    QObject *createOutputDialog = devices->findChild<QObject *>(QStringLiteral("createOutputDialog"));
+    QObject *visibilityDialog = devices->findChild<QObject *>(QStringLiteral("visibilityConfirmationDialog"));
+    QObject *setupDialog = surface->findChild<QObject *>(QStringLiteral("controllerSetupDialog"));
+    if (!addMemberDialog || !addOutputDialog || !createOutputDialog || !visibilityDialog || !setupDialog) {
+        return failPresentationLifecycleTest(QStringLiteral("Devices action dialogs were not available"));
+    }
+    if (!triggerDevicesControl(QStringLiteral("addInputToRigButton"), QStringLiteral("Add Input"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("addMemberDialog"), QStringLiteral("Add Input"))) return false;
+    QMetaObject::invokeMethod(addMemberDialog, "close");
+
+    if (!triggerDevicesControl(QStringLiteral("addOutputToRigButton"), QStringLiteral("Add Output"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("addOutputDialog"), QStringLiteral("Add Output"))) return false;
+    if (!triggerDevicesControl(QStringLiteral("openCreateOutputButton"), QStringLiteral("Create Virtual Output"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("createOutputDialog"), QStringLiteral("Create Virtual Output"))) return false;
+    QMetaObject::invokeMethod(createOutputDialog, "close");
+
+    if (!triggerDevicesControl(QStringLiteral("hideAllInputsButton"), QStringLiteral("Hide physical controllers"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("visibilityConfirmationDialog"), QStringLiteral("Hide physical controllers"))) return false;
+    if (!triggerDevicesControl(QStringLiteral("visibilityApplyButton"), QStringLiteral("Apply game visibility"))) return false;
+    settlePresentation();
+    if (devices->property("actionFeedback").toMap().value(QStringLiteral("success")).toBool()
+        || devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Apply game visibility did not show its safe failure result"));
+    }
+    QMetaObject::invokeMethod(visibilityDialog, "close");
+
+    if (!triggerDevicesControl(QStringLiteral("checkRigSetupButton"), QStringLiteral("Check Rig Setup"))) return false;
+    settlePresentation();
+    if (!setupDialog->property("visible").toBool()
+        || !devices->property("actionFeedback").toMap().value(QStringLiteral("inProgress")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Check Rig Setup did not open the Setup Assistant with visible progress"));
+    }
+    QMetaObject::invokeMethod(setupDialog, "close");
+
+    const bool rigStartedActive = backend.activeDeviceRigId() == rigId;
+    const QString firstActivationControl = rigStartedActive ? QStringLiteral("deactivateRigButton")
+                                                            : QStringLiteral("activateRigButton");
+    if (!triggerDevicesControl(firstActivationControl,
+                               rigStartedActive ? QStringLiteral("Deactivate") : QStringLiteral("Activate"))) return false;
+    settlePresentation();
+    if (backend.activeDeviceRigId() == (rigStartedActive ? rigId : QString{})
+        || devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not report its result"));
+    }
+    const QString restoreActivationControl = rigStartedActive ? QStringLiteral("activateRigButton")
+                                                               : QStringLiteral("deactivateRigButton");
+    if (!triggerDevicesControl(restoreActivationControl,
+                               rigStartedActive ? QStringLiteral("Restore activation") : QStringLiteral("Deactivate"))) return false;
+    settlePresentation();
+    if ((backend.activeDeviceRigId() == rigId) != rigStartedActive) {
+        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not restore the fixture state"));
+    }
 
     // Invoke the exact Devices-page helper that the EDIT THIS control calls.
     // Repeater delegates are visual children, so inspect their visible QML

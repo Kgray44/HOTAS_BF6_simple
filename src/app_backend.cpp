@@ -3985,13 +3985,14 @@ QVariantList AppBackend::controllerReadinessChecks() const
         // updates the fixed member/output counters below; it never produces
         // readiness strings or traverses this durable model per report.
         const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
-        appendRigCheck(checks, u"VISIBILITY · HOTAS BF6"_qs,
-            hidhide.mapperAllowlisted ? u"READY"_qs : hidhide.installed ? u"ACTION REQUIRED"_qs
-                                                                  : u"NOT ADOPTED"_qs,
-            hidhide.mapperAllowlisted ? u"HOTAS BF6 is allowlisted for the managed visibility configuration."_qs
-                : hidhide.installed ? u"HidHide is available, but the mapper allowlist needs review."_qs
-                                   : u"HidHide has not been adopted for this setup."_qs,
-            hidhide.mapperAllowlisted ? u"ready"_qs : hidhide.installed ? u"warning"_qs : u"info"_qs);
+        appendRigCheck(checks, u"GAME VISIBILITY · HOTAS BF6"_qs,
+            hidhide.mapperAllowlisted ? u"READY"_qs : u"SETUP NEEDED"_qs,
+            hidhide.mapperAllowlisted
+                ? u"HOTAS BF6 can keep selected physical controllers hidden from games."_qs
+                : hidhide.installed
+                    ? u"Game visibility needs one setup change before HOTAS BF6 can hide physical controllers safely."_qs
+                    : u"Set up game visibility so your game uses the virtual controller instead of the physical controllers."_qs,
+            hidhide.mapperAllowlisted ? u"ready"_qs : u"warning"_qs);
         for (const DeviceRigMember &member : rig->members) {
             const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
             const QString name = record ? record->displayName : u"Unknown device"_qs;
@@ -4031,15 +4032,13 @@ QVariantList AppBackend::controllerReadinessChecks() const
                     return !normalizedIdentity.isEmpty()
                         && ControllerReadinessService::normalizeDeviceInstanceId(candidate) == normalizedIdentity;
                 });
-            appendRigCheck(checks, u"VISIBILITY · "_qs + name,
-                !managed ? u"NOT ADOPTED"_qs : !hidhide.cloakKnown ? u"VERIFY"_qs
-                         : hidden ? u"READY"_qs : u"ACTION REQUIRED"_qs,
-                !managed ? u"This input is not explicitly managed by HidHide."_qs
-                    : !hidhide.cloakKnown ? u"Managed identity is saved; verify the current HidHide state."_qs
-                    : hidden ? u"Persisted physical HID identity is hidden from games."_qs
-                             : u"Persisted physical HID identity is not hidden as configured."_qs,
-                !managed ? u"info"_qs : !hidhide.cloakKnown ? u"warning"_qs
-                          : hidden ? u"ready"_qs : u"error"_qs);
+            appendRigCheck(checks, u"GAME VISIBILITY · "_qs + name,
+                !managed || !hidhide.cloakKnown || !hidden ? u"SETUP NEEDED"_qs : u"READY"_qs,
+                !managed ? u"Game visibility has not been set up for this physical controller."_qs
+                    : !hidhide.cloakKnown ? u"HOTAS BF6 needs to check whether this physical controller is hidden from games."_qs
+                    : hidden ? u"This physical controller is hidden from games."_qs
+                             : u"This physical controller is visible to games and may cause duplicate controls."_qs,
+                !managed || !hidhide.cloakKnown || !hidden ? u"warning"_qs : u"ready"_qs);
 
             const auto compiledMember = std::find_if(compiled.members.cbegin(),
                 compiled.members.cbegin() + compiled.memberCount,
@@ -4089,14 +4088,13 @@ QVariantList AppBackend::controllerReadinessChecks() const
                                 == ControllerReadinessService::normalizeDeviceInstanceId(
                                     layout->hidHideDeviceInstanceId);
                     });
-            appendRigCheck(checks, u"OUTPUT VISIBILITY · "_qs + outputName,
-                !layout || !layout->hidhideManaged ? u"NOT ADOPTED"_qs
-                    : outputHidden ? u"ACTION REQUIRED"_qs : u"READY"_qs,
-                !layout || !layout->hidhideManaged ? u"Output visibility is not managed by HidHide."_qs
-                    : outputHidden ? u"Managed virtual output is hidden; games must be able to see it."_qs
-                                   : u"Managed virtual output remains visible to games."_qs,
-                !layout || !layout->hidhideManaged ? u"info"_qs
-                    : outputHidden ? u"error"_qs : u"ready"_qs);
+            appendRigCheck(checks, u"GAME VISIBILITY · "_qs + outputName,
+                !layout || !layout->hidhideManaged || outputHidden ? u"SETUP NEEDED"_qs : u"READY"_qs,
+                !layout || !layout->hidhideManaged
+                    ? u"Game visibility has not been set up for this virtual controller."_qs
+                    : outputHidden ? u"This virtual controller is hidden from games. Games need to see it."_qs
+                                   : u"This virtual controller is visible to games."_qs,
+                !layout || !layout->hidhideManaged || outputHidden ? u"warning"_qs : u"ready"_qs);
             if (target.enabled) {
                 const bool writes = enabledOutputIndex < compiled.outputCount
                     && m_worker.runtime().deviceRigOutputWrites[static_cast<size_t>(enabledOutputIndex)]
@@ -4139,7 +4137,12 @@ QVariantList AppBackend::controllerReadinessChecks() const
     };
     append(u"PHYSICAL CONTROLLER"_qs, plan.physicalStatus, plan.physicalSummary);
     append(u"VJOY OUTPUT"_qs, plan.vjoyStatus, plan.vjoySummary);
-    append(u"HIDHIDE ISOLATION"_qs, plan.hidhideStatus, plan.hidhideSummary);
+    const VerificationSubsystemState gameVisibilityState = plan.hidhideStatus == VerificationSubsystemState::Ready
+        ? VerificationSubsystemState::Ready : VerificationSubsystemState::Attention;
+    append(u"GAME VISIBILITY"_qs, gameVisibilityState,
+           plan.hidhideStatus == VerificationSubsystemState::Ready
+               ? u"HOTAS BF6 can keep the selected physical controller hidden from games."_qs
+               : u"Set up game visibility so games use the virtual controller instead of the physical controller."_qs);
     return checks;
 }
 
@@ -4167,12 +4170,20 @@ QVariantList AppBackend::setupAssistantIssues() const
             category = u"PhysicalInput"_qs;
             const QString device = name == u"PHYSICAL CONTROLLER"_qs ? u"Physical controller"_qs
                                                                          : name.mid(8);
-            if (state.contains(u"OFFLINE"_qs)) {
+            const bool noSavedControllers = m_configuration.savedControllers.empty();
+            const bool noControllerConnected = m_connectedControllerCount == 0;
+            if (state.contains(u"OFFLINE"_qs) || (!noSavedControllers && noControllerConnected)) {
                 title = device + u" is offline"_qs;
                 explanation = u"This physical controller is required before the setup can be completed."_qs;
                 recommendedAction = u"reconnect"_qs;
                 recommendedActionLabel = u"CHECK AGAIN"_qs;
                 issueSeverity = u"offline"_qs;
+            } else if (noSavedControllers && noControllerConnected) {
+                title = u"Let's set up your controller"_qs;
+                explanation = u"Connect a physical controller to Windows, then choose Check Setup to continue."_qs;
+                recommendedAction = u"check-setup"_qs;
+                recommendedActionLabel = u"CHECK SETUP"_qs;
+                issueSeverity = u"setup-needed"_qs;
             } else {
                 title = u"Set up "_qs + device;
                 explanation = u"HOTAS BF6 found this physical controller, but it still needs setup before it can be used safely in a game."_qs;
@@ -4183,6 +4194,7 @@ QVariantList AppBackend::setupAssistantIssues() const
             category = u"VirtualOutput"_qs;
             title = u"Virtual controller needs setup"_qs;
             explanation = u"HOTAS BF6 needs a working virtual controller so your game sees one clean controller."_qs;
+            issueSeverity = u"setup-needed"_qs;
             automaticallyFixable = m_readiness.plan().canApplyAutomatically;
             recommendedAction = automaticallyFixable ? u"fix"_qs : u"check-setup"_qs;
             recommendedActionLabel = automaticallyFixable ? u"FIX OUTPUT"_qs : u"CHECK OUTPUT"_qs;
@@ -4190,6 +4202,7 @@ QVariantList AppBackend::setupAssistantIssues() const
             category = u"Visibility"_qs;
             title = u"Physical controller is visible to games"_qs;
             explanation = u"Your game may detect both the physical controller and the HOTAS BF6 virtual controller. Hiding the physical controller avoids duplicate controls while HOTAS BF6 keeps reading it."_qs;
+            issueSeverity = u"setup-needed"_qs;
             automaticallyFixable = m_readiness.plan().canApplyAutomatically;
             recommendedAction = automaticallyFixable ? u"fix"_qs : u"check-setup"_qs;
             recommendedActionLabel = automaticallyFixable ? u"HIDE FROM GAMES"_qs : u"CHECK VISIBILITY"_qs;
@@ -4498,6 +4511,9 @@ QVariantList AppBackend::virtualOutputLayouts() const
         }
         result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
             {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
+            {u"buttons"_qs, layout.requirements.buttons},
+            {u"continuousPovs"_qs, layout.requirements.continuousPovs},
+            {u"discretePovs"_qs, layout.requirements.discretePovs},
             {u"profileCount"_qs, profileCount}, {u"active"_qs, currentProfile().outputLayoutId == layout.id},
             {u"managedVisibility"_qs, layout.hidhideManaged},
             {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});

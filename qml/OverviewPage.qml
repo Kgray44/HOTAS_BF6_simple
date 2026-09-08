@@ -226,7 +226,10 @@ Flickable {
         Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
             ColumnLayout { objectName: "systemReadinessList"; Layout.fillWidth: true; spacing: 8
                 Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: backend.controllerReadinessChecks
-                    delegate: ReadinessCheck { check: modelData }
+                    delegate: ReadinessCheck {
+                        required property var modelData
+                        check: modelData
+                    }
                 }
             }
             RowLayout { Layout.fillWidth: true

@@ -38,6 +38,11 @@ Page {
         actionFeedback = result && result.title ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage })
         return actionFeedback
     }
+    function reportBooleanAction(succeeded, successTitle, successMessage, failureTitle, failureMessage) {
+        return showActionFeedback({ success: !!succeeded,
+            title: succeeded ? successTitle : failureTitle,
+            message: succeeded ? successMessage : failureMessage })
+    }
     function createRigWithInputs(name, ids, outputId) {
         const result = backendObject ? backendObject.createDeviceRigResult(name, ids, outputId) : ({ success: false, title: "Device Rig was not created", message: "HOTAS BF6 is not ready." })
         showActionFeedback(result, "Device Rig was not created", "Refresh the page and try again.")
@@ -71,8 +76,13 @@ Page {
     // the explicit top-bar picker.
     function editThisDevice(id) {
         const rig = selectedRig
-        if (!backendObject || !rig || !rigHasMember(rig, id)) return false
-        return backendObject.setEditingDeviceContext(rig.id, [id])
+        if (!backendObject || !rig || !rigHasMember(rig, id)) {
+            reportBooleanAction(false, "", "", "Could not edit this device", "Select a device that belongs to the current Device Rig.")
+            return false
+        }
+        const updated = backendObject.setEditingDeviceContext(rig.id, [id])
+        reportBooleanAction(updated, "Editing this device", "This device is now the active editing target.", "Could not change editing target", "Refresh the Device Rig and try again.")
+        return updated
     }
 
     // Repeater delegates are visual children rather than QObject children of
@@ -87,6 +97,7 @@ Page {
     }
     function requestVerification(rigId, deviceId) {
         if (rigDetailsActions.visible) rigDetailsActions.close()
+        showActionFeedback({ success: true, inProgress: true, title: "Checking setup", message: "Opening the Setup Assistant…" })
         verificationRequested(rigId || selectedRigId, deviceId || "")
     }
     function rigHasMember(rig, id) {
@@ -202,7 +213,7 @@ Page {
                     }
                 }
                 Item { Layout.fillWidth: true }
-                ThemedButton { theme: themeTokens; text: "+ CREATE RIG"; commandEnabled: root.selectableControllerCount() > 0
+                ThemedButton { objectName: "openCreateRigButton"; theme: themeTokens; text: "+ CREATE RIG"; commandEnabled: root.selectableControllerCount() > 0
                     onTriggered: createRigDialog.open() }
             }
 
@@ -235,9 +246,9 @@ Page {
                     Text { Layout.fillWidth: true; text: "No physical controllers detected"; color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true }
                     Text { Layout.fillWidth: true; text: "Connect a physical controller, then create a Device Rig and choose a virtual controller for your game."; color: themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true
-                        ThemedButton { theme: themeTokens; text: "REFRESH"; tone: "secondary"
+                        ThemedButton { objectName: "refreshDevicesButton"; theme: themeTokens; text: "REFRESH DEVICES"; tone: "secondary"
                             onTriggered: { backendObject.refreshControllers(); root.showActionFeedback({ success: true, title: "Refreshing devices", message: "HOTAS BF6 is looking for connected physical controllers." }) } }
-                        Text { Layout.fillWidth: true; text: "Connect a controller to enable Create Rig."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: "Connect or select a physical controller first."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     }
                 }
             }
@@ -383,17 +394,20 @@ Page {
                             }
                             Item { Layout.fillWidth: true }
                             ThemedButton {
+                                objectName: "activateRigButton"
                                 theme: themeTokens
                                 visible: selectedRig && !selectedRig.active; text: "ACTIVATE"
                                 commandEnabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
-                                onTriggered: backendObject.activateDeviceRig(selectedRig.id)
+                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Device Rig activated", "This rig is now selected for mapping and setup.", "Device Rig could not be activated", "Check that the required controllers and output are available.") }
                             }
                             ThemedButton {
+                                objectName: "deactivateRigButton"
                                 theme: themeTokens; tone: "secondary"
                                 visible: selectedRig && selectedRig.active; text: "DEACTIVATE"
-                                onTriggered: backendObject.deactivateDeviceRig(selectedRig.id)
+                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.deactivateDeviceRig(rig.id), "Device Rig deactivated", "The rig is no longer selected for mapping.", "Device Rig could not be deactivated", "Refresh the Device Rig and try again.") }
                             }
                             ThemedButton {
+                                objectName: "checkRigSetupButton"
                                 theme: themeTokens; tone: "secondary"
                                 visible: selectedRig; text: "CHECK RIG SETUP"
                                 onTriggered: root.requestVerification(selectedRig.id, "")
@@ -444,12 +458,12 @@ Page {
                                             Text { Layout.fillWidth: true; elide: Text.ElideRight; text: editingTarget ? "EDITING TARGET · " + (modelData.connected ? "Connected" : "Saved · Offline") : modelData.ambiguous ? "Selection required" : !modelData.verified ? "Needs verification" : modelData.connected ? "Connected · Verified" : modelData.required ? "Required · Offline" : "Optional · Offline"; color: editingTarget ? themeTokens.orange : themeTokens.textMuted; font.pixelSize: 10; font.bold: editingTarget }
                                         }
                                         ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openDevice(modelData.id) }
-                                        ThemedButton { theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; visible: selectedRig && selectedRig.members.length > 1; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigMember(rigId, modelData.id) } }
+                                        ThemedButton { theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; visible: selectedRig && selectedRig.members.length > 1; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.removeDeviceRigMember(rigId, modelData.id), "Physical controller removed", "The saved controller is no longer part of this Device Rig.", "Physical controller was not removed", "Refresh the Device Rig and try again.") } }
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true; spacing: 10
-                                        ThemedCheckBox { theme: themeTokens; text: modelData.required ? "Required" : "Optional"; checked: !!modelData.required; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberRequired(rigId, modelData.id, value) } }
-                                        ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberEnabled(rigId, modelData.id, value) } }
+                                        ThemedCheckBox { theme: themeTokens; text: modelData.required ? "Required" : "Optional"; checked: !!modelData.required; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigMemberRequired(rigId, modelData.id, value), "Controller requirement updated", value ? "This controller is required for the rig." : "This controller is optional and will not block setup when offline.", "Controller requirement was not updated", "Refresh the Device Rig and try again.") } }
+                                        ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigMemberEnabled(rigId, modelData.id, value), "Controller state updated", value ? "This controller is included in the rig." : "This controller is excluded from the rig.", "Controller state was not updated", "Refresh the Device Rig and try again.") } }
                                         ThemedButton {
                                             id: editThisControl
                                             objectName: "editThisButton"
@@ -493,7 +507,7 @@ Page {
                                             model: selectedRig ? selectedRig.outputs : []
                                             textRole: "name"; valueRole: "id"
                                             currentIndex: root.indexFor(selectedRig ? selectedRig.outputs : [], modelData.preferredOutputLayoutId)
-                                            onActivated: function(index, value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigMemberOutput(rigId, modelData.id, value) }
+                                            onActivated: function(index, value) { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigMemberOutput(rigId, modelData.id, value), "Controller output updated", "The controller now routes to the selected Virtual Output.", "Controller output was not updated", "Choose an available Virtual Output and try again.") }
                                         }
                                         Item { Layout.fillWidth: true }
                                     }
@@ -522,21 +536,21 @@ Page {
                                             Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
                                             Text { Layout.fillWidth: true; text: (modelData.ready ? "Ready" : modelData.status || "Needs verification") + "  ·  " + (modelData.routeCount || 0) + " configured routes"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
                                         }
-                                        ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value) } }
+                                        ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value), "Virtual Output state updated", value ? "This Virtual Output is included in the rig." : "This Virtual Output is excluded from the rig.", "Virtual Output state was not updated", "Refresh the Device Rig and try again.") } }
                                         Text { text: !modelData.visibilityManaged ? "VISIBLE" : modelData.hiddenFromGames ? "HIDDEN" : "VISIBLE"; color: !modelData.visibilityManaged || !modelData.visibilityKnown ? themeTokens.textMuted : modelData.hiddenFromGames ? themeTokens.warning : themeTokens.ready; font.pixelSize: 9; font.bold: true }
                                         ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
-                                        ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; if (rigId) backendObject.removeDeviceRigOutput(rigId, modelData.id) } }
+                                        ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.removeDeviceRigOutput(rigId, modelData.id), "Virtual Output removed", "The output is no longer part of this Device Rig.", "Virtual Output was not removed", "Refresh the Device Rig and try again.") } }
                                     }
                                 }
                             }
                             RowLayout { Layout.fillWidth: true
-                                ThemedButton { theme: themeTokens; text: "+ ADD OUTPUT"; tone: "secondary"; onTriggered: addOutputDialog.open() }
+                                ThemedButton { objectName: "addOutputToRigButton"; theme: themeTokens; text: "+ ADD OUTPUT"; tone: "secondary"; onTriggered: addOutputDialog.open() }
                                 Item { Layout.fillWidth: true }
                             }
                         }
                         RowLayout {
                             visible: selectedRig !== null; Layout.fillWidth: true; spacing: 8
-                            ThemedButton { theme: themeTokens; text: "+ ADD INPUT DEVICE"; tone: "secondary"; onTriggered: addMemberDialog.open() }
+                            ThemedButton { objectName: "addInputToRigButton"; theme: themeTokens; text: "+ ADD INPUT DEVICE"; tone: "secondary"; onTriggered: addMemberDialog.open() }
                             Item { Layout.fillWidth: true }
                         }
                         DevicePanel {
@@ -553,7 +567,7 @@ Page {
                                     text: "Games should normally see the active virtual controller instead of each physical controller. HOTAS BF6 checks the selected devices before changing visibility." }
                                 Flow {
                                     Layout.fillWidth: true; spacing: 8
-                                    ThemedButton { theme: themeTokens; compact: true; text: "HIDE ALL INPUTS"; tone: "secondary"
+                                    ThemedButton { objectName: "hideAllInputsButton"; theme: themeTokens; compact: true; text: "HIDE ALL INPUTS"; tone: "secondary"
                                         onTriggered: if (selectedRig) visibilityConfirmationDialog.openForInputs(selectedRig.id, selectedRig.members.filter(function(item) { return item.enabled }).map(function(item) { return item.id }), true) }
                                     ThemedButton { theme: themeTokens; compact: true; text: "SHOW ALL INPUTS"; tone: "secondary"
                                         onTriggered: if (selectedRig) visibilityConfirmationDialog.openForInputs(selectedRig.id, selectedRig.members.filter(function(item) { return item.enabled }).map(function(item) { return item.id }), false) }
@@ -593,8 +607,8 @@ Page {
                         SmallLabel { text: "AUTOMATIC BEHAVIOR" }
                         Flow {
                             Layout.fillWidth: true; spacing: 12
-                            ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigEnabled(selectedRig.id, value) } }
-                            ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { if (selectedRig) backendObject.setDeviceRigAutoActivate(selectedRig.id, value) } }
+                            ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigEnabled(rig.id, value), "Device Rig state updated", value ? "This rig is enabled." : "This rig is disabled.", "Device Rig state was not updated", "Refresh the Device Rig and try again.") } }
+                            ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigAutoActivate(rig.id, value), "Automatic activation updated", value ? "HOTAS BF6 can select this rig when its devices are available." : "This rig will not activate automatically.", "Automatic activation was not updated", "Refresh the Device Rig and try again.") } }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -603,21 +617,21 @@ Page {
                                 theme: themeTokens; Layout.preferredWidth: 220
                                 model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
                                 currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
-                                onActivated: function(index) { if (selectedRig) backendObject.setDeviceRigDisconnectBehavior(selectedRig.id, index) }
+                                onActivated: function(index) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigDisconnectBehavior(rig.id, index), "Disconnect behavior updated", "The Device Rig will use the selected behavior when a controller disconnects.", "Disconnect behavior was not updated", "Refresh the Device Rig and try again.") }
                             }
                             Item { Layout.fillWidth: true }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             SmallLabel { text: "PRIORITY" }
-                            ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { if (selectedRig) backendObject.setDeviceRigActivationPriority(selectedRig.id, value) } }
+                            ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigActivationPriority(rig.id, value), "Activation priority updated", "The Device Rig priority was saved.", "Activation priority was not updated", "Refresh the Device Rig and try again.") } }
                             SmallLabel { text: "FALLBACK" }
                             ThemedComboBox {
                                 id: fallbackPicker; theme: themeTokens; Layout.preferredWidth: 210
                                 model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) { return selectedRig && item.id !== selectedRig.id }))
                                 textRole: "name"; valueRole: "id"
                                 currentIndex: root.indexFor(model, selectedRig ? selectedRig.fallbackRigId : "")
-                                onActivated: function(index, value) { if (selectedRig) backendObject.setDeviceRigFallback(selectedRig.id, value) }
+                                onActivated: function(index, value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigFallback(rig.id, value), "Fallback Device Rig updated", value ? "A fallback rig was selected." : "No fallback rig is selected.", "Fallback Device Rig was not updated", "Refresh the Device Rig and try again.") }
                             }
                             Item { Layout.fillWidth: true }
                         }
@@ -688,9 +702,9 @@ Page {
         background: DevicePanel { theme: themeTokens; legacy: root.legacy; border.color: themeTokens.borderStrong }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 5
-            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.default ? "CLEAR DEFAULT" : "SET DEFAULT"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); if (rig) { if (rig.default) backendObject.clearDefaultDeviceRig(rig.id); else backendObject.setDefaultDeviceRig(rig.id) } } }
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.default ? "CLEAR DEFAULT" : "SET DEFAULT"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); const changed = rig && (rig.default ? backendObject.clearDefaultDeviceRig(rig.id) : backendObject.setDefaultDeviceRig(rig.id)); root.reportBooleanAction(changed, rig && rig.default ? "Default Device Rig cleared" : "Default Device Rig set", "The default Device Rig was saved.", "Default Device Rig was not updated", "Refresh the Device Rig and try again.") } }
             ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: "RENAME RIG"; tone: "secondary"; onTriggered: { rigNameField.text = selectedRig ? selectedRig.name : ""; rigDetailsActions.close(); renameRigDialog.open() } }
-            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.enabled ? "DISABLE RIG" : "ENABLE RIG"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); if (rig) backendObject.setDeviceRigEnabled(rig.id, !rig.enabled) } }
+            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: selectedRig && selectedRig.enabled ? "DISABLE RIG" : "ENABLE RIG"; tone: "secondary"; onTriggered: { const rig = selectedRig; rigDetailsActions.close(); root.reportBooleanAction(rig && backendObject.setDeviceRigEnabled(rig.id, !rig.enabled), "Device Rig state updated", rig && rig.enabled ? "This rig is disabled." : "This rig is enabled.", "Device Rig state was not updated", "Refresh the Device Rig and try again.") } }
             ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: "DELETE RIG"; tone: "danger"; onTriggered: { rigDetailsActions.close(); deleteRigDialog.open() } }
         }
     }
@@ -716,22 +730,23 @@ Page {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.text
                 text: visibilityConfirmationDialog.inputs
                     ? (visibilityConfirmationDialog.targetHidden
-                       ? "Hide the selected physical input devices from games? HOTAS BF6 will first validate every saved HID identity, preserve unrelated HidHide entries, and roll back all completed changes if one command fails."
-                       : "Show the selected managed physical input devices to games? Only exact identities previously adopted by this rig can change.")
+                       ? "Hide the selected physical controllers from games? HOTAS BF6 will keep reading them, change only the controllers you selected, and leave unrelated devices alone."
+                       : "Show the selected physical controllers to games? HOTAS BF6 will change only the controllers you selected.")
                     : (visibilityConfirmationDialog.targetHidden
-                       ? "Hide the selected inactive virtual outputs from games? Only adopted exact vJoy HID identities can change."
+                       ? "Hide the selected inactive virtual controllers from games? HOTAS BF6 will change only the virtual controllers you selected."
                        : "Show the selected virtual outputs to games? Active outputs are kept visible for game binding.") }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
-                text: "After the change, HOTAS BF6 rechecks the live HidHide state. This action never clears, rewrites, or matches unrelated devices by name." }
+                text: "HOTAS BF6 checks the result before it reports success. Technical Details contains the exact driver evidence." }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: visibilityConfirmationDialog.close() }
-                ThemedButton { theme: themeTokens; text: "APPLY"; emphasis: "warning"
+                ThemedButton { objectName: "visibilityApplyButton"; theme: themeTokens; text: "APPLY"; emphasis: "warning"
                     commandEnabled: visibilityConfirmationDialog.rigId !== "" && visibilityConfirmationDialog.ids.length > 0
                     onTriggered: {
                         const okay = visibilityConfirmationDialog.inputs
                             ? backendObject.setDeviceRigInputVisibility(visibilityConfirmationDialog.rigId, visibilityConfirmationDialog.ids, visibilityConfirmationDialog.targetHidden)
                             : backendObject.setDeviceRigOutputVisibility(visibilityConfirmationDialog.rigId, visibilityConfirmationDialog.ids, !visibilityConfirmationDialog.targetHidden)
+                        root.reportBooleanAction(okay, visibilityConfirmationDialog.targetHidden ? "Game visibility updated" : "Game visibility updated", visibilityConfirmationDialog.targetHidden ? "The selected physical controllers are now hidden from games." : "The selected devices are now visible to games.", "Game visibility was not updated", "HOTAS BF6 could not change the selected device visibility. Check Setup for details.")
                         if (okay) visibilityConfirmationDialog.close()
                     } }
             }
@@ -753,7 +768,7 @@ Page {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: addMemberDialog.close() }
-                ThemedButton { theme: themeTokens; text: "ADD INPUT"; commandEnabled: selectedRig && memberPicker.currentValue; onTriggered: { const rig = selectedRig; const id = memberPicker.currentValue; if (rig && id && backendObject.addDeviceRigMember(rig.id, id, !addMemberOptional.checked)) addMemberDialog.close() } }
+                ThemedButton { theme: themeTokens; text: "ADD INPUT"; commandEnabled: selectedRig && memberPicker.currentValue; onTriggered: { const rig = selectedRig; const id = memberPicker.currentValue; const added = rig && id && backendObject.addDeviceRigMember(rig.id, id, !addMemberOptional.checked); root.reportBooleanAction(added, "Physical controller added", "The controller was added to this Device Rig.", "Physical controller was not added", "Choose an available saved controller and try again."); if (added) addMemberDialog.close() } }
             }
         }
     }
@@ -774,14 +789,14 @@ Page {
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             SmallLabel { text: "CREATE NEW VIRTUAL OUTPUT" }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
-                text: "Create a second vJoy output from this workflow. HOTAS BF6 saves the requested descriptor, then the unified verifier shows any required vJoy approval before the rig uses it." }
-            ThemedButton { theme: themeTokens; Layout.fillWidth: true; text: "+ CREATE NEW VJOY DEVICE"; tone: "secondary"
+                text: "Create another virtual controller here. HOTAS BF6 saves its capability settings, then Check Setup explains any driver configuration it still needs." }
+            ThemedButton { objectName: "openCreateOutputButton"; theme: themeTokens; Layout.fillWidth: true; text: "+ CREATE NEW VJOY DEVICE"; tone: "secondary"
                 onTriggered: { addOutputDialog.close(); createOutputDialog.returnToRig = false; createOutputDialog.resetForOpen(); createOutputDialog.open() } }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: addOutputDialog.close() }
                 ThemedButton { theme: themeTokens; text: "ADD OUTPUT"; commandEnabled: selectedRig && outputPicker.currentValue
-                    onTriggered: { const rig = selectedRig; if (rig && backendObject.addDeviceRigOutput(rig.id, outputPicker.currentValue)) addOutputDialog.close() } }
+                    onTriggered: { const rig = selectedRig; const added = rig && backendObject.addDeviceRigOutput(rig.id, outputPicker.currentValue); root.reportBooleanAction(added, "Virtual Output added", "The output was added to this Device Rig.", "Virtual Output was not added", "Choose an available Virtual Output and try again."); if (added) addOutputDialog.close() } }
             }
         }
     }
@@ -892,7 +907,7 @@ Page {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "BACK"; tone: "secondary"
                     onTriggered: { createOutputDialog.close(); if (createOutputDialog.returnToRig) createRigDialog.open(); else addOutputDialog.open() } }
-                ThemedButton { theme: themeTokens; text: createOutputDialog.returnToRig ? "CREATE & USE" : "CREATE & ADD"; emphasis: "ready"
+                ThemedButton { objectName: "createOutputButton"; theme: themeTokens; text: "CREATE OUTPUT"; emphasis: "ready"
                     commandEnabled: outputCreateName.text.trim().length > 0 && createOutputDialog.selectedDeviceId > 0 && (createOutputDialog.mode === "custom" ? createOutputDialog.selectedAxes.length > 0 : createOutputDialog.selectedSource() !== "") && (createOutputDialog.returnToRig || selectedRig)
                     onTriggered: {
                         const result = backendObject.createVirtualOutputLayoutResult(outputCreateName.text, createOutputDialog.selectedDeviceId, createOutputDialog.mode, createOutputDialog.selectedSource(), createOutputDialog.selectedAxes, createOutputDialog.customButtons, createOutputDialog.customContinuousPovs, createOutputDialog.customDiscretePovs)
@@ -948,7 +963,7 @@ Page {
                 Text { Layout.fillWidth: true; elide: Text.ElideRight; text: physicalDeviceDialog.detail.rigs || "Not assigned to a Device Rig"; color: themeTokens.text }
                 SmallLabel { text: "MAPPINGS" }
                 Text { text: (physicalDeviceDialog.detail.mappedAxes || 0) + " axes · " + (physicalDeviceDialog.detail.mappedButtons || 0) + " buttons · " + (physicalDeviceDialog.detail.mappedPovs || 0) + " POV routes"; color: themeTokens.text }
-                SmallLabel { text: "HIDHIDE" }
+                SmallLabel { text: "GAME VISIBILITY" }
                 Text { text: physicalDeviceDialog.detail.hidhideManaged ? "Configured for this device" : "Set up game visibility"; color: themeTokens.text }
                 SmallLabel { text: "GAME VISIBILITY" }
                 Text {
@@ -974,7 +989,7 @@ Page {
                     onTriggered: visibilityConfirmationDialog.openForInputs(root.selectedRigId, [root.selectedDeviceId], !physicalDeviceDialog.detail.hiddenFromGames)
                 }
                 Item { Layout.fillWidth: true }
-                ThemedButton { visible: !(physicalDeviceDialog.detail.rigs || ""); theme: themeTokens; text: "FORGET DEVICE"; tone: "danger"; onTriggered: { backendObject.forgetController(root.selectedDeviceId); physicalDeviceDialog.close() } }
+                ThemedButton { visible: !(physicalDeviceDialog.detail.rigs || ""); theme: themeTokens; text: "FORGET DEVICE"; tone: "danger"; onTriggered: { const forgotten = backendObject.forgetController(root.selectedDeviceId); root.reportBooleanAction(forgotten, "Physical controller forgotten", "The saved device was removed from HOTAS BF6.", "Physical controller was not forgotten", "The device may still be used by a Device Rig."); if (forgotten) physicalDeviceDialog.close() } }
                 ThemedButton { theme: themeTokens; text: "CLOSE"; tone: "secondary"; onTriggered: physicalDeviceDialog.close() }
             }
         }
@@ -1022,14 +1037,14 @@ Page {
             ColumnLayout {
                 visible: !outputDetailDialog.detail.managedVisibility
                 Layout.fillWidth: true; spacing: 6
-                SmallLabel { text: "ADOPT EXACT VJOY HID ID" }
+                SmallLabel { text: "TECHNICAL DETAILS" }
                 Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
-                    text: "Paste the exact vJoy HID instance from the verifier. Friendly names are never matched or adopted." }
+                    text: "Enter the exact virtual-controller identifier shown in Technical Details. A name alone cannot identify a controller safely." }
                 RowLayout { Layout.fillWidth: true
                     ThemedTextInput { id: outputVisibilityIdentity; theme: themeTokens; Layout.fillWidth: true; placeholderText: "HID\\VID_1234&PID_BEAD\\…" }
-                    ThemedButton { theme: themeTokens; compact: true; text: "ADOPT"; tone: "secondary"
+                    ThemedButton { theme: themeTokens; compact: true; text: "SAVE ID"; tone: "secondary"
                         commandEnabled: outputVisibilityIdentity.text.trim().length > 0
-                        onTriggered: if (backendObject.adoptVirtualOutputVisibility(root.selectedOutputId, outputVisibilityIdentity.text)) outputVisibilityIdentity.text = "" }
+                        onTriggered: { const saved = backendObject.adoptVirtualOutputVisibility(root.selectedOutputId, outputVisibilityIdentity.text); root.reportBooleanAction(saved, "Virtual Output identity saved", "HOTAS BF6 can now check game visibility for this output.", "Virtual Output identity was not saved", "Use the exact vJoy device identity shown in Technical Details."); if (saved) outputVisibilityIdentity.text = "" } }
                 }
             }
             RowLayout { Layout.fillWidth: true
@@ -1044,7 +1059,7 @@ Page {
                                     || !root.selectedRig.active
                     onTriggered: visibilityConfirmationDialog.openForOutputs(root.selectedRigId, [root.selectedOutputId], outputDetailDialog.detail.hiddenFromGames)
                 }
-                ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: backendObject.openVjoyConfiguration() }
+                ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: root.reportBooleanAction(backendObject.openVjoyConfiguration(), "vJoy configuration opened", "Configure the requested Virtual Output, then return to Check Output.", "vJoy configuration could not open", "Install or repair the vJoy configuration tool, then try again.") }
                 ThemedButton {
                     theme: themeTokens; text: "RENAME LAYOUT"; tone: "secondary"
                     onTriggered: { outputNameField.text = outputDetailDialog.detail.name || ""; renameOutputDialog.open() }
@@ -1069,7 +1084,7 @@ Page {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: renameOutputDialog.close() }
                 ThemedButton { theme: themeTokens; text: "SAVE"; commandEnabled: outputNameField.text.trim().length > 0
-                    onTriggered: if (backendObject.renameVirtualOutputLayout(root.selectedOutputId, outputNameField.text)) renameOutputDialog.close() }
+                    onTriggered: { const saved = backendObject.renameVirtualOutputLayout(root.selectedOutputId, outputNameField.text); root.reportBooleanAction(saved, "Virtual Output renamed", "The saved output name was updated.", "Virtual Output was not renamed", "Choose a unique output name and try again."); if (saved) renameOutputDialog.close() } }
             }
         }
     }
@@ -1087,7 +1102,7 @@ Page {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: renameRigDialog.close() }
                 ThemedButton { theme: themeTokens; text: "SAVE"; commandEnabled: rigNameField.text.trim().length > 0
-                    onTriggered: if (selectedRig && backendObject.renameDeviceRig(selectedRig.id, rigNameField.text)) renameRigDialog.close() }
+                    onTriggered: { const rig = selectedRig; const saved = rig && backendObject.renameDeviceRig(rig.id, rigNameField.text); root.reportBooleanAction(saved, "Device Rig renamed", "The saved rig name was updated.", "Device Rig was not renamed", "Choose a unique rig name and try again."); if (saved) renameRigDialog.close() } }
             }
         }
     }
@@ -1145,8 +1160,10 @@ Page {
                     theme: themeTokens; text: "APPLY COMPATIBLE ONLY"
                     commandEnabled: !!batchAxisDialog.preview && !!batchAxisDialog.preview.valid
                     onTriggered: {
-                        if (backendObject.applyEditingAxisBatch(batchAxisDialog.axisIndex, "inverted",
-                                invertAll.checked, "apply-compatible-only")) batchAxisDialog.close()
+                        const applied = backendObject.applyEditingAxisBatch(batchAxisDialog.axisIndex, "inverted",
+                            invertAll.checked, "apply-compatible-only")
+                        root.reportBooleanAction(applied, "Compatible settings applied", "The selected compatible devices were updated.", "Settings were not applied", "Review the compatible devices and try again.")
+                        if (applied) batchAxisDialog.close()
                     }
                 }
             }
@@ -1226,6 +1243,7 @@ Page {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ThemedButton {
+                    objectName: "createRigButton"
                     theme: themeTokens; text: createRigDialog.selectedControllersNeedSetup() ? "CREATE & SET UP" : "CREATE RIG"
                     commandEnabled: rigName.text.trim().length > 0 && createRigDialog.outputLayoutId !== "" && createRigDialog.selectedControllerIds().length > 0
                     onTriggered: {
@@ -1258,7 +1276,10 @@ Page {
                 ThemedButton {
                     theme: themeTokens; text: "DELETE RIG"; tone: "danger"
                     onTriggered: {
-                        if (root.selectedRig && backendObject.deleteDeviceRig(root.selectedRig.id)) {
+                        const rig = root.selectedRig
+                        const deleted = rig && backendObject.deleteDeviceRig(rig.id)
+                        root.reportBooleanAction(deleted, "Device Rig deleted", "Saved controllers and mappings remain available.", "Device Rig was not deleted", "Refresh the Device Rig and try again.")
+                        if (deleted) {
                             root.selectedRigId = ""
                             deleteRigDialog.close()
                         }
