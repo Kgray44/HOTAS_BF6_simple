@@ -35,7 +35,7 @@ Item {
         case 1:
             return "Buttons";
         case 2:
-            return "Controller setup";
+            return "Devices";
         case 3:
             return "Diagnostics";
         case 4:

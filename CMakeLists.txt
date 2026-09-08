@@ -101,6 +101,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckHealthCard.qml
         qml/FlightDeckAxisMeter.qml
         qml/FlightDeckOverview.qml
+        qml/FlightDeckDevices.qml
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
@@ -437,6 +438,7 @@ if (BUILD_TESTING)
             qml/FlightDeckHealthCard.qml
             qml/FlightDeckAxisMeter.qml
             qml/FlightDeckOverview.qml
+            qml/FlightDeckDevices.qml
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml
