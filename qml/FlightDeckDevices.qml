@@ -11,6 +11,10 @@ Flickable {
 
     property var readinessModel
     property string requestedContext: ""
+    // The startup test may render controller-card arrangements without
+    // touching AppBackend, device discovery, or persisted configuration.
+    // Production never assigns this and always consumes backend.controllers.
+    property var controllerPresentationOverride: null
     property bool virtualDetailsOpen: false
     property bool isolationDetailsOpen: false
     property bool verificationDetailsOpen: false
@@ -26,11 +30,49 @@ Flickable {
     readonly property var vjoyCheck: checkFor(["VJOY", "VIRTUAL OUTPUT"])
     readonly property var isolationCheck: checkFor(["HIDHIDE", "ISOLATION"])
     readonly property var physicalCheck: checkFor(["PHYSICAL", "CONTROLLER"])
-    readonly property bool checking: backend.controllerSetupInProgress
-    readonly property bool canRepairSetup: backend.controllerSetupCanApply && !checking
-    readonly property bool canRepairHidHideAccess: backend.hidhideAvailable
-        && backend.hidhideCloakStateKnown && backend.hidhideCloaked
-        && !backend.hidhideMapperAllowed
+    readonly property var controllerItems: controllerPresentationOverride === null
+        ? backend.controllers : controllerPresentationOverride
+    readonly property bool checking: state.controllerSetupInProgress === undefined
+        ? backend.controllerSetupInProgress : state.controllerSetupInProgress
+    readonly property bool canRepairSetup: (state.controllerSetupCanApply === undefined
+        ? backend.controllerSetupCanApply : state.controllerSetupCanApply) && !checking
+    readonly property bool canUndoRepair: state.controllerSetupCanUndo === undefined
+        ? backend.controllerSetupCanUndo : state.controllerSetupCanUndo
+    readonly property bool canRepairHidHideAccess: (state.hidhideAvailable === undefined
+        ? backend.hidhideAvailable : state.hidhideAvailable)
+        && (state.hidhideCloakStateKnown === undefined
+            ? backend.hidhideCloakStateKnown : state.hidhideCloakStateKnown)
+        && (state.hidhideCloaked === undefined ? backend.hidhideCloaked : state.hidhideCloaked)
+        && !(state.hidhideMapperAllowed === undefined
+            ? backend.hidhideMapperAllowed : state.hidhideMapperAllowed)
+    readonly property bool vjoyReady: state.vjoyReady === undefined ? backend.vjoyReady : state.vjoyReady
+    readonly property string vjoyDeviceId: state.vjoyDeviceId === undefined
+        ? backend.vjoyDeviceId : state.vjoyDeviceId
+    readonly property string vjoyStatus: state.vjoyStatus === undefined ? backend.vjoyStatus : state.vjoyStatus
+    readonly property int vjoyButtonCount: state.vjoyButtonCount === undefined
+        ? backend.vjoyButtonCount : state.vjoyButtonCount
+    readonly property int vjoyContinuousPovCount: state.vjoyContinuousPovCount === undefined
+        ? backend.vjoyContinuousPovCount : state.vjoyContinuousPovCount
+    readonly property int vjoyDiscretePovCount: state.vjoyDiscretePovCount === undefined
+        ? backend.vjoyDiscretePovCount : state.vjoyDiscretePovCount
+    readonly property string verificationState: state.controllerReadinessState === undefined
+        ? backend.controllerReadinessState : state.controllerReadinessState
+    readonly property string verificationStatus: state.controllerReadinessStatus === undefined
+        ? backend.controllerReadinessStatus : state.controllerReadinessStatus
+    readonly property var proposedChanges: state.controllerReadinessProposedChanges === undefined
+        ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
+    readonly property bool reconnectRequired: state.controllerReconnectRequired === undefined
+        ? backend.controllerReconnectRequired : state.controllerReconnectRequired
+    readonly property bool disconnectObserved: state.controllerDisconnectObserved === undefined
+        ? backend.controllerDisconnectObserved : state.controllerDisconnectObserved
+    readonly property bool hidhideAvailable: state.hidhideAvailable === undefined
+        ? backend.hidhideAvailable : state.hidhideAvailable
+    readonly property bool hidhideCloakStateKnown: state.hidhideCloakStateKnown === undefined
+        ? backend.hidhideCloakStateKnown : state.hidhideCloakStateKnown
+    readonly property bool hidhideCloaked: state.hidhideCloaked === undefined
+        ? backend.hidhideCloaked : state.hidhideCloaked
+    readonly property bool hidhideMapperAllowed: state.hidhideMapperAllowed === undefined
+        ? backend.hidhideMapperAllowed : state.hidhideMapperAllowed
 
     FlightDeckTheme {
         id: deck
@@ -96,6 +138,12 @@ Flickable {
         if (!controller.connected) return "attention";
         if (controller.ambiguous || !controller.verified) return "attention";
         return "healthy";
+    }
+
+    function controllerActionLabel(controller) {
+        if (!controller.connected) return "RESCAN";
+        if (controller.active) return "ACTIVE";
+        return controller.verified ? "USE CONTROLLER" : "VERIFY CONTROLLER";
     }
 
     function revealContext() {
@@ -295,7 +343,7 @@ Flickable {
             objectName: "flightDeckNoControllers"
             tokens: deck
             Layout.fillWidth: true
-            visible: backend.controllers.length === 0
+            visible: root.controllerItems.length === 0
             implicitHeight: visible ? noControllersContent.implicitHeight + deck.space32 : 0
             ColumnLayout {
                 id: noControllersContent
@@ -318,18 +366,26 @@ Flickable {
 
         GridLayout {
             Layout.fillWidth: true
-            visible: backend.controllers.length > 0
+            visible: root.controllerItems.length > 0
             columns: root.wide ? 2 : 1
             columnSpacing: deck.space12
             rowSpacing: deck.space12
             Repeater {
-                model: backend.controllers
+                objectName: "flightDeckControllerRepeater"
+                // AppBackend supplies a QVariantList. Use an integer model
+                // and read the current element by index so map values remain
+                // live even when discovery updates an existing row in place.
+                model: root.controllerItems.length
                 delegate: FlightDeckCard {
-                    required property var modelData
+                    id: controllerCard
+                    required property int index
+                    readonly property var controller: root.controllerItems[index] || ({})
+                    objectName: "flightDeckControllerCard_" + controller.directInputId
+                    readonly property string controllerActionLabel: root.controllerActionLabel(controller)
                     tokens: deck
                     Layout.fillWidth: true
                     implicitHeight: controllerContent.implicitHeight + deck.space32
-                    border.color: modelData.active ? deck.accent : deck.border
+                    border.color: controller.active ? deck.accent : deck.border
                     ColumnLayout {
                         id: controllerContent
                         anchors.fill: parent
@@ -341,31 +397,31 @@ Flickable {
                                 Layout.fillWidth: true
                                 spacing: deck.space4
                                 Text { text: "PHYSICAL CONTROLLER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                                Text { text: modelData.name || "Controller"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 16; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: controllerCard.controller.name || "Controller"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 16; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
                             }
-                            FlightDeckStatusChip { tokens: deck; label: root.controllerState(modelData).toUpperCase(); tone: root.controllerTone(modelData); visible: root.medium }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: deck.space12
-                            Text { text: root.markerFor(root.controllerTone(modelData)) + " " + root.controllerState(modelData); color: deck.statusColor(root.controllerTone(modelData)); font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Text { text: modelData.verified ? "✓ Verified" : "! Not yet verified"; color: modelData.verified ? deck.healthy : deck.attention; font.pixelSize: 10; font.bold: true }
+                            Text { text: root.markerFor(root.controllerTone(controllerCard.controller)) + " " + root.controllerState(controllerCard.controller); color: deck.statusColor(root.controllerTone(controllerCard.controller)); font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: controllerCard.controller.verified ? "✓ Verified" : "! Not yet verified"; color: controllerCard.controller.verified ? deck.healthy : deck.attention; font.pixelSize: 10; font.bold: true }
                         }
-                        Text { text: modelData.axisCount + " axes  •  " + modelData.buttonCount + " buttons  •  " + modelData.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { visible: modelData.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true }
-                        Text { visible: !modelData.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: controllerCard.controller.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true }
+                        Text { visible: !controllerCard.controller.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
                             Item { Layout.fillWidth: true }
                             Button {
-                                text: !modelData.connected ? "RESCAN" : modelData.active ? "ACTIVE" : modelData.verified ? "USE CONTROLLER" : "VERIFY CONTROLLER"
-                                enabled: !modelData.active
+                                objectName: "flightDeckControllerAction_" + controllerCard.controller.directInputId
+                                text: controllerCard.controllerActionLabel
+                                enabled: !controllerCard.controller.active
                                 focusPolicy: Qt.StrongFocus
                                 implicitHeight: deck.compactControlHeight
                                 onClicked: {
-                                    if (!modelData.connected) backend.refreshControllers()
-                                    else if (modelData.verified && modelData.id) backend.setActiveController(modelData.id)
-                                    else backend.selectNewController(modelData.directInputId)
+                                    if (!controllerCard.controller.connected) backend.refreshControllers()
+                                    else if (controllerCard.controller.verified && controllerCard.controller.id) backend.setActiveController(controllerCard.controller.id)
+                                    else backend.selectNewController(controllerCard.controller.directInputId)
                                 }
                                 background: Rectangle { radius: deck.radiusControl; color: parent.enabled && parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : (parent.enabled ? deck.accent : deck.border); border.width: parent.activeFocus ? 2 : 1 }
                                 contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -395,16 +451,16 @@ Flickable {
                         Layout.fillWidth: true
                         spacing: deck.space4
                         Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: backend.vjoyReady ? "Online" : "Action needed"; color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
+                        Text { text: root.vjoyReady ? "Online" : "Action needed"; color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
                         Text { text: root.vjoyCheck.message || output.detail || "Checking virtual output."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
-                    FlightDeckStatusChip { tokens: deck; label: backend.vjoyReady ? "ONLINE" : "ACTION NEEDED"; value: "vJoy " + backend.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
+                    FlightDeckStatusChip { tokens: deck; label: root.vjoyReady ? "ONLINE" : "ACTION NEEDED"; value: "vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
                 }
                 Text { text: "Virtual output is the controller signal games receive from HOTAS BF6."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     Button {
-                        visible: !backend.vjoyReady
+                        visible: !root.vjoyReady
                         text: "OPEN VJOY SETUP"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
@@ -434,9 +490,9 @@ Flickable {
                         anchors.fill: parent
                         anchors.margins: deck.space12
                         spacing: deck.space4
-                        Text { text: "vJoy Device " + backend.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
-                        Text { text: backend.vjoyStatus; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: backend.vjoyButtonCount + " buttons  •  " + backend.vjoyContinuousPovCount + " continuous hats  •  " + backend.vjoyDiscretePovCount + " discrete hats"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "vJoy Device " + root.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+                        Text { text: root.vjoyStatus; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.vjoyButtonCount + " buttons  •  " + root.vjoyContinuousPovCount + " continuous hats  •  " + root.vjoyDiscretePovCount + " discrete hats"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
             }
@@ -505,9 +561,9 @@ Flickable {
                         anchors.margins: deck.space12
                         spacing: deck.space4
                         Text { text: "HidHide status"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
-                        Text { text: backend.hidhideAvailable ? "Service and tools are available." : "Service or tools are unavailable."; color: deck.textSecondary; font.pixelSize: 10 }
-                        Text { text: backend.hidhideCloakStateKnown ? (backend.hidhideCloaked ? "Cloaking is enabled." : "Cloaking is disabled.") : "Cloaking state is still unknown."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: backend.hidhideMapperAllowed ? "HOTAS BF6 is allow-listed." : "HOTAS BF6 is not allow-listed."; color: deck.textSecondary; font.pixelSize: 10 }
+                        Text { text: root.hidhideAvailable ? "Service and tools are available." : "Service or tools are unavailable."; color: deck.textSecondary; font.pixelSize: 10 }
+                        Text { text: root.hidhideCloakStateKnown ? (root.hidhideCloaked ? "Cloaking is enabled." : "Cloaking is disabled.") : "Cloaking state is still unknown."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.hidhideMapperAllowed ? "HOTAS BF6 is allow-listed." : "HOTAS BF6 is not allow-listed."; color: deck.textSecondary; font.pixelSize: 10 }
                     }
                 }
             }
@@ -532,8 +588,8 @@ Flickable {
                         Layout.fillWidth: true
                         spacing: deck.space4
                         Text { text: "CONTROLLER VERIFICATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: checking ? "Checking setup" : String(backend.controllerReadinessState || "Not checked"); color: deck.statusColor(readiness.tone || "informational"); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
-                        Text { text: backend.controllerReadinessStatus || "Verify the selected controller, virtual output, and device isolation."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: checking ? "Checking setup" : String(root.verificationState || "Not checked"); color: deck.statusColor(readiness.tone || "informational"); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
+                        Text { text: root.verificationStatus || "Verify the selected controller, virtual output, and device isolation."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Button {
                         objectName: "flightDeckVerifySetup"
@@ -574,7 +630,7 @@ Flickable {
                     }
                 }
                 Rectangle {
-                    visible: backend.controllerReadinessProposedChanges.length > 0
+                    visible: root.proposedChanges.length > 0
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? proposedChanges.implicitHeight + deck.space24 : 0
                     radius: deck.radiusControl
@@ -587,14 +643,14 @@ Flickable {
                         spacing: deck.space4
                         Text { text: "RECOMMENDED NEXT STEP"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                         Repeater {
-                            model: backend.controllerReadinessProposedChanges
+                            model: root.proposedChanges
                             delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                     }
                 }
                 Text {
-                    visible: backend.controllerReconnectRequired
-                    text: backend.controllerDisconnectObserved ? "Controller disconnected. Reconnect the selected controller and move a control to complete verification." : "Device isolation changed visibility. Unplug and reconnect the selected controller when prompted to complete verification."
+                    visible: root.reconnectRequired
+                    text: root.disconnectObserved ? "Controller disconnected. Reconnect the selected controller and move a control to complete verification." : "Device isolation changed visibility. Unplug and reconnect the selected controller when prompted to complete verification."
                     color: deck.attention
                     font.pixelSize: 10
                     Layout.fillWidth: true
@@ -604,7 +660,7 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: deck.space8
                     Button {
-                        visible: backend.controllerSetupCanUndo
+                        visible: root.canUndoRepair
                         text: "UNDO REPAIR"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
@@ -677,7 +733,7 @@ Flickable {
                     spacing: deck.space4
                     Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                     Repeater {
-                        model: backend.controllerReadinessProposedChanges
+                        model: root.proposedChanges
                         delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }

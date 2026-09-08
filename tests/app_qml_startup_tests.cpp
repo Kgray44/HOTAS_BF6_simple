@@ -2427,49 +2427,199 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices empty state did not render")
             .arg(appearance));
     }
+    // These fixtures exercise the native Devices composition only. They are
+    // assigned to presentation-only QML properties, never to AppBackend,
+    // device discovery, the controller store, or mapper state.
+    const QVariantList readyChecks{
+        QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("PHYSICAL CONTROLLER")},
+            {QStringLiteral("state"), QStringLiteral("READY")},
+            {QStringLiteral("message"), QStringLiteral("Physical controller input is available.")},
+            {QStringLiteral("severity"), QStringLiteral("ready")}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("VJOY OUTPUT")},
+            {QStringLiteral("state"), QStringLiteral("READY")},
+            {QStringLiteral("message"), QStringLiteral("Virtual output is online.")},
+            {QStringLiteral("severity"), QStringLiteral("ready")}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")},
+            {QStringLiteral("state"), QStringLiteral("READY")},
+            {QStringLiteral("message"), QStringLiteral("Exact-device isolation is verified.")},
+            {QStringLiteral("severity"), QStringLiteral("ready")}}),
+    };
+    const QVariantMap readyVisualState{
+        {QStringLiteral("physicalConnected"), true},
+        {QStringLiteral("connectedControllerCount"), 3},
+        {QStringLiteral("deviceName"), QStringLiteral("Flight Stick")},
+        {QStringLiteral("mappingActive"), true},
+        {QStringLiteral("mappingRequested"), true},
+        {QStringLiteral("mappingStatus"), QStringLiteral("MAPPING ACTIVE")},
+        {QStringLiteral("vjoyReady"), true},
+        {QStringLiteral("vjoyStatus"), QStringLiteral("vJoy 1 online")},
+        {QStringLiteral("vjoyStatusSeverity"), QStringLiteral("ready")},
+        {QStringLiteral("vjoyDeviceId"), QStringLiteral("1")},
+        {QStringLiteral("vjoyButtonCount"), 32},
+        {QStringLiteral("vjoyContinuousPovCount"), 1},
+        {QStringLiteral("vjoyDiscretePovCount"), 0},
+        {QStringLiteral("outputLayoutName"), QStringLiteral("BF6 Output")},
+        {QStringLiteral("controllerReadinessState"), QStringLiteral("READY")},
+        {QStringLiteral("controllerReadinessStatus"), QStringLiteral("Controller setup is ready for use.")},
+        {QStringLiteral("controllerReadinessProposedChanges"), QVariantList{}},
+        {QStringLiteral("controllerReconnectRequired"), false},
+        {QStringLiteral("controllerDisconnectObserved"), false},
+        {QStringLiteral("controllerSetupInProgress"), false},
+        {QStringLiteral("controllerSetupCanApply"), false},
+        {QStringLiteral("controllerSetupCanUndo"), false},
+        {QStringLiteral("hidhideAvailable"), true},
+        {QStringLiteral("hidhideCloakStateKnown"), true},
+        {QStringLiteral("hidhideCloaked"), true},
+        {QStringLiteral("hidhideMapperAllowed"), true},
+        {QStringLiteral("checks"), readyChecks},
+        {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("BF6 Helicopter")},
+        {QStringLiteral("profileSourceLabel"), QStringLiteral("Automatic game profile")},
+        {QStringLiteral("automaticGameDetection"), true},
+        {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield 6")},
+        {QStringLiteral("activeCategoryRules"), QStringList{QStringLiteral("bf6.exe")}},
+        {QStringLiteral("runningApplications"), QVariantList{QVariant::fromValue(QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("Battlefield 6")},
+            {QStringLiteral("executable"), QStringLiteral("bf6.exe")},
+        })}},
+    };
+    const QVariantList multiControllerFixture{
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("stick-record")},
+            {QStringLiteral("directInputId"), QStringLiteral("stick-di")}, {QStringLiteral("name"), QStringLiteral("VKB Gunfighter IV")},
+            {QStringLiteral("connected"), true}, {QStringLiteral("verified"), true},
+            {QStringLiteral("selected"), true}, {QStringLiteral("ambiguous"), false}, {QStringLiteral("active"), true},
+            {QStringLiteral("axisCount"), 6}, {QStringLiteral("buttonCount"), 32}, {QStringLiteral("povCount"), 1}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("throttle-record")},
+            {QStringLiteral("directInputId"), QStringLiteral("throttle-di")}, {QStringLiteral("name"), QStringLiteral("VKB STECS Throttle")},
+            {QStringLiteral("connected"), true}, {QStringLiteral("verified"), true},
+            {QStringLiteral("selected"), false}, {QStringLiteral("ambiguous"), false}, {QStringLiteral("active"), false},
+            {QStringLiteral("axisCount"), 5}, {QStringLiteral("buttonCount"), 29}, {QStringLiteral("povCount"), 0}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("")},
+            {QStringLiteral("directInputId"), QStringLiteral("panel-di")},
+            {QStringLiteral("name"), QString(88, u'X') + QStringLiteral(" Button Panel")},
+            {QStringLiteral("connected"), true}, {QStringLiteral("verified"), false},
+            {QStringLiteral("selected"), false}, {QStringLiteral("ambiguous"), false}, {QStringLiteral("active"), false},
+            {QStringLiteral("axisCount"), 0}, {QStringLiteral("buttonCount"), 48}, {QStringLiteral("povCount"), 0}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("pedals-record")},
+            {QStringLiteral("directInputId"), QStringLiteral("pedals-di")}, {QStringLiteral("name"), QStringLiteral("MFG Crosswind Pedals")},
+            {QStringLiteral("connected"), false}, {QStringLiteral("verified"), true},
+            {QStringLiteral("selected"), false}, {QStringLiteral("ambiguous"), false}, {QStringLiteral("active"), false},
+            {QStringLiteral("axisCount"), 3}, {QStringLiteral("buttonCount"), 0}, {QStringLiteral("povCount"), 0}}),
+    };
+    const QVariantList unverifiedControllerFixture{multiControllerFixture.at(2)};
+    const auto showDevicesFixture = [&](const QVariantMap &fixture, const QVariantList &controllers) {
+        readinessModel->setProperty("presentationStateOverride", fixture);
+        if (!selectPage(surface, 2)) return static_cast<QObject *>(nullptr);
+        settlePresentation();
+        QObject *fixtureDevices = pageItem(surface, 2);
+        if (!fixtureDevices || !fixtureDevices->setProperty("controllerPresentationOverride", controllers))
+            return static_cast<QObject *>(nullptr);
+        settlePresentation();
+        return fixtureDevices;
+    };
+
     if (!selectPage(surface, 8)) return false;
-    if (!visualOutputDirectory.isEmpty()) {
-        // This deterministic visual-only state exercises the ready hierarchy.
-        // Production Flight Deck never assigns this override; its visible
-        // readiness remains solely derived from AppBackend's published state.
-        const QVariantMap readyVisualState{
-            {QStringLiteral("physicalConnected"), true},
-            {QStringLiteral("connectedControllerCount"), 1},
-            {QStringLiteral("deviceName"), QStringLiteral("Flight Stick")},
-            {QStringLiteral("mappingActive"), true},
-            {QStringLiteral("mappingRequested"), true},
-            {QStringLiteral("mappingStatus"), QStringLiteral("MAPPING ACTIVE")},
-            {QStringLiteral("vjoyReady"), true},
-            {QStringLiteral("vjoyStatus"), QStringLiteral("vJoy 1 online")},
-            {QStringLiteral("vjoyStatusSeverity"), QStringLiteral("ready")},
-            {QStringLiteral("vjoyDeviceId"), QStringLiteral("1")},
-            {QStringLiteral("outputLayoutName"), QStringLiteral("BF6 Output")},
-            {QStringLiteral("controllerReadinessState"), QStringLiteral("READY")},
-            {QStringLiteral("checks"), QVariantList{QVariant::fromValue(QVariantMap{
-                {QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")},
-                {QStringLiteral("state"), QStringLiteral("READY")},
-                {QStringLiteral("message"), QStringLiteral("Exact-device isolation is verified.")},
-                {QStringLiteral("severity"), QStringLiteral("ready")},
-            })}},
-            {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("BF6 Helicopter")},
-            {QStringLiteral("profileSourceLabel"), QStringLiteral("Automatic game profile")},
-            {QStringLiteral("automaticGameDetection"), true},
-            {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield 6")},
-            {QStringLiteral("activeCategoryRules"), QStringList{QStringLiteral("bf6.exe")}},
-            {QStringLiteral("runningApplications"), QVariantList{QVariant::fromValue(QVariantMap{
-                {QStringLiteral("name"), QStringLiteral("Battlefield 6")},
-                {QStringLiteral("executable"), QStringLiteral("bf6.exe")},
-            })}},
-        };
-        readinessModel->setProperty("presentationStateOverride", readyVisualState);
-        settlePresentation();
-        if (!captureShell(QStringLiteral("ready-normal"))) {
-            return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 ready state did not render")
-                .arg(appearance));
-        }
-        readinessModel->setProperty("presentationStateOverride", {});
-        settlePresentation();
+    readinessModel->setProperty("presentationStateOverride", readyVisualState);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("ready-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 ready state did not render")
+            .arg(appearance));
     }
+
+    devices = showDevicesFixture(readyVisualState, multiControllerFixture);
+    const QVariantMap sharedReadiness = readinessModel->property("readiness").toMap();
+    QObject *emptyState = devices ? devices->findChild<QObject *>(QStringLiteral("flightDeckNoControllers")) : nullptr;
+    QObject *controllerRepeater = devices ? devices->findChild<QObject *>(QStringLiteral("flightDeckControllerRepeater")) : nullptr;
+    const int controllerCount = devices ? deviceValue(QStringLiteral("controllerItems.length")).toInt() : -1;
+    const QString firstAction = devices ? deviceValue(QStringLiteral("controllerActionLabel(controllerItems[0])")).toString() : QString{};
+    const QString secondAction = devices ? deviceValue(QStringLiteral("controllerActionLabel(controllerItems[1])")).toString() : QString{};
+    const QString thirdAction = devices ? deviceValue(QStringLiteral("controllerActionLabel(controllerItems[2])")).toString() : QString{};
+    const QString fourthAction = devices ? deviceValue(QStringLiteral("controllerActionLabel(controllerItems[3])")).toString() : QString{};
+    const bool multiCaptured = captureShell(QStringLiteral("devices-multi-normal"));
+    if (!devices || devices->property("readiness").toMap() != sharedReadiness || controllerCount != 4
+        || !emptyState || emptyState->property("visible").toBool() || !controllerRepeater
+        || controllerRepeater->property("count").toInt() != 4
+        || firstAction != QStringLiteral("ACTIVE") || secondAction != QStringLiteral("USE CONTROLLER")
+        || thirdAction != QStringLiteral("VERIFY CONTROLLER") || fourthAction != QStringLiteral("RESCAN")
+        || !multiCaptured) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 Devices multi-controller fixture was incomplete: readiness=%2 count=%3 empty=%4 repeater=%5 actions=%6/%7/%8/%9")
+            .arg(appearance).arg(devices && devices->property("readiness").toMap() == sharedReadiness)
+            .arg(controllerCount).arg(emptyState ? emptyState->property("visible").toBool() : true)
+            .arg(controllerRepeater ? controllerRepeater->property("count").toInt() : -1)
+            .arg(firstAction).arg(secondAction).arg(thirdAction).arg(fourthAction));
+    }
+
+    QVariantMap vjoyAttentionState = readyVisualState;
+    vjoyAttentionState.insert(QStringLiteral("vjoyReady"), false);
+    vjoyAttentionState.insert(QStringLiteral("vjoyStatus"), QStringLiteral("vJoy Device 1 is unavailable."));
+    vjoyAttentionState.insert(QStringLiteral("vjoyStatusSeverity"), QStringLiteral("error"));
+    QVariantList vjoyAttentionChecks = readyChecks;
+    vjoyAttentionChecks[1] = QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("VJOY OUTPUT")},
+        {QStringLiteral("state"), QStringLiteral("ACTION REQUIRED")},
+        {QStringLiteral("message"), QStringLiteral("Virtual output is unavailable, so games cannot receive mapped input.")},
+        {QStringLiteral("severity"), QStringLiteral("error")}});
+    vjoyAttentionState.insert(QStringLiteral("checks"), vjoyAttentionChecks);
+    devices = showDevicesFixture(vjoyAttentionState, multiControllerFixture);
+    if (!devices || devices->property("vjoyReady").toBool()
+        || !devices->findChild<QObject *>(QStringLiteral("flightDeckVirtualOutput"))
+        || !captureShell(QStringLiteral("devices-vjoy-attention-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Virtual Output attention fixture did not render")
+            .arg(appearance));
+    }
+
+    QVariantMap isolationAttentionState = readyVisualState;
+    isolationAttentionState.insert(QStringLiteral("hidhideAvailable"), false);
+    isolationAttentionState.insert(QStringLiteral("hidhideCloakStateKnown"), false);
+    QVariantList isolationAttentionChecks = readyChecks;
+    isolationAttentionChecks[2] = QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")},
+        {QStringLiteral("state"), QStringLiteral("ACTION REQUIRED")},
+        {QStringLiteral("message"), QStringLiteral("Physical input may also be visible to games." )},
+        {QStringLiteral("severity"), QStringLiteral("error")}});
+    isolationAttentionState.insert(QStringLiteral("checks"), isolationAttentionChecks);
+    devices = showDevicesFixture(isolationAttentionState, multiControllerFixture);
+    if (!devices || devices->property("hidhideAvailable").toBool()
+        || !devices->findChild<QObject *>(QStringLiteral("flightDeckDeviceIsolation"))
+        || !captureShell(QStringLiteral("devices-isolation-attention-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Device Isolation attention fixture did not render")
+            .arg(appearance));
+    }
+
+    QVariantMap unverifiedState = readyVisualState;
+    unverifiedState.insert(QStringLiteral("physicalConnected"), false);
+    unverifiedState.insert(QStringLiteral("connectedControllerCount"), 1);
+    unverifiedState.insert(QStringLiteral("mappingActive"), false);
+    unverifiedState.insert(QStringLiteral("controllerReadinessState"), QStringLiteral("ACTION REQUIRED"));
+    unverifiedState.insert(QStringLiteral("controllerReadinessStatus"), QStringLiteral("A newly connected controller needs explicit verification."));
+    QVariantList unverifiedChecks = readyChecks;
+    unverifiedChecks[0] = QVariant::fromValue(QVariantMap{{QStringLiteral("name"), QStringLiteral("PHYSICAL CONTROLLER")},
+        {QStringLiteral("state"), QStringLiteral("ACTION REQUIRED")},
+        {QStringLiteral("message"), QStringLiteral("New controller detected. Verify it before mapping.")},
+        {QStringLiteral("severity"), QStringLiteral("warning")}});
+    unverifiedState.insert(QStringLiteral("checks"), unverifiedChecks);
+    devices = showDevicesFixture(unverifiedState, unverifiedControllerFixture);
+    if (!devices || devices->property("verificationState").toString() != QStringLiteral("ACTION REQUIRED")
+        || !captureShell(QStringLiteral("devices-unverified-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 unverified-controller fixture did not render")
+            .arg(appearance));
+    }
+
+    QVariantMap repairConfirmationState = isolationAttentionState;
+    repairConfirmationState.insert(QStringLiteral("controllerSetupCanApply"), true);
+    repairConfirmationState.insert(QStringLiteral("controllerReadinessProposedChanges"), QVariantList{
+        QVariant::fromValue(QVariantMap{{QStringLiteral("message"), QStringLiteral("Restore device isolation for the selected controller.")}}),
+    });
+    devices = showDevicesFixture(repairConfirmationState, multiControllerFixture);
+    QObject *repairConfirmation = window->findChild<QObject *>(QStringLiteral("flightDeckRepairConfirmation"));
+    if (!devices || !devices->property("canRepairSetup").toBool() || !repairConfirmation
+        || !QMetaObject::invokeMethod(repairConfirmation, "open")
+        || !repairConfirmation->property("visible").toBool() || !captureShell(QStringLiteral("devices-repair-confirmation"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 repair confirmation did not render")
+            .arg(appearance));
+    }
+    QMetaObject::invokeMethod(repairConfirmation, "close");
+    settlePresentation();
+
+    if (!selectPage(surface, 8)) return false;
     window->resize(900, 650);
     window->requestUpdate();
     QTest::qWait(60);
@@ -2478,8 +2628,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at minimum size")
             .arg(appearance));
     }
-    if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-minimum"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices minimum state did not render")
+    devices = showDevicesFixture(readyVisualState, multiControllerFixture);
+    if (!devices || !captureShell(QStringLiteral("devices-multi-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices multi-controller minimum state did not render")
             .arg(appearance));
     }
     if (!selectPage(surface, 8)) return false;
@@ -2510,8 +2661,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at expanded size")
             .arg(appearance));
     }
-    if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-expanded"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices expanded state did not render")
+    devices = showDevicesFixture(readyVisualState, multiControllerFixture);
+    if (!devices || !captureShell(QStringLiteral("devices-multi-expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices multi-controller expanded state did not render")
             .arg(appearance));
     }
     if (!selectPage(surface, 8)) return false;
