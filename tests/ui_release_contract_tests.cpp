@@ -32,6 +32,7 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void installerUpgradeAcceptanceTracksSchema22();
+    void mapperPostBuildDeploymentIncludesQmlModules();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
     void allThemeSelectorsUseSkinnedDarkPopups();
@@ -717,6 +718,14 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema22()
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v22")));
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v22")));
     QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v22")));
+}
+
+void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
+{
+    const QString cmake = sourceFile(QStringLiteral("CMakeLists.txt"));
+    const QString staging = sourceFile(QStringLiteral("scripts/stage-package.ps1"));
+    QVERIFY(cmake.contains(QStringLiteral("--qmldir \"${CMAKE_CURRENT_SOURCE_DIR}/qml\"")));
+    QVERIFY(staging.contains(QStringLiteral("--qmldir (Join-Path $repoRoot 'qml')")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()

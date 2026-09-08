@@ -164,7 +164,8 @@ if (WIN32)
     set(HOTAS_WINDEPLOYQT "${HOTAS_QT_BIN_DIR}/windeployqt.exe")
     if (EXISTS "${HOTAS_WINDEPLOYQT}")
         add_custom_command(TARGET HOTASMapper POST_BUILD
-            COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime "$<TARGET_FILE:HOTASMapper>"
+            COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HOTASMapper>"
             COMMENT "Deploying the Qt runtime required by the elevated HOTAS BF6 repair transaction")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
