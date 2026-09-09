@@ -2292,6 +2292,241 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     return selectPage(surface, 8);
 }
 
+bool clickFlightDeckSettingsItem(QQuickWindow *window, QQuickItem *settings, QQuickItem *item)
+{
+    if (!window || !settings || !item) return false;
+    const qreal maximumY = std::max<qreal>(0.0, settings->property("contentHeight").toReal()
+        - settings->height());
+    const qreal targetY = std::clamp(contentPoint(item, settings).y() - 84.0, 0.0, maximumY);
+    settings->setProperty("contentY", targetY);
+    settlePresentation();
+    const QPoint clickPoint = viewportPoint(item, settings,
+        QPointF(item->width() * 0.5, item->height() * 0.5));
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
+    settlePresentation();
+    return true;
+}
+
+bool clickPresentationChoice(QQuickWindow *window, QQuickItem *settings, QQuickItem *selector,
+                             int choiceIndex, int choiceCount)
+{
+    if (!window || !settings || !selector || choiceIndex < 0 || choiceIndex >= choiceCount) {
+        return false;
+    }
+    // Qt promotes a ComboBox popup into QQuickOverlay after release. Retry the
+    // complete physical sequence rather than treating its model as a click.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const qreal maximumY = std::max<qreal>(0.0, settings->property("contentHeight").toReal()
+            - settings->height());
+        settings->setProperty("contentY", std::clamp(contentPoint(selector, settings).y() - 84.0,
+            0.0, maximumY));
+        settlePresentation();
+        const QPoint selectorPoint = viewportPoint(selector, settings,
+            QPointF(selector->width() * 0.5, selector->height() * 0.5));
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
+        QTest::qWait(8);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
+        settlePresentation();
+        auto *popup = selector->findChild<QObject *>(selector->objectName()
+            + QStringLiteral("Popup"));
+        if (!popup || !popup->property("visible").toBool()) {
+            qInfo().noquote() << QStringLiteral("presentation selector popup attempt=%1 popup=%2 visible=%3 index=%4 point=(%5,%6)")
+                .arg(attempt).arg(popup != nullptr).arg(popup ? popup->property("visible").toBool() : false)
+                .arg(selector->property("currentIndex").toInt()).arg(selectorPoint.x()).arg(selectorPoint.y());
+            continue;
+        }
+        auto *content = qvariant_cast<QQuickItem *>(popup->property("contentItem"));
+        auto *choice = findVisualItemByObjectName(content, selector->objectName()
+            + QStringLiteral("Choice_%1").arg(choiceIndex));
+        if (!choice) {
+            qInfo().noquote() << QStringLiteral("presentation selector choice attempt=%1 content=%2 choice=%3 index=%4")
+                .arg(attempt).arg(content != nullptr).arg(choice != nullptr).arg(choiceIndex);
+            continue;
+        }
+        const QPoint choicePoint = choice->mapToScene(QPointF(choice->width() * 0.5,
+            choice->height() * 0.5)).toPoint();
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, choicePoint);
+        QTest::qWait(8);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, choicePoint);
+        settlePresentation();
+        // This row can select Flight Deck, which unloads the Standard shell
+        // and therefore destroys this popup synchronously. The caller
+        // verifies the resulting ThemeManager state and replacement shell.
+        return true;
+    }
+    return false;
+}
+
+QVariantList configuredInputRoutes(const QVariantList &inputs, const QStringList &keys)
+{
+    QVariantList configured;
+    for (const QVariant &entry : inputs) {
+        const QVariantMap input = entry.toMap();
+        QVariantMap route;
+        for (const QString &key : keys) route.insert(key, input.value(key));
+        configured.push_back(route);
+    }
+    return configured;
+}
+
+QVariantMap flightDeckConfigurationSnapshot(hotas::AppBackend &backend)
+{
+    return {
+        {QStringLiteral("profile"), backend.activeProfileId()},
+        {QStringLiteral("category"), backend.activeCategoryId()},
+        {QStringLiteral("profiles"), backend.profiles()},
+        {QStringLiteral("axes"), configuredInputRoutes(backend.axes(),
+            {QStringLiteral("index"), QStringLiteral("target"), QStringLiteral("inverted"),
+             QStringLiteral("deadzone"), QStringLiteral("hysteresis"),
+             QStringLiteral("outputMinimum"), QStringLiteral("outputMaximum"),
+             QStringLiteral("curveSummary")})},
+        {QStringLiteral("buttons"), configuredInputRoutes(backend.buttons(),
+            {QStringLiteral("index"), QStringLiteral("target"), QStringLiteral("name"),
+             QStringLiteral("profileId"), QStringLiteral("profileBehavior"),
+             QStringLiteral("mappingControl")})},
+        {QStringLiteral("povs"), configuredInputRoutes(backend.povInputs(),
+            {QStringLiteral("hat"), QStringLiteral("direction"), QStringLiteral("target"),
+             QStringLiteral("profileId"), QStringLiteral("profileBehavior")})},
+        {QStringLiteral("automation"), backend.automationRules()},
+        {QStringLiteral("adaptive"), backend.adaptiveResponseState()},
+        {QStringLiteral("controllers"), backend.controllers()},
+        {QStringLiteral("vjoyDevice"), backend.vjoyDeviceId()},
+        {QStringLiteral("disabledAxisValue"), backend.disabledAxisValue()},
+        {QStringLiteral("mappingRequested"), backend.mappingRequested()},
+    };
+}
+
+QString differingSnapshotKeys(const QVariantMap &before, const QVariantMap &after)
+{
+    QStringList keys = before.keys();
+    for (const QString &key : after.keys()) {
+        if (!keys.contains(key)) keys.push_back(key);
+    }
+    QStringList changed;
+    for (const QString &key : keys) {
+        if (before.value(key) != after.value(key)) changed.push_back(key);
+    }
+    return changed.join(u", "_qs);
+}
+
+bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &themeManager,
+                              QQuickWindow *window, QObject *&surface,
+                              const QString &expectedAppearance)
+{
+    if (!selectPage(surface, 4)) return false;
+    auto *settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    if (!settings || settings->objectName() != QStringLiteral("flightDeckSettings")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck did not load native Settings"));
+    }
+    auto *settingsTheme = settings->findChild<QObject *>(QStringLiteral("flightDeckSettingsTheme"));
+    auto *autoSwitch = findVisualItemByObjectName(settings,
+        QStringLiteral("flightDeckSettingsAutoSwitchToggle"));
+    auto *gameDetection = findVisualItemByObjectName(settings,
+        QStringLiteral("flightDeckSettingsGameDetectionToggle"));
+    if (!settingsTheme || !autoSwitch || !gameDetection) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Settings omitted a native control or theme"));
+    }
+
+    const bool autoSwitchBefore = backend.autoSwitchVerifiedController();
+    const bool gameDetectionBefore = backend.automaticGameDetection();
+    if (!clickFlightDeckSettingsItem(window, settings, autoSwitch)
+        || backend.autoSwitchVerifiedController() == autoSwitchBefore
+        || backend.automaticGameDetection() != gameDetectionBefore
+        || !clickFlightDeckSettingsItem(window, settings, autoSwitch)
+        || backend.autoSwitchVerifiedController() != autoSwitchBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Settings toggle pointer action did not commit or remain isolated"));
+    }
+
+    auto *light = findVisualItemByObjectName(settings, QStringLiteral("flightDeckSettingsAppearanceLight"));
+    auto *dark = findVisualItemByObjectName(settings, QStringLiteral("flightDeckSettingsAppearanceDark"));
+    if (!light || !dark || !clickFlightDeckSettingsItem(window, settings, light)
+        || themeManager.flightDeckAppearance() != QStringLiteral("Light")
+        || !settingsTheme->property("light").toBool()
+        || !clickFlightDeckSettingsItem(window, settings, dark)
+        || themeManager.flightDeckAppearance() != QStringLiteral("Dark")
+        || settingsTheme->property("light").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck appearance pointer controls did not update semantic resources"));
+    }
+    themeManager.setFlightDeckAppearance(expectedAppearance);
+    settlePresentation();
+
+    auto *profiles = findVisualItemByObjectName(settings, QStringLiteral("flightDeckSettingsOpenProfiles"));
+    if (!profiles || !clickFlightDeckSettingsItem(window, settings, profiles)
+        || surface->property("currentPage").toInt() != 5) {
+        return failPresentationLifecycleTest(QStringLiteral("Settings navigation button did not route to Profiles"));
+    }
+    if (!selectPage(surface, 4)) return false;
+    settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    if (!settings) return failPresentationLifecycleTest(QStringLiteral("Settings did not reload after a native deep link"));
+
+    const QVariantMap configurationBeforeSwitch = flightDeckConfigurationSnapshot(backend);
+    auto *standardCard = findVisualItemByObjectName(settings,
+        QStringLiteral("flightDeckExperience_theme:Standard"));
+    if (!standardCard || !clickFlightDeckSettingsItem(window, settings, standardCard)
+        || themeManager.currentExperience() != QStringLiteral("Existing")
+        || themeManager.currentTheme() != QStringLiteral("Standard")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck experience card did not switch to Standard"));
+    }
+    const QVariantMap configurationAfterStandard = flightDeckConfigurationSnapshot(backend);
+    if (configurationAfterStandard != configurationBeforeSwitch) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck to Standard changed controller configuration: %1")
+            .arg(differingSnapshotKeys(configurationBeforeSwitch, configurationAfterStandard)));
+    }
+    if (window->findChild<QObject *>(QStringLiteral("flightDeckSurface"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck to Standard retained a stale Flight Deck shell"));
+    }
+
+    auto *standard = window->findChild<QObject *>(QStringLiteral("standardSurface"));
+    if (!standard || !standard->setProperty("currentPage", 4)) {
+        return failPresentationLifecycleTest(QStringLiteral("Standard shell did not expose the preview Settings entry point"));
+    }
+    settlePresentation();
+    auto *standardSettings = qobject_cast<QQuickItem *>(pageItem(standard, 4));
+    auto *selector = standardSettings ? findVisualItemByObjectName(standardSettings,
+        QStringLiteral("experienceAppearanceSelector")) : nullptr;
+    int flightDeckChoice = -1;
+    const QVariantList choices = themeManager.presentationChoices();
+    for (qsizetype index = 0; index < choices.size(); ++index) {
+        if (choices.at(index).toMap().value(QStringLiteral("id")).toString()
+            == QStringLiteral("flight-deck")) {
+            flightDeckChoice = static_cast<int>(index);
+            break;
+        }
+    }
+    if (!standardSettings || !selector || flightDeckChoice < 0
+        || !clickPresentationChoice(window, standardSettings, selector, flightDeckChoice, choices.size())
+        || themeManager.currentExperience() != QStringLiteral("Flight Deck")) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview-gated Standard to Flight Deck pointer selection failed"));
+    }
+    settlePresentation();
+    surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface || surface->property("loadedPageCount").toInt() != 1
+        || flightDeckConfigurationSnapshot(backend) != configurationBeforeSwitch) {
+        return failPresentationLifecycleTest(QStringLiteral("Standard to Flight Deck changed configuration or duplicated its host"));
+    }
+
+    for (const QString &presentation : {QStringLiteral("theme:Legacy"),
+                                        QStringLiteral("flight-deck"),
+                                        QStringLiteral("theme:Top Gun"),
+                                        QStringLiteral("flight-deck"),
+                                        QStringLiteral("theme:Standard"),
+                                        QStringLiteral("flight-deck")}) {
+        themeManager.selectPresentation(presentation);
+        settlePresentation();
+        const bool flightDeck = presentation == QStringLiteral("flight-deck");
+        const int flightDeckShells = window->findChildren<QObject *>(QStringLiteral("flightDeckSurface")).size();
+        if ((flightDeck && (flightDeckShells != 1 || themeManager.currentExperience() != QStringLiteral("Flight Deck")))
+            || (!flightDeck && (flightDeckShells != 0 || themeManager.currentExperience() != QStringLiteral("Existing")))) {
+            return failPresentationLifecycleTest(QStringLiteral("Experience-switch stress left an incorrect presentation host"));
+        }
+    }
+    surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface || flightDeckConfigurationSnapshot(backend) != configurationBeforeSwitch) {
+        return failPresentationLifecycleTest(QStringLiteral("Experience-switch stress changed controller configuration"));
+    }
+    return true;
+}
+
 bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &themeManager,
                            const QString &appearance)
 {
@@ -2479,6 +2714,64 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         }
         return true;
     };
+    if (!selectPage(surface, 4)) return false;
+    auto *settingsPage = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    if (!settingsPage || settingsPage->objectName() != QStringLiteral("flightDeckSettings")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings could not be prepared for visual review")
+            .arg(appearance));
+    }
+    const auto scrollSettingsAndCapture = [&](const QString &groupName, const QString &label) {
+        auto *group = findVisualItemByObjectName(settingsPage, groupName);
+        if (!group) return false;
+        const qreal maximumY = std::max<qreal>(0.0, settingsPage->property("contentHeight").toReal()
+            - settingsPage->height());
+        settingsPage->setProperty("contentY", std::clamp(contentPoint(group, settingsPage).y() - 24.0,
+            0.0, maximumY));
+        settlePresentation();
+        return captureShell(label);
+    };
+    settingsPage->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("settings-main"))
+        || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsAppearanceGroup"),
+            QStringLiteral("settings-appearance"))
+        || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsStartupGroup"),
+            QStringLiteral("settings-startup"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings primary visual capture failed")
+            .arg(appearance));
+    }
+    const bool smoothingBeforeFixture = backend.curveTransitionSmoothingEnabled();
+    backend.setCurveTransitionSmoothingEnabled(false);
+    settingsPage->setProperty("presentationState", QVariantMap{
+        {QStringLiteral("updateStatus"), QStringLiteral("A deliberately long update validation message verifies wrapping without escaping the native Settings surface.")},
+        {QStringLiteral("vjoyStatus"), QStringLiteral("Virtual output is unavailable until a long validation explanation can be reviewed without clipping or overlap.")},
+    });
+    if (!scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsMappingDefaultsGroup"),
+            QStringLiteral("settings-advanced-disabled"))
+        || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsVirtualOutputGroup"),
+            QStringLiteral("settings-long-value"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings advanced visual capture failed")
+            .arg(appearance));
+    }
+    settingsPage->setProperty("presentationState", QVariantMap{});
+    backend.setCurveTransitionSmoothingEnabled(smoothingBeforeFixture);
+    const QSize settingsOriginalSize = window->size();
+    window->resize(900, 650);
+    settlePresentation();
+    if (!scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsAppearanceGroup"),
+            QStringLiteral("settings-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings minimum layout capture failed")
+            .arg(appearance));
+    }
+    window->resize(1600, 980);
+    settlePresentation();
+    if (!scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsVirtualOutputGroup"),
+            QStringLiteral("settings-wide"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings wide layout capture failed")
+            .arg(appearance));
+    }
+    window->resize(settingsOriginalSize);
+    if (!selectPage(surface, 8)) return false;
     if (!captureShell(QStringLiteral("normal"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at normal size")
             .arg(appearance));
@@ -3409,7 +3702,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance).arg(devices && devices->property("readiness").toMap() == sharedReadiness)
             .arg(controllerCount).arg(emptyState ? emptyState->property("visible").toBool() : true)
             .arg(controllerRepeater ? controllerRepeater->property("count").toInt() : -1)
-            .arg(firstAction).arg(secondAction).arg(thirdAction).arg(fourthAction));
+            .arg(firstAction).arg(secondAction).arg(thirdAction).arg(fourthAction)
+            + QStringLiteral(" readiness-diff=%1").arg(devices
+                ? differingSnapshotKeys(sharedReadiness, devices->property("readiness").toMap())
+                : QStringLiteral("device-page-unavailable")));
     }
 
     QVariantMap vjoyAttentionState = readyVisualState;
@@ -3993,6 +4289,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     window->resize(diagnosticsOriginalSize);
     readinessModel->setProperty("presentationStateOverride", QVariant{});
     diagnostics->setProperty("presentationOverride", QVariant{});
+    if (!selectPage(surface, 8)) return false;
+    // Run cross-experience Settings actions after the long established
+    // visual/interaction matrix has released its page fixtures. Selecting an
+    // experience replaces the whole presentation host by design, so this is
+    // the lifecycle-safe final interaction in this engine instance.
+    if (!verifyFlightDeckSettings(backend, themeManager, window, surface, appearance)) return false;
     if (!selectPage(surface, 8)) return false;
     return true;
 }

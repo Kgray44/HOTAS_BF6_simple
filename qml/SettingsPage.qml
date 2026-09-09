@@ -237,13 +237,22 @@ Flickable {
             SettingRow { Layout.fillWidth: true; title: "KEEP RUNNING IN SYSTEM TRAY"; detail: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is unavailable in this Windows session."
                 Toggle { checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
             }
-            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: themeManager.currentTheme === "Day Ops" ? "Day Ops — a bright naval aviation theme inspired by daytime carrier flight-deck equipment." : "Legacy, Standard, Top Gun, and Day Ops each use their own visual language."
-                ComboBox { id: appearance; implicitWidth: 138; model: themeManager.themeChoices; currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme)); onActivated: themeManager.setCurrentTheme(currentText)
+            SettingRow { Layout.fillWidth: true; title: themeManager.flightDeckPreviewEnabled ? "EXPERIENCE & APPEARANCE" : "APPEARANCE"; detail: themeManager.flightDeckPreviewEnabled ? "Choose an existing visual theme or the preview-gated Flight Deck interface." : "Legacy, Standard, Top Gun, and Day Ops each use their own visual language."
+                ComboBox { id: appearance; objectName: "experienceAppearanceSelector"; implicitWidth: 168; model: themeManager.presentationChoices; textRole: "label"; valueRole: "id"
+                    currentIndex: {
+                        for (let index = 0; index < model.length; ++index)
+                            if (model[index].id === themeManager.currentPresentationId) return index
+                        return 0
+                    }
+                    onActivated: {
+                        const presentationId = currentValue
+                        Qt.callLater(function() { themeManager.selectPresentation(presentationId) })
+                    }
                     contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                     indicator: Text { x: appearance.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 12; font.bold: true }
-                    delegate: ItemDelegate { id: appearanceDelegate; width: appearance.width; highlighted: appearance.highlightedIndex === index
-                        contentItem: Text { text: modelData; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
+                    delegate: ItemDelegate { id: appearanceDelegate; objectName: appearance.objectName + "Choice_" + index; width: appearance.width; highlighted: appearance.highlightedIndex === index
+                        contentItem: Text { text: modelData.label; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
                         background: Rectangle { color: appearanceDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
                     }
                     popup: Popup { y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1

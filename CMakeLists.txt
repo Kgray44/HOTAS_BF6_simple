@@ -122,6 +122,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckProfiles.qml
         qml/FlightDeckOverview.qml
         qml/FlightDeckDevices.qml
+        qml/FlightDeckSettings.qml
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
@@ -511,6 +512,7 @@ if (BUILD_TESTING)
             qml/FlightDeckProfiles.qml
             qml/FlightDeckOverview.qml
             qml/FlightDeckDevices.qml
+            qml/FlightDeckSettings.qml
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml
