@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QVariantMap>
 
 using namespace Qt::StringLiterals;
 
@@ -60,6 +61,43 @@ QStringList ThemeManager::experienceChoices() const
     return {u"Existing"_qs};
 }
 
+QString ThemeManager::currentPresentationId() const
+{
+    if (m_currentExperience == u"Flight Deck"_qs) return u"flight-deck"_qs;
+    return u"theme:"_qs + m_currentTheme;
+}
+
+QVariantList ThemeManager::presentationChoices() const
+{
+    QVariantList choices;
+    for (const QString &theme : themeChoices()) {
+        QVariantMap choice{
+            {u"id"_qs, u"theme:"_qs + theme},
+            {u"label"_qs, theme},
+            {u"kind"_qs, u"existing-theme"_qs},
+            {u"preview"_qs, false},
+        };
+        if (theme == u"Legacy"_qs) {
+            choice.insert(u"description"_qs, u"Original interface"_qs);
+        } else if (theme == u"Top Gun"_qs) {
+            choice.insert(u"description"_qs, u"Aircraft-inspired current theme"_qs);
+        } else {
+            choice.insert(u"description"_qs, u"Current standard experience"_qs);
+        }
+        choices.push_back(choice);
+    }
+    if (m_flightDeckPreviewEnabled) {
+        choices.push_back(QVariantMap{
+            {u"id"_qs, u"flight-deck"_qs},
+            {u"label"_qs, u"Flight Deck"_qs},
+            {u"description"_qs, u"Modern simplified alternate interface"_qs},
+            {u"kind"_qs, u"alternate-shell"_qs},
+            {u"preview"_qs, true},
+        });
+    }
+    return choices;
+}
+
 void ThemeManager::setCurrentTheme(const QString &theme)
 {
     const QString normalized = normalizedTheme(theme);
@@ -70,6 +108,7 @@ void ThemeManager::setCurrentTheme(const QString &theme)
     stored.setValue(QLatin1String(kThemeKey), m_currentTheme);
     stored.sync();
     emit themeChanged();
+    emit presentationChanged();
 }
 
 void ThemeManager::setCurrentExperience(const QString &experience)
@@ -82,6 +121,7 @@ void ThemeManager::setCurrentExperience(const QString &experience)
     stored.setValue(QLatin1String(kExperienceKey), m_currentExperience);
     stored.sync();
     emit experienceChanged();
+    emit presentationChanged();
 }
 
 void ThemeManager::setFlightDeckAppearance(const QString &appearance)
@@ -94,6 +134,20 @@ void ThemeManager::setFlightDeckAppearance(const QString &appearance)
     stored.setValue(QLatin1String(kFlightDeckAppearanceKey), m_flightDeckAppearance);
     stored.sync();
     emit flightDeckAppearanceChanged();
+}
+
+void ThemeManager::selectPresentation(const QString &presentationId)
+{
+    const QString trimmed = presentationId.trimmed();
+    const QString themePrefix = u"theme:"_qs;
+    if (trimmed.startsWith(themePrefix, Qt::CaseInsensitive)) {
+        setCurrentTheme(trimmed.mid(themePrefix.size()));
+        setCurrentExperience(u"Existing"_qs);
+        return;
+    }
+    if (trimmed.compare(u"flight-deck"_qs, Qt::CaseInsensitive) == 0) {
+        setCurrentExperience(u"Flight Deck"_qs);
+    }
 }
 
 QString ThemeManager::normalizedTheme(const QString &theme)

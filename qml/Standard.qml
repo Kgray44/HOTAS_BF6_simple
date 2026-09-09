@@ -4,6 +4,7 @@ import QtQuick.Layouts 6.5
 
 Page {
     id: root
+    objectName: "standardSurface"
     anchors.fill: parent
     padding: 0
 
@@ -1404,8 +1405,17 @@ Page {
             id: settingsPageLoader
             anchors.fill: parent
             active: root.currentPage === 4
-            sourceComponent: Component {
-                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
+            sourceComponent: root.flightDeckMode ? flightDeckSettingsComponent : standardSettingsComponent
+        }
+        Component {
+            id: standardSettingsComponent
+            SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false }
+        }
+        Component {
+            id: flightDeckSettingsComponent
+            FlightDeckSettings {
+                anchors.fill: parent
+                onNavigateToPage: function(page) { root.currentPage = page }
             }
         }
         Loader {

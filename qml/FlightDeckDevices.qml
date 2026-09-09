@@ -23,7 +23,11 @@ Flickable {
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
     readonly property var state: readinessModel ? readinessModel.currentState : ({})
-    readonly property var readiness: readinessModel ? readinessModel.readiness : ({})
+    // A newly loaded Devices page reads the same current state as the shared
+    // readiness model, so fixture and live updates cannot leave its compact
+    // status label one render behind.
+    readonly property var readiness: readinessModel
+        ? readinessModel.presentationFor(readinessModel.currentState) : ({})
     readonly property var input: readinessModel ? readinessModel.input : ({})
     readonly property var output: readinessModel ? readinessModel.output : ({})
     readonly property var isolation: readinessModel ? readinessModel.isolation : ({})
@@ -425,6 +429,16 @@ Flickable {
                                 }
                                 background: Rectangle { radius: deck.radiusControl; color: parent.enabled && parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : (parent.enabled ? deck.accent : deck.border); border.width: parent.activeFocus ? 2 : 1 }
                                 contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            }
+                            Button {
+                                visible: controllerCard.controller.verified && controllerCard.controller.id
+                                objectName: "flightDeckControllerForget_" + controllerCard.controller.id
+                                text: "FORGET"
+                                focusPolicy: Qt.StrongFocus
+                                implicitHeight: deck.compactControlHeight
+                                onClicked: backend.forgetController(controllerCard.controller.id)
+                                background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                                contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
                         }
                     }

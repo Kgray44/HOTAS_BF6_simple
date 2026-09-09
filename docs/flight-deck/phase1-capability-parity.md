@@ -157,3 +157,34 @@ of the established theme family.
 - Day Ops was absent from this baseline. Its later coexistence and launch
   integration remains explicitly pending; this native Diagnostics destination
   neither replaces nor simulates it.
+
+## Phase 10 Settings presentation coverage
+
+- `FlightDeckSettings.qml` is the native Settings destination only while the
+  preview-gated Flight Deck experience is active. Standard, Legacy, and Top
+  Gun retain their established Settings page; the preview gate remains owned
+  by `ThemeManager` and the existing command-line preview path.
+- General controls use the existing tray, remembered-controller selection, and
+  verified-controller auto-switch commands. Devices & setup is a navigation
+  handoff, while verified controller records retain their existing individual
+  Forget action in native Devices.
+- Appearance has one central `ThemeManager.presentationChoices` model: Legacy,
+  Standard, and Top Gun are existing themes; Flight Deck is marked Preview and
+  offered only when preview is enabled. Flight Deck's actual Light and Dark
+  appearances remain separate presentation storage. This baseline provides no
+  System color mode and no Day Ops choice, so neither is simulated.
+- Startup and game controls retain Start Mapping on Launch, Automatic Game
+  Detection, and the real Profiles handoff. Update status/check/install uses
+  the existing update commands. Mapping defaults retain disabled-axis value,
+  curve-transition smoothing, and duration behavior including the disabled
+  duration control.
+- Virtual Output retains selected vJoy device, configuration launch,
+  five-axis output layout creation, layout selection, and exact adopted
+  visibility identity. HidHide retains status refresh and configuration
+  launch. Maintenance retains separate confirmation-scoped commands for
+  controller records, device calibration, application configuration, and the
+  uninstaller.
+- The Settings surface introduces no configuration store, mapper mutation
+  path, device polling, telemetry observer, or DirectInput-to-vJoy hot-path
+  work. Its display-only exceptional-state property exists solely for
+  deterministic QML visual fixtures and is empty in production.
