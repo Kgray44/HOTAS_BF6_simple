@@ -237,4 +237,31 @@ absent from this baseline and remains a later coexistence integration item.
 - The Phase 12 validation record in
   `phase12-parity-integration-validation.md` is the source-of-truth evidence
   for cross-workflow coverage, native visual limits, fixes, and the remaining
-  owner-session checks. Day Ops remains absent from this source baseline.
+  owner-session checks. The subsequent Day Ops reconciliation is recorded
+  below and does not change this Phase 1 baseline.
+
+## Phase 13 V2.4 / Day Ops integration coverage
+
+- The V2.4.0 source adds a real fourth existing theme, `Day Ops`, alongside
+  Legacy, Standard, and Top Gun. Phase 13 retains all four as real theme
+  choices and keeps Flight Deck as a separately preview-gated alternate shell;
+  Day Ops is never represented as a Flight Deck appearance or fallback.
+- `ThemeManager.presentationChoices` is the one selector contract: it contains
+  the four real themes in normal operation, and appends Flight Deck only when
+  the established preview switch is present. Conventional Settings and Flight
+  Deck Settings consume that contract rather than maintaining divergent lists.
+- V2.4 Device Rigs, App Health routes, device-scoped editing context,
+  configuration persistence, tray/crash presentation state, and Day Ops tokens
+  remain authoritative. Flight Deck reads or routes to those existing paths;
+  it adds no device, mapper, profile, or Automation authority.
+- Physical Automation rules now require the V2.4 single-device editing scope.
+  The Phase 13 test fixture selects that source before saving a Flight Deck
+  Automation rule, proving the native preview does not bypass current
+  device-qualified validation or introduce an unscoped compatibility path.
+- The Phase 13 QML lifecycle checks all five presentations, including
+  forward/back Flight Deck switching through Day Ops, with authoritative
+  configuration snapshots before and after. Its validation record is
+  `phase13-v24-dayops-integration-validation.md`; offscreen capture remains
+  structural evidence, while a direct native Qt fixture run records readable
+  Day Ops and Flight Deck captures. Owner-session physical, OS-owned, and
+  accessibility conditions remain separate boundaries.
