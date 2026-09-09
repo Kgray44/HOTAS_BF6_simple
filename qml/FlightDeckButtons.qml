@@ -30,6 +30,7 @@ Flickable {
     signal navigateToAutomation(string automationId)
     signal requestButtonLearning()
     signal requestQuickMap()
+    signal requestPovLearning(int virtualButton)
 
     readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttons
     readonly property var povItems: povPresentationOverride !== null ? povPresentationOverride : backend.povs
@@ -946,6 +947,24 @@ Flickable {
                             currentIndex = Math.max(0, Number(selectedDirection.target || 0))
                     }
                 }
+                RowLayout {
+                    visible: Number(card.directionAt(root.expandedPovDirection).target || 0) > 0
+                    Layout.fillWidth: true
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Learn a physical hat direction for the current vJoy button route."
+                        color: deck.textMuted
+                        font.pixelSize: 9
+                        wrapMode: Text.WordWrap
+                    }
+                    DeckButton {
+                        objectName: "flightDeckPovLearn_" + card.hatIndex + "_" + root.expandedPovDirection
+                        text: "LEARN INPUT"
+                        subdued: true
+                        enabled: backend.physicalConnected
+                        onClicked: root.requestPovLearning(Number(card.directionAt(root.expandedPovDirection).target || 0))
+                    }
+                }
                 GridLayout {
                     Layout.fillWidth: true
                     columns: width >= 620 ? 2 : 1
@@ -1050,12 +1069,14 @@ Flickable {
                 }
             }
             DeckButton {
+                objectName: "flightDeckButtonsLearn"
                 text: "LEARN ROUTE"
                 subdued: true
                 enabled: backend.physicalConnected && backend.vjoyButtonCount > 0
                 onClicked: root.requestButtonLearning()
             }
             DeckButton {
+                objectName: "flightDeckButtonsQuickMap"
                 text: "QUICK MAP"
                 subdued: true
                 enabled: backend.buttonCount > 0

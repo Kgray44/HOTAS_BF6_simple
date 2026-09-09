@@ -20,6 +20,8 @@ Flickable {
     property int conflictAxis: -1
     property string conflictTarget: ""
     signal navigateToPage(int page)
+    signal requestAxisLearning(string target)
+    signal requestQuickMap()
 
     readonly property bool usingPresentationOverride: axisPresentationOverride !== null
     readonly property var axisItems: usingPresentationOverride ? axisPresentationOverride : backend.axes
@@ -551,11 +553,12 @@ Flickable {
                                     Layout.fillWidth: true
                                 }
                                 DeckButton {
+                                    objectName: "flightDeckAxisLearn_" + card.axisIndex
                                     visible: axis.target !== "Disabled"
                                     text: "LEARN INPUT"
                                     subdued: true
                                     Layout.preferredWidth: 106
-                                    onClicked: backend.startAxisLearning(axis.target)
+                                    onClicked: root.requestAxisLearning(axis.target)
                                 }
                             }
                             Rectangle {
@@ -1008,6 +1011,13 @@ Flickable {
                     SummaryChip {
                         label: backend.vjoyReady ? "VJOY READY" : "VJOY ATTENTION"
                         tone: backend.vjoyReady ? "healthy" : "attention"
+                    }
+                    DeckButton {
+                        objectName: "flightDeckAxesQuickMap"
+                        text: "QUICK MAP"
+                        subdued: true
+                        enabled: backend.physicalConnected && backend.quickAssignAxisTargets.length > 0
+                        onClicked: root.requestQuickMap()
                     }
                 }
                 RowLayout {
