@@ -18,7 +18,7 @@ of the established theme family.
 | --- | --- | --- | --- |
 | Mapper health and active configuration | Overview; `AppBackend` mapping, controller, vJoy, profile, and telemetry properties | Overview primary status and persistent readiness card | Primary; mapping live/off/suspended, controller absent/stale, vJoy ready/offline/capacity warning, active profile |
 | Controller inventory and setup | Settings, controller setup dialog, `ControllerManager` and readiness model | Native Flight Deck Devices & setup; health summary first, repair and details contextual | Primary; connected/new/verified/offline/ambiguous device, calibration required, HidHide/vJoy attention, repair/progress/rollback/reconnect |
-| Axis routing and processing | Axes workspace; shared mapping/configuration commands | Axes; a control-to-game-output overview before advanced editor controls | Primary; unavailable/fixed inputs, route conflict, disabled/unsupported output, live/calibrated/output state, learn/quick-map |
+| Axis routing and processing | Axes workspace; shared mapping/configuration commands | Native Flight Deck Axes scan view with expanded routing, response, limits, advanced, and Adaptive Response handoff | Primary; unavailable/fixed inputs, route conflict, disabled/unsupported output, live/calibrated/output state, learn/quick-map |
 | Axis calibration | Calibration workspace and controller-scoped calibration state | Devices & setup with a contextual calibration entry point | Primary/contextual; range/center stages, success/failure, history, selected/offline controller |
 | Response curves | Curve editor; shared curve state and compiled LUT configuration | Axes deep link / advanced Curve editor | Advanced; preset/custom/point editing, undo/redo, comparison, live graph, validation and profile scope |
 | Button and POV routing | Buttons workspace; shared route and native-POV commands | Buttons; physical-control-to-output overview | Primary; press/live output, disabled, destination conflict, learn/quick-map, hat directions/native continuous or discrete routes |
@@ -43,3 +43,22 @@ of the established theme family.
   represented by the backend; no shell-level one-device assumption is allowed.
 - Color never carries the whole status: labels such as `LIVE`, `STANDBY`,
   `WAITING`, and `OFFLINE` remain visible with semantic lamps.
+
+## Phase 4 axis presentation coverage
+
+- Flight Deck Axes reads the existing `AppBackend.axes` bounded presentation
+  snapshot and `virtualAxisChoices` model. It does not retain a second mapping
+  or output-value model.
+- The scan view exposes physical source, configured virtual destination,
+  normalized input, final virtual output when the existing snapshot safely
+  publishes it, disabled/fixed/unavailable state, curve/deadzone/inversion
+  summary, and per-axis Adaptive Response state.
+- Expanded cards use the established immediate-apply commands for route,
+  inversion, deadzone, range mode, hysteresis, output limits, labels, curve,
+  learning, and the full Curve Editor. The static preview is a bounded
+  settings-change calculation; it does not predict the live Adaptive Response
+  overlay.
+- This baseline's mapper axis model represents the selected physical
+  controller. Flight Deck presents that scope honestly and directs users to
+  Devices & setup to select another connected controller; it does not invent
+  simultaneous multi-controller routing.
