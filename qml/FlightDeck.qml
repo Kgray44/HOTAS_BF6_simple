@@ -350,6 +350,10 @@ Item {
                         objectName: "flightDeckAutomationLoader"
                         anchors.fill: parent
                         active: root.currentPage === 7
+                        // An inactive full-surface Loader must not remain in
+                        // the hit-test stack above native Standard-host pages.
+                        visible: active
+                        enabled: active
                         source: Qt.resolvedUrl("FlightDeckAutomation.qml")
                         onLoaded: {
                             item.presentationState = root.flightDeckAutomationPresentationState;
