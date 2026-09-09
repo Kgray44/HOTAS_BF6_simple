@@ -48,13 +48,26 @@ Page {
         })
     }
     function showActionFeedback(result, fallbackTitle, fallbackMessage) {
+        actionFeedbackDismissTimer.stop()
         actionFeedback = result && result.title ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage })
         return actionFeedback
+    }
+    function showTransientActionFeedback(result, fallbackTitle, fallbackMessage, durationMs) {
+        const feedback = showActionFeedback(result, fallbackTitle, fallbackMessage)
+        actionFeedbackDismissTimer.interval = durationMs > 0 ? durationMs : 5000
+        actionFeedbackDismissTimer.restart()
+        return feedback
     }
     function reportBooleanAction(succeeded, successTitle, successMessage, failureTitle, failureMessage) {
         return showActionFeedback({ success: !!succeeded,
             title: succeeded ? successTitle : failureTitle,
             message: succeeded ? successMessage : failureMessage })
+    }
+    Timer {
+        id: actionFeedbackDismissTimer
+        interval: 5000
+        repeat: false
+        onTriggered: root.actionFeedback = ({})
     }
     function createRigWithInputs(name, ids, outputId) {
         const result = backendObject ? backendObject.createDeviceRigResult(name, ids, outputId) : ({ success: false, title: "Device Rig was not created", message: "HOTAS BF6 is not ready." })
@@ -274,7 +287,7 @@ Page {
                     Text { Layout.fillWidth: true; text: "Connect a controller to create your first Device Rig."; color: themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true
                         ThemedButton { objectName: "refreshDevicesButton"; theme: themeTokens; text: "REFRESH DEVICES"; tone: "secondary"
-                            onTriggered: { backendObject.refreshControllers(); root.showActionFeedback({ success: true, title: "Refreshing devices", message: "HOTAS BF6 is looking for connected physical controllers." }) } }
+                            onTriggered: { backendObject.refreshControllers(); root.showTransientActionFeedback({ success: true, title: "Refreshing devices", message: "HOTAS BF6 is looking for connected physical controllers." }, "", "", 5000) } }
                         Text { Layout.fillWidth: true; text: "No saved or connected physical controllers are available yet."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     }
                 }

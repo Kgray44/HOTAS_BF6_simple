@@ -24,6 +24,8 @@ Popup {
     focus: true
     padding: 0
     width: Math.min(470, Math.max(310, parent ? parent.width - 32 : 470))
+    x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))
+    y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: root.legacy ? 4 : (root.theme ? root.theme.panelRadius : 5) }
 

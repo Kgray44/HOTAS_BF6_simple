@@ -1078,6 +1078,15 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     // invalid and valid path. Invoke the same QML helper used by CREATE RIG;
     // a bare backend bool or empty ID is not sufficient UI feedback.
     QObject *feedback = devices->findChild<QObject *>(QStringLiteral("deviceActionFeedback"));
+    QQmlExpression transientRefresh(qmlContext(devices), devices,
+        QStringLiteral("showTransientActionFeedback({ success: true, title: 'Refreshing devices', message: 'Fixture refresh' }, '', '', 40)"));
+    transientRefresh.evaluate();
+    const bool transientVisible = feedback && !transientRefresh.hasError() && feedback->property("visible").toBool();
+    QTest::qWait(80);
+    const bool transientDismissed = feedback && !feedback->property("visible").toBool();
+    if (!transientVisible || !transientDismissed) {
+        return failPresentationLifecycleTest(QStringLiteral("Refresh Devices feedback did not dismiss after its transient timeout"));
+    }
     QQmlExpression invalidCreate(qmlContext(devices), devices,
         QStringLiteral("createRigWithInputs('Missing Input Fixture', [], '%1')").arg(outputId));
     const QVariant invalidResult = invalidCreate.evaluate();
@@ -1409,6 +1418,10 @@ bool verifyAppHealthSurface(hotas::AppBackend &backend, QObject *surface, const 
     }
     settlePresentation();
     const bool popupVisible = popup->property("visible").toBool();
+    QQmlExpression centered(qmlContext(popup), popup,
+        QStringLiteral("Math.abs(x - Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))) <= 1"
+                       " && Math.abs(y - Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))) <= 1"));
+    const bool popupCentered = !centered.hasError() && centered.evaluate().toBool();
     QMetaObject::invokeMethod(popup, "close");
     QQmlExpression navigate(qmlContext(surface), surface,
         QStringLiteral("navigateToIssue({ page: 10, objectType: 'deviceRig', objectId: 'fixture-rig' }); currentPage"));
@@ -1426,8 +1439,8 @@ bool verifyAppHealthSurface(hotas::AppBackend &backend, QObject *surface, const 
         && devices->property("selectedDeviceId").toString() == QStringLiteral("fixture-throttle")
         && physicalDialog && physicalDialog->property("visible").toBool();
     if (physicalDialog) QMetaObject::invokeMethod(physicalDialog, "close");
-    if (!popupVisible || !routedToDevices || !openedPhysicalTarget) {
-        return failPresentationLifecycleTest(QStringLiteral("App Health did not open or route its Device Rig review for %1").arg(theme));
+    if (!popupVisible || !popupCentered || !routedToDevices || !openedPhysicalTarget) {
+        return failPresentationLifecycleTest(QStringLiteral("App Health did not open, center, or route its Device Rig review for %1").arg(theme));
     }
     return true;
 }

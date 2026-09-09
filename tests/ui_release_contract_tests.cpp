@@ -596,6 +596,12 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(standard.contains(QStringLiteral("navigateToIssue(target)")));
     QVERIFY(standard.contains(QStringLiteral("backend.focusIssueTarget")));
     QVERIFY(standard.contains(QStringLiteral("devices.focusIssueTarget(target)")));
+    QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
+    QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
+    QVERIFY(devices.contains(QStringLiteral("Refreshing devices")));
+    QVERIFY(devices.contains(QStringLiteral("5000")));
+    QVERIFY(health.contains(QStringLiteral("x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))")));
+    QVERIFY(health.contains(QStringLiteral("y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))")));
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
     QVERIFY(assistant.contains(QStringLiteral("summary.visibleSteps")));
