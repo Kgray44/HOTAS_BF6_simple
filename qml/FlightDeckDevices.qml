@@ -718,21 +718,16 @@ Flickable {
         }
     }
 
-    Popup {
+    FlightDeckDialog {
         id: repairConfirmation
         objectName: "flightDeckRepairConfirmation"
-        parent: Overlay.overlay
-        modal: true
-        closePolicy: Popup.NoAutoClose
-        width: Math.min(560, root.width - deck.space24)
-        anchors.centerIn: parent
-        padding: 0
-        background: Rectangle { color: deck.primarySurface; border.color: deck.attention; radius: deck.radiusCard }
+        tokens: deck
+        heading: "Repair setup?"
+        tone: "attention"
+        preferredWidth: 560
         contentItem: ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: deck.space16
+            width: repairConfirmation.availableWidth
             spacing: deck.space12
-            Text { text: "Repair setup?"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 20; font.bold: true }
             Text { text: "HOTAS BF6 will apply only the scoped changes listed below, then verify the resulting controller state. Windows may request administrator permission."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Rectangle {
                 Layout.fillWidth: true
@@ -774,21 +769,16 @@ Flickable {
         }
     }
 
-    Popup {
+    FlightDeckDialog {
         id: undoConfirmation
         objectName: "flightDeckUndoRepairConfirmation"
-        parent: Overlay.overlay
-        modal: true
-        closePolicy: Popup.NoAutoClose
-        width: Math.min(520, root.width - deck.space24)
-        anchors.centerIn: parent
-        padding: 0
-        background: Rectangle { color: deck.primarySurface; border.color: deck.attention; radius: deck.radiusCard }
+        tokens: deck
+        heading: "Undo setup repair?"
+        tone: "attention"
+        preferredWidth: 520
         contentItem: ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: deck.space16
+            width: undoConfirmation.availableWidth
             spacing: deck.space12
-            Text { text: "Undo setup repair?"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 20; font.bold: true }
             Text { text: "HOTAS BF6 will reverse only entries it added during this repair and then verify physical-controller access."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true

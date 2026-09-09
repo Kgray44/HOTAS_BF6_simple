@@ -1645,31 +1645,17 @@ Flickable {
         }
     }
 
-    Dialog {
+    FlightDeckDialog {
         id: deleteDialog
         property string ruleId: ""
         property string ruleName: ""
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        modal: true
-        padding: deck.space16
-        background: Rectangle {
-            radius: deck.radiusCard
-            color: deck.elevatedSurface
-            border.color: deck.fault
-        }
+        tokens: deck
+        heading: "Delete “" + ruleName + "”?"
+        tone: "fault"
+        preferredWidth: 420
         contentItem: ColumnLayout {
             width: 340
             spacing: deck.space12
-            Text {
-                text: "Delete “" + deleteDialog.ruleName + "”?"
-                color: deck.textPrimary
-                font.family: deck.displayFont
-                font.pixelSize: 18
-                font.bold: true
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
             Text {
                 text: "This removes the automation rule. It does not delete a referenced profile or control."
                 color: deck.textSecondary

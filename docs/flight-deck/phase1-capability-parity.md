@@ -188,3 +188,33 @@ of the established theme family.
   path, device polling, telemetry observer, or DirectInput-to-vJoy hot-path
   work. Its display-only exceptional-state property exists solely for
   deterministic QML visual fixtures and is empty in production.
+
+## Phase 11 secondary UI presentation coverage
+
+| Secondary surface | Existing authority and trigger | Flight Deck treatment | Ownership / validation state |
+| --- | --- | --- | --- |
+| Profile/category create, rename, duplicate, move, delete | `AppBackend` profile/category commands from `FlightDeckProfiles.qml` | Shared `FlightDeckDialog`; backend rejection stays inline and the dialog closes only after success | Native; actual pointer tests cover rejected form and delete cancel/confirm |
+| Profile import/export | `ProfilePortability` through `AppBackend` portability commands | `FlightDeckTransferDialog` presents profile/category/pack selection, preview, conflicts, device choice, calibration opt-in, and result banner | Native; schema, extension, compatibility, and contents unchanged; Windows picker is platform-owned |
+| Game association | Existing category executable-rule commands and running-application snapshot | Native dialog offers detected running application, existing executable picker, or manual executable rule | Native; detection algorithm and automatic-activation semantics unchanged |
+| Axis route conflict | Existing route command result in `FlightDeckAxes.qml` | Shared attention dialog with cancel / deliberate override | Native; no route changes until confirmation |
+| Button/POV output conflict | Existing Button/POV route commands | Shared attention dialog with existing Share / Replace choices | Native; existing selector command path retained |
+| Automation deletion | Existing `deleteAutomation` command | Shared restrained destructive confirmation | Native; referenced profiles and controls are not deleted |
+| Setup repair/undo | Existing controller-readiness commands | Shared attention dialogs retain scoped-plan explanation and authoritative apply / undo actions | Native; UAC remains platform-owned |
+| Settings maintenance | Existing forget, calibration reset, configuration reset, and uninstall commands | Shared confirmation with fault treatment only for configuration reset/uninstall | Native; uninstaller and configuration panels stay platform-owned |
+| Adaptive preset rename | Existing adaptive-preset command | Shared form dialog with inline backend rejection | Native; predictor, preset, and runtime behavior unchanged |
+| Combo popups and explanatory tooltip | Existing QML selector models and preset descriptions | Token-based rounded popups across native pages; shared `FlightDeckTooltip` for application-owned preset help | Native; selection values remain existing commands |
+| Loading, empty, unavailable, validation, and result states | Existing bounded presentation snapshots and command status | Existing page-specific states remain; Profiles adds an in-page result banner rather than a new global notification service | Native where app-owned; there is no existing standalone toast service |
+
+`FlightDeckDialog.qml` is the common modal surface for the real consumers
+above. `FlightDeckTransferDialog.qml` remains deliberately specialized because
+the existing portability service exposes broad preview and pack-selection
+state. Neither contains a mapper, profile store, portability format, game
+detector, or validation engine.
+
+Intentional exceptions are Windows file/folder pickers, UAC elevation,
+vJoy/HidHide configuration applications, and the uninstaller. Flight Deck
+styles the application surface before and after those platform operations; it
+does not emulate them. The established Curve Editor remains a separately
+routed advanced primary workspace, not a secondary modal. Legacy, Standard,
+and Top Gun retain their prior dialog/popup implementations. Day Ops was
+absent from this baseline and remains a later coexistence integration item.
