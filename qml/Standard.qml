@@ -2080,7 +2080,10 @@ Page {
             id: diagnosticsPageLoader
             anchors.fill: parent
             active: root.currentPage === 3
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckDiagnosticsComponent : standardDiagnosticsComponent
+        }
+        Component {
+            id: standardDiagnosticsComponent
         Flickable {
             id: diagnosticsPage
             anchors.fill: parent
@@ -2359,6 +2362,17 @@ Page {
                 }
             }
         }
+        }
+        Component {
+            id: flightDeckDiagnosticsComponent
+            FlightDeckDiagnostics {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToDevices: function(context) {
+                    root.flightDeckDevicesContext = context
+                    root.currentPage = 2
+                }
             }
         }
         Loader {

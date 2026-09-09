@@ -3828,6 +3828,171 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     window->resize(adaptiveOriginalSize);
     adaptiveVisual->setProperty("presentationOverride", QVariant{});
+    if (!selectPage(surface, 3)) return false;
+
+    // Diagnostics is a display-only surface. This fixture exercises the
+    // shared readiness model, exact route state, pointer controls, and a
+    // recovery link without calling any backend command.
+    QObject *diagnostics = pageItem(surface, 3);
+    auto *diagnosticsItem = qobject_cast<QQuickItem *>(diagnostics);
+    if (!diagnostics || !diagnosticsItem
+        || diagnostics->objectName() != QStringLiteral("flightDeckDiagnostics")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not load native Diagnostics")
+            .arg(appearance));
+    }
+    const QString profileBeforeDiagnostics = backend.activeProfileId();
+    const QVariantList routesBeforeDiagnostics = backend.runtimeAxisRoutesForTest();
+    const QVariantList automationsBeforeDiagnostics = backend.automationRules();
+    const QVariantList controllersBeforeDiagnostics = backend.controllers();
+    const QVariantMap adaptiveBeforeDiagnostics = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex());
+    const QVariantList routeFixture{
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("Roll")}, {QStringLiteral("available"), true}, {QStringLiteral("target"), QStringLiteral("X")}, {QStringLiteral("targetAvailable"), true}, {QStringLiteral("virtualRouted"), true}, {QStringLiteral("virtualValid"), true}, {QStringLiteral("raw"), 0.31}, {QStringLiteral("calibrated"), 0.29}, {QStringLiteral("virtualValue"), 0.29}, {QStringLiteral("curveSummary"), QStringLiteral("Linear")}, {QStringLiteral("deadzone"), 0.02}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("Pitch")}, {QStringLiteral("available"), true}, {QStringLiteral("target"), QStringLiteral("Z")}, {QStringLiteral("targetAvailable"), true}, {QStringLiteral("virtualRouted"), true}, {QStringLiteral("virtualValid"), true}, {QStringLiteral("raw"), -0.42}, {QStringLiteral("calibrated"), -0.40}, {QStringLiteral("virtualValue"), -0.40}, {QStringLiteral("curveSummary"), QStringLiteral("Precision")}, {QStringLiteral("deadzone"), 0.03}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("Yaw")}, {QStringLiteral("available"), true}, {QStringLiteral("target"), QStringLiteral("Rz")}, {QStringLiteral("targetAvailable"), true}, {QStringLiteral("virtualRouted"), true}, {QStringLiteral("virtualValid"), true}, {QStringLiteral("raw"), 0.08}, {QStringLiteral("calibrated"), 0.07}, {QStringLiteral("virtualValue"), 0.07}, {QStringLiteral("curveSummary"), QStringLiteral("Linear")}, {QStringLiteral("deadzone"), 0.02}}
+    };
+    const QVariantList checksFixture{
+        QVariantMap{{QStringLiteral("name"), QStringLiteral("PHYSICAL INPUT")}, {QStringLiteral("state"), QStringLiteral("Ready")}, {QStringLiteral("message"), QStringLiteral("Controller reports are available.")}, {QStringLiteral("severity"), QStringLiteral("ready")}},
+        QVariantMap{{QStringLiteral("name"), QStringLiteral("VIRTUAL OUTPUT")}, {QStringLiteral("state"), QStringLiteral("Ready")}, {QStringLiteral("message"), QStringLiteral("vJoy output is ready.")}, {QStringLiteral("severity"), QStringLiteral("ready")}},
+        QVariantMap{{QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")}, {QStringLiteral("state"), QStringLiteral("Ready")}, {QStringLiteral("message"), QStringLiteral("Physical input is protected.")}, {QStringLiteral("severity"), QStringLiteral("ready")}}
+    };
+    QVariantMap readyFixture{{QStringLiteral("physicalConnected"), true},
+        {QStringLiteral("connectedControllerCount"), 1}, {QStringLiteral("deviceName"), QStringLiteral("T.16000M FCS")},
+        {QStringLiteral("mappingActive"), true}, {QStringLiteral("mappingRequested"), true},
+        {QStringLiteral("mappingStatus"), QStringLiteral("Mapping active")}, {QStringLiteral("vjoyReady"), true},
+        {QStringLiteral("vjoyStatus"), QStringLiteral("vJoy Device 1 is ready")}, {QStringLiteral("vjoyStatusSeverity"), QStringLiteral("ready")},
+        {QStringLiteral("vjoyDeviceId"), 1}, {QStringLiteral("hidhideAvailable"), true},
+        {QStringLiteral("hidhideCloakStateKnown"), true}, {QStringLiteral("hidhideCloaked"), true},
+        {QStringLiteral("hidhideMapperAllowed"), true}, {QStringLiteral("controllerReadinessState"), QStringLiteral("READY")},
+        {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("Helicopter")}, {QStringLiteral("profileSourceLabel"), QStringLiteral("Manual selection")},
+        {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield")}, {QStringLiteral("automaticGameDetection"), true},
+        {QStringLiteral("activeCategoryRules"), QVariantList{QStringLiteral("bf6.exe")}},
+        {QStringLiteral("runningApplications"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("Battlefield 6")}, {QStringLiteral("executable"), QStringLiteral("bf6.exe")}}}},
+        {QStringLiteral("checks"), checksFixture}};
+    QVariantMap diagnosticFixture{{QStringLiteral("deviceName"), QStringLiteral("T.16000M FCS")},
+        {QStringLiteral("deviceId"), QStringLiteral("DIRECTINPUT:T16000M-FCS-TEST")}, {QStringLiteral("axes"), routeFixture},
+        {QStringLiteral("buttons"), QVariantList{QVariantMap{{QStringLiteral("label"), QStringLiteral("B1")}, {QStringLiteral("pressed"), true}}, QVariantMap{{QStringLiteral("label"), QStringLiteral("B2")}, {QStringLiteral("pressed"), false}}}},
+        {QStringLiteral("povs"), QVariantList{QVariantMap{{QStringLiteral("index"), 1}, {QStringLiteral("direction"), QStringLiteral("Centered")}, {QStringLiteral("centered"), true}}}},
+        {QStringLiteral("controllers"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("T.16000M FCS")}, {QStringLiteral("state"), QStringLiteral("Connected · Verified · Active")}, {QStringLiteral("directInputId"), QStringLiteral("DIRECTINPUT:T16000M-FCS-TEST")}, {QStringLiteral("connected"), true}}}},
+        {QStringLiteral("automationRules"), QVariantList{QVariantMap{{QStringLiteral("enabled"), true}, {QStringLiteral("health"), 0}}}},
+        {QStringLiteral("automationRuleCount"), 1}, {QStringLiteral("automationActiveRuleCount"), 0}, {QStringLiteral("automationEngineEnabled"), true},
+        {QStringLiteral("adaptive"), QVariantMap{{QStringLiteral("enabled"), true}, {QStringLiteral("physical"), 0.42}, {QStringLiteral("predicted"), 0.49}, {QStringLiteral("virtualOutput"), 0.47}, {QStringLiteral("velocity"), 5.87}, {QStringLiteral("acceleration"), 18.2}, {QStringLiteral("activeHorizonMs"), 15.3}, {QStringLiteral("lead"), 0.0486}, {QStringLiteral("confidence"), 0.94}, {QStringLiteral("state"), QStringLiteral("Accelerating")}, {QStringLiteral("model"), QStringLiteral("velocity")}}},
+        {QStringLiteral("events"), QVariantList{QStringLiteral("12:00:01  Controller snapshot updated")}}};
+    readinessModel->setProperty("presentationStateOverride", readyFixture);
+    diagnostics->setProperty("presentationOverride", diagnosticFixture);
+    settlePresentation();
+    QQmlExpression routesExpression(qmlContext(diagnostics), diagnostics, QStringLiteral("routedAxes()"));
+    const QVariantList displayedRoutes = routesExpression.evaluate().toList();
+    if (routesExpression.hasError() || displayedRoutes.size() != 3
+        || displayedRoutes.at(0).toMap().value(QStringLiteral("target")).toString() != QStringLiteral("X")
+        || displayedRoutes.at(1).toMap().value(QStringLiteral("target")).toString() != QStringLiteral("Z")
+        || displayedRoutes.at(2).toMap().value(QStringLiteral("target")).toString() != QStringLiteral("Rz")
+        || diagnostics->property("outputHealth").toMap().value(QStringLiteral("tone")).toString() != QStringLiteral("healthy")
+        || !captureShell(QStringLiteral("diagnostics-healthy"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Diagnostics healthy signal-path state is incomplete").arg(appearance));
+    }
+    const auto scrollDiagnostics = [&](const QString &section) {
+        QQmlExpression call(qmlContext(diagnostics), diagnostics,
+            QStringLiteral("scrollToSection('%1')").arg(section));
+        const bool result = call.evaluate().toBool();
+        settlePresentation();
+        return !call.hasError() && result;
+    };
+    const auto clickDiagnosticsItem = [&](const QString &name, const QString &section) {
+        if (!scrollDiagnostics(section)) return false;
+        auto *item = findVisualItemByObjectName(diagnosticsItem, name);
+        if (!item) return false;
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5)).toPoint());
+        settlePresentation();
+        return true;
+    };
+    const bool pathClicked = clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsSection_path"), QStringLiteral("summary"));
+    const bool pathScrolled = diagnostics->property("contentY").toReal() > 0.0;
+    const bool detailClicked = clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsTechnicalToggle"), QStringLiteral("advanced"));
+    const bool detailsOpen = diagnostics->property("technicalDetailsExpanded").toBool();
+    const bool observational = backend.activeProfileId() == profileBeforeDiagnostics
+        && backend.runtimeAxisRoutesForTest() == routesBeforeDiagnostics
+        && backend.automationRules() == automationsBeforeDiagnostics
+        && backend.adaptiveResponseContextState(QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex()) == adaptiveBeforeDiagnostics;
+    if (!pathClicked || !pathScrolled || !detailClicked || !detailsOpen || !observational
+        || !captureShell(QStringLiteral("diagnostics-advanced-details"))) {
+        qInfo().noquote() << QStringLiteral("diagnostics interaction path=%1 scrolled=%2 detail=%3 open=%4 observational=%5")
+            .arg(pathClicked).arg(pathScrolled).arg(detailClicked).arg(detailsOpen).arg(observational);
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Diagnostics pointer navigation or technical disclosure was not observational").arg(appearance));
+    }
+    QVariantMap attentionFixture = readyFixture;
+    attentionFixture.insert(QStringLiteral("vjoyReady"), false);
+    attentionFixture.insert(QStringLiteral("vjoyStatus"), QStringLiteral("vJoy Device 1 does not match the configured output."));
+    attentionFixture.insert(QStringLiteral("vjoyStatusSeverity"), QStringLiteral("error"));
+    attentionFixture.insert(QStringLiteral("mappingActive"), false);
+    attentionFixture.insert(QStringLiteral("controllerReadinessState"), QStringLiteral("ATTENTION"));
+    attentionFixture.insert(QStringLiteral("checks"), QVariantList{checksFixture.at(0),
+        QVariantMap{{QStringLiteral("name"), QStringLiteral("VIRTUAL OUTPUT")}, {QStringLiteral("state"), QStringLiteral("Action required")}, {QStringLiteral("message"), QStringLiteral("vJoy output needs setup.")}, {QStringLiteral("severity"), QStringLiteral("error")}},
+        QVariantMap{{QStringLiteral("name"), QStringLiteral("HIDHIDE ISOLATION")}, {QStringLiteral("state"), QStringLiteral("Attention")}, {QStringLiteral("message"), QStringLiteral("Physical controller may remain visible to games.")}, {QStringLiteral("severity"), QStringLiteral("warning")}}});
+    diagnosticFixture.insert(QStringLiteral("vjoyReady"), false);
+    diagnosticFixture.insert(QStringLiteral("vjoyStatus"), QStringLiteral("vJoy Device 1 does not match the configured output."));
+    diagnosticFixture.insert(QStringLiteral("vjoyStatusSeverity"), QStringLiteral("error"));
+    diagnosticFixture.insert(QStringLiteral("hidhideMapperAllowed"), false);
+    readinessModel->setProperty("presentationStateOverride", attentionFixture);
+    diagnostics->setProperty("presentationOverride", diagnosticFixture);
+    diagnostics->setProperty("contentY", 0.0);
+    diagnostics->setProperty("technicalDetailsExpanded", false);
+    settlePresentation();
+    if (diagnostics->property("outputHealth").toMap().value(QStringLiteral("tone")).toString() != QStringLiteral("fault")
+        || diagnostics->property("isolationHealth").toMap().value(QStringLiteral("tone")).toString() != QStringLiteral("attention")
+        || !captureShell(QStringLiteral("diagnostics-attention"))
+        || !clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsFilterAttention"), QStringLiteral("summary"))
+        || diagnostics->property("filterMode").toString() != QStringLiteral("attention")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Diagnostics centralized-attention state is incomplete").arg(appearance));
+    }
+    diagnostics->setProperty("filterMode", QStringLiteral("all"));
+    QVariantList badRoutes = routeFixture;
+    QVariantMap badPitch = badRoutes.at(1).toMap();
+    badPitch.insert(QStringLiteral("targetAvailable"), false);
+    badPitch.insert(QStringLiteral("virtualRouted"), false);
+    badPitch.insert(QStringLiteral("virtualValid"), false);
+    badRoutes[1] = badPitch;
+    diagnosticFixture.insert(QStringLiteral("axes"), badRoutes);
+    diagnostics->setProperty("presentationOverride", diagnosticFixture);
+    if (!scrollDiagnostics(QStringLiteral("path")) || !captureShell(QStringLiteral("diagnostics-routing-problem"))
+        || !clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsOpenDevices"), QStringLiteral("systems"))
+        || surface->property("currentPage").toInt() != 2
+        || backend.activeProfileId() != profileBeforeDiagnostics
+        || backend.runtimeAxisRoutesForTest() != routesBeforeDiagnostics
+        || backend.automationRules() != automationsBeforeDiagnostics
+        || backend.controllers() != controllersBeforeDiagnostics
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex()) != adaptiveBeforeDiagnostics) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Diagnostics recovery route changed configuration or did not open Devices").arg(appearance));
+    }
+    if (!selectPage(surface, 3)) return false;
+    diagnostics = pageItem(surface, 3);
+    diagnosticsItem = qobject_cast<QQuickItem *>(diagnostics);
+    if (!diagnostics || !diagnosticsItem) return false;
+    readinessModel->setProperty("presentationStateOverride", readyFixture);
+    diagnosticFixture.insert(QStringLiteral("deviceName"), QStringLiteral("T.16000M FCS Precision Flight Controller With An Intentionally Long Diagnostic Name"));
+    diagnosticFixture.insert(QStringLiteral("deviceId"), QStringLiteral("DIRECTINPUT:VID_044F&PID_B68D&INSTANCE_000000000000000000000000000000000000000000000000"));
+    diagnosticFixture.insert(QStringLiteral("axes"), routeFixture);
+    diagnostics->setProperty("presentationOverride", diagnosticFixture);
+    diagnostics->setProperty("outputDetailsExpanded", true);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("diagnostics-signal-path")) || !scrollDiagnostics(QStringLiteral("systems"))
+        || !captureShell(QStringLiteral("diagnostics-output-technical")) || !scrollDiagnostics(QStringLiteral("inspection"))
+        || !captureShell(QStringLiteral("diagnostics-adaptive-technical"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Diagnostics technical visual matrix is incomplete").arg(appearance));
+    }
+    const QSize diagnosticsOriginalSize = window->size();
+    window->resize(900, 650);
+    diagnostics->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("diagnostics-minimum"))) return false;
+    window->resize(1600, 980);
+    diagnostics->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("diagnostics-wide"))) return false;
+    window->resize(diagnosticsOriginalSize);
+    readinessModel->setProperty("presentationStateOverride", QVariant{});
+    diagnostics->setProperty("presentationOverride", QVariant{});
     if (!selectPage(surface, 8)) return false;
     return true;
 }
