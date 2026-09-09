@@ -1103,20 +1103,13 @@ Flickable {
         }
     }
 
-    Dialog {
+    FlightDeckDialog {
         id: routeConflictDialog
         objectName: "flightDeckAxisRouteConflict"
-        parent: root
-        modal: true
-        title: "Route needs a decision"
-        standardButtons: Dialog.NoButton
-        anchors.centerIn: parent
-        width: Math.min(460, root.width - deck.space32)
-        background: Rectangle {
-            radius: deck.radiusCard
-            color: deck.elevatedSurface
-            border.color: deck.border
-        }
+        tokens: deck
+        heading: "Route needs a decision"
+        tone: "attention"
+        preferredWidth: 460
         contentItem: ColumnLayout {
             spacing: deck.space12
             Text {

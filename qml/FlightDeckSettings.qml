@@ -75,9 +75,10 @@ Flickable {
 
     component DeckPrimaryButton: DeckButton {
         id: primary
+        property bool destructive: false
         contentItem: Text {
             text: primary.text
-            color: !primary.enabled ? deck.textMuted : (deck.light ? "white" : deck.primarySurface)
+            color: !primary.enabled ? deck.textMuted : primary.destructive ? deck.fault : (deck.light ? "white" : deck.primarySurface)
             font: primary.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -85,9 +86,9 @@ Flickable {
         }
         background: Rectangle {
             radius: deck.radiusControl
-            color: !primary.enabled ? deck.disabled : primary.down ? deck.accentMuted : primary.hovered ? deck.focus : deck.accent
+            color: !primary.enabled ? deck.disabled : primary.down ? (primary.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.22) : deck.accentMuted) : primary.hovered ? (primary.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.15) : deck.focus) : primary.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.10) : deck.accent
             border.width: primary.activeFocus ? 2 : 1
-            border.color: primary.activeFocus ? deck.focus : deck.accent
+            border.color: primary.activeFocus ? deck.focus : primary.destructive ? deck.fault : deck.accent
         }
     }
 
@@ -848,32 +849,16 @@ Flickable {
         }
     }
 
-    Dialog {
+    FlightDeckDialog {
         id: maintenanceDialog
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        modal: true
-        title: ""
-        standardButtons: Dialog.NoButton
-        padding: deck.space16
         property string action: ""
-        background: Rectangle {
-            radius: deck.radiusCard
-            color: deck.elevatedSurface
-            border.color: maintenanceDialog.action === "uninstall" ? deck.fault : deck.attention
-        }
+        tokens: deck
+        heading: maintenanceDialog.action === "uninstall" ? "Uninstall HOTAS BF6?" : maintenanceDialog.action === "forget" ? "Forget saved controllers?" : maintenanceDialog.action === "calibration" ? "Reset active-controller calibration?" : "Reset application configuration?"
+        tone: maintenanceDialog.action === "uninstall" || maintenanceDialog.action === "configuration" ? "fault" : "attention"
+        preferredWidth: 460
         contentItem: ColumnLayout {
             width: Math.min(430, root.width - deck.space48)
             spacing: deck.space16
-            Text {
-                text: maintenanceDialog.action === "uninstall" ? "Uninstall HOTAS BF6?" : maintenanceDialog.action === "forget" ? "Forget saved controllers?" : maintenanceDialog.action === "calibration" ? "Reset active-controller calibration?" : "Reset application configuration?"
-                color: deck.textPrimary
-                font.family: deck.displayFont
-                font.pixelSize: 16
-                font.bold: true
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
             Text {
                 text: maintenanceDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, Automation, and saved data remain by default." : maintenanceDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles and Automation remain." : maintenanceDialog.action === "calibration" ? "This clears calibration only for the active controller. Profiles, curves, and mappings remain." : "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and Automation are reset as part of the application configuration."
                 color: deck.textSecondary
@@ -893,6 +878,7 @@ Flickable {
                 DeckPrimaryButton {
                     objectName: "flightDeckSettingsConfirmMaintenance"
                     text: maintenanceDialog.action === "uninstall" ? "UNINSTALL" : maintenanceDialog.action === "configuration" ? "RESET CONFIGURATION" : "CONFIRM"
+                    destructive: maintenanceDialog.action === "uninstall" || maintenanceDialog.action === "configuration"
                     onClicked: {
                         if (maintenanceDialog.action === "uninstall")
                             backend.launchUninstaller();

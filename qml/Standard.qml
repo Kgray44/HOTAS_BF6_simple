@@ -35,7 +35,6 @@ Page {
     property string flightDeckProfileContext: ""
     property string flightDeckAutomationContext: ""
     property string flightDeckAdaptiveProfileContext: ""
-    property bool flightDeckUseClassicProfileTransfer: false
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -51,9 +50,6 @@ Page {
     property var allPovInputs: (currentPage === 1 || currentPage === 3) ? backend.povInputs : []
     property int conflictingAxis: -1
     property string conflictingTarget: "Disabled"
-    onCurrentPageChanged: {
-        if (currentPage !== 5) flightDeckUseClassicProfileTransfer = false
-    }
     property int conflictingButton: -1
     property int conflictingVirtualButton: 0
     property int conflictingPovHat: 0
@@ -1540,8 +1536,7 @@ Page {
             id: profileLibraryLoader
             anchors.fill: parent
             active: root.currentPage === 5
-            sourceComponent: root.flightDeckMode && !root.flightDeckUseClassicProfileTransfer
-                ? flightDeckProfilesComponent : standardProfileLibraryComponent
+            sourceComponent: root.flightDeckMode ? flightDeckProfilesComponent : standardProfileLibraryComponent
         }
         Component {
             id: standardProfileLibraryComponent
@@ -1571,17 +1566,6 @@ Page {
                 onNavigateToAdaptiveProfile: function(profileId) {
                     root.flightDeckAdaptiveProfileContext = profileId
                     root.currentPage = 9
-                }
-                onRequestClassicTransfer: {
-                    root.profileLibraryPresentationState = {
-                        view: "library", transferMode: "import", transferKind: "profile",
-                        transferFile: "", transferProfileId: "", transferCategoryId: "",
-                        selectedPackCategoryIds: [], selectedPackProfileIds: [],
-                        categoryConflictMode: "merge", adaptivePresetConflictMode: "copy",
-                        applyImportedCalibration: false, replaceCategoryConfirmed: false,
-                        replaceProfilesConfirmed: false, contentY: 0, transferDialogOpen: true
-                    }
-                    root.flightDeckUseClassicProfileTransfer = true
                 }
                 Component.onCompleted: {
                     if (root.flightDeckProfileContext.length > 0) {

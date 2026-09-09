@@ -111,6 +111,17 @@ Flickable {
         return fallback;
     }
 
+    function commitPresetRename() {
+        presetError = "";
+        if (backendObject.renameAdaptiveResponsePreset(renamePresetId, renamePresetDraft)) {
+            renamePresetDialog.close();
+            setPreview();
+            return true;
+        }
+        presetError = "Use a unique preset name of 64 characters or fewer.";
+        return false;
+    }
+
     function effective() {
         return state.runtimeEffective || state.effective || ({});
     }
@@ -1588,23 +1599,16 @@ Flickable {
         }
     }
 
-    Dialog {
+    FlightDeckDialog {
         id: renamePresetDialog
         objectName: "adaptiveRenamePresetDialog"
-        modal: true
-        focus: true
-        title: "Rename Response Preset"
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        anchors.centerIn: Overlay.overlay
-        onAccepted: {
-            root.presetError = "";
-            if (!backendObject.renameAdaptiveResponsePreset(root.renamePresetId, root.renamePresetDraft))
-                root.presetError = "Use a unique preset name of 64 characters or fewer.";
-            root.setPreview();
-        }
+        tokens: deck
+        heading: "Rename Response Preset"
+        tone: root.presetError.length > 0 ? "attention" : "informational"
+        preferredWidth: 430
         contentItem: ColumnLayout {
-            width: 360
-            spacing: deck.space8
+            width: renamePresetDialog.availableWidth
+            spacing: deck.space12
             Text {
                 Layout.fillWidth: true
                 text: "Names must be unique and cannot reuse a built-in Response Preset name."
@@ -1622,10 +1626,31 @@ Flickable {
                 background: Rectangle {
                     radius: deck.radiusControl
                     color: deck.primarySurface
-                    border.color: renamePresetInput.activeFocus ? deck.focus : deck.border
+                    border.width: renamePresetInput.activeFocus ? 2 : 1
+                    border.color: root.presetError.length > 0 ? deck.attention : renamePresetInput.activeFocus ? deck.focus : deck.border
+                }
+            }
+            Text {
+                visible: root.presetError.length > 0
+                Layout.fillWidth: true
+                text: root.presetError
+                color: deck.attention
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                DeckButton { text: "CANCEL"; subdued: true; onClicked: renamePresetDialog.close() }
+                DeckButton {
+                    text: "RENAME"
+                    enabled: renamePresetInput.text.trim().length > 0
+                    onClicked: root.commitPresetRename()
                 }
             }
         }
+        onOpened: { root.presetError = ""; renamePresetInput.forceActiveFocus(); renamePresetInput.selectAll(); }
+        Keys.onReturnPressed: function(event) { root.commitPresetRename(); event.accepted = true; }
     }
 
     Item {
@@ -2009,8 +2034,11 @@ Flickable {
                                 border.color: presetButton.activeFocus ? deck.focus : presetButton.checked ? deck.accent : deck.border
                             }
                             onClicked: root.applySimplePreset(modelData.id)
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.description
+                            FlightDeckTooltip {
+                                tokens: deck
+                                visible: parent.hovered
+                                text: modelData.description
+                            }
                         }
                     }
                 }

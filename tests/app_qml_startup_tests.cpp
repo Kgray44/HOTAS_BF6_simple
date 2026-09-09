@@ -326,15 +326,16 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
     // The producer can publish a newer physical snapshot between an injection
     // and a direct backend history read. Assert the page's two bounded UI
     // history snapshots instead: one following each injection. This verifies
-    // the live source and graph feed without assuming ring ordering or
-    // retention beyond the UI contract.
+    // the live source and graph feed without assuming ring ordering, retention,
+    // or host vJoy-driver availability beyond the UI contract. Mapping must
+    // remain suspended; vJoy readiness itself is independent hardware state.
     if (refreshFirstLiveHistory.hasError() || refreshLiveHistory.hasError()
         || firstLiveGraphSamples.isEmpty() || !firstObservedNegative
         || liveGraphSamples.isEmpty() || !secondObservedPositive
         || backend.mappingStatus() != QStringLiteral("MAPPING SUSPENDED")
-        || backend.mappingActive() || backend.vjoyReady()) {
+        || backend.mappingActive()) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Live Controller snapshot did not update the unified Response Lab while mapping was suspended and vJoy unavailable "
+            "Live Controller snapshot did not update the unified Response Lab while mapping was suspended "
             "(first_samples=%1 first_negative=%2 samples=%3 second_positive=%4 oldest=%5 newest=%6 status=%7 active=%8 vjoy=%9)")
             .arg(firstLiveGraphSamples.size()).arg(firstObservedNegative)
             .arg(liveGraphSamples.size()).arg(secondObservedPositive)
@@ -2919,6 +2920,55 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     returnToNativeLibrary.evaluate();
     settlePresentation();
 
+    // Secondary profile flows stay inside the native Flight Deck host. The
+    // transfer dialog is presentation-only until the existing portability
+    // command receives a platform-picked file, while form rejection must
+    // remain visible and must not create an authoritative category.
+    auto *transferButton = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckProfilesTransfer"));
+    if (!transferButton || !clickFlightDeckSettingsItem(window, profilesItem, transferButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native transfer entry was not pointer reachable")
+            .arg(appearance));
+    }
+    QObject *transferDialog = profilesPage->findChild<QObject *>(QStringLiteral("flightDeckTransferDialog"));
+    if (!transferDialog || !transferDialog->property("visible").toBool()
+        || surface->property("currentPage").toInt() != 5
+        || !captureShell(QStringLiteral("profiles-transfer"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 transfer entry leaked to a non-native host")
+            .arg(appearance));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (transferDialog->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 transfer dialog did not close on Escape")
+            .arg(appearance));
+    }
+    auto *newCategoryButton = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckNewCategory"));
+    if (!newCategoryButton || !clickFlightDeckSettingsItem(window, profilesItem, newCategoryButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native category form was not pointer reachable")
+            .arg(appearance));
+    }
+    auto *newCategorySave = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckNewCategorySave"));
+    auto *newCategoryError = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckNewCategoryError"));
+    const int categoryCountBeforeRejectedForm = backend.profileCategories().size();
+    if (!newCategorySave || !newCategoryError
+        || !clickFlightDeckSettingsItem(window, window->contentItem(), newCategorySave)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 rejected category form was not pointer reachable")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!newCategoryError->property("visible").toBool()
+        || backend.profileCategories().size() != categoryCountBeforeRejectedForm
+        || !captureShell(QStringLiteral("profiles-form-error"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 rejected category form closed, hid validation, or mutated state")
+            .arg(appearance));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+
     // Functional coverage deliberately uses the authoritative Profile model.
     // It proves that selecting a profile for inspection is separate from the
     // existing activation command, and that category/game mutations stay
@@ -3058,12 +3108,45 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation deep link changed profile activation")
             .arg(appearance));
     }
+    if (!selectPage(surface, 5)) return false;
+    profilesPage = pageItem(surface, 5);
+    profilesItem = qobject_cast<QQuickItem *>(profilesPage);
+    QQmlExpression openInactiveForDelete(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('%1')").arg(firstId));
+    openInactiveForDelete.evaluate();
+    settlePresentation();
+    auto *deleteProfileButton = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckProfileDelete"));
+    if (openInactiveForDelete.hasError() || !deleteProfileButton
+        || !clickFlightDeckSettingsItem(window, profilesItem, deleteProfileButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 destructive profile action was not pointer reachable")
+            .arg(appearance));
+    }
+    auto *deleteProfileCancel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckProfileDeleteCancel"));
+    if (!deleteProfileCancel || !captureShell(QStringLiteral("profiles-delete-confirm"))
+        || !clickFlightDeckSettingsItem(window, window->contentItem(), deleteProfileCancel)
+        || profileWithName(firstName).isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 destructive cancel mutated its profile or failed to close")
+            .arg(appearance));
+    }
+    if (!clickFlightDeckSettingsItem(window, profilesItem, deleteProfileButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 destructive confirmation did not reopen")
+            .arg(appearance));
+    }
+    auto *deleteProfileConfirm = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckProfileDeleteConfirm"));
+    if (!deleteProfileConfirm || !clickFlightDeckSettingsItem(window, window->contentItem(), deleteProfileConfirm)
+        || !profileWithName(firstName).isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 destructive confirmation did not commit through AppBackend")
+            .arg(appearance));
+    }
     if (backend.deleteProfile(secondId)) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 allowed deletion of the active profile")
             .arg(appearance));
     }
     if (!backend.activateProfile(originalActiveProfileId)
-        || !backend.deleteProfile(secondId) || !backend.deleteProfile(firstId)
+        || !backend.deleteProfile(secondId)
         || !backend.deleteProfileCategory(testCategoryId) || !backend.deleteProfileCategory(movedCategoryId)) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile CRUD cleanup did not preserve authoritative deletion rules")
             .arg(appearance));

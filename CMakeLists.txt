@@ -106,6 +106,9 @@ qt_add_qml_module(HOTASMapper
         qml/Legacy.qml
         qml/FlightDeck.qml
         qml/FlightDeckTheme.qml
+        qml/FlightDeckDialog.qml
+        qml/FlightDeckTransferDialog.qml
+        qml/FlightDeckTooltip.qml
         qml/FlightDeckSurface.qml
         qml/FlightDeckCard.qml
         qml/FlightDeckNavItem.qml
@@ -496,6 +499,9 @@ if (BUILD_TESTING)
             qml/Legacy.qml
             qml/FlightDeck.qml
             qml/FlightDeckTheme.qml
+            qml/FlightDeckDialog.qml
+            qml/FlightDeckTransferDialog.qml
+            qml/FlightDeckTooltip.qml
             qml/FlightDeckSurface.qml
             qml/FlightDeckCard.qml
             qml/FlightDeckNavItem.qml

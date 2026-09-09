@@ -1195,14 +1195,12 @@ Flickable {
         Item { Layout.preferredHeight: deck.space12 }
     }
 
-    Dialog {
+    FlightDeckDialog {
         id: mappingConflict
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        modal: true
-        title: "Output already assigned"
-        standardButtons: Dialog.NoButton
-        width: Math.min(520, root.width - deck.space32)
+        tokens: deck
+        heading: "Output already assigned"
+        tone: "attention"
+        preferredWidth: 520
         contentItem: ColumnLayout {
             width: mappingConflict.width - deck.space32
             spacing: deck.space12
@@ -1239,6 +1237,5 @@ Flickable {
                 }
             }
         }
-        background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.attention }
     }
 }

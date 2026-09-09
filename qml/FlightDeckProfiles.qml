@@ -1,5 +1,6 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
+import QtQuick.Dialogs 6.5
 import QtQuick.Layouts 6.5
 
 // Native Flight Deck Profiles presentation. The page owns only navigation and
@@ -24,11 +25,12 @@ Flickable {
     property string searchText: ""
     property var runningApplicationsSnapshot: []
     property var presentationState: ({})
+    property string actionNotice: ""
+    property string actionNoticeTone: "informational"
 
     signal navigateToPage(int page)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
-    signal requestClassicTransfer
     signal presentationStateCaptured(var state)
 
     readonly property var categories: categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined ? categoriesPresentationOverride : backend.profileCategories
@@ -700,12 +702,14 @@ Flickable {
                 }
             }
             DeckButton {
+                objectName: "flightDeckProfilesTransfer"
                 visible: root.view === "library"
                 text: "IMPORT / EXPORT"
                 subdued: true
-                onClicked: root.requestClassicTransfer()
+                onClicked: transferDialog.openTransfer("import", "profile", "", "")
             }
             DeckButton {
+                objectName: "flightDeckNewCategory"
                 visible: root.view === "library"
                 text: "+ CATEGORY"
                 subdued: true
@@ -720,6 +724,31 @@ Flickable {
                     newProfileDialog.categoryId = backend.activeCategoryId;
                     newProfileDialog.open();
                 }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            visible: root.actionNotice.length > 0
+            implicitHeight: noticeText.implicitHeight + deck.space16
+            radius: deck.radiusControl
+            color: Qt.rgba(deck.statusColor(root.actionNoticeTone).r,
+                deck.statusColor(root.actionNoticeTone).g,
+                deck.statusColor(root.actionNoticeTone).b, deck.light ? 0.10 : 0.16)
+            border.color: deck.statusColor(root.actionNoticeTone)
+            Text {
+                id: noticeText
+                anchors.fill: parent
+                anchors.margins: deck.space8
+                text: root.actionNotice
+                color: deck.textSecondary
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.actionNotice = ""
             }
         }
 
@@ -963,6 +992,12 @@ Flickable {
                                     renameCategoryDialog.name = root.selectedCategory.name;
                                     renameCategoryDialog.open();
                                 }
+                            }
+                            DeckButton {
+                                text: "EXPORT"
+                                subdued: true
+                                enabled: !root.usingPresentationFixture
+                                onClicked: transferDialog.openTransfer("export", "category", "", root.selectedCategoryId)
                             }
                             Item {
                                 Layout.fillWidth: true
@@ -1616,6 +1651,12 @@ Flickable {
                         }
                     }
                     DeckButton {
+                        text: "EXPORT"
+                        subdued: true
+                        enabled: !root.usingPresentationFixture
+                        onClicked: transferDialog.openTransfer("export", "profile", root.selectedProfileId, "")
+                    }
+                    DeckButton {
                         text: "MOVE CATEGORY"
                         subdued: true
                         enabled: !root.usingPresentationFixture
@@ -1632,6 +1673,7 @@ Flickable {
                         onClicked: backend.setProfileEnabled(root.selectedProfileId, !root.selectedDetail.enabled)
                     }
                     DeckButton {
+                        objectName: "flightDeckProfileDelete"
                         text: "DELETE PROFILE"
                         destructive: true
                         enabled: !root.selectedDetail.active && !root.selectedDetail.protected && !root.usingPresentationFixture
@@ -1649,35 +1691,29 @@ Flickable {
         }
     }
 
-    component DeckDialog: Dialog {
+    FlightDeckTransferDialog {
+        id: transferDialog
+        deckTokens: deck
+        backendObject: backend
+        categories: root.categories
+        profiles: root.profiles
+        presentationFixture: root.usingPresentationFixture
+        onCompleted: function(message) {
+            root.actionNotice = message;
+            root.actionNoticeTone = "healthy";
+        }
+    }
+
+    component DeckDialog: FlightDeckDialog {
         id: dialog
-        property string heading: ""
-        parent: Overlay.overlay
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(480, root.width - deck.space32)
-        padding: deck.space16
-        standardButtons: Dialog.NoButton
-        background: Rectangle {
-            radius: deck.radiusPanel
-            color: deck.elevatedSurface
-            border.color: deck.border
-        }
-        header: Text {
-            x: deck.space16
-            y: deck.space16
-            width: dialog.width - deck.space32
-            height: implicitHeight + deck.space16
-            text: dialog.heading
-            color: deck.textPrimary
-            font.family: deck.displayFont
-            font.pixelSize: 17
-            font.bold: true
-        }
+        tokens: deck
+        preferredWidth: 480
     }
 
     DeckDialog {
         id: newCategoryDialog
+        objectName: "flightDeckNewCategoryDialog"
+        property string errorMessage: ""
         heading: "New category"
         contentItem: ColumnLayout {
             width: newCategoryDialog.availableWidth
@@ -1691,8 +1727,19 @@ Flickable {
             }
             DeckField {
                 id: newCategoryName
+                objectName: "flightDeckNewCategoryName"
                 Layout.fillWidth: true
                 placeholderText: "Battlefield"
+                onTextEdited: newCategoryDialog.errorMessage = ""
+            }
+            Text {
+                objectName: "flightDeckNewCategoryError"
+                visible: newCategoryDialog.errorMessage.length > 0
+                Layout.fillWidth: true
+                text: newCategoryDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
             }
             Text {
                 text: "Categories group profiles and can optionally be selected when a configured game is running."
@@ -1712,17 +1759,20 @@ Flickable {
                     onClicked: newCategoryDialog.close()
                 }
                 DeckButton {
+                    objectName: "flightDeckNewCategorySave"
                     text: "CREATE CATEGORY"
-                    enabled: newCategoryName.text.trim().length > 0
                     onClicked: {
                         if (backend.createProfileCategory(newCategoryName.text))
                             newCategoryDialog.close();
+                        else
+                            newCategoryDialog.errorMessage = "Choose a unique category name.";
                     }
                 }
             }
         }
         onOpened: {
             newCategoryName.text = "";
+            newCategoryDialog.errorMessage = "";
             newCategoryName.forceActiveFocus();
         }
     }
@@ -1730,6 +1780,7 @@ Flickable {
     DeckDialog {
         id: newProfileDialog
         property string categoryId: ""
+        property string errorMessage: ""
         heading: "New profile"
         contentItem: ColumnLayout {
             width: newProfileDialog.availableWidth
@@ -1745,6 +1796,15 @@ Flickable {
                 id: newProfileName
                 Layout.fillWidth: true
                 placeholderText: "Helicopter Precision"
+                onTextEdited: newProfileDialog.errorMessage = ""
+            }
+            Text {
+                visible: newProfileDialog.errorMessage.length > 0
+                Layout.fillWidth: true
+                text: newProfileDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
             }
             Text {
                 text: "CATEGORY"
@@ -1805,12 +1865,15 @@ Flickable {
                     onClicked: {
                         if (backend.createProfileInCategory(newProfileName.text, newProfileCategory.currentValue, newProfileSource.currentValue))
                             newProfileDialog.close();
+                        else
+                            newProfileDialog.errorMessage = "Choose a unique profile name and a valid destination category.";
                     }
                 }
             }
         }
         onOpened: {
             newProfileName.text = "";
+            newProfileDialog.errorMessage = "";
             newProfileName.forceActiveFocus();
         }
     }
@@ -1819,6 +1882,7 @@ Flickable {
         id: renameCategoryDialog
         property string categoryId: ""
         property string name: ""
+        property string errorMessage: ""
         heading: "Rename category"
         contentItem: ColumnLayout {
             width: renameCategoryDialog.availableWidth
@@ -1826,6 +1890,14 @@ Flickable {
             DeckField {
                 id: renameCategoryName
                 Layout.fillWidth: true
+                onTextEdited: renameCategoryDialog.errorMessage = ""
+            }
+            Text {
+                visible: renameCategoryDialog.errorMessage.length > 0
+                Layout.fillWidth: true
+                text: renameCategoryDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -1843,12 +1915,15 @@ Flickable {
                     onClicked: {
                         if (backend.renameProfileCategory(renameCategoryDialog.categoryId, renameCategoryName.text))
                             renameCategoryDialog.close();
+                        else
+                            renameCategoryDialog.errorMessage = "Choose a unique category name.";
                     }
                 }
             }
         }
         onOpened: {
             renameCategoryName.text = name;
+            renameCategoryDialog.errorMessage = "";
             renameCategoryName.forceActiveFocus();
         }
     }
@@ -1857,6 +1932,7 @@ Flickable {
         id: renameProfileDialog
         property string profileId: ""
         property string name: ""
+        property string errorMessage: ""
         heading: "Rename profile"
         contentItem: ColumnLayout {
             width: renameProfileDialog.availableWidth
@@ -1864,6 +1940,14 @@ Flickable {
             DeckField {
                 id: renameProfileName
                 Layout.fillWidth: true
+                onTextEdited: renameProfileDialog.errorMessage = ""
+            }
+            Text {
+                visible: renameProfileDialog.errorMessage.length > 0
+                Layout.fillWidth: true
+                text: renameProfileDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -1881,12 +1965,15 @@ Flickable {
                     onClicked: {
                         if (backend.renameProfile(renameProfileDialog.profileId, renameProfileName.text))
                             renameProfileDialog.close();
+                        else
+                            renameProfileDialog.errorMessage = "Choose a unique profile name.";
                     }
                 }
             }
         }
         onOpened: {
             renameProfileName.text = name;
+            renameProfileDialog.errorMessage = "";
             renameProfileName.forceActiveFocus();
         }
     }
@@ -1896,6 +1983,7 @@ Flickable {
         property string profileId: ""
         property string categoryId: ""
         property string name: ""
+        property string errorMessage: ""
         heading: "Duplicate profile"
         contentItem: ColumnLayout {
             width: duplicateProfileDialog.availableWidth
@@ -1910,6 +1998,14 @@ Flickable {
             DeckField {
                 id: duplicateProfileName
                 Layout.fillWidth: true
+                onTextEdited: duplicateProfileDialog.errorMessage = ""
+            }
+            Text {
+                visible: duplicateProfileDialog.errorMessage.length > 0
+                Layout.fillWidth: true
+                text: duplicateProfileDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
             }
             Text {
                 text: "DESTINATION CATEGORY"
@@ -1954,12 +2050,15 @@ Flickable {
                     onClicked: {
                         if (backend.duplicateProfileToCategory(duplicateProfileDialog.profileId, duplicateProfileName.text, duplicateProfileCategory.currentValue))
                             duplicateProfileDialog.close();
+                        else
+                            duplicateProfileDialog.errorMessage = "Choose a unique profile name and a valid destination category.";
                     }
                 }
             }
         }
         onOpened: {
             duplicateProfileName.text = name;
+            duplicateProfileDialog.errorMessage = "";
             duplicateProfileName.forceActiveFocus();
         }
     }
@@ -2015,6 +2114,7 @@ Flickable {
 
     DeckDialog {
         id: deleteProfileDialog
+        objectName: "flightDeckProfileDeleteDialog"
         property string profileId: ""
         property string name: ""
         heading: "Delete profile?"
@@ -2034,11 +2134,13 @@ Flickable {
                     Layout.fillWidth: true
                 }
                 DeckButton {
+                    objectName: "flightDeckProfileDeleteCancel"
                     text: "CANCEL"
                     subdued: true
                     onClicked: deleteProfileDialog.close()
                 }
                 DeckButton {
+                    objectName: "flightDeckProfileDeleteConfirm"
                     text: "DELETE PROFILE"
                     destructive: true
                     onClicked: {
@@ -2094,26 +2196,112 @@ Flickable {
     DeckDialog {
         id: addGameDialog
         property string categoryId: ""
+        property string mode: "running"
+        property string browsePath: ""
+        property string errorMessage: ""
         heading: "Add game association"
         contentItem: ColumnLayout {
             width: addGameDialog.availableWidth
             spacing: deck.space12
             Text {
-                text: "EXECUTABLE"
-                color: deck.textMuted
-                font.family: deck.telemetryFont
-                font.pixelSize: 9
-                font.bold: true
-            }
-            DeckField {
-                id: gameExecutable
-                Layout.fillWidth: true
-                placeholderText: "bf6.exe"
-            }
-            Text {
-                text: "HOTAS BF6 stores the executable name for low-frequency game detection. Adding an association does not activate this category now."
+                text: "Detect a running game, choose an executable, or enter an executable name. Adding an association never activates this category immediately."
                 color: deck.textSecondary
                 font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Repeater {
+                    model: [{ label: "RUNNING", value: "running" }, { label: "BROWSE", value: "browse" }, { label: "MANUAL", value: "manual" }]
+                    delegate: DeckButton {
+                        required property var modelData
+                        text: modelData.label
+                        subdued: addGameDialog.mode !== modelData.value
+                        onClicked: addGameDialog.mode = modelData.value
+                    }
+                }
+            }
+            ScrollView {
+                visible: addGameDialog.mode === "running"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 188
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.width
+                    spacing: deck.space8
+                    Repeater {
+                        model: root.runningApplications
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: runningGameRow.implicitHeight + deck.space16
+                            radius: deck.radiusControl
+                            color: deck.secondarySurface
+                            border.color: deck.border
+                            RowLayout {
+                                id: runningGameRow
+                                anchors.fill: parent
+                                anchors.margins: deck.space8
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Text { text: String(modelData.name || root.friendlyGameName(modelData.executable)); color: deck.textPrimary; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: String(modelData.executable || ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; elide: Text.ElideRight }
+                                }
+                                DeckButton {
+                                    text: "ADD"
+                                    onClicked: {
+                                        if (root.addGameRule(addGameDialog.categoryId, modelData.executable)) addGameDialog.close();
+                                        else addGameDialog.errorMessage = "This game association could not be saved.";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        visible: root.runningApplications.length === 0
+                        text: "No suitable running applications were found. You can still choose an executable or enter a name."
+                        color: deck.textMuted
+                        font.pixelSize: 10
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+            ColumnLayout {
+                visible: addGameDialog.mode === "browse"
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                RowLayout {
+                    Layout.fillWidth: true
+                    DeckField { Layout.fillWidth: true; readOnly: true; text: addGameDialog.browsePath; placeholderText: "No executable selected" }
+                    DeckButton { text: "CHOOSE…"; onClicked: gameExecutableDialog.open() }
+                }
+                Text {
+                    visible: addGameDialog.browsePath.length > 0
+                    text: "Game: " + root.friendlyGameName(addGameDialog.browsePath) + "  ·  Executable: " + addGameDialog.browsePath.split(/[\\/]/).pop()
+                    color: deck.textSecondary
+                    font.pixelSize: 10
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+            }
+            ColumnLayout {
+                visible: addGameDialog.mode === "manual"
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                DeckField { id: gameExecutable; Layout.fillWidth: true; placeholderText: "bf6.exe" }
+            }
+            Text {
+                visible: addGameDialog.errorMessage.length > 0
+                text: addGameDialog.errorMessage
+                color: deck.fault
+                font.pixelSize: 9
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -2129,17 +2317,32 @@ Flickable {
                 }
                 DeckButton {
                     text: "ADD GAME"
-                    enabled: gameExecutable.text.trim().length > 0
+                    visible: addGameDialog.mode !== "running"
+                    enabled: addGameDialog.mode === "browse" ? addGameDialog.browsePath.length > 0 : gameExecutable.text.trim().length > 0
                     onClicked: {
-                        if (root.addGameRule(addGameDialog.categoryId, gameExecutable.text))
+                        const rule = addGameDialog.mode === "browse" ? addGameDialog.browsePath : gameExecutable.text;
+                        if (root.addGameRule(addGameDialog.categoryId, rule))
                             addGameDialog.close();
+                        else
+                            addGameDialog.errorMessage = "This game association could not be saved.";
                     }
                 }
             }
         }
         onOpened: {
+            addGameDialog.mode = "running";
+            addGameDialog.browsePath = "";
+            addGameDialog.errorMessage = "";
             gameExecutable.text = "";
-            gameExecutable.forceActiveFocus();
+            root.refreshRunningApplications();
         }
+    }
+
+    FileDialog {
+        id: gameExecutableDialog
+        title: "Choose a game executable"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["Windows applications (*.exe)"]
+        onAccepted: addGameDialog.browsePath = selectedFile.toString()
     }
 }
