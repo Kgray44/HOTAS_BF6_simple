@@ -76,7 +76,7 @@ try {
     Invoke-Installer $candidate $cleanInstall
     Assert-InstalledVersion $cleanInstall
     Invoke-MapperStartupSmoke $cleanInstall
-    & $fixture --assert-fresh-v22
+    & $fixture --assert-fresh-v23
     if ($LASTEXITCODE -ne 0) { throw 'Clean installation did not create the Battlefield 6 / Helicopter starter.' }
 
     # This is a real v1.9.3 installation with a populated schema-14 profile,
@@ -89,7 +89,7 @@ try {
     Invoke-Installer $candidate $upgradeInstall
     Assert-InstalledVersion $upgradeInstall
     Invoke-MapperStartupSmoke $upgradeInstall
-    & $fixture --assert-v22
+    & $fixture --assert-v23
     if ($LASTEXITCODE -ne 0) { throw 'v1.9.3 upgrade did not preserve and migrate the acceptance fixture.' }
 
     # A v2.0.0 tray crash can leave the exact same program location with a
@@ -102,7 +102,7 @@ try {
     Invoke-Installer $candidate $recoveryInstall
     Assert-InstalledVersion $recoveryInstall
     Invoke-MapperStartupSmoke $recoveryInstall
-    & $fixture --assert-v22
+    & $fixture --assert-v23
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
     Write-Host "Installer acceptance passed: clean install, v1.9.3 -> v$ExpectedVersion, and v2.0.0 recovery."

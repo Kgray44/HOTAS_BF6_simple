@@ -97,8 +97,8 @@ bool assertMigratedFixture()
 {
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
-    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 22) {
-        std::cerr << "Expected the installed mapper to persist schema 22.\n";
+    if (!document.isObject() || document.object().value(QStringLiteral("version")).toInt() != 23) {
+        std::cerr << "Expected the installed mapper to persist schema 23.\n";
         return false;
     }
 
@@ -159,9 +159,9 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-fresh-v22"))) return assertFreshStarter() ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v22"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-fresh-v23"))) return assertFreshStarter() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v23"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v22, or --assert-v22 (optionally with --test-mode).\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v23, or --assert-v23 (optionally with --test-mode).\n";
     return 2;
 }
