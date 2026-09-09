@@ -135,6 +135,33 @@ QQuickItem *findVisualItemByObjectName(QQuickItem *item, const QString &objectNa
     return nullptr;
 }
 
+QQuickItem *flickableContentItem(QQuickItem *viewport)
+{
+    if (!viewport) return nullptr;
+    const QVariant content = viewport->property("contentItem");
+    if (auto *quickItem = qvariant_cast<QQuickItem *>(content)) return quickItem;
+    return qobject_cast<QQuickItem *>(qvariant_cast<QObject *>(content));
+}
+
+QPoint viewportPoint(QQuickItem *item, QQuickItem *viewport, const QPointF &point)
+{
+    if (!item || !viewport) return {};
+    auto *contentItem = flickableContentItem(viewport);
+    if (!contentItem) return item->mapToScene(point).toPoint();
+    const QPointF inContent = item->mapToItem(contentItem, point);
+    const QPointF inViewport = inContent - QPointF(viewport->property("contentX").toReal(),
+                                                    viewport->property("contentY").toReal());
+    return viewport->mapToScene(inViewport).toPoint();
+}
+
+QPointF contentPoint(QQuickItem *item, QQuickItem *viewport)
+{
+    if (!item || !viewport) return {};
+    auto *contentItem = flickableContentItem(viewport);
+    return contentItem ? item->mapToItem(contentItem, QPointF{})
+                       : item->mapToItem(viewport, QPointF{});
+}
+
 bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *combo, int row,
                            bool requireSelectedRow = true)
 {
@@ -146,15 +173,19 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
     // transient frame where the popup is promoted into QQuickOverlay between
     // the initial button release and the first offscreen paint.
     for (int attempt = 0; attempt < 2; ++attempt) {
-        const QPointF relative = comboItem->mapToScene(QPointF{}) - scroll->mapToScene(QPointF{});
+        const bool viewportCoordinates = scroll->objectName() == QStringLiteral("flightDeckAdaptiveResponse");
+        const QPointF relative = viewportCoordinates ? contentPoint(comboItem, scroll)
+            : comboItem->mapToScene(QPointF{}) - scroll->mapToScene(QPointF{});
         const qreal contentY = scroll->property("contentY").toReal();
-        scroll->setProperty("contentY", std::max<qreal>(0.0, contentY + relative.y() - 96.0));
+        scroll->setProperty("contentY", std::max<qreal>(0.0,
+            viewportCoordinates ? relative.y() - 96.0 : contentY + relative.y() - 96.0));
         settlePresentation();
-        const QPointF comboPoint = comboItem->mapToScene(QPointF(comboItem->width() * 0.5,
-                                                                  comboItem->height() * 0.5));
-        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint.toPoint());
+        const QPoint comboPoint = viewportCoordinates
+            ? viewportPoint(comboItem, scroll, QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5))
+            : comboItem->mapToScene(QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5)).toPoint();
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
         QTest::qWait(8);
-        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint.toPoint());
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
         settlePresentation();
         QObject *popup = combo->findChild<QObject *>(combo->objectName() + QStringLiteral("Popup"));
         if (!popup || !popup->property("visible").toBool()) continue;
@@ -280,33 +311,33 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
         QStringLiteral("refreshHistory(false)"));
     refreshLiveHistory.evaluate();
     const QVariantList liveGraphSamples = adaptive->property("responseLabSamples").toList();
-    const QVariantList capturedLiveHistory = backend.adaptiveResponseHistorySince(0, 2)
-        .value(QStringLiteral("samples")).toList();
-    bool capturedNegative = false;
-    bool capturedPositive = false;
-    for (const QVariant &sample : capturedLiveHistory) {
-        const double physical = sample.toMap().value(QStringLiteral("physical")).toDouble();
-        capturedNegative = capturedNegative || physical <= -0.64;
-        capturedPositive = capturedPositive || physical >= 0.69;
-    }
-    // The worker may publish a newer physical snapshot between test injection
-    // and a separate direct read. The Response Lab deliberately presents the
-    // UI-side sampled history, so assert its selected-axis samples instead:
-    // this proves that changing physical input reaches both the Lab state and
-    // its graph without coupling the test to an instantaneous report race.
-    if (refreshLiveHistory.hasError() || firstLiveGraphSamples.isEmpty()
-        || firstLiveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble() >= -0.64
-        || liveGraphSamples.isEmpty()
-        || liveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble() <= 0.69
-        || !capturedNegative || !capturedPositive
+    const auto containsPhysical = [](const QVariantList &samples, auto predicate) {
+        for (const QVariant &sample : samples) {
+            if (predicate(sample.toMap().value(QStringLiteral("physical")).toDouble())) return true;
+        }
+        return false;
+    };
+    const bool firstObservedNegative = containsPhysical(firstLiveGraphSamples, [](double physical) {
+        return physical <= -0.64;
+    });
+    const bool secondObservedPositive = containsPhysical(liveGraphSamples, [](double physical) {
+        return physical >= 0.69;
+    });
+    // The producer can publish a newer physical snapshot between an injection
+    // and a direct backend history read. Assert the page's two bounded UI
+    // history snapshots instead: one following each injection. This verifies
+    // the live source and graph feed without assuming ring ordering or
+    // retention beyond the UI contract.
+    if (refreshFirstLiveHistory.hasError() || refreshLiveHistory.hasError()
+        || firstLiveGraphSamples.isEmpty() || !firstObservedNegative
+        || liveGraphSamples.isEmpty() || !secondObservedPositive
         || backend.mappingStatus() != QStringLiteral("MAPPING SUSPENDED")
         || backend.mappingActive() || backend.vjoyReady()) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Live Controller snapshot did not update the unified Response Lab while mapping was suspended and vJoy unavailable "
-            "(first_samples=%1 first_newest=%2 samples=%3 oldest=%4 newest=%5 status=%6 active=%7 vjoy=%8)")
-            .arg(firstLiveGraphSamples.size())
-            .arg(firstLiveGraphSamples.isEmpty() ? 0.0 : firstLiveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
-            .arg(liveGraphSamples.size())
+            "(first_samples=%1 first_negative=%2 samples=%3 second_positive=%4 oldest=%5 newest=%6 status=%7 active=%8 vjoy=%9)")
+            .arg(firstLiveGraphSamples.size()).arg(firstObservedNegative)
+            .arg(liveGraphSamples.size()).arg(secondObservedPositive)
             .arg(liveGraphSamples.isEmpty() ? 0.0 : liveGraphSamples.constFirst().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
             .arg(liveGraphSamples.isEmpty() ? 0.0 : liveGraphSamples.constLast().toMap().value(QStringLiteral("physical")).toDouble(), 0, 'f', 3)
             .arg(backend.mappingStatus()).arg(backend.mappingActive()).arg(backend.vjoyReady()));
@@ -3559,6 +3590,244 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices multi-controller expanded state did not render")
             .arg(appearance));
     }
+    if (!selectPage(surface, 9)) return false;
+    QObject *adaptiveVisual = pageItem(surface, 9);
+    auto *adaptiveVisualItem = qobject_cast<QQuickItem *>(adaptiveVisual);
+    if (!adaptiveVisual || !adaptiveVisualItem
+        || adaptiveVisual->objectName() != QStringLiteral("flightDeckAdaptiveResponse")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not load native Adaptive Response for visual review")
+            .arg(appearance));
+    }
+    for (const QString &flowName : {QStringLiteral("adaptiveContextMetrics"),
+                                    QStringLiteral("adaptiveContextSelectors"),
+                                    QStringLiteral("adaptivePresetFlow"),
+                                    QStringLiteral("adaptiveBasicMetrics")}) {
+        auto *flow = adaptiveVisual->findChild<QQuickItem *>(flowName);
+        if (!flow || flow->width() < adaptiveVisualItem->width() * 0.70) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive flow %2 did not receive the page width (flow=%3 page=%4)")
+                .arg(appearance, flowName).arg(flow ? flow->width() : 0).arg(adaptiveVisualItem->width()));
+        }
+    }
+    const auto *contextCategory = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetricCategory"));
+    const auto *contextProfile = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetricProfile"));
+    const auto *contextLevel = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextLevel"));
+    const auto *contextTarget = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextTarget"));
+    if (!contextCategory || !contextProfile || !contextLevel || !contextTarget
+        || contextProfile->y() != contextCategory->y() || contextProfile->x() <= contextCategory->x()
+        || contextTarget->y() != contextLevel->y() || contextTarget->x() <= contextLevel->x()) {
+        const auto *metricFlow = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetrics"));
+        const auto *selectorFlow = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextSelectors"));
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Flow layout did not arrange context horizontally (metricFlow=%2 width=%3 selectorFlow=%4 width=%5 category=%6,%7 %8x%9 profile=%10,%11 %12x%13 level=%14,%15 %16x%17 target=%18,%19 %20x%21)")
+            .arg(appearance).arg(metricFlow ? metricFlow->property("flow").toInt() : -1).arg(metricFlow ? metricFlow->width() : -1)
+            .arg(selectorFlow ? selectorFlow->property("flow").toInt() : -1).arg(selectorFlow ? selectorFlow->width() : -1)
+            .arg(contextCategory ? contextCategory->x() : -1).arg(contextCategory ? contextCategory->y() : -1)
+            .arg(contextCategory ? contextCategory->width() : -1).arg(contextCategory ? contextCategory->height() : -1)
+            .arg(contextProfile ? contextProfile->x() : -1).arg(contextProfile ? contextProfile->y() : -1)
+            .arg(contextProfile ? contextProfile->width() : -1).arg(contextProfile ? contextProfile->height() : -1)
+            .arg(contextLevel ? contextLevel->x() : -1).arg(contextLevel ? contextLevel->y() : -1)
+            .arg(contextLevel ? contextLevel->width() : -1).arg(contextLevel ? contextLevel->height() : -1)
+            .arg(contextTarget ? contextTarget->x() : -1).arg(contextTarget ? contextTarget->y() : -1)
+            .arg(contextTarget ? contextTarget->width() : -1).arg(contextTarget ? contextTarget->height() : -1));
+    }
+    adaptiveVisual->setProperty("advancedExpanded", false);
+    adaptiveVisual->setProperty("testLabExpanded", false);
+    adaptiveVisual->setProperty("responseLabSource", QStringLiteral("interactive"));
+    adaptiveVisual->setProperty("contentY", 0.0);
+    const auto scrollAdaptiveTo = [&](const QString &section, const QString &targetName) {
+        QQmlExpression request(qmlContext(adaptiveVisual), adaptiveVisual,
+            QStringLiteral("scrollToSection('%1')").arg(section));
+        const QVariant scrolled = request.evaluate();
+        if (request.hasError() || !scrolled.toBool()) {
+            const QByteArray message = QStringLiteral("Adaptive visual navigation %1 could not scroll: result=%2 error=%3\n")
+                .arg(section, scrolled.toString(), request.hasError() ? request.error().toString() : QStringLiteral("none")).toUtf8();
+            std::fputs(message.constData(), stderr);
+            return false;
+        }
+        settlePresentation();
+        auto *target = findVisualItemByObjectName(adaptiveVisualItem, targetName);
+        if (!target) {
+            const QByteArray message = QStringLiteral("Adaptive visual navigation %1 could not find target %2\n")
+                .arg(section, targetName).toUtf8();
+            std::fputs(message.constData(), stderr);
+            return false;
+        }
+        const qreal targetTop = target->mapToScene(QPointF{}).y();
+        const qreal targetBottom = targetTop + target->height();
+        const qreal pageTop = adaptiveVisualItem->mapToScene(QPointF{}).y();
+        const qreal pageBottom = pageTop + adaptiveVisualItem->height();
+        const bool aligned = targetTop >= pageTop
+            && (target->height() > adaptiveVisualItem->height()
+                ? targetTop <= pageTop + 32.0
+                : targetBottom <= pageBottom);
+        if (!aligned) {
+            const QByteArray message = QStringLiteral("Adaptive visual navigation %1 -> %2 did not align: targetTop=%3 targetHeight=%4 pageTop=%5 pageHeight=%6 contentY=%7 contentHeight=%8\n")
+                .arg(section, targetName).arg(targetTop).arg(target->height()).arg(pageTop)
+                .arg(adaptiveVisualItem->height()).arg(adaptiveVisual->property("contentY").toReal())
+                .arg(adaptiveVisual->property("contentHeight").toReal()).toUtf8();
+            std::fputs(message.constData(), stderr);
+        }
+        return aligned;
+    };
+    settlePresentation();
+    if (!captureShell(QStringLiteral("adaptive-basic"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive basic state did not render")
+            .arg(appearance));
+    }
+    QQmlExpression disableForEvidence(qmlContext(adaptiveVisual), adaptiveVisual,
+        QStringLiteral("(function() { updateParameter('enabled', false); return !effective().enabled; })()"));
+    const QVariant disabledForEvidence = disableForEvidence.evaluate();
+    if (disableForEvidence.hasError() || !disabledForEvidence.toBool()
+        || !captureShell(QStringLiteral("adaptive-off"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive off state did not render")
+            .arg(appearance));
+    }
+    QQmlExpression enableForEvidence(qmlContext(adaptiveVisual), adaptiveVisual,
+        QStringLiteral("(function() { updateParameter('enabled', true); return effective().enabled; })()"));
+    if (enableForEvidence.hasError() || !enableForEvidence.evaluate().toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive off-state fixture could not restore")
+            .arg(appearance));
+    }
+    QQmlExpression makeCustomForEvidence(qmlContext(adaptiveVisual), adaptiveVisual,
+        QStringLiteral("(function() { updateParameter('maximumHorizonMs', effective().maximumHorizonMs + 1.0); return previewSamples.length; })()"));
+    makeCustomForEvidence.evaluate();
+    if (makeCustomForEvidence.hasError() || adaptiveVisual->property("previewSamples").toList().isEmpty()
+        || !captureShell(QStringLiteral("adaptive-custom"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive custom configuration state did not render")
+            .arg(appearance));
+    }
+    if (!scrollAdaptiveTo(QStringLiteral("preview"), QStringLiteral("staticResponsePreviewCard"))
+        || !captureShell(QStringLiteral("adaptive-static-rapid-reversal"))
+        || !scrollAdaptiveTo(QStringLiteral("comparison"), QStringLiteral("adaptiveComparisonCard"))
+        || !captureShell(QStringLiteral("adaptive-comparison"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive static analysis state did not render")
+            .arg(appearance));
+    }
+    adaptiveVisual->setProperty("advancedExpanded", true);
+    if (!scrollAdaptiveTo(QStringLiteral("advanced"), QStringLiteral("flightDeckAdaptiveAdvancedCard"))
+        || !captureShell(QStringLiteral("adaptive-advanced"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive advanced state did not render")
+            .arg(appearance));
+    }
+    adaptiveVisual->setProperty("presetWorkshopExpanded", true);
+    if (!scrollAdaptiveTo(QStringLiteral("advanced"), QStringLiteral("flightDeckAdaptiveAdvancedCard"))
+        || !captureShell(QStringLiteral("adaptive-preset-workshop"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive preset workshop did not render")
+            .arg(appearance));
+    }
+    adaptiveVisual->setProperty("presetWorkshopExpanded", false);
+    if (!scrollAdaptiveTo(QStringLiteral("advanced-controls"), QStringLiteral("adaptivePredictorSelector"))
+        || !captureShell(QStringLiteral("adaptive-advanced-controls"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive advanced controls did not render")
+            .arg(appearance));
+    }
+    backend.injectAdaptiveResponseLiveSampleForTest(0, -0.72F);
+    backend.injectAdaptiveResponseLiveSampleForTest(0, 0.68F);
+    QQmlExpression liveSource(qmlContext(adaptiveVisual), adaptiveVisual,
+        QStringLiteral("setResponseLabSource('live'); refreshHistory(true)"));
+    liveSource.evaluate();
+    if (liveSource.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive live fixture could not select its source")
+            .arg(appearance));
+    }
+    if (!scrollAdaptiveTo(QStringLiteral("analysis"), QStringLiteral("responseLabCard"))
+        || !captureShell(QStringLiteral("adaptive-live-analysis"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive live analysis state did not render")
+            .arg(appearance));
+    }
+    QQmlExpression interactiveSource(qmlContext(adaptiveVisual), adaptiveVisual,
+        QStringLiteral("setResponseLabSource('interactive'); simulatorInput = 0.62; simulatorPaused = false"));
+    interactiveSource.evaluate();
+    if (interactiveSource.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive interactive fixture could not select its source")
+            .arg(appearance));
+    }
+    QTest::qWait(120);
+    adaptiveVisual->setProperty("simulatorPaused", true);
+    const bool testLabPropertyWritten = adaptiveVisual->setProperty("testLabExpanded", true);
+    settlePresentation();
+    if (!testLabPropertyWritten || !adaptiveVisual->property("testLabExpanded").toBool()) {
+        const QByteArray message = QStringLiteral("Adaptive Test Lab fixture could not expand: written=%1 value=%2\n")
+            .arg(testLabPropertyWritten).arg(adaptiveVisual->property("testLabExpanded").toBool()).toUtf8();
+        std::fputs(message.constData(), stderr);
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Test Lab fixture did not expand")
+            .arg(appearance));
+    }
+    const auto sectionGeometry = [&](const QString &section) {
+        QQmlExpression geometryExpression(qmlContext(adaptiveVisual), adaptiveVisual,
+            QStringLiteral("sectionGeometry('%1')").arg(section));
+        return geometryExpression.evaluate().toMap();
+    };
+    const QVariantMap advancedGeometry = sectionGeometry(QStringLiteral("advanced"));
+    const QVariantMap telemetryGeometry = sectionGeometry(QStringLiteral("telemetry"));
+    const QVariantMap analysisGeometry = sectionGeometry(QStringLiteral("analysis"));
+    const QVariantMap testLabGeometry = sectionGeometry(QStringLiteral("test-lab"));
+    const bool orderedSections = advancedGeometry.value(QStringLiteral("height")).toReal() > 76
+        && telemetryGeometry.value(QStringLiteral("top")).toReal() >= advancedGeometry.value(QStringLiteral("bottom")).toReal()
+        && analysisGeometry.value(QStringLiteral("top")).toReal() >= telemetryGeometry.value(QStringLiteral("bottom")).toReal()
+        && testLabGeometry.value(QStringLiteral("top")).toReal() >= analysisGeometry.value(QStringLiteral("bottom")).toReal()
+        && testLabGeometry.value(QStringLiteral("contentHeight")).toReal()
+            >= testLabGeometry.value(QStringLiteral("bottom")).toReal() + 16.0;
+    if (!orderedSections) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive expanded sections overlap or exceed the scroll range (advanced=%2/%3 telemetry=%4/%5 analysis=%6/%7 testLab=%8/%9 content=%10)")
+            .arg(appearance)
+            .arg(advancedGeometry.value(QStringLiteral("top")).toReal()).arg(advancedGeometry.value(QStringLiteral("height")).toReal())
+            .arg(telemetryGeometry.value(QStringLiteral("top")).toReal()).arg(telemetryGeometry.value(QStringLiteral("height")).toReal())
+            .arg(analysisGeometry.value(QStringLiteral("top")).toReal()).arg(analysisGeometry.value(QStringLiteral("height")).toReal())
+            .arg(testLabGeometry.value(QStringLiteral("top")).toReal()).arg(testLabGeometry.value(QStringLiteral("height")).toReal())
+            .arg(testLabGeometry.value(QStringLiteral("contentHeight")).toReal()));
+    }
+    const bool testLabScrolled = scrollAdaptiveTo(QStringLiteral("test-lab"), QStringLiteral("flightDeckAdaptiveTestLabCard"));
+    const bool testLabCaptured = testLabScrolled && captureShell(QStringLiteral("adaptive-interactive-test-lab"));
+    if (!testLabCaptured) {
+        const QByteArray message = QStringLiteral("Adaptive Test Lab visual capture state: scrolled=%1 size=%2x%3 contentY=%4 contentHeight=%5\n")
+            .arg(testLabScrolled).arg(window->width()).arg(window->height())
+            .arg(adaptiveVisual->property("contentY").toReal()).arg(adaptiveVisual->property("contentHeight").toReal()).toUtf8();
+        std::fputs(message.constData(), stderr);
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Test Lab state did not render")
+            .arg(appearance));
+    }
+    adaptiveVisual->setProperty("contentY", std::max<qreal>(0.0,
+        adaptiveVisual->property("contentHeight").toReal() - adaptiveVisualItem->height()));
+    settlePresentation();
+    if (!captureShell(QStringLiteral("adaptive-test-lab-bottom"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Test Lab bottom state did not render")
+            .arg(appearance));
+    }
+    adaptiveVisual->setProperty("presentationOverride", QVariantMap{
+        {QStringLiteral("category"), QStringLiteral("Battlefield Six Experimental Flight-Control Category With A Deliberately Long Name")},
+        {QStringLiteral("profile"), QStringLiteral("Precision Helicopter Profile With A Deliberately Long Operational Description")},
+        {QStringLiteral("axis"), QStringLiteral("Collective Lever Fine Trim Axis With A Deliberately Long Label")},
+        {QStringLiteral("controllerAvailable"), false},
+    });
+    adaptiveVisual->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("adaptive-unavailable-long"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive unavailable/long-name state did not render")
+            .arg(appearance));
+    }
+    const QSize adaptiveOriginalSize = window->size();
+    window->resize(900, 650);
+    adaptiveVisual->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("adaptive-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive minimum layout did not render")
+            .arg(appearance));
+    }
+    if (!scrollAdaptiveTo(QStringLiteral("preview"), QStringLiteral("staticResponsePreviewCard"))
+        || !captureShell(QStringLiteral("adaptive-minimum-static-rapid-reversal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive minimum static preview did not render")
+            .arg(appearance));
+    }
+    window->resize(1600, 980);
+    adaptiveVisual->setProperty("presentationOverride", QVariant{});
+    adaptiveVisual->setProperty("contentY", 0.0);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("adaptive-wide"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive wide layout did not render")
+            .arg(appearance));
+    }
+    window->resize(adaptiveOriginalSize);
+    adaptiveVisual->setProperty("presentationOverride", QVariant{});
     if (!selectPage(surface, 8)) return false;
     return true;
 }
@@ -3580,6 +3849,387 @@ bool verifyFlightDeckAxesQmlLoad(hotas::AppBackend &backend, hotas::ThemeManager
             .arg(component.errorString()));
     }
     delete axes;
+    return true;
+}
+
+bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
+                                                 hotas::ThemeManager &themeManager,
+                                                 const QString &appearance)
+{
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    const int originalAxis = backend.selectedAxisIndex();
+    backend.setSelectedAxis(0);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive shell did not load")
+            .arg(appearance));
+    }
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface || !surface->setProperty("currentPage", 9)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive route did not load")
+            .arg(appearance));
+    }
+    settlePresentation();
+    QObject *adaptive = pageItem(surface, 9);
+    auto *adaptiveItem = qobject_cast<QQuickItem *>(adaptive);
+    if (!adaptiveItem) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive component did not create a QQuickItem")
+            .arg(appearance));
+    }
+
+    const auto fail = [&](const QString &message) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Response: %2")
+            .arg(appearance, message));
+    };
+    const auto findItem = [&](const QString &name) {
+        return findVisualItemByObjectName(adaptiveItem, name);
+    };
+    const auto scrollTo = [&](QQuickItem *item) {
+        if (!item) return false;
+        const QPointF itemPoint = contentPoint(item, adaptiveItem);
+        const qreal next = std::max<qreal>(0.0, itemPoint.y() - 72.0);
+        adaptive->setProperty("contentY", next);
+        settlePresentation();
+        return true;
+    };
+    const auto clickItem = [&](QQuickItem *item) {
+        if (!item || !scrollTo(item)) return false;
+        const QPoint point = viewportPoint(item, adaptiveItem, QPointF(item->width() * 0.5,
+                                                                         item->height() * 0.5));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+        settlePresentation();
+        return true;
+    };
+
+    if (adaptive->objectName() != QStringLiteral("flightDeckAdaptiveResponse")) {
+        return fail(QStringLiteral("native page object was not selected"));
+    }
+    auto *axisSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveAxisSelector"));
+    auto *scopeSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveEditScopeSelector"));
+    auto *targetSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveTargetSelector"));
+    if (!axisSelector || !scopeSelector || !targetSelector) {
+        return fail(QStringLiteral("context controls are missing"));
+    }
+    const QVariantList axes = backend.axes();
+    if (axes.size() < 3) return fail(QStringLiteral("Roll, Pitch, and Yaw fixture is unavailable"));
+    const QString profileId = backend.activeProfileId();
+    // Each physical click intentionally selects a different row. Qt's native
+    // ComboBox leaves an already-selected row open in some offscreen builds,
+    // which would test popup mechanics rather than axis selection.
+    for (const int physicalAxis : {1, 2, 0}) {
+        int modelIndex = -1;
+        for (qsizetype index = 0; index < axes.size(); ++index) {
+            if (axes.at(index).toMap().value(QStringLiteral("index")).toInt() == physicalAxis) {
+                modelIndex = static_cast<int>(index);
+                break;
+            }
+        }
+        if (modelIndex < 0) {
+            return fail(QStringLiteral("axis selector does not expose physical axis %1").arg(physicalAxis));
+        }
+        if (!clickResponseComboRow(window, adaptive, axisSelector, modelIndex)) {
+            QObject *popup = axisSelector->findChild<QObject *>(QStringLiteral("adaptiveAxisSelectorPopup"));
+            const auto *selectorItem = qobject_cast<QQuickItem *>(axisSelector);
+            return fail(QStringLiteral("axis selector did not accept physical pointer selection for %1 (current=%2 width=%3 height=%4 enabled=%5 visible=%6 scene=(%7,%8) contentY=%9 popup=%10)")
+                .arg(physicalAxis).arg(axisSelector->property("currentIndex").toInt())
+                .arg(selectorItem ? selectorItem->width() : 0).arg(selectorItem ? selectorItem->height() : 0)
+                .arg(selectorItem ? selectorItem->isEnabled() : false)
+                .arg(selectorItem ? selectorItem->isVisible() : false)
+                .arg(selectorItem ? selectorItem->mapToScene(QPointF{}).x() : 0)
+                .arg(selectorItem ? selectorItem->mapToScene(QPointF{}).y() : 0)
+                .arg(adaptive->property("contentY").toReal())
+                .arg(popup ? popup->property("visible").toBool() : false));
+        }
+        const QVariantMap context = adaptive->property("state").toMap();
+        if (backend.selectedAxisIndex() != physicalAxis
+            || context.value(QStringLiteral("axis")).toInt() != physicalAxis
+            || adaptive->property("previewSamples").toList().isEmpty()) {
+            return fail(QStringLiteral("axis selection did not refresh context and deterministic preview"));
+        }
+    }
+    if (!clickResponseComboRow(window, adaptive, scopeSelector, 0)
+        || adaptive->property("editScope").toString() != QStringLiteral("global")
+        || !clickResponseComboRow(window, adaptive, targetSelector, 0)
+        || !clickResponseComboRow(window, adaptive, scopeSelector, 2)
+        || adaptive->property("editScope").toString() != QStringLiteral("profile")) {
+        return fail(QStringLiteral("editing level and target controls did not commit through pointer input"));
+    }
+    backend.setSelectedAxis(0);
+    if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), profileId, 0,
+                                                     QStringLiteral("light"))
+        || !backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), profileId, 1,
+                                                        QStringLiteral("balanced"))) {
+        return fail(QStringLiteral("could not establish isolated Adaptive Response fixture"));
+    }
+    settlePresentation();
+    const QVariantMap pitchBefore = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 1);
+    auto *fastPreset = findItem(QStringLiteral("adaptivePresetButton_fast"));
+    if (!clickItem(fastPreset)) return fail(QStringLiteral("Fast preset card was not pointer reachable"));
+    const QVariantMap rollAfterPreset = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0);
+    if (!rollAfterPreset.value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore) {
+        return fail(QStringLiteral("preset pointer action did not remain axis-isolated"));
+    }
+    for (const QVariant &entry : backend.adaptiveResponsePresets()) {
+        const QString id = entry.toMap().value(QStringLiteral("id")).toString();
+        if (!findItem(QStringLiteral("adaptivePresetButton_") + id)) {
+            return fail(QStringLiteral("current preset %1 has no Flight Deck destination").arg(id));
+        }
+    }
+    auto *enabled = findItem(QStringLiteral("flightDeckAdaptiveEnabled"));
+    const bool enabledBefore = rollAfterPreset.value(QStringLiteral("effective")).toMap()
+        .value(QStringLiteral("enabled")).toBool();
+    if (!clickItem(enabled)
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool() == enabledBefore
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore
+        || !clickItem(enabled)) {
+        return fail(QStringLiteral("enable pointer action was not scoped to the selected axis"));
+    }
+    auto *advancedToggle = findItem(QStringLiteral("flightDeckAdaptiveAdvancedToggle"));
+    if (!clickItem(advancedToggle) || !adaptive->property("advancedExpanded").toBool()) {
+        return fail(QStringLiteral("Advanced Tuning did not expand from its pointer control"));
+    }
+    auto *modelSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptivePredictorSelector"));
+    if (!modelSelector || !clickResponseComboRow(window, adaptive, modelSelector, 1)
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("model")).toString()
+            != QStringLiteral("velocity")) {
+        return fail(QStringLiteral("predictor selector did not commit an authoritative value"));
+    }
+    auto *horizonSlider = findItem(QStringLiteral("flightDeckAdaptiveSlider_maximumHorizonMs"));
+    if (!scrollTo(horizonSlider)) return fail(QStringLiteral("maximum-horizon slider was not reachable"));
+    const double horizonBefore = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0).value(QStringLiteral("effective")).toMap()
+        .value(QStringLiteral("maximumHorizonMs")).toDouble();
+    const QVariantList previewBeforeSlider = adaptive->property("previewSamples").toList();
+    const QPoint sliderClick = viewportPoint(horizonSlider, adaptiveItem,
+        QPointF(horizonSlider->width() * 0.72, horizonSlider->height() * 0.5));
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, sliderClick);
+    settlePresentation();
+    const QVariantMap rollAfterSlider = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0);
+    const double horizonAfter = rollAfterSlider.value(QStringLiteral("effective")).toMap()
+        .value(QStringLiteral("maximumHorizonMs")).toDouble();
+    if (std::abs(horizonAfter - horizonBefore) < 0.2
+        || adaptive->property("previewSamples").toList() == previewBeforeSlider
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore) {
+        return fail(QStringLiteral("advanced slider pointer action did not update the authoritative preview and remain axis-isolated (before=%1 after=%2 slider=%3 presses=%4 click=(%5,%6) contentY=%7)")
+            .arg(horizonBefore).arg(horizonAfter).arg(horizonSlider->property("value").toDouble())
+            .arg(horizonSlider->property("pointerPresses").toInt())
+            .arg(sliderClick.x()).arg(sliderClick.y())
+            .arg(adaptive->property("contentY").toReal()));
+    }
+    const QVariantMap configurationBeforeComparison = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0);
+    auto *comparisonSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveComparisonSelector"));
+    auto *staticBaseline = findItem(QStringLiteral("flightDeckStaticTraceBaseline"));
+    if (!comparisonSelector || !staticBaseline
+        || !clickResponseComboRow(window, adaptive, comparisonSelector, 1)
+        || adaptive->property("comparisonSamples").toList().isEmpty()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforeComparison) {
+        return fail(QStringLiteral("static A/B comparison did not stay presentation-only"));
+    }
+    const bool staticBaselineBefore = adaptive->property("showBaselineTrace").toBool();
+    if (!clickItem(staticBaseline)
+        || adaptive->property("showBaselineTrace").toBool() == staticBaselineBefore
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforeComparison) {
+        return fail(QStringLiteral("static trace selection changed configuration"));
+    }
+    const QVariantMap configurationBeforePresentation = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0);
+    auto *liveSource = findItem(QStringLiteral("responseLabLiveSource"));
+    if (!clickItem(liveSource) || adaptive->property("responseLabSource").toString() != QStringLiteral("live")
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("Live Controller source switch modified Adaptive configuration"));
+    }
+    backend.injectAdaptiveResponseLiveSampleForTest(0, -0.65F);
+    QQmlExpression refreshHistory(qmlContext(adaptive), adaptive, QStringLiteral("refreshHistory(true)"));
+    refreshHistory.evaluate();
+    backend.injectAdaptiveResponseLiveSampleForTest(0, 0.70F);
+    QQmlExpression appendHistory(qmlContext(adaptive), adaptive, QStringLiteral("refreshHistory(false)"));
+    appendHistory.evaluate();
+    if (refreshHistory.hasError() || appendHistory.hasError()
+        || adaptive->property("responseLabSamples").toList().isEmpty()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("live telemetry observation changed configuration or did not refresh"));
+    }
+    adaptive->setProperty("historyPaused", true);
+    auto *historyInspect = findItem(QStringLiteral("adaptiveHistoryInspect"));
+    if (!historyInspect || !scrollTo(historyInspect)) {
+        return fail(QStringLiteral("bounded live-history inspection control was not reachable"));
+    }
+    const int historyIndexBefore = adaptive->property("historyInspectIndex").toInt();
+    const QPoint inspectPoint = viewportPoint(historyInspect, adaptiveItem,
+        QPointF(historyInspect->width() * 0.1, historyInspect->height() * 0.5));
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, inspectPoint);
+    settlePresentation();
+    if (adaptive->property("historyInspectIndex").toInt() == historyIndexBefore
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("history inspection pointer control changed configuration or did not seek"));
+    }
+    auto *monitor = findItem(QStringLiteral("adaptiveResponseMonitorButton"));
+    if (!clickItem(monitor) || !adaptive->property("responseMonitorVisible").toBool()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("read-only monitor did not open safely"));
+    }
+    adaptive->setProperty("responseMonitorVisible", false);
+    auto *physicalTrace = findItem(QStringLiteral("flightDeckTracePhysical"));
+    const bool traceBefore = adaptive->property("showPhysicalTrace").toBool();
+    if (!clickItem(physicalTrace)
+        || adaptive->property("showPhysicalTrace").toBool() == traceBefore
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("trace visibility pointer control changed engine configuration"));
+    }
+    auto *testLabToggle = findItem(QStringLiteral("flightDeckAdaptiveTestLabToggle"));
+    if (!clickItem(testLabToggle) || !adaptive->property("testLabExpanded").toBool()) {
+        return fail(QStringLiteral("Test Lab did not open from its native control"));
+    }
+    auto *runTestLab = findItem(QStringLiteral("flightDeckTestLabRun"));
+    if (!clickItem(runTestLab) || adaptive->property("testLabMetrics").toMap().isEmpty()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+            != configurationBeforePresentation) {
+        return fail(QStringLiteral("Test Lab execution altered configuration or omitted results"));
+    }
+
+    auto *presetWorkshop = findItem(QStringLiteral("flightDeckAdaptivePresetWorkshopToggle"));
+    if (!clickItem(presetWorkshop) || !adaptive->property("presetWorkshopExpanded").toBool()) {
+        return fail(QStringLiteral("custom preset workshop did not open from its native control"));
+    }
+    const QString customPresetName = QStringLiteral("Flight Deck Native Preset %1").arg(appearance);
+    // A prior interrupted run must not make the native save assertion depend
+    // on fixture residue. These names are test-owned and are removed before
+    // their pointer-driven lifecycle is exercised below.
+    for (const QVariant &entry : backend.adaptiveResponsePresets()) {
+        const QVariantMap preset = entry.toMap();
+        const QString name = preset.value(QStringLiteral("name")).toString();
+        if (name == customPresetName || name == customPresetName + QStringLiteral(" Copy"))
+            backend.deleteAdaptiveResponsePreset(preset.value(QStringLiteral("id")).toString());
+    }
+    settlePresentation();
+    adaptive->setProperty("presetNameDraft", customPresetName);
+    adaptive->setProperty("presetDescriptionDraft", QStringLiteral("Pointer-created native Flight Deck fixture"));
+    auto *savePreset = findItem(QStringLiteral("flightDeckAdaptivePresetSave"));
+    if (!clickItem(savePreset)) {
+        return fail(QStringLiteral("custom preset save was not pointer reachable"));
+    }
+    QString customPresetId;
+    for (const QVariant &entry : backend.adaptiveResponsePresets()) {
+        const QVariantMap preset = entry.toMap();
+        if (preset.value(QStringLiteral("name")).toString() == customPresetName) {
+            customPresetId = preset.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    if (customPresetId.isEmpty()) {
+        return fail(QStringLiteral("custom preset save did not create an authoritative preset"));
+    }
+    auto *editPreset = findItem(QStringLiteral("adaptivePresetWorkshopEdit_") + customPresetId);
+    if (!clickItem(editPreset)
+        || adaptive->property("editScope").toString() != QStringLiteral("preset")
+        || adaptive->property("targetId").toString() != customPresetId) {
+        return fail(QStringLiteral("custom preset edit did not establish its native editing context"));
+    }
+    auto *renamePreset = findItem(QStringLiteral("adaptivePresetWorkshopRename_") + customPresetId);
+    if (!clickItem(renamePreset)) {
+        return fail(QStringLiteral("custom preset rename action was not pointer reachable"));
+    }
+    auto *renameDialog = adaptive->findChild<QObject *>(QStringLiteral("adaptiveRenamePresetDialog"));
+    if (!renameDialog || !renameDialog->property("visible").toBool()) {
+        return fail(QStringLiteral("custom preset rename dialog did not open"));
+    }
+    renameDialog->setProperty("visible", false);
+    auto *duplicatePreset = findItem(QStringLiteral("adaptivePresetWorkshopDuplicate_") + customPresetId);
+    if (!clickItem(duplicatePreset)) {
+        return fail(QStringLiteral("custom preset duplicate action was not pointer reachable"));
+    }
+    QString duplicatePresetId;
+    for (const QVariant &entry : backend.adaptiveResponsePresets()) {
+        const QVariantMap preset = entry.toMap();
+        if (preset.value(QStringLiteral("name")).toString() == customPresetName + QStringLiteral(" Copy")) {
+            duplicatePresetId = preset.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    if (duplicatePresetId.isEmpty()) {
+        return fail(QStringLiteral("custom preset duplicate did not create an authoritative preset"));
+    }
+    QQmlExpression restoreProfileContext(qmlContext(adaptive), adaptive,
+        QStringLiteral("(function() { editScope = 'profile'; targetId = '%1'; setPreview(); return true; })()")
+            .arg(profileId));
+    restoreProfileContext.evaluate();
+    const auto presetExists = [&](const QString &id) {
+        for (const QVariant &entry : backend.adaptiveResponsePresets()) {
+            if (entry.toMap().value(QStringLiteral("id")).toString() == id)
+                return true;
+        }
+        return false;
+    };
+    const auto deletePresetByPointer = [&](const QString &id) {
+        auto *deleteButton = findItem(QStringLiteral("adaptivePresetWorkshopDelete_") + id);
+        return deleteButton && clickItem(deleteButton) && !presetExists(id);
+    };
+    if (restoreProfileContext.hasError()
+        || !deletePresetByPointer(duplicatePresetId)
+        || !deletePresetByPointer(customPresetId)) {
+        return fail(QStringLiteral("custom preset cleanup actions were not pointer reachable"));
+    }
+
+    const QString categoryName = QStringLiteral("Flight Deck Adaptive Isolation %1").arg(appearance);
+    if (!backend.createProfileCategory(categoryName)) {
+        return fail(QStringLiteral("could not create isolated profile fixture"));
+    }
+    QString categoryId;
+    for (const QVariant &entry : backend.profileCategories()) {
+        const QVariantMap category = entry.toMap();
+        if (category.value(QStringLiteral("name")).toString() == categoryName) {
+            categoryId = category.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    if (categoryId.isEmpty() || !backend.createProfileInCategory(
+            QStringLiteral("Adaptive Isolation %1").arg(appearance), categoryId, profileId)) {
+        return fail(QStringLiteral("could not create profile-isolation fixture"));
+    }
+    QString isolatedProfileId;
+    for (const QVariant &entry : backend.profiles()) {
+        const QVariantMap profile = entry.toMap();
+        if (profile.value(QStringLiteral("categoryId")).toString() == categoryId) {
+            isolatedProfileId = profile.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    const QVariantMap sourceProfileBefore = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0);
+    const bool isolatedChanged = !isolatedProfileId.isEmpty()
+        && backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), isolatedProfileId, 0,
+                                                       QStringLiteral("aggressive"));
+    const bool isolated = isolatedChanged && backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), profileId, 0) == sourceProfileBefore;
+    const bool cleaned = !isolatedProfileId.isEmpty() && backend.deleteProfile(isolatedProfileId)
+        && backend.deleteProfileCategory(categoryId);
+    if (!isolated || !cleaned) {
+        return fail(QStringLiteral("profile-level Adaptive configuration was not isolated"));
+    }
+    backend.setSelectedAxis(originalAxis);
     return true;
 }
 
@@ -4027,6 +4677,9 @@ int main(int argc, char *argv[])
 
     hotas::AppBackend backend;
     hotas::ThemeManager themeManager({}, true);
+    // The legacy lifecycle contract below intentionally exercises the
+    // established shells, independent of a persisted Flight Deck preference.
+    themeManager.setCurrentExperience(QStringLiteral("Existing"));
     QStringList themes{
         QStringLiteral("Legacy"),
         QStringLiteral("Standard"),
@@ -4072,6 +4725,7 @@ int main(int argc, char *argv[])
     for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
         if (!verifyFlightDeckAxesQmlLoad(backend, themeManager)) return 1;
         if (!verifyFlightDeckShell(backend, themeManager, appearance)) return 1;
+        if (!verifyFlightDeckAdaptiveResponseInteraction(backend, themeManager, appearance)) return 1;
     }
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
 

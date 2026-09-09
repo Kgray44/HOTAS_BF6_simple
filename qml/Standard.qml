@@ -2391,15 +2391,39 @@ Page {
             id: adaptiveResponsePageLoader
             anchors.fill: parent
             active: root.currentPage === 9
-            sourceComponent: Component {
-                AdaptiveResponsePage { anchors.fill: parent; visible: root.currentPage === 9; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun
-                    Component.onCompleted: {
-                        if (root.flightDeckAdaptiveProfileContext.length > 0) {
-                            editScope = "profile"
-                            targetId = root.flightDeckAdaptiveProfileContext
-                            setPreview()
-                            root.flightDeckAdaptiveProfileContext = ""
-                        }
+            sourceComponent: root.flightDeckMode ? flightDeckAdaptiveResponseComponent : standardAdaptiveResponseComponent
+        }
+        Component {
+            id: flightDeckAdaptiveResponseComponent
+            FlightDeckAdaptiveResponse {
+                anchors.fill: parent
+                visible: root.currentPage === 9
+                backendObject: backend
+                profileContext: root.flightDeckAdaptiveProfileContext
+                Component.onCompleted: {
+                    if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                        editScope = "profile"
+                        targetId = root.flightDeckAdaptiveProfileContext
+                        setPreview()
+                        root.flightDeckAdaptiveProfileContext = ""
+                    }
+                }
+            }
+        }
+        Component {
+            id: standardAdaptiveResponseComponent
+            AdaptiveResponsePage {
+                anchors.fill: parent
+                visible: root.currentPage === 9
+                backendObject: backend
+                themeTokens: root.themeTokens
+                topGun: theme.topGun
+                Component.onCompleted: {
+                    if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                        editScope = "profile"
+                        targetId = root.flightDeckAdaptiveProfileContext
+                        setPreview()
+                        root.flightDeckAdaptiveProfileContext = ""
                     }
                 }
             }
