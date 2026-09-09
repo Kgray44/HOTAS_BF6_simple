@@ -15,12 +15,20 @@ Item {
         objectName: "flightDeckTheme"
     }
     property int currentPage: 8
-    readonly property int loadedPageCount: standardPageHost.loadedPageCount
+    property string flightDeckAutomationContext: ""
+    property int flightDeckButtonContext: -1
+    property var flightDeckAutomationPresentationState: ({})
+    readonly property int loadedPageCount: currentPage === 7
+        ? (automationPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
 
     function pageItem(page) {
+        if (page === 7)
+            return automationPageLoader.item;
         return standardPageHost.pageItem(page);
     }
     function loadedPage(page) {
+        if (page === 7)
+            return automationPageLoader.item !== null;
         return standardPageHost.loadedPage(page);
     }
     function navigateTo(page) {
@@ -57,7 +65,24 @@ Item {
         id: readinessModel
     }
 
-    onCurrentPageChanged: standardPageHost.currentPage = currentPage
+    onCurrentPageChanged: {
+        standardPageHost.currentPage = currentPage === 7 ? -1 : currentPage;
+        if (currentPage === 1 && flightDeckButtonContext > 0)
+            buttonContextTimer.restart();
+    }
+
+    Timer {
+        id: buttonContextTimer
+        interval: 0
+        repeat: false
+        onTriggered: {
+            const buttons = standardPageHost.pageItem(1);
+            if (buttons && root.flightDeckButtonContext > 0) {
+                buttons.setExpandedButton(root.flightDeckButtonContext);
+                root.flightDeckButtonContext = -1;
+            }
+        }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -314,8 +339,39 @@ Item {
                         flightDeckReadiness: readinessModel
                         currentPage: 8
                         onCurrentPageChanged: {
-                            if (root.currentPage !== currentPage)
+                            if (currentPage === 7 && flightDeckAutomationContext.length > 0)
+                                root.flightDeckAutomationContext = flightDeckAutomationContext;
+                            if (root.currentPage !== 7 && root.currentPage !== currentPage)
                                 root.currentPage = currentPage;
+                        }
+                    }
+                    Loader {
+                        id: automationPageLoader
+                        objectName: "flightDeckAutomationLoader"
+                        anchors.fill: parent
+                        active: root.currentPage === 7
+                        source: Qt.resolvedUrl("FlightDeckAutomation.qml")
+                        onLoaded: {
+                            item.presentationState = root.flightDeckAutomationPresentationState;
+                            item.restorePresentationState();
+                            if (root.flightDeckAutomationContext.length > 0) {
+                                item.openRuleById(root.flightDeckAutomationContext);
+                                root.flightDeckAutomationContext = "";
+                            }
+                        }
+                        Connections {
+                            target: automationPageLoader.item
+                            function onPresentationStateCaptured(state) {
+                                root.flightDeckAutomationPresentationState = state;
+                            }
+                            function onNavigateToProfile(profileId) {
+                                standardPageHost.flightDeckProfileContext = profileId;
+                                root.currentPage = 5;
+                            }
+                            function onNavigateToButton(buttonIndex) {
+                                root.flightDeckButtonContext = buttonIndex;
+                                root.currentPage = 1;
+                            }
                         }
                     }
                 }

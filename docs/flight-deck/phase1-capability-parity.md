@@ -115,3 +115,22 @@ of the established theme family.
   existing model rules. Delete remains unavailable for an active or protected
   profile; category delete remains limited to an empty, inactive category that
   leaves another category in place.
+
+## Phase 7 Automation presentation coverage
+
+- Flight Deck Automation reads only the existing bounded `AppBackend`
+  Automation projection and uses the established create, duplicate, delete,
+  save, and enable commands. `AutomationEngine` remains the sole compiler and
+  execution authority.
+- Rule cards distinguish actual active, enabled, disabled, incomplete, and
+  needs-attention states from the authoritative rule health and summaries.
+  Search and All/Enabled/Disabled filters are presentation-only.
+- The deliberate editor exposes every existing condition and action enum,
+  one-to-four `WHEN` and `DO` entries, all/any matching, activation lifetime,
+  priority, and the existing condition/action-specific fields. It does not add
+  game conditions, category actions, new trigger semantics, or a parallel
+  rule model.
+- Button and profile links carry selection context into the native surfaces;
+  they neither activate a profile nor execute a rule. Day Ops was absent from
+  this baseline and remains a coexistence integration item rather than a
+  claimed Phase 7 theme implementation.
