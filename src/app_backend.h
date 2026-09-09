@@ -222,6 +222,12 @@ public:
     // compare editor/configuration state with the runtime route at a safe
     // control-plane boundary, never from a DirectInput report.
     QVariantList runtimeAxisRoutesForTest() const;
+#ifdef HOTAS_STARTUP_TESTING
+    // Bounded startup-test presentation fixture. It neither enumerates
+    // hardware nor reaches the DirectInput-to-vJoy report path.
+    void setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
+                                   int physicalPovCount, int continuousPovCapacity = 0);
+#endif
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
