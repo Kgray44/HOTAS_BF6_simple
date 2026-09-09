@@ -8,7 +8,8 @@ QVariantMap AppIssue::toVariantMap() const
     return {{u"id"_qs, id}, {u"code"_qs, code}, {u"category"_qs, category},
             {u"severity"_qs, severity}, {u"scopeType"_qs, scopeType},
             {u"scopeId"_qs, scopeId}, {u"affectedObjectType"_qs, affectedObjectType},
-            {u"affectedObjectId"_qs, affectedObjectId}, {u"title"_qs, title},
+            {u"affectedObjectId"_qs, affectedObjectId}, {u"affectedObjectIds"_qs, affectedObjectIds},
+            {u"title"_qs, title},
             {u"explanation"_qs, explanation}, {u"recommendedAction"_qs, recommendedAction},
             {u"recommendedActionLabel"_qs, recommendedActionLabel},
             {u"alternativeActions"_qs, alternativeActions},
@@ -28,6 +29,10 @@ AppIssue AppIssue::fromVariantMap(const QVariantMap &value)
     issue.scopeId = value.value(u"scopeId"_qs).toString();
     issue.affectedObjectType = value.value(u"affectedObjectType"_qs).toString();
     issue.affectedObjectId = value.value(u"affectedObjectId"_qs).toString();
+    issue.affectedObjectIds = value.value(u"affectedObjectIds"_qs).toStringList();
+    if (issue.affectedObjectIds.isEmpty() && !issue.affectedObjectId.isEmpty()) {
+        issue.affectedObjectIds = {issue.affectedObjectId};
+    }
     issue.title = value.value(u"title"_qs).toString();
     issue.explanation = value.value(u"explanation"_qs).toString();
     issue.recommendedAction = value.value(u"recommendedAction"_qs).toString();

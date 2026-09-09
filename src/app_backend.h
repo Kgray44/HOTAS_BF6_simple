@@ -129,6 +129,7 @@ class AppBackend final : public QObject {
     // structured control-plane model rather than a list of UI sentences, so
     // every themed Setup Assistant can present the same issue and action.
     Q_PROPERTY(QVariantList setupAssistantIssues READ setupAssistantIssues NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList setupAssistantSteps READ setupAssistantSteps NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantSummary READ setupAssistantSummary NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
@@ -316,6 +317,7 @@ public:
     bool hidhideMapperAllowed() const;
     QVariantList controllerReadinessChecks() const;
     QVariantList setupAssistantIssues() const;
+    QVariantList setupAssistantSteps() const;
     QVariantMap setupAssistantSummary() const;
     QVariantMap setupAssistantLiveTest() const;
     QString setupAssistantScopeType() const;
@@ -593,6 +595,7 @@ public:
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();
     Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
                                                              const QString &scopeId = {});
+    Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
     Q_INVOKABLE bool applyControllerReadiness();
@@ -851,6 +854,7 @@ private:
                                              const QString &scopeId) const;
     QVariantList setupAssistantIssuesForScope(const QString &scopeType,
                                               const QString &scopeId) const;
+    QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
     void rememberCurrentController();
     void tryAutoSwitchVerifiedController();

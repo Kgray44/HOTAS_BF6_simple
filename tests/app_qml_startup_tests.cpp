@@ -928,7 +928,7 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
         {QStringLiteral("unverified connected device"), unverified, QStringLiteral("PhysicalDeviceUnverified"), QStringLiteral("Finish setting up your T.Flight HOTAS One"), QStringLiteral("set-up-device"), QStringLiteral("PhysicalInput"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("calibration required"), calibration, QStringLiteral("CalibrationRequired"), QStringLiteral("Calibrate your controller"), QStringLiteral("start-calibration"), QStringLiteral("Calibration"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("HidHide unavailable"), hidHideMissing, QStringLiteral("HidHideUnavailable"), QStringLiteral("Game visibility protection needs setup"), QStringLiteral("setup-hidhide"), QStringLiteral("Driver"), QStringLiteral("SETUP NEEDED")},
-        {QStringLiteral("physical input visible"), physicalVisible, QStringLiteral("PhysicalInputVisible"), QStringLiteral("Hide your physical controller from games"), QStringLiteral("hide-from-games"), QStringLiteral("Visibility"), QStringLiteral("SETUP NEEDED")},
+        {QStringLiteral("physical input visible"), physicalVisible, QStringLiteral("PhysicalInputVisible"), QStringLiteral("Hide T.Flight HOTAS One from games"), QStringLiteral("hide-from-games"), QStringLiteral("Visibility"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("virtual output hidden"), outputHidden, QStringLiteral("VirtualOutputHidden"), QStringLiteral("Show your virtual controller to games"), QStringLiteral("check-again"), QStringLiteral("Visibility"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("vJoy missing"), vjoyMissing, QStringLiteral("VirtualOutputMissing"), QStringLiteral("Virtual controller driver needed"), QStringLiteral("setup-vjoy"), QStringLiteral("Driver"), QStringLiteral("SETUP NEEDED")},
         {QStringLiteral("vJoy misconfigured"), vjoyMisconfigured, QStringLiteral("VirtualOutputMisconfigured"), QStringLiteral("BF6 Output needs different capabilities"), QStringLiteral("reconfigure-output"), QStringLiteral("VirtualOutput"), QStringLiteral("SETUP NEEDED")},
@@ -945,7 +945,7 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
         backend.setSetupAssistantFactsForTest(scenario.facts);
         const QVariantMap summary = backend.setupAssistantSummary();
         const QVariantMap primary = summary.value(QStringLiteral("primaryIssue")).toMap();
-        const QVariantList steps = summary.value(QStringLiteral("visibleSteps")).toList();
+        const QVariantList steps = backend.setupAssistantSteps();
         if (summary.value(QStringLiteral("state")).toString() != scenario.state
             || summary.value(QStringLiteral("title")).toString() != scenario.title
             || summary.value(QStringLiteral("primaryAction")).toString() != scenario.action
@@ -956,8 +956,13 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
                     || primary.value(QStringLiteral("affectedObjectType")).toString().isEmpty()
                     || !primary.value(QStringLiteral("navigationTarget")).toMap().contains(
                         QStringLiteral("page"))))
-            || (scenario.code.isEmpty() ? !steps.isEmpty() : steps.isEmpty()
-                || steps.front().toMap().value(QStringLiteral("category")).toString().isEmpty())) {
+            || steps.size() != 4
+            || std::any_of(steps.cbegin(), steps.cend(), [](const QVariant &entry) {
+                const QVariantMap step = entry.toMap();
+                return step.value(QStringLiteral("id")).toString().isEmpty()
+                    || step.value(QStringLiteral("order")).toInt() <= 0
+                    || step.value(QStringLiteral("state")).toString().isEmpty();
+            })) {
             backend.setSetupAssistantFactsForTest({});
             return failPresentationLifecycleTest(QStringLiteral("Setup Assistant scenario did not present the expected diagnosis: %1").arg(scenario.label));
         }
@@ -966,6 +971,114 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
             backend.setSetupAssistantFactsForTest({});
             return failPresentationLifecycleTest(QStringLiteral("Optional offline controller was not presented as a non-blocking note"));
         }
+    }
+
+    QVariantMap ordered = healthyFacts();
+    ordered.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, false)});
+    ordered.insert(QStringLiteral("vjoyInstalled"), false);
+    ordered.insert(QStringLiteral("vjoyPresent"), false);
+    ordered.insert(QStringLiteral("physicalVisible"), true);
+    ordered.insert(QStringLiteral("visibilityActionAvailable"), true);
+    ordered.insert(QStringLiteral("liveInputPending"), true);
+    backend.setSetupAssistantFactsForTest(ordered);
+    const auto stepState = [&backend](int index) {
+        return backend.setupAssistantSteps().at(index).toMap().value(QStringLiteral("state")).toString();
+    };
+    if (stepState(0) != QStringLiteral("current") || stepState(1) != QStringLiteral("blocked")
+        || stepState(2) != QStringLiteral("blocked") || stepState(3) != QStringLiteral("blocked")) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Setup Assistant did not select the earliest unresolved blocking step"));
+    }
+    const QVariantList orderedIssues = backend.setupAssistantIssues();
+    const auto visibleIt = std::find_if(orderedIssues.cbegin(), orderedIssues.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("code")).toString()
+            == QStringLiteral("PhysicalInputVisible");
+    });
+    const QVariantMap visibleIssue = visibleIt == orderedIssues.cend() ? QVariantMap{} : visibleIt->toMap();
+    if (visibleIssue.value(QStringLiteral("affectedObjectId")).toString() != QStringLiteral("t.flight-hotas-one")
+        || visibleIssue.value(QStringLiteral("affectedObjectIds")).toStringList()
+               != QStringList{QStringLiteral("t.flight-hotas-one")}) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Physical visibility issue did not retain its exact saved-device target"));
+    }
+    ordered.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, true)});
+    backend.setSetupAssistantFactsForTest(ordered);
+    if (stepState(0) != QStringLiteral("complete") || stepState(1) != QStringLiteral("current")) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Setup Assistant did not advance from the physical-device step"));
+    }
+    ordered.insert(QStringLiteral("vjoyInstalled"), true);
+    ordered.insert(QStringLiteral("vjoyPresent"), true);
+    backend.setSetupAssistantFactsForTest(ordered);
+    if (stepState(1) != QStringLiteral("complete") || stepState(2) != QStringLiteral("current")) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Setup Assistant did not advance from the virtual-output step"));
+    }
+    const QVariantMap visibilityIssue = backend.setupAssistantSummary().value(QStringLiteral("primaryIssue")).toMap();
+    const QVariantMap visibilityResult = backend.applySetupAssistantIssueAction(
+        visibilityIssue.value(QStringLiteral("id")).toString());
+    if (!visibilityResult.value(QStringLiteral("success")).toBool()
+        || visibilityResult.value(QStringLiteral("affectedObjectId")).toString() != QStringLiteral("t.flight-hotas-one")
+        || stepState(3) != QStringLiteral("current")) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Targeted visibility repair did not auto-advance the scoped step model"));
+    }
+    ordered.insert(QStringLiteral("physicalVisible"), true);
+    ordered.insert(QStringLiteral("visibilityRepairSucceeds"), false);
+    ordered.insert(QStringLiteral("visibilityRepairFailure"), QStringLiteral("Fixture denied HidHide access."));
+    backend.setSetupAssistantFactsForTest(ordered);
+    const QVariantMap failureIssue = backend.setupAssistantSummary().value(QStringLiteral("primaryIssue")).toMap();
+    const QVariantMap failureResult = backend.applySetupAssistantIssueAction(
+        failureIssue.value(QStringLiteral("id")).toString());
+    if (failureResult.value(QStringLiteral("success")).toBool()
+        || !failureResult.value(QStringLiteral("title")).toString().startsWith(QStringLiteral("Could not hide"))
+        || !failureResult.value(QStringLiteral("technicalDetails")).toString().contains(QStringLiteral("Fixture denied HidHide access."))) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Targeted visibility failure did not expose a useful action result"));
+    }
+
+    QVariantMap deviceScoped = healthyFacts();
+    deviceScoped.insert(QStringLiteral("scopeType"), QStringLiteral("device"));
+    deviceScoped.insert(QStringLiteral("scopeId"), QStringLiteral("t.flight-hotas-one"));
+    deviceScoped.insert(QStringLiteral("scopeLabel"), QStringLiteral("T.Flight HOTAS One"));
+    deviceScoped.insert(QStringLiteral("inputs"), QVariantList{input(QStringLiteral("T.Flight HOTAS One"), true, false)});
+    deviceScoped.insert(QStringLiteral("vjoyInstalled"), false);
+    deviceScoped.insert(QStringLiteral("vjoyPresent"), false);
+    backend.setSetupAssistantFactsForTest(deviceScoped);
+    const QVariantMap deviceSummary = backend.setupAssistantSummary();
+    const QVariantList deviceSteps = backend.setupAssistantSteps();
+    const QVariantList deviceIssues = backend.setupAssistantIssues();
+    const bool deviceHasVirtualIssue = std::any_of(deviceIssues.cbegin(), deviceIssues.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("category")).toString() == QStringLiteral("VirtualOutput");
+    });
+    if (deviceSummary.value(QStringLiteral("scope")).toString() != QStringLiteral("T.Flight HOTAS One")
+        || deviceSteps.size() != 4
+        || deviceSteps.at(0).toMap().value(QStringLiteral("id")).toString() != QStringLiteral("device")
+        || deviceSteps.at(0).toMap().value(QStringLiteral("state")).toString() != QStringLiteral("current")
+        || deviceHasVirtualIssue) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Device-scoped setup included rig or virtual-output blockers"));
+    }
+
+    QVariantMap outputScoped = healthyFacts();
+    outputScoped.insert(QStringLiteral("scopeType"), QStringLiteral("virtualOutput"));
+    outputScoped.insert(QStringLiteral("scopeId"), QStringLiteral("bf6-output"));
+    outputScoped.insert(QStringLiteral("scopeLabel"), QStringLiteral("BF6 Output"));
+    outputScoped.insert(QStringLiteral("inputs"), QVariantList{});
+    outputScoped.insert(QStringLiteral("vjoyInstalled"), false);
+    outputScoped.insert(QStringLiteral("vjoyPresent"), false);
+    backend.setSetupAssistantFactsForTest(outputScoped);
+    const QVariantList outputSteps = backend.setupAssistantSteps();
+    const QVariantList outputIssues = backend.setupAssistantIssues();
+    const bool outputHasPhysicalIssue = std::any_of(outputIssues.cbegin(), outputIssues.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("category")).toString() == QStringLiteral("PhysicalInput");
+    });
+    if (outputSteps.size() != 4
+        || outputSteps.at(0).toMap().value(QStringLiteral("id")).toString() != QStringLiteral("output")
+        || outputSteps.at(0).toMap().value(QStringLiteral("state")).toString() != QStringLiteral("current")
+        || outputHasPhysicalIssue) {
+        backend.setSetupAssistantFactsForTest({});
+        return failPresentationLifecycleTest(QStringLiteral("Virtual-output setup included physical-input blockers"));
     }
     backend.setSetupAssistantFactsForTest({});
     return true;

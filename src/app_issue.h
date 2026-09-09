@@ -19,6 +19,7 @@ struct AppIssue {
     QString scopeId;
     QString affectedObjectType;
     QString affectedObjectId;
+    QStringList affectedObjectIds;
     QString title;
     QString explanation;
     QString recommendedAction;

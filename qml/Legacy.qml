@@ -1322,9 +1322,12 @@ Page {
                     backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
                     onVerificationRequested: function(rigId, deviceId) {
                         controllerSetupDialog.open()
-                        if (rigId !== "") {
-                            backend.setEditingDeviceContext(rigId, deviceId === "" ? [] : [deviceId])
-                            backend.startSetupAssistantCheckForScope(deviceId === "" ? "deviceRig" : "device", deviceId === "" ? rigId : deviceId)
+                        if (deviceId !== "") {
+                            if (rigId !== "") backend.setEditingDeviceContext(rigId, [deviceId])
+                            backend.startSetupAssistantCheckForScope("device", deviceId)
+                        } else if (rigId !== "") {
+                            backend.setEditingDeviceContext(rigId, [])
+                            backend.startSetupAssistantCheckForScope("deviceRig", rigId)
                         } else backend.startSetupAssistantCheckForScope("application")
                     }
                 }

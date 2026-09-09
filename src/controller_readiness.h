@@ -100,7 +100,10 @@ struct ManagedVisibilityTransactionResult {
     bool available = false;
     bool changed = false;
     bool succeeded = true;
+    bool rollbackOccurred = false;
+    int exitCode = -1;
     QString status;
+    QString technicalDetails;
 };
 
 struct MapperOutputRequirements {

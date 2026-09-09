@@ -1095,10 +1095,19 @@ ManagedVisibilityTransactionResult ControllerReadinessService::applyManagedPhysi
     const QStringList &instanceIds, bool hidden) const
 {
     ManagedVisibilityTransactionResult result;
+    const auto details = [hidden](const QString &transaction, int exitCode,
+                                  const QString &readback, bool rollback) {
+        return QStringLiteral("REQUESTED ACTION\n%1\n\nCOMMAND/TRANSACTION RESULT\n%2\n\nEXIT CODE\n%3\n\nREADBACK RESULT\n%4\n\nROLLBACK\n%5")
+            .arg(hidden ? QStringLiteral("Hide from games") : QStringLiteral("Show to games"),
+                 transaction, exitCode < 0 ? QStringLiteral("Not run") : QString::number(exitCode),
+                 readback, rollback ? QStringLiteral("Completed changes were rolled back")
+                           : QStringLiteral("Not needed"));
+    };
     QStringList normalized;
     QString validation;
     if (!validateManagedPhysicalInputIdentities(instanceIds, &normalized, &validation)) {
         result.status = validation;
+        result.technicalDetails = details(validation, -1, QStringLiteral("Exact identity validation failed."), false);
         return result;
     }
 
@@ -1107,6 +1116,9 @@ ManagedVisibilityTransactionResult ControllerReadinessService::applyManagedPhysi
     const SetupProcessResult current = runHidHide(false, {QStringLiteral("--dev-list")});
     if (!cloak.succeeded() || !apps.succeeded() || !current.succeeded()) {
         result.status = QStringLiteral("HidHide did not provide a readable runtime configuration; physical-input visibility was left unchanged.");
+        result.exitCode = !cloak.succeeded() ? cloak.exitCode : !apps.succeeded() ? apps.exitCode : current.exitCode;
+        result.technicalDetails = details(result.status, result.exitCode,
+            QStringLiteral("HidHide preflight read-back was unavailable."), false);
         return result;
     }
     const QString mapperPath = mapperExecutablePath();
@@ -1116,6 +1128,8 @@ ManagedVisibilityTransactionResult ControllerReadinessService::applyManagedPhysi
     });
     if (!cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive) || !mapperAllowed) {
         result.status = QStringLiteral("Physical-input visibility requires enabled HidHide cloaking and a HOTAS BF6 allowlist entry; no runtime change was made.");
+        result.technicalDetails = details(result.status, 0,
+            QStringLiteral("Cloaking or mapper allowlist prerequisite was not satisfied."), false);
         return result;
     }
 
@@ -1133,6 +1147,7 @@ ManagedVisibilityTransactionResult ControllerReadinessService::applyManagedPhysi
     if (changes.empty()) {
         result.status = hidden ? QStringLiteral("Selected managed physical inputs are already hidden from games.")
                                : QStringLiteral("Selected managed physical inputs are already visible to games.");
+        result.technicalDetails = details(result.status, 0, result.status, false);
         return result;
     }
 
@@ -1150,12 +1165,43 @@ ManagedVisibilityTransactionResult ControllerReadinessService::applyManagedPhysi
                                                    : QStringLiteral("--dev-unhide"), rollback->instance});
         }
         result.succeeded = false;
+        result.rollbackOccurred = !completed.empty();
+        result.exitCode = operation.exitCode;
         result.status = QStringLiteral("HidHide could not change the selected physical-input visibility; completed changes were rolled back.");
+        result.technicalDetails = details(result.status, operation.exitCode,
+            QStringLiteral("The requested device state was not accepted."), result.rollbackOccurred);
+        return result;
+    }
+    const SetupProcessResult readback = runHidHide(false, {QStringLiteral("--dev-list")});
+    const QStringList observedHidden = readback.succeeded()
+        ? parseHidHideCommands(readback.output, QStringLiteral("dev-hide")) : QStringList{};
+    const bool readbackMatches = readback.succeeded() && std::all_of(normalized.cbegin(), normalized.cend(),
+        [&observedHidden, hidden](const QString &instance) {
+            const bool observed = std::any_of(observedHidden.cbegin(), observedHidden.cend(), [&instance](const QString &entry) {
+                return ControllerReadinessService::normalizeDeviceInstanceId(entry) == instance;
+            });
+            return observed == hidden;
+        });
+    if (!readbackMatches) {
+        for (auto rollback = completed.crbegin(); rollback != completed.crend(); ++rollback) {
+            runHidHide(false, {rollback->wasHidden ? QStringLiteral("--dev-hide")
+                                                   : QStringLiteral("--dev-unhide"), rollback->instance});
+        }
+        result.succeeded = false;
+        result.rollbackOccurred = !completed.empty();
+        result.exitCode = readback.exitCode;
+        result.status = QStringLiteral("HidHide did not confirm the requested physical-input visibility; completed changes were rolled back.");
+        result.technicalDetails = details(result.status, readback.exitCode,
+            readback.succeeded() ? QStringLiteral("Read-back did not match the requested hidden state.")
+                               : QStringLiteral("HidHide read-back command failed."), result.rollbackOccurred);
         return result;
     }
     result.changed = true;
     result.status = hidden ? QStringLiteral("Selected managed physical inputs are now hidden from games; rechecking HidHide state.")
                            : QStringLiteral("Selected managed physical inputs are now visible to games; rechecking HidHide state.");
+    result.exitCode = 0;
+    result.technicalDetails = details(result.status, 0,
+        QStringLiteral("Exact HID identities match the requested visibility state."), false);
     return result;
 }
 
