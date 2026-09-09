@@ -27,7 +27,7 @@ of the established theme family.
 | Game association / detection | Profile Library and low-frequency trigger runtime | Profiles > Automatic activation | Automatic; automatic detection enabled/disabled, executable match transitions, manual base profile and runtime hold/toggle precedence |
 | Automation | Automation workspace and `AutomationEngine` | Automation; readable active rules first, editor through deliberate entry | Advanced; master switch, invalid-rule health, draft/unsaved/delete states, priorities, timing, axis/button/POV/profile conditions, mapping/profile/vJoy/axis/Adaptive effects |
 | Adaptive Response | Adaptive Response workspace and shared adaptive configuration | Native Flight Deck Adaptive Response: scope and axis context, enable/preset decisions, explanatory static preview/A-B comparison, grouped advanced tuning, prioritized telemetry, unified live/interactive analysis, custom preset workshop, read-only monitor, and Test Lab | Primary/advanced; global/category/profile/preset contexts, safe-off state, all current tuning controls, custom preset dependencies, live/static source, bounded history/trace inspection, telemetry, simulation, validation |
-| Diagnostics and event log | Diagnostics workspace and `AppBackend` snapshots | Diagnostics; unhealthy or unusual state first, raw detail progressive | Diagnostic; raw/calibrated/virtual axes, buttons/POVs, event log, update age, capacity, HidHide, Automation timing, Adaptive telemetry, warnings |
+| Diagnostics and event log | Diagnostics workspace and `AppBackend` snapshots | Native Flight Deck Diagnostics: centralized readiness, real signal path, live inspection, performance, and progressive technical detail | Diagnostic; raw/calibrated/virtual axes, buttons/POVs, event log, update age, capacity, HidHide, Automation timing, Adaptive telemetry, warnings, and redacted controller diagnostics export |
 | Global application and mapper settings | Settings; configuration store and launcher handoff | Settings; grouped application, mapping, controller, device-hiding, update, and maintenance controls | Advanced; tray behavior, start on launch, output layout, disabled-axis value, curve transition smoothing, update state, destructive confirmations |
 | System tray and close behavior | `AppBackend`, native tray menu, Main window close handler | Remains platform-owned; Flight Deck does not replace it | Automatic/contextual; open, mapping toggle, close-to-tray, exit, tray availability |
 | Dialogs, flyouts, confirmations, and notifications | Standard/Legacy shells and page components | Native setup-repair confirmation and undo confirmation within Flight Deck Devices; preserve other established behavior | Contextual; learning, conflicts, create/rename/delete, setup/recovery, import preview, tooltips, empty/loading/error/validation states |
@@ -134,3 +134,26 @@ of the established theme family.
   they neither activate a profile nor execute a rule. Day Ops was absent from
   this baseline and remains a coexistence integration item rather than a
   claimed Phase 7 theme implementation.
+
+## Phase 9 Diagnostics presentation coverage
+
+- Flight Deck Diagnostics reads the established `AppBackend` bounded
+  presentation snapshots and the shared `FlightDeckReadiness` model. It does
+  not introduce a second health calculation, device model, telemetry store,
+  report observer, timer, or backend command.
+- The health-first summary names Physical Input, Mapping Runtime, Virtual
+  Output, Isolation, Profile, Game, Automation, and Adaptive Response using
+  the existing readiness and diagnostic state. The signal path renders the
+  selected-controller scope and the actual route data published for each
+  axis; it does not claim a simultaneous multi-controller route.
+- Details retain raw/calibrated/final-output axis values, buttons, POVs,
+  event history, update and latency metrics, vJoy capacity, HidHide state,
+  Automation health, and Adaptive telemetry. Redacted Copy Diagnostics keeps
+  the existing backend export rather than creating a second report format.
+- All recovery controls are presentation handoffs to the native Devices,
+  Axes, Profiles, Automation, or Adaptive Response workspaces. They do not
+  write configuration, toggle mapping, start output, change isolation, or
+  mutate a profile.
+- Day Ops was absent from this baseline. Its later coexistence and launch
+  integration remains explicitly pending; this native Diagnostics destination
+  neither replaces nor simulates it.
