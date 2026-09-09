@@ -4,8 +4,12 @@
 
 Phase 12 closes the app-owned Flight Deck parity gaps found while reconciling
 the accepted Phase 11 source with the established Standard surfaces. The work
-is isolated to `codex/flight-deck-phase12-parity-integration`, created from
-accepted Phase 11 commit `275154a85142c601b348f8efe74602a91754f243`.
+is isolated to `codex/flight-deck-phase12-parity-integration`.
+
+| Source point | SHA | Meaning |
+| --- | --- | --- |
+| Accepted baseline | `275154a85142c601b348f8efe74602a91754f243` | Accepted Phase 11 source. |
+| Phase 12 candidate and final product source | `5008c5a6fea9359ad6d3c1a7ef371cdbe3413936` | Complete app/QML/test/evidence candidate; no later commit changes product source. |
 
 The candidate preserves the Flight Deck preview gate and uses the existing
 `AppBackend`, `ThemeManager`, configuration, portability, controller, and
@@ -13,9 +17,8 @@ Adaptive Response authorities. It adds no DirectInput, MappingWorker, vJoy,
 HidHide, predictor, or runtime-path behavior. No merge, tag, push, release,
 or production-process intervention is part of this validation.
 
-The final local source commit is recorded after the validation changes are
-committed. This document is evidence of a local acceptance candidate, not a
-release or physical-device certification.
+This document is evidence of a local acceptance candidate, not a release or
+physical-device certification.
 
 ## Reconciliation method
 
