@@ -260,6 +260,7 @@ absent from this baseline and remains a later coexistence integration item.
 - The Phase 13 QML lifecycle checks all five presentations, including
   forward/back Flight Deck switching through Day Ops, with authoritative
   configuration snapshots before and after. Its validation record is
-  `phase13-v24-dayops-integration-validation.md`; offscreen capture proves
-  structural layout and interaction only, while native rendered-text review
-  remains an explicit owner-session boundary.
+  `phase13-v24-dayops-integration-validation.md`; offscreen capture remains
+  structural evidence, while a direct native Qt fixture run records readable
+  Day Ops and Flight Deck captures. Owner-session physical, OS-owned, and
+  accessibility conditions remain separate boundaries.

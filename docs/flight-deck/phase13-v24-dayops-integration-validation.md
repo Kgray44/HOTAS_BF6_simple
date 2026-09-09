@@ -77,14 +77,24 @@ toolchain, the MSVC 2022 x64 environment, and Ninja in `b15`.
 | Device Rig/App Health integration | Pass, local fixture | V2.4's Devices lifecycle, explicit single-device edit scope, Device Rig deletion transition, recovery/deep-link surfaces, and current Settings route remain in the same QML lifecycle traversal. |
 | Flight Deck Dark/Light structure | Pass, local fixture | 146 QML captures were emitted: 73 Dark and 73 Light, covering overview, Devices, Axes, Buttons, Profiles, Automation, Adaptive Response, Diagnostics, Settings, dialogs, and narrow/wide states. |
 | Conventional visual matrix | Pass, structural | 36 opt-in QML captures cover Legacy, Standard, Top Gun, and Day Ops Device Rig states and dialogs. |
-| Native rendered-text review | Not claimed | The isolated candidate launched with `--flight-deck-preview-isolated`, but this host's desktop-capture service was unavailable. The candidate process was stopped after that check; no live mapper process was touched. |
+| Native Windows QML visual review | Pass, local fixture | `b15\\app_qml_startup_tests.exe` was run directly with the CTest offscreen override removed, `HOTAS_QML_TEST_THEME=Day Ops`, and the Flight Deck visual-output hooks enabled. It exited 0 and wrote 9 Day Ops plus 146 Flight Deck Windows-rendered captures (73 Dark, 73 Light). |
 
-The QML visual runs use Qt's `offscreen` CTest platform. On this host that
-platform substitutes boxed glyphs despite successful native layout and
-interaction coverage, so these image files prove composition, bounds, color,
-state, and route coverage only; they are not claimed as typography or
-native-render proof. A native, owner-session screenshot review remains needed
-before calling rendered visual acceptance complete.
+The ordinary QML visual runs use Qt's `offscreen` CTest platform. On this host
+that platform substitutes boxed glyphs despite successful layout and
+interaction coverage, so those captures prove composition, bounds, color,
+state, and route coverage only. The direct Windows-QPA fixture run above is
+the rendered-text proof: its representative captures were visually inspected
+at 1650x1050 in both Flight Deck appearances, at the 1125x813 narrow
+Automation/Settings states, and on the Day Ops Device Rigs route. Examples
+retained with this candidate are
+`artifacts/phase13-native-flight-deck-review/flight-deck-dark-ready-normal.png`,
+`artifacts/phase13-native-flight-deck-review/flight-deck-light-ready-normal.png`,
+`artifacts/phase13-native-flight-deck-review/flight-deck-dark-automation-large-long-minimum.png`,
+`artifacts/phase13-native-flight-deck-review/flight-deck-light-settings-minimum.png`,
+`artifacts/phase13-native-dayops-review/devices-day-ops.png`, and
+`artifacts/phase13-native-dayops-review/devices-day-ops-editing-target.png`.
+The last is a deliberately scrolled Device Rig fixture state; its partial
+viewport is not presented as a full-page fit claim.
 
 The suite's Flight Deck switch stress now explicitly includes
 `theme:Day Ops` as well as Legacy, Standard, Top Gun, and `flight-deck`. It
@@ -100,9 +110,10 @@ on each transition.
 2. The local QML suite proves app-owned route and state behavior. It does not
    prove physical controller capture, exact DirectInput-to-Raw-Input identity,
    live vJoy/HidHide behavior, or a running-game session.
-3. Native rendered screenshot/typography review is explicitly outstanding
-   because desktop capture was unavailable in this environment. Do not
-   substitute the offscreen boxed-glyph images for that proof.
+3. The direct native Qt rendering run proves the captured app-owned Day Ops
+   and Flight Deck states, but not OS-owned dialogs or owner-specific display,
+   input, accessibility, or hardware conditions. Do not substitute the
+   offscreen boxed-glyph images for this native-render evidence.
 4. Windows pickers, UAC, vJoy/HidHide configuration tools, the uninstaller,
    and physical device ownership remain platform or owner-session operations.
 5. The preview gate remains intact. No default profile, device, mapper start
@@ -113,6 +124,6 @@ on each transition.
 
 The only new behavioral reconciliation is the test fixture's use of the
 existing V2.4 single-device Automation scope. The source merge is ready for
-normal code review after the final full CTest run and repository status audit.
-It must remain local until the outstanding native-render and owner-session
+normal code review after the final full CTest run, direct native-render review,
+and repository status audit. It remains local until the remaining owner-session
 boundaries are consciously accepted.
