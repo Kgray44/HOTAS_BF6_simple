@@ -7,6 +7,7 @@ import QtQuick.Layouts 6.5
 Flickable {
     id: root
     property bool legacy: false
+    signal manageDevicesRequested()
     anchors.fill: parent
     contentWidth: width
     contentHeight: settings.implicitHeight + 26
@@ -108,61 +109,18 @@ Flickable {
         x: 1; width: root.width - 14; spacing: 13
         ColumnLayout { Layout.fillWidth: true; spacing: 3
             Text { text: theme.topGun ? "SYSTEM CONFIGURATION" : "Settings"; color: root.textColor; font.pixelSize: theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
-            Text { text: "Controllers, mapping defaults, application preferences, and maintenance."; color: root.mutedColor; font.pixelSize: 11 }
+            Text { text: "Application preferences, mapping defaults, updates, and maintenance."; color: root.mutedColor; font.pixelSize: 11 }
         }
 
-        SectionLabel { label: "CONTROLLERS" }
-        Card { Layout.fillWidth: true; title: theme.topGun ? "CONTROLLER SYSTEM CHECK" : "Controller Setup & Verification"; detail: backend.controllerReadinessStatus; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
+        SectionLabel { label: "DEVICE SETUP" }
+        Card { Layout.fillWidth: true; title: theme.topGun ? "ACTIVE DEVICE RIG" : "Device setup belongs in Devices"; detail: "Devices is the single workspace for saved physical hardware, Device Rigs, virtual outputs, game visibility, and guided setup."; accent: backend.appHealthSummary.ready ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
-                StatusPill { label: backend.controllerReadinessState; tone: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor }
-                Item { Layout.fillWidth: true }
-                ActionButton { label: "VERIFY SETUP"; onTriggered: { readinessDialog.open(); backend.verifyHotasSetup() } }
-            }
-        }
-        Card { Layout.fillWidth: true; title: "Input Controllers"; detail: "Discovered DirectInput controllers and remembered controller records."; accent: root.borderColor
-            RowLayout { Layout.fillWidth: true
-                Text { text: root.controllerModel.length + " CONTROLLERS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.telemetryFont }
-                Item { Layout.fillWidth: true }
-                ActionButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshControllers() }
-            }
-            Rectangle { visible: root.controllerModel.length > 0 && backend.connectedControllerCount === 0; Layout.fillWidth: true; implicitHeight: offlineNotice.implicitHeight + 20
-                color: Qt.rgba(root.warningColor.r, root.warningColor.g, root.warningColor.b, 0.10); border.color: root.warningColor; radius: theme.topGun ? 1 : theme.controlRadius
-                ColumnLayout { id: offlineNotice; anchors.fill: parent; anchors.margins: 10; spacing: 2
-                    Text { text: "NO CONTROLLERS CONNECTED"; color: root.warningColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
-                    Text { Layout.fillWidth: true; text: root.controllerModel.length + " verified controllers are remembered. Connect one to resume mapping."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                ColumnLayout { Layout.fillWidth: true; spacing: 2
+                    Text { text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : "No Active Device Rig"; color: root.textColor; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: backend.appHealthSummary.ready ? "Ready for normal use." : backend.appHealthSummary.primaryIssue.title || "Review Device setup."; color: root.mutedColor; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-            }
-            Repeater { model: root.controllerModel
-                delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 60; radius: theme.topGun ? 1 : theme.controlRadius
-                    color: !modelData.connected ? root.panelColor : modelData.active ? theme.selectionCurrent : root.insetColor
-                    border.color: !modelData.connected ? root.mutedColor : modelData.active ? root.accentColor : root.borderColor
-                    opacity: modelData.connected ? 1.0 : 0.62
-                    RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 9
-                        ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            RowLayout { Layout.fillWidth: true; spacing: 5
-                                Text { text: modelData.name; color: root.textColor; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                StatusPill { visible: modelData.active; label: "ACTIVE"; tone: root.accentColor }
-                                StatusPill { visible: !modelData.connected; label: "OFFLINE"; tone: root.mutedColor }
-                                StatusPill { visible: modelData.selected && !modelData.active; label: "SELECTED"; tone: root.warningColor }
-                                StatusPill { visible: modelData.verified; label: "VERIFIED"; tone: root.readyColor }
-                                StatusPill { visible: !modelData.verified; label: "NEW"; tone: root.warningColor }
-                            }
-                            Text { text: modelData.state + "  ·  " + modelData.axisCount + " AXES  ·  " + modelData.buttonCount + " BUTTONS  ·  " + modelData.povCount + " POV"; color: root.mutedColor; font.pixelSize: 8; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
-                        }
-                        ActionButton { visible: !modelData.verified && modelData.connected; label: "SET UP"; onTriggered: backend.selectNewController(modelData.directInputId) }
-                        ActionButton { visible: modelData.verified && modelData.connected && !modelData.active; label: "SET ACTIVE"; subdued: true; onTriggered: backend.setActiveController(modelData.id) }
-                        ActionButton { visible: modelData.verified; label: "FORGET"; subdued: true; onTriggered: backend.forgetController(modelData.id) }
-                    }
-                }
-            }
-            Text { visible: root.controllerModel.length === 0; text: "No physical DirectInput controllers detected. vJoy is intentionally excluded."; color: root.mutedColor; font.pixelSize: 10 }
-        }
-        GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 13; rowSpacing: 13
-            SettingRow { Layout.fillWidth: true; title: "AUTO-SWITCH VERIFIED CONTROLLER"; detail: "Switch only to one unambiguous remembered controller when the active controller is unavailable."
-                Toggle { checked: backend.autoSwitchVerifiedController; onToggled: backend.setAutoSwitchVerifiedController(checked) }
-            }
-            SettingRow { Layout.fillWidth: true; title: "PREFERRED PHYSICAL DEVICE"; detail: backend.deviceId.length > 0 ? backend.deviceName : "Automatic selection prefers a known controller."
-                ActionButton { label: "USE CONNECTED"; subdued: true; onTriggered: backend.useConnectedDevice() }
+                StatusPill { label: backend.appHealthSummary.ready ? "READY" : "SETUP NEEDED"; tone: backend.appHealthSummary.ready ? root.readyColor : root.warningColor }
+                ActionButton { label: "OPEN DEVICES"; onTriggered: root.manageDevicesRequested() }
             }
         }
 
@@ -195,7 +153,9 @@ Flickable {
                 Text { text: "ms"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
             }
         }
-        Card { Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
+        // Device/output creation and assignment are deliberately hidden here:
+        // Devices is the authoritative hardware workspace in V2.4.
+        Card { visible: false; Layout.fillWidth: true; title: "vJoy Output"; detail: backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                     RowLayout { spacing: 7
@@ -223,7 +183,7 @@ Flickable {
             }
         }
 
-        Card { Layout.fillWidth: true; title: "Virtual Outputs"; detail: "Profiles reuse preconfigured vJoy layouts. Creating a layout records its intended descriptor; vJoy provisioning stays an explicit setup action."; accent: root.borderColor
+        Card { visible: false; Layout.fillWidth: true; title: "Virtual Outputs"; detail: "Profiles reuse preconfigured vJoy layouts. Creating a layout records its intended descriptor; vJoy provisioning stays an explicit setup action."; accent: root.borderColor
             Repeater { model: backend.virtualOutputLayouts
                 delegate: Rectangle { Layout.fillWidth: true; implicitHeight: layoutRow.implicitHeight + 14; color: root.insetColor; border.color: modelData.active ? root.readyColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
                     RowLayout { id: layoutRow; anchors.fill: parent; anchors.margins: 9; spacing: 9
@@ -264,12 +224,20 @@ Flickable {
             Text { Layout.fillWidth: true; text: "Optional advanced setup: adopt only an exact HID\\VID_1234&PID_BEAD vJoy identity already shown by HidHide. Layout switches then hide inactive adopted outputs without UAC. A running game can retain an already-open controller handle, so switch before launch or restart the game."; color: root.faintColor; font.pixelSize: 8; wrapMode: Text.WordWrap }
         }
 
+        Card { Layout.fillWidth: true; title: "Virtual Output"; detail: "Create, assign, and verify virtual outputs from Devices. Settings retains only application-wide mapping defaults."; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
+            RowLayout { Layout.fillWidth: true
+                StatusPill { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "SETUP NEEDED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
+                Text { Layout.fillWidth: true; text: backend.activeOutputLayoutName + " · vJoy Device " + backend.vjoyDeviceId; color: root.mutedColor; font.pixelSize: 9; elide: Text.ElideRight }
+                ActionButton { label: "OPEN DEVICES"; subdued: true; onTriggered: root.manageDevicesRequested() }
+            }
+        }
+
         SectionLabel { label: "APPLICATION" }
         GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 13; rowSpacing: 13
             SettingRow { Layout.fillWidth: true; title: "KEEP RUNNING IN SYSTEM TRAY"; detail: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is unavailable in this Windows session."
                 Toggle { checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
             }
-            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: "Legacy, Standard, and Top Gun each use their own visual language."
+            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: themeManager.currentTheme === "Day Ops" ? "Day Ops — a bright naval aviation theme inspired by daytime carrier flight-deck equipment." : "Legacy, Standard, Top Gun, and Day Ops each use their own visual language."
                 ComboBox { id: appearance; implicitWidth: 138; model: themeManager.themeChoices; currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme)); onActivated: themeManager.setCurrentTheme(currentText)
                     contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
@@ -353,8 +321,8 @@ Flickable {
         onOpened: selectFirstTarget()
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
-            Text { Layout.fillWidth: true; text: theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"; color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
-            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Select the controller to set up. Existing active input remains unchanged." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Use Together creates one unverified Device Rig so its inputs can be configured and verified as a coherent flight setup. Set Up Separately keeps the existing one-device flow." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
                     color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? theme.selectionCurrent : root.insetColor; border.color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? root.accentColor : root.borderColor
@@ -374,7 +342,11 @@ Flickable {
             RowLayout { Layout.fillWidth: true; spacing: 8
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "NOT NOW"; subdued: true; onTriggered: detectedControllerDialog.close() }
-                ActionButton { label: detectedControllerDialog.selectedController() ? "SET UP " + detectedControllerDialog.selectedController().name.toUpperCase() : "SET UP CONTROLLER"; actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
+                ActionButton { visible: detectedControllerDialog.targetDirectInputIds.length === 1 && backend.deviceRigs.length === 1; label: "SET UP & ADD TO " + (backend.deviceRigs.length === 1 ? backend.deviceRigs[0].name.toUpperCase() : "RIG"); actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
+                    onTriggered: { if (backend.addDetectedDeviceToRig(backend.deviceRigs[0].id, detectedControllerDialog.selectedDirectInputId)) { detectedControllerDialog.close() } } }
+                ActionButton { visible: detectedControllerDialog.targetDirectInputIds.length > 1; label: "USE TOGETHER"; actionEnabled: detectedControllerDialog.targetDirectInputIds.length > 1
+                    onTriggered: { const rigId = backend.createDeviceRigFromDetected("New Flight Rig", detectedControllerDialog.targetDirectInputIds); if (rigId !== "") { backend.activateDeviceRig(rigId); detectedControllerDialog.close() } } }
+                ActionButton { label: detectedControllerDialog.targetDirectInputIds.length > 1 ? "SET UP SEPARATELY" : (detectedControllerDialog.selectedController() ? "SET UP " + detectedControllerDialog.selectedController().name.toUpperCase() : "SET UP CONTROLLER"); actionEnabled: detectedControllerDialog.selectedDirectInputId.length > 0
                     onTriggered: { if (backend.selectNewController(detectedControllerDialog.selectedDirectInputId)) { detectedControllerDialog.close(); readinessDialog.open() } } }
             }
         }

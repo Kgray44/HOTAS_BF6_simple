@@ -23,6 +23,7 @@ Flickable {
     readonly property color dangerColor: legacy ? "#c98e97" : theme.danger
     readonly property color primaryColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 900
+    signal setupRequested()
 
     function statusLabel() {
         if (!backend.physicalConnected) return "WAITING FOR INPUT"
@@ -74,6 +75,37 @@ Flickable {
         Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
         Rectangle { visible: theme.topGun && parent.enabledAction; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 3; width: 25; height: 2; color: theme.orangeBright }
         MouseArea { id: buttonMouse; anchors.fill: parent; enabled: parent.enabledAction; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
+    }
+
+    // Readiness is intentionally a small, stable dashboard row rather than a
+    // four-column mosaic. The old fixed grid made its final check compete with
+    // the verify command at ordinary desktop widths.
+    component ReadinessCheck: Rectangle {
+        required property var check
+        objectName: "readinessCheckCard"
+        Layout.fillWidth: true
+        implicitHeight: root.width < 700 ? 64 : 50
+        radius: theme.topGun ? 1 : theme.controlRadius
+        color: root.insetColor
+        border.color: root.borderColor
+        RowLayout {
+            anchors.fill: parent; anchors.margins: 9; spacing: 8
+            Rectangle {
+                width: 8; height: 8; radius: theme.topGun ? 0 : 4
+                color: check.severity === "ready" ? root.readyColor
+                     : check.severity === "error" ? root.dangerColor : root.warningColor
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 1
+                Text { Layout.fillWidth: true; text: check.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: check.message || "Current setup status"; color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
+            }
+            StatusBadge {
+                label: check.state
+                tone: check.severity === "ready" ? root.readyColor
+                      : check.severity === "error" ? root.dangerColor : root.warningColor
+            }
+        }
     }
 
     component Capability: Rectangle {
@@ -133,9 +165,9 @@ Flickable {
                 GridLayout { Layout.fillWidth: true; Layout.fillHeight: true; columns: root.narrow ? 1 : 5; columnSpacing: root.narrow ? 5 : 10; rowSpacing: 5
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
                         Column { anchors.centerIn: parent; width: parent.width - 22; spacing: 4
-                            Text { text: theme.topGun ? "PHYSICAL INPUT" : "Physical Controller"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                            Text { width: parent.width; text: backend.physicalConnected ? backend.deviceName : "No controller connected"; color: root.textColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
-                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : "CONNECT TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
+                            Text { text: theme.topGun ? "DEVICE RIG INPUT" : "Device Rig Input"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
+                            Text { width: parent.width; text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : backend.physicalConnected ? backend.deviceName : "No Device Rig active"; color: root.textColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
+                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : backend.activeDeviceRigId !== "" ? "RIG NEEDS INPUT" : "CREATE RIG TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
                         }
                     }
                     Item { visible: !root.narrow; Layout.preferredWidth: 56; Layout.fillHeight: true
@@ -163,13 +195,14 @@ Flickable {
         }
 
         GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 14; rowSpacing: 14
-            Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONTROLLER"; title: backend.physicalConnected ? backend.deviceName : "Controller disconnected"; accent: backend.physicalConnected ? root.readyColor : root.warningColor
+            Panel { Layout.fillWidth: true; eyebrow: "ACTIVE DEVICE RIG"; title: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : "No Device Rig active"; accent: backend.activeDeviceRigId !== "" ? root.readyColor : root.warningColor
                 RowLayout { Layout.fillWidth: true
-                    StatusBadge { label: backend.physicalConnected ? "CONNECTED" : "OFFLINE"; tone: backend.physicalConnected ? root.readyColor : root.warningColor }
+                    StatusBadge { label: backend.activeDeviceRigId !== "" ? "ACTIVE" : "NOT SELECTED"; tone: backend.activeDeviceRigId !== "" ? root.readyColor : root.warningColor }
+                    StatusBadge { label: backend.physicalConnected ? "INPUT CONNECTED" : "INPUT OFFLINE"; tone: backend.physicalConnected ? root.readyColor : root.warningColor }
                     StatusBadge { label: backend.controllerReadinessState; tone: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor }
                     Item { Layout.fillWidth: true }
                 }
-                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Connect or select a controller from Settings to begin verification."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
+                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Create or manage Device Rigs in Devices, then run Check Setup."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
                 GridLayout { Layout.fillWidth: true; columns: 3; columnSpacing: 7
                     Capability { value: backend.axisCount; label: "AXES" }
                     Capability { value: backend.buttonCount; label: "BUTTONS" }
@@ -191,20 +224,18 @@ Flickable {
             }
         }
 
-        Panel { Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
-            GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 4; columnSpacing: 12; rowSpacing: 8
-                Repeater { model: backend.controllerReadinessChecks
-                    delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 44; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
-                        RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
-                            Rectangle { width: 8; height: 8; radius: theme.topGun ? 0 : 4; color: modelData.severity === "ready" ? root.readyColor : modelData.severity === "error" ? root.dangerColor : root.warningColor }
-                            ColumnLayout { Layout.fillWidth: true; spacing: 1
-                                Text { text: modelData.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: modelData.state; color: root.textColor; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                            }
-                        }
+        Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
+            ColumnLayout { objectName: "systemReadinessList"; Layout.fillWidth: true; spacing: 8
+                Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: backend.controllerReadinessChecks
+                    delegate: ReadinessCheck {
+                        required property var modelData
+                        check: modelData
                     }
                 }
-                DashboardButton { label: "VERIFY SETUP"; Layout.alignment: Qt.AlignVCenter; onTriggered: backend.verifyHotasSetup() }
+            }
+            RowLayout { Layout.fillWidth: true
+                Text { Layout.fillWidth: true; text: backend.physicalConnected || backend.activeDeviceRigId !== "" ? "One guided Setup Assistant can check your physical controller, virtual controller, visibility, and controls." : "Connect a physical controller or create a Device Rig to start setup."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                DashboardButton { objectName: "systemReadinessVerifyButton"; label: "CHECK SETUP"; enabledAction: backend.physicalConnected || backend.activeDeviceRigId !== ""; onTriggered: root.setupRequested() }
             }
         }
 
@@ -218,11 +249,11 @@ Flickable {
             }
         }
 
-        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.activeProfileDisplayName; accent: root.primaryColor
+        Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.effectiveProfileDisplayName; accent: root.primaryColor
             RowLayout { Layout.fillWidth: true; spacing: 22
                 Column { spacing: 3
                     Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.activeProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    Text { text: backend.effectiveProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
                 }
                 Column { spacing: 3
                     Text { text: "MAPPED AXES"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }

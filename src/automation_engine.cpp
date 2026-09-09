@@ -422,6 +422,99 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
     return result;
 }
 
+std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
+    const MapperConfiguration &configuration, const RuntimeProfileCache &cache,
+    const QString &controllerRecordId, const QString &outputLayoutId,
+    bool multiMemberRig, QString *qualificationIssue)
+{
+    if (qualificationIssue) qualificationIssue->clear();
+    MapperConfiguration projected = configuration;
+    projected.automations.clear();
+    const auto physicalCondition = [](AutomationConditionType type) {
+        return type != AutomationConditionType::Always
+            && type != AutomationConditionType::BaseProfileIs
+            && type != AutomationConditionType::EffectiveProfileIs;
+    };
+    const auto deviceAction = [](AutomationActionType type) {
+        return type == AutomationActionType::AxisScale || type == AutomationActionType::AxisOffset
+            || type == AutomationActionType::AxisClamp || type == AutomationActionType::AxisOverride
+            || type == AutomationActionType::AxisMix || type == AutomationActionType::AxisFollow
+            || type == AutomationActionType::AdaptiveResponseEnable
+            || type == AutomationActionType::AdaptiveResponseDisable
+            || type == AutomationActionType::AdaptiveResponsePreset;
+    };
+    const auto vjoyAction = [](AutomationActionType type) {
+        return type == AutomationActionType::VJoyButtonHold
+            || type == AutomationActionType::VJoyButtonToggle
+            || type == AutomationActionType::VJoyButtonTap;
+    };
+    const auto reject = [qualificationIssue](const QString &message) {
+        if (qualificationIssue && qualificationIssue->isEmpty()) *qualificationIssue = message;
+    };
+
+    for (const AutomationDefinition &rule : configuration.automations) {
+        // Disabled drafts do not participate in a runtime topology. They are
+        // retained durably and can be qualified when the user enables them.
+        if (!rule.enabled) continue;
+        bool localPhysicalSource = false;
+        bool foreignPhysicalSource = false;
+        bool unqualifiedPhysicalSource = false;
+        for (const AutomationConditionDefinition &condition : rule.conditions) {
+            if (!physicalCondition(condition.type)) continue;
+            if (condition.controllerRecordId.isEmpty()) {
+                unqualifiedPhysicalSource = true;
+            } else if (condition.controllerRecordId == controllerRecordId) {
+                localPhysicalSource = true;
+            } else {
+                foreignPhysicalSource = true;
+            }
+        }
+        if (unqualifiedPhysicalSource && multiMemberRig) {
+            reject(u"An Automation physical condition needs an explicit Device Rig input."_qs);
+            continue;
+        }
+        if (localPhysicalSource && foreignPhysicalSource) {
+            reject(u"An Automation rule combines physical inputs from different Device Rig members."_qs);
+            continue;
+        }
+        // A rule owned by another member will be projected when that member's
+        // fixed session is compiled.  It is not a local failure.
+        if (foreignPhysicalSource && !localPhysicalSource) continue;
+        if (!localPhysicalSource && multiMemberRig) {
+            reject(u"A multi-device Automation needs one explicit physical source."_qs);
+            continue;
+        }
+
+        bool validForMember = true;
+        for (const AutomationActionDefinition &action : rule.actions) {
+            if (vjoyAction(action.type)) {
+                if (action.outputLayoutId.isEmpty()) {
+                    reject(u"An Automation vJoy action needs an explicit Device Rig output."_qs);
+                    validForMember = false;
+                } else if (action.outputLayoutId != outputLayoutId) {
+                    // The physical source belongs to this member, but its
+                    // button action points at a different output. Do not
+                    // silently publish that output from the wrong session.
+                    reject(u"An Automation source and vJoy output are assigned to different Device Rig routes."_qs);
+                    validForMember = false;
+                }
+            }
+            if (deviceAction(action.type) && multiMemberRig
+                && action.sourceControllerRecordId != controllerRecordId) {
+                reject(u"A device-scoped Automation action does not match its physical source."_qs);
+                validForMember = false;
+            }
+            if ((action.type == AutomationActionType::ProfileHold
+                 || action.type == AutomationActionType::ProfileToggle) && multiMemberRig) {
+                reject(u"Profile-changing Automation must be resolved from one physical device before use in a Device Rig."_qs);
+                validForMember = false;
+            }
+        }
+        if (validForMember) projected.automations.push_back(rule);
+    }
+    return compileAutomationSet(projected, cache);
+}
+
 void AutomationRuntime::reset()
 {
     m_conditionStates = {};

@@ -1,14 +1,15 @@
 [
   {
     "name": "Real-Time Mapping Runtime",
-    "description": "A dedicated DirectInput-to-vJoy worker owns report processing so controller output is not scheduled by the UI.",
+    "description": "A dedicated DirectInput-to-vJoy worker owns bounded single-device and Device Rig report processing so controller output is not scheduled by the UI.",
     "subfeatures": [
       "Independent mapping worker with a bounded target report rate and UI snapshots published separately.",
       "Precompiled mapping state swapped between reports rather than rebuilt inside the hot path.",
       "Event-driven bumpless mapping transitions anchor to the actual virtual output, then decay only the offset while the new mapping continues to follow physical input directly.",
       "Change-driven vJoy writes for stationary inputs and stable idle behavior.",
       "Safe reset/quiesce behavior on Mapping Off, controller disconnect, or output invalidation.",
-      "Fresh physical snapshot seeding after reconnect to avoid synthetic button edges."
+      "Fresh physical snapshot seeding after reconnect to avoid synthetic button edges.",
+      "Fixed-capacity Device Rig sessions independently acquire known physical inputs and write each configured virtual output without report-path identity lookup, UI work, or allocation."
     ]
   },
   {
@@ -136,13 +137,18 @@
   },
   {
     "name": "Universal Controller Management",
-    "description": "HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit mapper inputs while keeping device management outside report processing.",
+    "description": "HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit inputs and groups them into reusable Device Rigs outside report processing.",
     "subfeatures": [
       "Low-frequency inventory of attached DirectInput controllers with display name, DirectInput identity, HID path when available, capability counts, and virtual-device exclusion.",
       "Persistent verified-device records use layered HID, DirectInput, product, vendor/product, and capability identity matching without silently choosing ambiguous identical hardware.",
       "Controller Manager shows connected, verified, new, active, and offline devices together and supports setup, active selection, refresh, and forgetting a device.",
       "Calibration and remembered vJoy capability requirements belong to the physical controller rather than leaking between unrelated hardware.",
-      "Known healthy controllers reconnect quietly; new controllers invoke themed verification, and optional automatic switching only uses one unambiguous verified device."
+      "Known healthy controllers reconnect quietly; new controllers invoke themed verification, and optional automatic switching only uses one unambiguous verified device.",
+      "Device Rigs persist required/optional physical members, enabled multi-output targets, default/priority/fallback policy, disconnect behavior, and exact member-to-output assignments.",
+      "Smart inventory reconciliation retains a healthy active rig, selects complete eligible rigs by saved default/priority policy, recognizes partial rigs, and never infers an identity from a friendly name.",
+      "The Devices workspace provides landing, physical-device, rig, and virtual-output detail surfaces with progressive disclosure rather than duplicating device management in Settings.",
+      "Setup Assistant can be opened at application, Device Rig, physical-device, or Virtual Output scope. It diagnoses structured issues with an exact next action, shows when an offline device is only an offline state, and asks for meaningful input movement plus a causally changed mapped output before live proof passes.",
+      "A compact global App Health control summarizes actionable device, mapping, profile, automation, update, and runtime findings and deep-links to the owning workspace without turning normal pages into permanent warning banners."
     ]
   },
   {
@@ -155,6 +161,8 @@
       "vJoy readiness, button capacity, axis availability, and POV capability reporting.",
       "HidHide installation/cloaking status when the supported CLI can answer.",
       "Automation rule count, active count, invalid health, and evaluation timing.",
+      "Crash Reporter & Recovery Diagnostics writes bounded local crash metadata, recent control-plane events, and a Windows minidump where possible, then opens a separate local reporter with copy, folder, and user-initiated restart actions. Nothing is uploaded automatically.",
+      "A lightweight session marker distinguishes clean shutdown from a previous abnormal exit and offers local crash-report access on the next startup when a report could not be completed.",
       "Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, motion state, reversal count, and safety-clamp count.",
       "Actual parked disabled-axis output reported separately from raw physical input.",
       "Configuration warnings for capability mismatch or unavailable targets."
@@ -162,16 +170,18 @@
   },
   {
     "name": "User Interface and Themes",
-    "description": "The app provides three persistent visual systems without allowing presentation state to alter mapping semantics.",
+    "description": "The app provides four persistent visual systems without allowing presentation state to alter mapping semantics.",
     "subfeatures": [
       "Legacy theme preserving the v1.6.3 presentation.",
       "Standard theme as the modern general-purpose interface.",
       "Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.",
+      "Day Ops is a dedicated bright naval-aviation theme: carrier-deck gray/aluminum surfaces, navy technical lettering, steel framing, safety-orange controls, and dark inset instrumentation graphs rather than generic light mode.",
       "Instant theme switching with theme state stored separately from mapper configuration.",
       "Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.",
       "Adaptive Response page with per-axis preset strip, Global/Category/Profile scope selection, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.",
       "Shared themed selectors, numeric inputs, dialogs, cards, and status controls.",
-      "Curve Transition Smoothing controls use the shared themed Settings and Profile Library surfaces in Legacy, Standard, and Top Gun.",
+      "Curve Transition Smoothing, Device Rigs, top-bar device context, and unified verification use the same shared themed surfaces in Legacy, Standard, Top Gun, and Day Ops.",
+      "Overview names the active Device Rig and effective profile; Settings is limited to application preferences and global maintenance, while physical devices and Virtual Outputs are owned by Devices.",
       "Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces."
     ]
   },
@@ -206,7 +216,7 @@
   },
   {
     "name": "HOTAS Setup & Verification",
-    "description": "Passive startup checks and Settings-accessible full verification explain the complete HOTAS chain without moving setup work into real-time mapping.",
+    "description": "One shared Device Rig setup and verification system explains a single controller or a full multi-device chain without moving setup work into real-time mapping.",
     "subfeatures": [
       "Inspects the selected DirectInput controller, axes, buttons, POVs, active virtual-output layout descriptor, HidHide state, and current mapper output requirements.",
       "Computes required vJoy axes, buttons, and native POV capacity from current profiles and Automation rather than cloning the physical device.",
@@ -216,7 +226,7 @@
       "Uses active DirectInput reports and the exact DirectInput HID/PnP path before treating identity as incomplete.",
       "Full verification and any driver repair restore the Mapping On/Off state that existed before the operation.",
       "Shows themed repair confirmation, low-frequency repair progress, structured operation outcomes, last-verified time, clear Physical HOTAS/vJoy/HidHide states, and only contextual repair actions.",
-      "One shared verification model is presented through the existing Legacy, Standard, and Top Gun design systems."
+      "One shared verification model presents required/optional input identity, reports, calibration, output capabilities, exact HidHide visibility, compiled routing, and per-member/per-output live evidence through Legacy, Standard, Top Gun, and Day Ops."
     ]
   },
   {
@@ -241,6 +251,8 @@
       "Schema 20 adds deterministic Curve Transition Smoothing defaults and an optional profile override while preserving prior mapping behavior.",
       "Schema 21 adds safe-off Adaptive Response defaults plus global/category/profile layers, bounded custom presets, and portable preset dependencies; legacy configurations retain direct physical response.",
       "Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.",
+      "Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.",
+      "Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.",
       "Automation schema defaults new temporal fields deterministically.",
       "Profile IDs remain stable for controls and readable summaries use profile names.",
       "Runtime-only toggles, latches, timers, and held-control state are never persisted."

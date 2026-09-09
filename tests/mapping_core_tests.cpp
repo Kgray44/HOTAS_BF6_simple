@@ -1,9 +1,11 @@
 #include "axis_transform.h"
 #include "axis_mapping_transition.h"
 #include "adaptive_response.h"
+#include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
 #include "controller_manager.h"
+#include "device_rig.h"
 #include "event_log.h"
 #include "input_learning.h"
 #include "physical_input_monitor.h"
@@ -686,6 +688,38 @@ QJsonObject legacyConfigurationJson(const MapperConfiguration &configuration, in
 }
 }
 
+SavedControllerRecord legacyMigrationRecord(const QString &id, const QString &directInputId,
+                                            bool verified)
+{
+    DiscoveredController discovered;
+    discovered.name = id + QStringLiteral(" HOTAS");
+    discovered.directInputId = directInputId;
+    discovered.productGuid = id + QStringLiteral("-PRODUCT");
+    discovered.hidInstanceId = QStringLiteral("HID\\") + id;
+    discovered.vendorId = 0x1234;
+    discovered.productId = 0x1000;
+    discovered.axisCount = 4;
+    discovered.buttonCount = 12;
+    discovered.povCount = 1;
+    discovered.axes[0] = true;
+    discovered.axes[1] = true;
+    SavedControllerRecord record = ControllerManager::verifiedRecord(discovered, {}, {}, id);
+    if (!verified) record.lastVerified.clear();
+    return record;
+}
+
+QJsonObject v23BeforeDeviceRigSchema(MapperConfiguration configuration)
+{
+    QJsonObject json = ConfigStore::toJson(configuration);
+    json.insert(QStringLiteral("version"), 22);
+    json.remove(QStringLiteral("deviceRigs"));
+    json.remove(QStringLiteral("activeDeviceRigId"));
+    json.remove(QStringLiteral("editingDeviceRigId"));
+    json.remove(QStringLiteral("editingDeviceRecordIds"));
+    json.remove(QStringLiteral("deviceRigMigrationWarning"));
+    return json;
+}
+
 class MappingCoreTests final : public QObject {
     Q_OBJECT
 
@@ -757,6 +791,18 @@ private slots:
     void configurationRoundTrips();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
+    void v24MigrationPreservesVerifiedSavedActiveController();
+    void v24MigrationPreservesUnverifiedSavedActiveController();
+    void v24MigrationResolvesPreferredSavedController();
+    void v24MigrationPreservesOfflineSavedController();
+    void v24MigrationRefusesAmbiguousLegacyController();
+    void deviceRigRuntimeCompilesDistinctInputsAndOutputs();
+    void deviceRigRuntimeRejectsAmbiguousAxisDestination();
+    void deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput();
+    void deviceRigRuntimeRejectsUnqualifiedMultiDeviceAutomation();
+    void deviceRigRuntimeDisconnectGateHandlesLostSessionsAndReconnect();
+    void deviceRigHealthKeepsOptionalOfflineNonBlocking();
+    void deviceRigDetectionUsesSavedPolicyAndRefusesTrueTie();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
     void vjoyAxisDescriptorSupersetsAreAccepted();
     void physicalAxisActivityRequiresCompletedCalibrationTravel();
@@ -1686,7 +1732,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 1);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -3424,6 +3470,419 @@ void MappingCoreTests::controllerRegistryPersistsPerDeviceCalibrationAndRequirem
     QCOMPARE(restored.savedControllers.front().vjoyRequirements.deviceId, 2);
 }
 
+void MappingCoreTests::v24MigrationPreservesVerifiedSavedActiveController()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord record = legacyMigrationRecord(QStringLiteral("verified"),
+        QStringLiteral("{VERIFIED-INSTANCE}"), true);
+    record.calibration[0] = {true, -0.90F, 0.04F, 0.91F};
+    configuration.savedControllers = {record};
+    configuration.activeControllerRecordId = record.id;
+    activeProfile(configuration).axes[0].target = VirtualAxis::Ry;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(migrated.deviceRigs.size()), 1);
+    const DeviceRig &rig = migrated.deviceRigs.front();
+    QCOMPARE(rig.members.front().controllerRecordId, record.id);
+    QCOMPARE(migrated.activeDeviceRigId, rig.id);
+    const DeviceProfileMapping *mapping = findDeviceProfileMapping(activeProfile(migrated), record.id);
+    QVERIFY(mapping);
+    QCOMPARE(mapping->axes[0].target, VirtualAxis::Ry);
+    QCOMPARE(compileDeviceProfileMapping(migrated, activeProfile(migrated), *mapping,
+             &migrated.savedControllers.front()).axes[0].calibration.center, 0.04F);
+}
+
+void MappingCoreTests::v24MigrationPreservesUnverifiedSavedActiveController()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    const SavedControllerRecord record = legacyMigrationRecord(QStringLiteral("unverified"),
+        QStringLiteral("{UNVERIFIED-INSTANCE}"), false);
+    configuration.savedControllers = {record};
+    configuration.activeControllerRecordId = record.id;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(migrated.deviceRigs.size()), 1);
+    QCOMPARE(migrated.deviceRigs.front().members.front().controllerRecordId, record.id);
+    QVERIFY(migrated.savedControllers.front().lastVerified.isEmpty());
+    QVERIFY(migrated.deviceRigMigrationWarning.isEmpty());
+}
+
+void MappingCoreTests::v24MigrationResolvesPreferredSavedController()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    const SavedControllerRecord record = legacyMigrationRecord(QStringLiteral("preferred"),
+        QStringLiteral("{PREFERRED-INSTANCE}"), false);
+    configuration.savedControllers = {record};
+    configuration.activeControllerRecordId.clear();
+    configuration.preferredDeviceId = record.lastDirectInputId;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(migrated.deviceRigs.size()), 1);
+    QCOMPARE(migrated.deviceRigs.front().members.front().controllerRecordId, record.id);
+}
+
+void MappingCoreTests::v24MigrationPreservesOfflineSavedController()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord record = legacyMigrationRecord(QStringLiteral("offline"),
+        QStringLiteral("{OFFLINE-INSTANCE}"), true);
+    record.lastSeen.clear();
+    configuration.savedControllers = {record};
+    configuration.activeControllerRecordId = record.id;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(migrated.deviceRigs.size()), 1);
+    QCOMPARE(migrated.deviceRigs.front().members.front().controllerRecordId, record.id);
+}
+
+void MappingCoreTests::v24MigrationRefusesAmbiguousLegacyController()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord first = legacyMigrationRecord(QStringLiteral("first"),
+        QStringLiteral("{AMBIGUOUS-INSTANCE}"), false);
+    SavedControllerRecord second = legacyMigrationRecord(QStringLiteral("second"),
+        QStringLiteral("{AMBIGUOUS-INSTANCE}"), false);
+    configuration.savedControllers = {first, second};
+    configuration.activeControllerRecordId.clear();
+    configuration.preferredDeviceId = first.lastDirectInputId;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.deviceRigs.empty());
+    QVERIFY(!migrated.deviceRigMigrationWarning.isEmpty());
+}
+
+void MappingCoreTests::deviceRigRuntimeCompilesDistinctInputsAndOutputs()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord stick = legacyMigrationRecord(QStringLiteral("stick"),
+        QStringLiteral("{STICK-INSTANCE}"), true);
+    SavedControllerRecord throttle = legacyMigrationRecord(QStringLiteral("throttle"),
+        QStringLiteral("{THROTTLE-INSTANCE}"), true);
+    configuration.savedControllers = {stick, throttle};
+    VirtualOutputLayout secondLayout = configuration.outputLayouts.front();
+    secondLayout.id = QStringLiteral("secondary-output");
+    secondLayout.name = QStringLiteral("Secondary Output");
+    secondLayout.requirements.deviceId = 2;
+    configuration.outputLayouts.push_back(secondLayout);
+    DeviceRig rig;
+    rig.id = QStringLiteral("flight-rig");
+    rig.name = QStringLiteral("Flight Rig");
+    rig.members = {{stick.id, true, true, defaultOutputLayoutId()},
+                   {throttle.id, true, true, secondLayout.id}};
+    rig.outputs = {{defaultOutputLayoutId(), true}, {secondLayout.id, true}};
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.deviceRigId = rig.id;
+    DeviceProfileMapping &stickMapping = ensureDeviceProfileMapping(profile, stick.id);
+    stickMapping.axes[static_cast<size_t>(PhysicalAxis::X)].target = VirtualAxis::X;
+    for (int axis = 1; axis < kPhysicalAxisCount; ++axis) {
+        stickMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+    }
+    DeviceProfileMapping &throttleMapping = ensureDeviceProfileMapping(profile, throttle.id);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        throttleMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+    }
+    throttleMapping.axes[static_cast<size_t>(PhysicalAxis::Z)].target = VirtualAxis::Z;
+
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id);
+    QVERIFY(runtime.valid);
+    QCOMPARE(runtime.memberCount, 2);
+    QCOMPARE(runtime.outputCount, 2);
+    QCOMPARE(runtime.members[0].outputIndex, 0);
+    QCOMPARE(runtime.members[1].outputIndex, 1);
+    QCOMPARE(runtime.members[0].mapping.axes[static_cast<size_t>(PhysicalAxis::X)].profile.target,
+             VirtualAxis::X);
+    QCOMPARE(runtime.members[1].mapping.axes[static_cast<size_t>(PhysicalAxis::Z)].profile.target,
+             VirtualAxis::Z);
+}
+
+void MappingCoreTests::deviceRigRuntimeRejectsAmbiguousAxisDestination()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord first = legacyMigrationRecord(QStringLiteral("first-axis"),
+        QStringLiteral("{FIRST-AXIS}"), true);
+    SavedControllerRecord second = legacyMigrationRecord(QStringLiteral("second-axis"),
+        QStringLiteral("{SECOND-AXIS}"), true);
+    configuration.savedControllers = {first, second};
+    DeviceRig rig;
+    rig.id = QStringLiteral("conflict-rig");
+    rig.members = {{first.id, true, true, defaultOutputLayoutId()},
+                   {second.id, true, true, defaultOutputLayoutId()}};
+    rig.outputs = {{defaultOutputLayoutId(), true}};
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.deviceRigId = rig.id;
+    DeviceProfileMapping &firstMapping = ensureDeviceProfileMapping(profile, first.id);
+    DeviceProfileMapping &secondMapping = ensureDeviceProfileMapping(profile, second.id);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        firstMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+        secondMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+    }
+    firstMapping.axes[0].target = VirtualAxis::X;
+    secondMapping.axes[0].target = VirtualAxis::X;
+
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id);
+    QVERIFY(!runtime.valid);
+    QVERIFY(runtime.issue.contains(QStringLiteral("same virtual axis")));
+}
+
+void MappingCoreTests::deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord stick = legacyMigrationRecord(QStringLiteral("automation-stick"),
+        QStringLiteral("{AUTOMATION-STICK}"), true);
+    SavedControllerRecord throttle = legacyMigrationRecord(QStringLiteral("automation-throttle"),
+        QStringLiteral("{AUTOMATION-THROTTLE}"), true);
+    configuration.savedControllers = {stick, throttle};
+    DeviceRig rig;
+    rig.id = QStringLiteral("automation-rig");
+    rig.members = {{stick.id, true, true, defaultOutputLayoutId()},
+                   {throttle.id, true, true, defaultOutputLayoutId()}};
+    rig.outputs = {{defaultOutputLayoutId(), true}};
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.deviceRigId = rig.id;
+    DeviceProfileMapping &stickMapping = ensureDeviceProfileMapping(profile, stick.id);
+    DeviceProfileMapping &throttleMapping = ensureDeviceProfileMapping(profile, throttle.id);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        stickMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+        throttleMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+    }
+    AutomationDefinition automation;
+    automation.id = QStringLiteral("automation-stick-button");
+    automation.name = QStringLiteral("Stick button");
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonHeld;
+    condition.button = 1;
+    condition.controllerRecordId = stick.id;
+    automation.conditions = {condition};
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 1;
+    action.outputLayoutId = defaultOutputLayoutId();
+    automation.actions = {action};
+    configuration.automations = {automation};
+
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id);
+    QVERIFY(runtime.valid);
+    QVERIFY(runtime.members[0].automation);
+    QVERIFY(runtime.members[1].automation);
+    QCOMPARE(runtime.members[0].automation->ruleCount, 1);
+    QCOMPARE(runtime.members[1].automation->ruleCount, 0);
+}
+
+void MappingCoreTests::deviceRigRuntimeRejectsUnqualifiedMultiDeviceAutomation()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord first = legacyMigrationRecord(QStringLiteral("automation-first"),
+        QStringLiteral("{AUTOMATION-FIRST}"), true);
+    SavedControllerRecord second = legacyMigrationRecord(QStringLiteral("automation-second"),
+        QStringLiteral("{AUTOMATION-SECOND}"), true);
+    configuration.savedControllers = {first, second};
+    DeviceRig rig;
+    rig.id = QStringLiteral("unqualified-automation-rig");
+    rig.members = {{first.id, true, true, defaultOutputLayoutId()},
+                   {second.id, true, true, defaultOutputLayoutId()}};
+    rig.outputs = {{defaultOutputLayoutId(), true}};
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.deviceRigId = rig.id;
+    DeviceProfileMapping &firstMapping = ensureDeviceProfileMapping(profile, first.id);
+    DeviceProfileMapping &secondMapping = ensureDeviceProfileMapping(profile, second.id);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        firstMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+        secondMapping.axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
+    }
+    AutomationDefinition automation;
+    automation.id = QStringLiteral("unqualified-automation");
+    automation.name = QStringLiteral("Unqualified input");
+    AutomationConditionDefinition condition;
+    condition.type = AutomationConditionType::ButtonHeld;
+    condition.button = 1;
+    automation.conditions = {condition};
+    AutomationActionDefinition action;
+    action.type = AutomationActionType::VJoyButtonHold;
+    action.virtualButton = 1;
+    action.outputLayoutId = defaultOutputLayoutId();
+    automation.actions = {action};
+    configuration.automations = {automation};
+
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id);
+    QVERIFY(!runtime.valid);
+    QVERIFY(runtime.issue.contains(QStringLiteral("explicit Device Rig input")));
+}
+
+void MappingCoreTests::deviceRigRuntimeDisconnectGateHandlesLostSessionsAndReconnect()
+{
+    // This exercises the same post-poll gate MappingWorker uses.  The states
+    // model actual HRESULT boundaries without requiring a physical controller:
+    // DIERR_INPUTLOST, DIERR_NOTACQUIRED, a fully disconnected session, and
+    // a later exact-session reconnect.
+    CompiledDeviceRigRuntime runtime;
+    runtime.memberCount = 3;
+    runtime.outputCount = 1;
+    runtime.valid = true;
+    runtime.members[0].required = true;
+    runtime.members[1].required = true;
+    runtime.members[2].required = false;
+    std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> inputs{};
+    inputs.fill(DeviceRigInputSessionState::Disconnected);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[1] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::Connected;
+
+    DeviceRigRuntimeAvailability state = evaluateDeviceRigRuntimeAvailability(runtime, inputs,
+        true, true, DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QCOMPARE(state.connectedMemberCount, 3);
+    QVERIFY(state.anyConnected);
+    QVERIFY(state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // A required member's DIERR_INPUTLOST parks only its contribution.  The
+    // surviving required + optional sessions keep their compiled routes live
+    // under the normal Suspend Affected Routes policy.
+    inputs[0] = DeviceRigInputSessionState::InputLost;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QCOMPARE(state.connectedMemberCount, 2);
+    QVERIFY(state.anyConnected);
+    QVERIFY(!state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // The strict policy instead suspends the complete rig after a required
+    // loss, while DIERR_NOTACQUIRED on an optional member remains nonblocking.
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::DeactivateRig);
+    QVERIFY(!state.mappingAllowed);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::NotAcquired;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::DeactivateRig);
+    QVERIFY(state.allRequiredConnected);
+    QVERIFY(state.mappingAllowed);
+
+    // All members lost always neutralizes the mapping gate.  A later
+    // reconnect restores the same compiled topology without a vJoy rebuild.
+    inputs[0] = DeviceRigInputSessionState::Disconnected;
+    inputs[1] = DeviceRigInputSessionState::InputLost;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QVERIFY(state.allMembersLost);
+    QVERIFY(!state.anyConnected);
+    QVERIFY(!state.mappingAllowed);
+    inputs[0] = DeviceRigInputSessionState::Connected;
+    inputs[1] = DeviceRigInputSessionState::Connected;
+    inputs[2] = DeviceRigInputSessionState::Connected;
+    state = evaluateDeviceRigRuntimeAvailability(runtime, inputs, true, true,
+        DeviceRigDisconnectBehavior::SuspendAffectedRoutes);
+    QVERIFY(state.mappingAllowed);
+}
+
+void MappingCoreTests::deviceRigHealthKeepsOptionalOfflineNonBlocking()
+{
+    const SavedControllerRecord required = legacyMigrationRecord(QStringLiteral("required"),
+        QStringLiteral("{REQUIRED-INSTANCE}"), true);
+    const SavedControllerRecord optional = legacyMigrationRecord(QStringLiteral("optional"),
+        QStringLiteral("{OPTIONAL-INSTANCE}"), true);
+    DeviceRig rig;
+    rig.id = QStringLiteral("required-plus-optional");
+    rig.members = {{required.id, true, true, defaultOutputLayoutId()},
+                   {optional.id, true, false, defaultOutputLayoutId()}};
+    rig.outputs = {{defaultOutputLayoutId(), true}};
+
+    DiscoveredController connectedRequired;
+    connectedRequired.name = required.displayName;
+    connectedRequired.directInputId = required.lastDirectInputId;
+    connectedRequired.productGuid = required.productGuid;
+    connectedRequired.hidInstanceId = required.hidInstanceId;
+    connectedRequired.vendorId = required.vendorId;
+    connectedRequired.productId = required.productId;
+    connectedRequired.axisCount = 4;
+    connectedRequired.buttonCount = 12;
+    connectedRequired.povCount = 1;
+    connectedRequired.axes[0] = true;
+    connectedRequired.axes[1] = true;
+    connectedRequired.connected = true;
+
+    const DeviceRigStatus status = evaluateDeviceRig(rig, {required, optional},
+                                                       {connectedRequired});
+    QVERIFY(status.complete);
+    QCOMPARE(status.health, DeviceRigHealth::Partial);
+    QCOMPARE(status.missingOptionalMemberIds, QStringList{optional.id});
+    QVERIFY(status.missingRequiredMemberIds.isEmpty());
+
+    rig.members[0].enabled = false;
+    rig.members[1].enabled = false;
+    const DeviceRigStatus noEffectiveInputs = evaluateDeviceRig(rig, {required, optional},
+                                                                 {connectedRequired});
+    QCOMPARE(noEffectiveInputs.health, DeviceRigHealth::NeedsAttention);
+    QVERIFY(!noEffectiveInputs.complete);
+}
+
+void MappingCoreTests::deviceRigDetectionUsesSavedPolicyAndRefusesTrueTie()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    DeviceRig first;
+    first.id = QStringLiteral("first-rig");
+    first.name = QStringLiteral("First Rig");
+    first.activationPriority = 20;
+    DeviceRig second;
+    second.id = QStringLiteral("second-rig");
+    second.name = QStringLiteral("Second Rig");
+    second.isDefault = true;
+    second.activationPriority = 10;
+    configuration.deviceRigs = {first, second};
+
+    DeviceRigStatus firstReady;
+    firstReady.rigId = first.id;
+    firstReady.health = DeviceRigHealth::Ready;
+    firstReady.complete = true;
+    DeviceRigStatus secondReady;
+    secondReady.rigId = second.id;
+    secondReady.health = DeviceRigHealth::Ready;
+    secondReady.complete = true;
+    const QList<DeviceRigStatus> bothReady{firstReady, secondReady};
+
+    DeviceRigActivationDecision decision = chooseDeviceRigActivation(configuration, bothReady);
+    QCOMPARE(decision.rigId, second.id);
+    QVERIFY(!decision.ambiguous);
+
+    configuration.activeDeviceRigId = first.id;
+    decision = chooseDeviceRigActivation(configuration, bothReady);
+    QCOMPARE(decision.rigId, first.id);
+    QVERIFY(decision.retainedActiveRig);
+
+    configuration.deviceRigs[0].disconnectBehavior = DeviceRigDisconnectBehavior::UseFallback;
+    configuration.deviceRigs[0].fallbackRigId = second.id;
+    DeviceRigStatus firstOffline = firstReady;
+    firstOffline.complete = false;
+    firstOffline.health = DeviceRigHealth::Offline;
+    decision = chooseDeviceRigActivation(configuration, {firstOffline, secondReady});
+    QCOMPARE(decision.rigId, second.id);
+    QVERIFY(!decision.retainedActiveRig);
+
+    configuration.activeDeviceRigId.clear();
+    configuration.deviceRigs[1].isDefault = false;
+    configuration.deviceRigs[1].activationPriority = configuration.deviceRigs[0].activationPriority;
+    decision = chooseDeviceRigActivation(configuration, bothReady);
+    QVERIFY(decision.ambiguous);
+    QVERIFY(decision.rigId.isEmpty());
+}
+
 void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection()
 {
     DiscoveredController first;
@@ -4972,7 +5431,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -5215,7 +5674,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

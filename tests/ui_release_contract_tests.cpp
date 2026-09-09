@@ -25,16 +25,21 @@ private slots:
     void presentationLifecycleSleepsOnlyTheGuiControlPlane();
     void curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts();
     void profileOverflowMenuUsesThemedControlContract();
+    void unifiedVerifierUsesSharedThemedButtons();
+    void deviceDialogsUseSharedThemedHeaders();
     void reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows();
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void installerUpgradeAcceptanceTracksSchema22();
+    void mapperPostBuildDeploymentIncludesQmlModules();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
     void allThemeSelectorsUseSkinnedDarkPopups();
     void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
+    void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
+    void setupAssistantAndOutputCreationExposeObservableContracts();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -83,10 +88,15 @@ void UiReleaseContractTests::controllerSetupRetainsItsExplicitTargetAndSuccessfu
 void UiReleaseContractTests::sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit()
 {
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
-    QVERIFY(settings.contains(QStringLiteral("NO CONTROLLERS CONNECTED")));
-    QVERIFY(settings.contains(QStringLiteral("SELECTED")));
-    QVERIFY(settings.contains(QStringLiteral("OFFLINE")));
+    // Device ownership is now singular: Settings offers an intentional
+    // handoff, while Devices owns selected/offline physical-controller state.
+    QVERIFY(settings.contains(QStringLiteral("Device setup belongs in Devices")));
+    QVERIFY(settings.contains(QStringLiteral("OPEN DEVICES")));
+    QVERIFY(!settings.contains(QStringLiteral("NO CONTROLLERS CONNECTED")));
+    QVERIFY(devices.contains(QStringLiteral("EDIT THIS")));
+    QVERIFY(devices.contains(QStringLiteral("OFFLINE")));
     QVERIFY(settings.contains(QStringLiteral("up.indicator")));
     QVERIFY(settings.contains(QStringLiteral("down.indicator")));
     QVERIFY(backend.contains(QStringLiteral("Selected · Offline · Verified")));
@@ -97,6 +107,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
@@ -124,7 +135,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(backend.contains(QStringLiteral("ControllerDiscovery::enumerate()")));
     QVERIFY(backend.contains(QStringLiteral("startRunningApplicationSnapshot(false)")));
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
-    QVERIFY(settings.contains(QStringLiteral("backend.connectedControllerCount")));
+    QVERIFY(devices.contains(QStringLiteral("readonly property var controllers: backendObject ? backendObject.controllers : []")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
 }
 
@@ -212,6 +223,57 @@ void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
     QVERIFY(library.contains(QStringLiteral("id: deleteProfileDialog")));
     QVERIFY(library.contains(QStringLiteral("legacy ? \"#182126\"")));
     QVERIFY(library.contains(QStringLiteral("theme.danger")));
+}
+
+void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
+{
+    const QString readinessPanel = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
+    const QString themedButton = sourceFile(QStringLiteral("qml/ThemedButton.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+
+    // The rig verifier is a V2.4 surface in every theme. Its repair and undo
+    // workflow must use the shared themed primitive, not visually skinned
+    // native Qt buttons or a Dialog-generated Cancel action.
+    QVERIFY(readinessPanel.contains(QStringLiteral("ThemedButton")));
+    QVERIFY(!readinessPanel.contains(QStringLiteral("\n            Button {")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("standardButtons: Dialog.NoButton")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: \"ready\"")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("model: root.steps")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("modelData.state === \"current\"")));
+    QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
+    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
+}
+
+void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
+{
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString header = sourceFile(QStringLiteral("qml/ThemedDialogHeader.qml"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString context = sourceFile(QStringLiteral("qml/DeviceContextSelector.qml"));
+
+    // Devices owns eleven transactional dialogs plus the batch-review dialog.
+    // They must all use the shared header; otherwise Day Ops can silently
+    // inherit a generic white Qt title bar even if its dialog body is themed.
+    QVERIFY(devices.contains(QStringLiteral("component DeviceDialog: Dialog")));
+    QVERIFY(devices.contains(QStringLiteral("header: ThemedDialogHeader")));
+    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 12);
+    QCOMPARE(devices.count(QStringLiteral("\n    Dialog {")), 0);
+    QVERIFY(header.contains(QStringLiteral("property bool legacy")));
+    QVERIFY(header.contains(QStringLiteral("theme.panelRaised")));
+    QVERIFY(header.contains(QStringLiteral("legacy ? \"#132027\"")));
+    QVERIFY(!header.contains(QStringLiteral("#ffffff")));
+
+    // EDIT THIS replaces the shared scope with exactly one saved member. It
+    // must be visible in both the persistent header and the rig row.
+    QVERIFY(devices.contains(QStringLiteral("function editThisDevice(id)")));
+    QVERIFY(devices.contains(QStringLiteral("setEditingDeviceContext(rig.id, [id])")));
+    QVERIFY(devices.contains(QStringLiteral("property bool editingTarget: !!modelData.editing")));
+    QVERIFY(devices.contains(QStringLiteral("text: editingTarget ? \"EDITING\" : \"EDIT THIS\"")));
+    QVERIFY(!devices.contains(QStringLiteral("entries[i].id === modelData.id ? !modelData.selected")));
+    QVERIFY(backend.contains(QStringLiteral("{u\"editing\"_qs, rig.id == m_configuration.editingDeviceRigId")));
+    QVERIFY(backend.contains(QStringLiteral("emit inputTelemetryChanged();")));
+    QVERIFY(backend.contains(QStringLiteral("emit buttonTelemetryChanged();")));
+    QVERIFY(context.contains(QStringLiteral("objectName: \"deviceContextLabel\"")));
 }
 
 void UiReleaseContractTests::reliabilityCleanupUsesRequiredCapacityAndStableAutomationRows()
@@ -461,6 +523,168 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
         QStringLiteral("adaptiveResponseSimulator")));
 }
 
+void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts()
+{
+    const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+    const QString rigHeader = sourceFile(QStringLiteral("src/device_rig.h"));
+    const QString rigSource = sourceFile(QStringLiteral("src/device_rig.cpp"));
+
+    // Successful vJoy API loads stay process-resident while the mapping worker
+    // opens/closes DirectInput and output-device sessions.  Releasing output
+    // ownership is still explicit; unloading the vendor DLL between sessions
+    // is deliberately not part of the control-plane contract.
+    QVERIFY(worker.contains(QStringLiteral("persistentWorkerInterface()")));
+    QVERIFY(worker.contains(QStringLiteral("// Do not call FreeLibrary here.  A topology transaction may destroy")));
+    QVERIFY(!worker.contains(QStringLiteral("release();\n        FreeLibrary(m_library)")));
+
+    // A multi-member Device Rig has to service the same setup/reacquisition
+    // handshake as the compatibility path.  This prevents full verification
+    // from racing an acquired vJoy device or stale DirectInput handles.
+    QVERIFY(worker.contains(QStringLiteral("if (m_releaseVjoyRequested.exchange(false))")));
+    QVERIFY(worker.contains(QStringLiteral("m_vjoyReleasedForControlPlane = true;")));
+    QVERIFY(worker.contains(QStringLiteral("Device Rig DirectInput sessions released for controlled reacquisition")));
+    QVERIFY(worker.contains(QStringLiteral("m_reacquireInputAcknowledged = requestedReacquire;")));
+
+    // The per-member state must be captured after the DirectInput poll/read
+    // boundary, then used for the common mapping gate.  This keeps a lost or
+    // not-acquired member from contributing stale output on the current pass.
+    QVERIFY(rigHeader.contains(QStringLiteral("enum class DeviceRigInputSessionState")));
+    QVERIFY(rigHeader.contains(QStringLiteral("InputLost")));
+    QVERIFY(rigHeader.contains(QStringLiteral("NotAcquired")));
+    QVERIFY(rigHeader.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability")));
+    QVERIFY(worker.contains(QStringLiteral("Device Rig DirectInput loss:")));
+    QVERIFY(worker.contains(QStringLiteral("inputStates[static_cast<size_t>(index)] = read == DIERR_INPUTLOST")));
+    QVERIFY(worker.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability(plan, inputStates,")));
+    QVERIFY(rigSource.contains(QStringLiteral("deactivateForRequiredLoss = disconnectBehavior")));
+    QVERIFY(rigSource.contains(QStringLiteral("availability.mappingAllowed = mappingRequested")));
+}
+
+void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableContracts()
+{
+    const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString assistant = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
+    const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
+    const QString issue = sourceFile(QStringLiteral("src/app_issue.h"));
+    const QString health = sourceFile(QStringLiteral("qml/AppHealthPopup.qml"));
+    const QString readiness = sourceFile(QStringLiteral("src/controller_readiness.cpp"));
+
+    QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantIssues READ setupAssistantIssues")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantScopeType READ setupAssistantScopeType")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantSteps READ setupAssistantSteps")));
+    QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
+    QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
+    QVERIFY(backendHeader.contains(QStringLiteral("beginCalibrationForDevice")));
+    QVERIFY(backendHeader.contains(QStringLiteral("skipCalibrationForSetup")));
+    QVERIFY(backendHeader.contains(QStringLiteral("applySetupAssistantIssueAction")));
+    QVERIFY(backendHeader.contains(QStringLiteral("focusIssueTarget")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
+    QVERIFY(backend.contains(QStringLiteral("Connect a controller to create your first Device Rig.")));
+    QVERIFY(backend.contains(QStringLiteral("match-physical")));
+    QVERIFY(backend.contains(QStringLiteral("copy-output")));
+    QVERIFY(backend.contains(QStringLiteral("continuousPovs")));
+    QVERIFY(backend.contains(QStringLiteral("discretePovs")));
+    QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceOffline")));
+    QVERIFY(backend.contains(QStringLiteral("OptionalDeviceOffline")));
+    QVERIFY(backend.contains(QStringLiteral("VirtualOutputBusy")));
+    QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
+    QVERIFY(backend.contains(QStringLiteral("NoMappedControl")));
+    QVERIFY(backend.contains(QStringLiteral("meaningfulInputSequence")));
+    QVERIFY(backend.contains(QStringLiteral("deviceRigMeaningfulOutputSequence")));
+    QVERIFY(backend.contains(QStringLiteral("m_virtualOutputReadinessPlans")));
+    QVERIFY(backend.contains(QStringLiteral("refreshVirtualOutputReadiness(normalizedId)")));
+    QVERIFY(backend.contains(QStringLiteral("An absent custom calibration is a safe, supported default")));
+    QVERIFY(!backend.contains(QStringLiteral("const bool ready = active && !m_configuration.activeDeviceRigId.isEmpty()")));
+    QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::setupAssistantSteps")));
+    QVERIFY(backend.contains(QStringLiteral("applyPhysicalDeviceGameVisibility")));
+    QVERIFY(!backend.contains(QStringLiteral("name.startsWith(u\"INPUT")));
+    QVERIFY(!backend.contains(QStringLiteral("name.contains(u\"VISIBILITY")));
+    QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
+    QVERIFY(standard.contains(QStringLiteral("standardAppHealthControl")));
+    QVERIFY(standard.contains(QStringLiteral("navigateToIssue(target)")));
+    QVERIFY(standard.contains(QStringLiteral("backend.focusIssueTarget")));
+    QVERIFY(standard.contains(QStringLiteral("devices.focusIssueTarget(target)")));
+    for (const QString &ui : {standard, legacy}) {
+        QVERIFY(ui.contains(QStringLiteral("if (deviceId !== \"\")")));
+        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"virtualOutput\", outputId)")));
+        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"device\", deviceId)")));
+        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"deviceRig\", rigId)")));
+    }
+    QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
+    QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
+    QVERIFY(devices.contains(QStringLiteral("Refreshing devices")));
+    QVERIFY(devices.contains(QStringLiteral("5000")));
+    QVERIFY(health.contains(QStringLiteral("x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))")));
+    QVERIFY(health.contains(QStringLiteral("y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))")));
+    QVERIFY(health.contains(QStringLiteral("border.width: 2")));
+    QVERIFY(health.contains(QStringLiteral("implicitWidth: 32")));
+    QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
+    QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupAssistantSteps")));
+    QVERIFY(assistant.contains(QStringLiteral("model: root.steps")));
+    QVERIFY(assistant.contains(QStringLiteral("INPUT DETECTED")));
+    QVERIFY(assistant.contains(QStringLiteral("Activity is passive evidence, not a gated test session")));
+    QVERIFY(assistant.contains(QStringLiteral("root.activityMonitoring")));
+    QVERIFY(assistant.contains(QStringLiteral("USE DEFAULT RANGE")));
+    QVERIFY(assistant.contains(QStringLiteral("root.summary.scopeType === \"deviceRig\"")));
+    QVERIFY(assistant.contains(QStringLiteral("VIEW ALL SETUP STEPS")));
+    QVERIFY(!assistant.contains(QStringLiteral("guidedStepState")));
+    QVERIFY(!assistant.contains(QStringLiteral("guidedStepIndex")));
+    QVERIFY(assistant.contains(QStringLiteral("Applying game visibility...")));
+    QVERIFY(assistant.contains(QStringLiteral("applySetupAssistantIssueAction")));
+    QVERIFY(assistant.contains(QStringLiteral("COPY DIAGNOSTICS")));
+    QVERIFY(assistant.contains(QStringLiteral("ThemedDialogHeader")));
+    QVERIFY(!assistant.contains(QStringLiteral("setupAssistantRelevantStep")));
+    QVERIFY(assistant.contains(QStringLiteral("VIEW TECHNICAL DETAILS")));
+    QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
+    QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
+    QVERIFY(devices.contains(QStringLiteral("CREATE OUTPUT")));
+    QVERIFY(devices.contains(QStringLiteral("Copy ")));
+    QVERIFY(devices.contains(QStringLiteral("firstDeviceInputsPanel")));
+    QVERIFY(devices.contains(QStringLiteral("PHYSICAL INPUTS")));
+    QVERIFY(devices.contains(QStringLiteral("virtualInputsPanel")));
+    QVERIFY(devices.contains(QStringLiteral("Routing loop not allowed")));
+    QVERIFY(devices.contains(QStringLiteral("virtualOutputsInventoryPanel")));
+    QVERIFY(devices.contains(QStringLiteral("openStandaloneOutputCreator")));
+    QVERIFY(devices.contains(QStringLiteral("openStandaloneCreateOutputFromEmptyButton")));
+    QVERIFY(devices.contains(QStringLiteral("returnToOutputInventory")));
+    QVERIFY(devices.contains(QStringLiteral("BUTTON CAPACITY")));
+    QVERIFY(devices.contains(QStringLiteral("customButtonCapacityStepper")));
+    QVERIFY(devices.contains(QStringLiteral("customContinuousPovsStepper")));
+    QVERIFY(devices.contains(QStringLiteral("customDiscretePovsStepper")));
+    QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
+    QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
+    QVERIFY(devices.contains(QStringLiteral("function focusIssueTarget(target)")));
+    QVERIFY(devices.contains(QStringLiteral("REFRESH DEVICES")));
+    QVERIFY(devices.contains(QStringLiteral("verificationRequested(string rigId, string deviceId, string outputId)")));
+    QVERIFY(devices.contains(QStringLiteral("root.requestVerification(root.selectedRigId, \"\", root.selectedOutputId)")));
+    QVERIFY(devices.contains(QStringLiteral("calibrationRequested")));
+    QVERIFY(devices.contains(QStringLiteral("to calibrate it.")));
+    QVERIFY(devices.contains(QStringLiteral("SAVED / OFFLINE")));
+    QVERIFY(devices.contains(QStringLiteral("savedOfflineControllerRepeater")));
+    QVERIFY(!devices.contains(QStringLiteral("NOT ADOPTED")));
+    QVERIFY(!devices.contains(QStringLiteral("HID identity")));
+    QVERIFY(!devices.contains(QStringLiteral("CREATE & VERIFY")));
+    for (const QString &ui : {standard, legacy}) {
+        QVERIFY(ui.contains(QStringLiteral("contentItem: Flickable")));
+        QVERIFY(ui.contains(QStringLiteral("contentHeight: setupAssistantPanel.implicitHeight")));
+    }
+    QVERIFY(overview.contains(QStringLiteral("systemReadinessList")));
+    QVERIFY(overview.contains(QStringLiteral("CHECK SETUP")));
+    QVERIFY(issue.contains(QStringLiteral("struct AppIssue")));
+    QVERIFY(issue.contains(QStringLiteral("navigationTarget")));
+    QVERIFY(issue.contains(QStringLiteral("affectedObjectIds")));
+    QVERIFY(readiness.contains(QStringLiteral("applyManagedPhysicalInputVisibility")));
+    QVERIFY(readiness.contains(QStringLiteral("const SetupProcessResult readback")));
+    QVERIFY(readiness.contains(QStringLiteral("completed changes were rolled back")));
+    QVERIFY(health.contains(QStringLiteral("APP HEALTH")));
+    QVERIFY(health.contains(QStringLiteral("navigationRequested")));
+}
+
 void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
 {
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
@@ -558,6 +782,14 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema22()
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v22")));
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v22")));
     QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v22")));
+}
+
+void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
+{
+    const QString cmake = sourceFile(QStringLiteral("CMakeLists.txt"));
+    const QString staging = sourceFile(QStringLiteral("scripts/stage-package.ps1"));
+    QVERIFY(cmake.contains(QStringLiteral("--qmldir \"${CMAKE_CURRENT_SOURCE_DIR}/qml\"")));
+    QVERIFY(staging.contains(QStringLiteral("--qmldir (Join-Path $repoRoot 'qml')")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()

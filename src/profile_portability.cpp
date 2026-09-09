@@ -660,8 +660,9 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     }
     for (const ProfileCategory &category : parsed.categories) {
         for (const QString &profileId : category.profileIds) {
-            const ControllerProfile *profile = findProfile(MapperConfiguration{.profiles = parsed.profiles}, profileId);
-            if (!profile || profile->categoryId != category.id) {
+            const auto profile = std::find_if(parsed.profiles.cbegin(), parsed.profiles.cend(),
+                [&profileId](const ControllerProfile &candidate) { return candidate.id == profileId; });
+            if (profile == parsed.profiles.cend() || profile->categoryId != category.id) {
                 setError(error, u"The portable configuration has an invalid category membership"_qs); return false;
             }
         }
@@ -1206,8 +1207,11 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
     for (const ControllerProfile &profile : bundle.profiles) {
         QVariantMap item;
         item.insert(u"name"_qs, profile.name);
-        const ProfileCategory *category = findProfileCategory(MapperConfiguration{.profileCategories = bundle.categories}, profile.categoryId);
-        item.insert(u"category"_qs, category ? category->name : u"Unknown"_qs);
+        const auto category = std::find_if(bundle.categories.cbegin(), bundle.categories.cend(),
+            [&profile](const ProfileCategory &candidate) { return candidate.id == profile.categoryId; });
+        const QString categoryName = category == bundle.categories.cend()
+            ? u"Unknown"_qs : category->name;
+        item.insert(u"category"_qs, categoryName);
         int axes = 0; int buttons = 0; int povs = 0; int profileAutomations = 0;
         for (const AxisMapping &axis : profile.axes) if (axis.target != VirtualAxis::Disabled) ++axes;
         for (const ButtonBinding &binding : profile.buttons) if (binding.type == ButtonActionType::VirtualButton) ++buttons;
@@ -1221,7 +1225,8 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
             [](const AxisMapping &axis) { return axis.curve.family != CurveFamily::Linear; })));
         const ProfileCategory *localCategory = nullptr;
         for (const ProfileCategory &candidate : localConfiguration.profileCategories) {
-            if (category && candidate.name.compare(category->name, Qt::CaseInsensitive) == 0) {
+            if (category != bundle.categories.cend()
+                && candidate.name.compare(category->name, Qt::CaseInsensitive) == 0) {
                 localCategory = &candidate; break;
             }
         }
@@ -1234,7 +1239,7 @@ QVariantMap ProfilePortability::preview(const PortableConfigurationBundle &bundl
         }
         item.insert(u"nameConflict"_qs, nameConflict);
         if (nameConflict) conflicts.append(QVariantMap{{u"type"_qs, u"Profile"_qs},
-            {u"name"_qs, QString(u"%1 / %2"_qs).arg(category ? category->name : u"Unknown"_qs, profile.name)},
+            {u"name"_qs, QString(u"%1 / %2"_qs).arg(categoryName, profile.name)},
             {u"resolution"_qs, u"Import as renamed profile (safe default) or explicitly replace"_qs}});
         profiles.append(item);
     }

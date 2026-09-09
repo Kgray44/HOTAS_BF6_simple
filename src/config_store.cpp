@@ -22,7 +22,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 22;
+constexpr int kProfileSchemaVersion = 23;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -672,7 +672,8 @@ bool automationActionTypeFromString(const QString &value, AutomationActionType *
 
 QJsonObject automationConditionToJson(const AutomationConditionDefinition &condition)
 {
-    return {{u"type"_qs, automationConditionTypeToString(condition.type)}, {u"axis"_qs, condition.axis},
+    return {{u"controllerRecordId"_qs, condition.controllerRecordId},
+            {u"type"_qs, automationConditionTypeToString(condition.type)}, {u"axis"_qs, condition.axis},
             {u"minimum"_qs, condition.minimum}, {u"maximum"_qs, condition.maximum},
             {u"hysteresis"_qs, condition.hysteresis}, {u"button"_qs, condition.button},
             {u"povHat"_qs, condition.povHat}, {u"povDirection"_qs, static_cast<int>(condition.povDirection)},
@@ -684,6 +685,7 @@ QJsonObject automationConditionToJson(const AutomationConditionDefinition &condi
 bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDefinition *condition)
 {
     if (!condition || !automationConditionTypeFromString(json.value(u"type"_qs).toString(), &condition->type)) return false;
+    condition->controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
     condition->axis = json.value(u"axis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
     condition->minimum = static_cast<float>(json.value(u"minimum"_qs).toDouble());
     condition->maximum = static_cast<float>(json.value(u"maximum"_qs).toDouble());
@@ -706,7 +708,9 @@ bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDef
 
 QJsonObject automationActionToJson(const AutomationActionDefinition &action)
 {
-    return {{u"type"_qs, automationActionTypeToString(action.type)}, {u"virtualButton"_qs, action.virtualButton},
+    return {{u"sourceControllerRecordId"_qs, action.sourceControllerRecordId},
+            {u"outputLayoutId"_qs, action.outputLayoutId},
+            {u"type"_qs, automationActionTypeToString(action.type)}, {u"virtualButton"_qs, action.virtualButton},
             {u"profileId"_qs, action.profileId},
             {u"adaptiveResponsePresetId"_qs, action.adaptiveResponsePresetId},
             {u"targetAxis"_qs, action.targetAxis},
@@ -719,6 +723,8 @@ QJsonObject automationActionToJson(const AutomationActionDefinition &action)
 bool automationActionFromJson(const QJsonObject &json, AutomationActionDefinition *action)
 {
     if (!action || !automationActionTypeFromString(json.value(u"type"_qs).toString(), &action->type)) return false;
+    action->sourceControllerRecordId = json.value(u"sourceControllerRecordId"_qs).toString().trimmed().left(96);
+    action->outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     action->virtualButton = json.value(u"virtualButton"_qs).toInt(1);
     action->profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
     action->adaptiveResponsePresetId = json.value(u"adaptiveResponsePresetId"_qs)
@@ -973,6 +979,116 @@ NativePovBindings nativePovBindingsFromJson(const QJsonValue &value)
     return bindings;
 }
 
+QJsonObject deviceProfileMappingToJson(const DeviceProfileMapping &mapping)
+{
+    QJsonArray axes;
+    for (const AxisMapping &axis : mapping.axes) axes.append(axisMappingToJson(axis));
+    return {{u"controllerRecordId"_qs, mapping.controllerRecordId},
+            {u"enabled"_qs, mapping.enabled},
+            {u"axes"_qs, axes},
+            {u"buttons"_qs, buttonBindingsToJson(mapping.buttons)},
+            {u"povs"_qs, povBindingsToJson(mapping.povs)},
+            {u"nativePovBindings"_qs, nativePovBindingsToJson(mapping.nativePovBindings)},
+            {u"adaptiveResponse"_qs, adaptiveResponseLayerToJson(mapping.adaptiveResponse)}};
+}
+
+bool deviceProfileMappingFromJson(const QJsonObject &json, DeviceProfileMapping *mapping)
+{
+    if (!mapping) return false;
+    DeviceProfileMapping restored;
+    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    const QJsonArray axes = json.value(u"axes"_qs).toArray();
+    if (restored.controllerRecordId.isEmpty() || axes.size() != kPhysicalAxisCount) return false;
+    restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const QJsonObject axis = axes.at(index).toObject();
+        if (axis.isEmpty()) return false;
+        restored.axes[static_cast<size_t>(index)] = axisMappingFromJson(
+            axis, AxisRangeMode::Centered);
+    }
+    normalizeMappingConflicts(restored.axes);
+    restored.buttons = buttonBindingsFromJson(json.value(u"buttons"_qs));
+    restored.povs = povBindingsFromJson(json.value(u"povs"_qs));
+    normalizePovMappings(restored.povs, restored.buttons, kMaximumVirtualButtons);
+    restored.nativePovBindings = nativePovBindingsFromJson(json.value(u"nativePovBindings"_qs));
+    if (json.contains(u"adaptiveResponse"_qs)
+        && !adaptiveResponseLayerFromJson(json.value(u"adaptiveResponse"_qs),
+                                           &restored.adaptiveResponse)) return false;
+    *mapping = std::move(restored);
+    return true;
+}
+
+QJsonObject deviceRigToJson(const DeviceRig &rig)
+{
+    QJsonArray members;
+    for (const DeviceRigMember &member : rig.members) {
+        members.append(QJsonObject{{u"controllerRecordId"_qs, member.controllerRecordId},
+                                   {u"enabled"_qs, member.enabled}, {u"required"_qs, member.required},
+                                   {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId}});
+    }
+    QJsonArray outputs;
+    for (const DeviceRigOutputTarget &output : rig.outputs) {
+        outputs.append(QJsonObject{{u"outputLayoutId"_qs, output.outputLayoutId},
+                                   {u"enabled"_qs, output.enabled}});
+    }
+    return {{u"id"_qs, rig.id}, {u"name"_qs, rig.name}, {u"enabled"_qs, rig.enabled},
+            {u"isDefault"_qs, rig.isDefault}, {u"autoActivate"_qs, rig.autoActivate},
+            {u"activationPriority"_qs, rig.activationPriority}, {u"fallbackRigId"_qs, rig.fallbackRigId},
+            {u"disconnectBehavior"_qs, static_cast<int>(rig.disconnectBehavior)},
+            {u"members"_qs, members}, {u"outputs"_qs, outputs},
+            {u"hidhideManaged"_qs, rig.hidhideManaged}, {u"presentationOrder"_qs, rig.presentationOrder}};
+}
+
+bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
+{
+    if (!rig) return false;
+    DeviceRig restored;
+    restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
+    restored.name = json.value(u"name"_qs).toString().trimmed().left(64);
+    const QJsonArray members = json.value(u"members"_qs).toArray();
+    const QJsonArray outputs = json.value(u"outputs"_qs).toArray();
+    if (restored.id.isEmpty() || restored.name.isEmpty() || members.empty()
+        || members.size() > kMaximumDeviceRigMembers || outputs.empty()
+        || outputs.size() > kMaximumDeviceRigOutputs) return false;
+    restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    restored.isDefault = json.value(u"isDefault"_qs).toBool(false);
+    restored.autoActivate = json.value(u"autoActivate"_qs).toBool(true);
+    restored.activationPriority = std::clamp(json.value(u"activationPriority"_qs).toInt(50), 0, 100);
+    restored.fallbackRigId = json.value(u"fallbackRigId"_qs).toString().trimmed().left(96);
+    const int behavior = json.value(u"disconnectBehavior"_qs)
+        .toInt(static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes));
+    if (behavior < static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes)
+        || behavior > static_cast<int>(DeviceRigDisconnectBehavior::UseFallback)) return false;
+    restored.disconnectBehavior = static_cast<DeviceRigDisconnectBehavior>(behavior);
+    restored.hidhideManaged = json.value(u"hidhideManaged"_qs).toBool(false);
+    restored.presentationOrder = std::max(0, json.value(u"presentationOrder"_qs).toInt());
+    QSet<QString> memberIds;
+    for (const QJsonValue &value : members) {
+        const QJsonObject member = value.toObject();
+        DeviceRigMember parsed;
+        parsed.controllerRecordId = member.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+        parsed.enabled = member.value(u"enabled"_qs).toBool(true);
+        parsed.required = member.value(u"required"_qs).toBool(true);
+        parsed.preferredOutputLayoutId = member.value(u"preferredOutputLayoutId"_qs)
+            .toString().trimmed().left(96);
+        if (parsed.controllerRecordId.isEmpty() || memberIds.contains(parsed.controllerRecordId)) return false;
+        memberIds.insert(parsed.controllerRecordId);
+        restored.members.push_back(std::move(parsed));
+    }
+    QSet<QString> outputIds;
+    for (const QJsonValue &value : outputs) {
+        const QJsonObject output = value.toObject();
+        DeviceRigOutputTarget parsed;
+        parsed.outputLayoutId = output.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
+        parsed.enabled = output.value(u"enabled"_qs).toBool(true);
+        if (parsed.outputLayoutId.isEmpty() || outputIds.contains(parsed.outputLayoutId)) return false;
+        outputIds.insert(parsed.outputLayoutId);
+        restored.outputs.push_back(std::move(parsed));
+    }
+    *rig = std::move(restored);
+    return true;
+}
+
 QJsonObject profileToJson(const ControllerProfile &profile)
 {
     QJsonArray axes;
@@ -985,11 +1101,16 @@ QJsonObject profileToJson(const ControllerProfile &profile)
                                       .remove(u" "_qs), alias);
         }
     }
+    QJsonArray deviceMappings;
+    for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
+        deviceMappings.append(deviceProfileMappingToJson(mapping));
+    }
     return {
         {u"id"_qs, profile.id},
         {u"name"_qs, profile.name},
         {u"categoryId"_qs, profile.categoryId},
         {u"enabled"_qs, profile.enabled},
+        {u"deviceRigId"_qs, profile.deviceRigId},
         {u"outputLayoutId"_qs, profile.outputLayoutId},
         {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
         {u"curveTransitionSmoothing"_qs,
@@ -999,6 +1120,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"buttons"_qs, buttonBindingsToJson(profile.buttons)},
         {u"povs"_qs, povBindingsToJson(profile.povs)},
         {u"virtualAxisAliases"_qs, virtualAliases},
+        {u"deviceMappings"_qs, deviceMappings},
     };
 }
 
@@ -1018,6 +1140,7 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     restored.name = name;
     restored.categoryId = json.value(u"categoryId"_qs).toString().trimmed().left(96);
     restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    restored.deviceRigId = json.value(u"deviceRigId"_qs).toString().trimmed().left(96);
     restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     restored.curveTransitionSmoothingOverride = json.value(
         u"curveTransitionSmoothingOverride"_qs).toBool(false);
@@ -1043,6 +1166,16 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
             .remove(u" "_qs);
         restored.virtualAxisAliases[static_cast<size_t>(index)] = virtualAliases.value(key)
             .toString().trimmed().left(48);
+    }
+    const QJsonArray deviceMappings = json.value(u"deviceMappings"_qs).toArray();
+    if (deviceMappings.size() > kMaximumDeviceRigMembers) return false;
+    QSet<QString> deviceMappingIds;
+    for (const QJsonValue &value : deviceMappings) {
+        DeviceProfileMapping mapping;
+        if (!deviceProfileMappingFromJson(value.toObject(), &mapping)
+            || deviceMappingIds.contains(mapping.controllerRecordId)) return false;
+        deviceMappingIds.insert(mapping.controllerRecordId);
+        restored.deviceMappings.push_back(std::move(mapping));
     }
     *profile = std::move(restored);
     return true;
@@ -1438,6 +1571,12 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
     for (const SavedControllerRecord &record : configuration.savedControllers) {
         savedControllers.append(savedControllerToJson(record));
     }
+    QJsonArray deviceRigs;
+    for (const DeviceRig &rig : configuration.deviceRigs) deviceRigs.append(deviceRigToJson(rig));
+    QJsonArray editingDeviceRecordIds;
+    for (const QString &recordId : configuration.editingDeviceRecordIds) {
+        editingDeviceRecordIds.append(recordId);
+    }
     QJsonArray adaptiveResponsePresets;
     const int adaptivePresetCount = std::min(static_cast<int>(configuration.adaptiveResponsePresets.size()), 64);
     for (int index = 0; index < adaptivePresetCount; ++index) {
@@ -1450,6 +1589,11 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"preferredDeviceId"_qs, configuration.preferredDeviceId},
         {u"savedControllers"_qs, savedControllers},
         {u"activeControllerRecordId"_qs, configuration.activeControllerRecordId},
+        {u"deviceRigs"_qs, deviceRigs},
+        {u"activeDeviceRigId"_qs, configuration.activeDeviceRigId},
+        {u"editingDeviceRigId"_qs, configuration.editingDeviceRigId},
+        {u"editingDeviceRecordIds"_qs, editingDeviceRecordIds},
+        {u"deviceRigMigrationWarning"_qs, configuration.deviceRigMigrationWarning},
         {u"autoSwitchVerifiedController"_qs, configuration.autoSwitchVerifiedController},
         {u"keepRunningInTray"_qs, configuration.keepRunningInTray},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
@@ -1493,7 +1637,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
-        && version != 21 && version != kProfileSchemaVersion) {
+        && version != 21 && version != 22 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1867,6 +2011,153 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (const VirtualOutputLayout *activeLayout = findOutputLayout(configuration,
             activeProfile(configuration).outputLayoutId)) {
         configuration.vjoyDeviceId = activeLayout->requirements.deviceId;
+    }
+    if (version >= 23) {
+        const QJsonArray rigs = json.value(u"deviceRigs"_qs).toArray();
+        if (rigs.size() > 64) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        QSet<QString> rigIds;
+        int defaultRigCount = 0;
+        for (const QJsonValue &value : rigs) {
+            DeviceRig rig;
+            if (!deviceRigFromJson(value.toObject(), &rig) || rigIds.contains(rig.id)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            for (const DeviceRigMember &member : rig.members) {
+                if (std::none_of(configuration.savedControllers.cbegin(), configuration.savedControllers.cend(),
+                                 [&member](const SavedControllerRecord &record) {
+                                     return record.id == member.controllerRecordId;
+                                 })
+                    || (!member.preferredOutputLayoutId.isEmpty()
+                        && !findOutputLayout(configuration, member.preferredOutputLayoutId))) {
+                    if (valid) *valid = false;
+                    return fallbackWithGlobalSettings(json);
+                }
+            }
+            for (const DeviceRigOutputTarget &output : rig.outputs) {
+                if (!findOutputLayout(configuration, output.outputLayoutId)) {
+                    if (valid) *valid = false;
+                    return fallbackWithGlobalSettings(json);
+                }
+            }
+            if (rig.isDefault && ++defaultRigCount > 1) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            rigIds.insert(rig.id);
+            configuration.deviceRigs.push_back(std::move(rig));
+        }
+        for (const DeviceRig &rig : configuration.deviceRigs) {
+            if (!rig.fallbackRigId.isEmpty()
+                && (rig.fallbackRigId == rig.id || !rigIds.contains(rig.fallbackRigId))) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+        }
+        configuration.activeDeviceRigId = json.value(u"activeDeviceRigId"_qs).toString().trimmed().left(96);
+        if (!configuration.activeDeviceRigId.isEmpty() && !rigIds.contains(configuration.activeDeviceRigId)) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        configuration.editingDeviceRigId = json.value(u"editingDeviceRigId"_qs).toString().trimmed().left(96);
+        if (!configuration.editingDeviceRigId.isEmpty() && !rigIds.contains(configuration.editingDeviceRigId)) {
+            if (valid) *valid = false;
+            return fallbackWithGlobalSettings(json);
+        }
+        QSet<QString> editingIds;
+        for (const QJsonValue &value : json.value(u"editingDeviceRecordIds"_qs).toArray()) {
+            const QString recordId = value.toString().trimmed().left(96);
+            if (recordId.isEmpty() || editingIds.contains(recordId)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            editingIds.insert(recordId);
+            configuration.editingDeviceRecordIds.append(recordId);
+        }
+        configuration.deviceRigMigrationWarning = json.value(u"deviceRigMigrationWarning"_qs)
+            .toString().trimmed().left(256);
+        for (const ControllerProfile &profile : configuration.profiles) {
+            if (!profile.deviceRigId.isEmpty() && !rigIds.contains(profile.deviceRigId)) {
+                if (valid) *valid = false;
+                return fallbackWithGlobalSettings(json);
+            }
+            QSet<QString> rigMemberIds;
+            if (const DeviceRig *rig = findDeviceRig(configuration, profile.deviceRigId)) {
+                for (const DeviceRigMember &member : rig->members) rigMemberIds.insert(member.controllerRecordId);
+            }
+            for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
+                if (std::none_of(configuration.savedControllers.cbegin(), configuration.savedControllers.cend(),
+                                 [&mapping](const SavedControllerRecord &record) {
+                                     return record.id == mapping.controllerRecordId;
+                                 })
+                    || (!profile.deviceRigId.isEmpty() && !rigMemberIds.contains(mapping.controllerRecordId))) {
+                    if (valid) *valid = false;
+                    return fallbackWithGlobalSettings(json);
+                }
+            }
+        }
+    } else {
+        // V2.3 had one selected controller.  Preserve a durable relationship
+        // whenever it can be proven from an active saved record or a unique
+        // preferred DirectInput instance.  Verification describes readiness,
+        // not identity: an unverified/offline saved controller still owns its
+        // mappings and therefore still migrates into its one-device rig.
+        const SavedControllerRecord *legacyRecord = nullptr;
+        if (!configuration.activeControllerRecordId.isEmpty()) {
+            const auto activeFound = std::find_if(configuration.savedControllers.cbegin(),
+                configuration.savedControllers.cend(), [&configuration](const SavedControllerRecord &record) {
+                    return record.id == configuration.activeControllerRecordId;
+                });
+            if (activeFound != configuration.savedControllers.cend()) legacyRecord = &*activeFound;
+        }
+        if (!legacyRecord && !configuration.preferredDeviceId.isEmpty()) {
+            for (const SavedControllerRecord &candidate : configuration.savedControllers) {
+                if (candidate.lastDirectInputId.compare(configuration.preferredDeviceId,
+                                                       Qt::CaseInsensitive) != 0) continue;
+                // More than one durable record claims this instance: retain
+                // all legacy data but do not invent a rig membership.
+                if (legacyRecord) {
+                    legacyRecord = nullptr;
+                    break;
+                }
+                legacyRecord = &candidate;
+            }
+        }
+        if (legacyRecord) {
+            DeviceRig migrated;
+            migrated.id = u"legacy-rig-"_qs + legacyRecord->id;
+            migrated.name = legacyRecord->displayName.left(52).trimmed() + u" Rig"_qs;
+            migrated.isDefault = true;
+            migrated.autoActivate = true;
+            migrated.members.push_back({legacyRecord->id, true, true, {}});
+            QSet<QString> profileOutputs;
+            for (ControllerProfile &profile : configuration.profiles) {
+                profile.deviceRigId = migrated.id;
+                DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, legacyRecord->id);
+                mapping.nativePovBindings = configuration.nativePovBindings;
+                profileOutputs.insert(profile.outputLayoutId);
+            }
+            for (const QString &outputId : profileOutputs) migrated.outputs.push_back({outputId, true});
+            if (migrated.outputs.empty()) migrated.outputs.push_back({defaultOutputLayoutId(), true});
+            configuration.deviceRigs.push_back(std::move(migrated));
+            configuration.activeDeviceRigId = configuration.deviceRigs.front().id;
+            configuration.editingDeviceRigId = configuration.activeDeviceRigId;
+            configuration.editingDeviceRecordIds = {legacyRecord->id};
+            for (AutomationDefinition &automation : configuration.automations) {
+                for (AutomationConditionDefinition &condition : automation.conditions) {
+                    condition.controllerRecordId = legacyRecord->id;
+                }
+                for (AutomationActionDefinition &action : automation.actions) {
+                    action.sourceControllerRecordId = legacyRecord->id;
+                    if (action.outputLayoutId.isEmpty()) action.outputLayoutId = activeProfile(configuration).outputLayoutId;
+                }
+            }
+        } else {
+            configuration.deviceRigMigrationWarning = u"Existing controller configuration was preserved, but no Device Rig was created because the legacy controller identity was missing or ambiguous."_qs;
+        }
     }
     if (version < kProfileSchemaVersion) {
         seedBundledBattlefieldHelicopterProfile(&configuration);

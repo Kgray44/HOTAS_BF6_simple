@@ -1,4 +1,5 @@
 #include "hotas_build_version.h"
+#include "crash_reporter.h"
 #include "launcher_core.h"
 
 #include <windows.h>
@@ -510,6 +511,9 @@ int runLauncher()
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     const std::vector<std::wstring> arguments = commandLineArguments();
+    if (const auto crashReport = argumentValue(arguments, L"--crash-report")) {
+        return hotas::launcher::runCrashReporter(std::filesystem::path(*crashReport));
+    }
     if (hasArgument(arguments, L"--apply-update")) return applyUpdate(arguments);
     if (hasArgument(arguments, L"--skip-update")) return launchMapper() ? 0 : 1;
 

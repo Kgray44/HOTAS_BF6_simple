@@ -951,6 +951,30 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
     return runtime;
 }
 
+RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguration &configuration,
+                                                         const ControllerProfile &profile,
+                                                         const DeviceProfileMapping &deviceMapping,
+                                                         const SavedControllerRecord *record)
+{
+    RuntimeMappingConfiguration runtime;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        RuntimeAxisMapping &compiled = runtime.axes[static_cast<size_t>(axis)];
+        compiled.profile = deviceMapping.axes[static_cast<size_t>(axis)];
+        compiled.calibration = record ? record->calibration[static_cast<size_t>(axis)]
+                                      : configuration.calibration[static_cast<size_t>(axis)];
+        compiled.responseCurve = compileResponseCurve(compiled.profile.curve,
+            compiled.profile.rangeMode == AxisRangeMode::OneSided);
+        compiled.adaptiveResponse = resolveAdaptiveResponseConfiguration(
+            configuration, profile, deviceMapping, axis);
+    }
+    runtime.buttons = deviceMapping.buttons;
+    runtime.povs = deviceMapping.povs;
+    runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
+        profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
+                                                 : configuration.curveTransitionSmoothing);
+    return runtime;
+}
+
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration)
 {
     RuntimeProfileCache cache;

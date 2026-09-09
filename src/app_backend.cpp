@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "crash_diagnostics.h"
 
 #include "adaptive_response.h"
 #include "axis_transform.h"
@@ -179,6 +180,68 @@ QString automationBehaviorLabel(AutomationActivationMode mode)
     return u"UNKNOWN"_qs;
 }
 
+QVariantMap issueNavigationTarget(const QString &code, const QString &objectType,
+                                  const QString &objectId)
+{
+    int page = 3; // Diagnostics is the safe technical fallback.
+    if (code == u"RoutingConflict"_qs || code == u"NoMappedControl"_qs
+        || objectType == u"axis"_qs) {
+        page = 0;
+    } else if (objectType == u"physicalDevice"_qs || objectType == u"deviceRig"_qs
+        || objectType == u"virtualOutput"_qs || objectType == u"gameVisibility"_qs) {
+        page = 10;
+    } else if (objectType == u"profile"_qs) {
+        page = 5;
+    } else if (objectType == u"automation"_qs) {
+        page = 7;
+    } else if (objectType == u"calibration"_qs || code == u"CalibrationRequired"_qs) {
+        page = 2;
+    }
+    return {{u"page"_qs, page}, {u"objectType"_qs, objectType},
+            {u"objectId"_qs, objectId}, {u"issueCode"_qs, code}};
+}
+
+QVariantMap actionResult(bool success, const QString &title, const QString &message,
+                         const QString &objectType = {}, const QString &objectId = {},
+                         const QString &nextAction = {}, const QString &nextActionLabel = {},
+                         const QString &technicalDetails = {}, bool inProgress = false)
+{
+    AppActionResult result;
+    result.success = success;
+    result.severity = success ? (inProgress ? u"in-progress"_qs : u"success"_qs) : u"error"_qs;
+    result.title = title;
+    result.message = message;
+    result.affectedObjectType = objectType;
+    result.affectedObjectId = objectId;
+    result.nextAction = nextAction;
+    result.nextActionLabel = nextActionLabel;
+    result.technicalDetails = technicalDetails;
+    result.inProgress = inProgress;
+    return result.toVariantMap();
+}
+
+bool hasMappedControl(const CompiledDeviceRigMember &member)
+{
+    if (std::any_of(member.mapping.axes.cbegin(), member.mapping.axes.cend(),
+            [](const RuntimeAxisMapping &axis) {
+                return axis.profile.target != VirtualAxis::Disabled;
+            })) return true;
+    if (std::any_of(member.mapping.buttons.cbegin(), member.mapping.buttons.cend(),
+            [](const ButtonBinding &binding) {
+                return binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+            })) return true;
+    for (const PovDirectionBindings &pov : member.mapping.povs) {
+        if (std::any_of(pov.cbegin(), pov.cend(), [](const ButtonBinding &binding) {
+                return binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+            })) return true;
+    }
+    return std::any_of(member.nativePovBindings.cbegin(), member.nativePovBindings.cend(),
+        [](const NativePovBinding &binding) {
+            return binding.enabled && binding.targetType != NativePovTargetType::Disabled
+                && binding.targetIndex > 0;
+        });
+}
+
 QString automationConditionSummary(const AutomationConditionDefinition &condition,
                                    const MapperConfiguration &configuration)
 {
@@ -322,6 +385,7 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         condition.pressCount = input.value(u"pressCount"_qs, 2).toInt();
         condition.multiPressWindowMs = input.value(u"multiPressWindowMs"_qs, 350).toInt();
         condition.longPressDurationMs = input.value(u"longPressDurationMs"_qs, 600).toInt();
+        condition.controllerRecordId = input.value(u"controllerRecordId"_qs).toString().trimmed();
         if (static_cast<int>(condition.type) < static_cast<int>(AutomationConditionType::Always)
             || static_cast<int>(condition.type) > static_cast<int>(AutomationConditionType::AxisCrossesBelow)) {
             if (reason) *reason = u"Condition type is invalid."_qs;
@@ -346,6 +410,9 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         action.minimum = static_cast<float>(input.value(u"minimum"_qs, -1.0).toDouble());
         action.maximum = static_cast<float>(input.value(u"maximum"_qs, 1.0).toDouble());
         action.tapDurationMs = input.value(u"tapDurationMs"_qs, 80).toInt();
+        action.sourceControllerRecordId = input.value(u"sourceControllerRecordId"_qs)
+            .toString().trimmed();
+        action.outputLayoutId = input.value(u"outputLayoutId"_qs).toString().trimmed();
         if (static_cast<int>(action.type) < static_cast<int>(AutomationActionType::VJoyButtonHold)
             || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::AdaptiveResponsePreset)) {
             if (reason) *reason = u"Action type is invalid."_qs;
@@ -538,9 +605,11 @@ QVariantList AppBackend::axes() const
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
-        const AxisMapping &mapping = profile.axes[index];
+        const AxisMapping &mapping = axes[index];
         QVariantMap item;
         item.insert(u"index"_qs, index);
         item.insert(u"key"_qs, physicalAxisKey(axis));
@@ -1356,6 +1425,27 @@ QVariantList AppBackend::runtimeAxisRoutesForTest() const
                 mapping.axes[static_cast<size_t>(axis)].profile.target)}});
     }
     return routes;
+}
+
+void AppBackend::setSetupAssistantFactsForTest(const QVariantMap &facts)
+{
+    m_setupAssistantTestFacts = facts;
+    // Synthetic scenarios describe an app-wide readiness snapshot. Keep a
+    // preceding Device Rig action from leaking a stale presentation scope
+    // into the test-only seam.
+    if (!facts.isEmpty()) {
+        const QString requestedScope = facts.value(u"scopeType"_qs).toString().trimmed();
+        m_setupAssistantScopeType = requestedScope == u"device"_qs
+                || requestedScope == u"deviceRig"_qs || requestedScope == u"virtualOutput"_qs
+            ? requestedScope : u"application"_qs;
+        m_setupAssistantScopeId = facts.value(u"scopeId"_qs).toString().trimmed();
+        m_setupAssistantLiveTestActive = false;
+    } else {
+        m_setupAssistantScopeType = u"application"_qs;
+        m_setupAssistantScopeId.clear();
+        m_setupAssistantLiveTestActive = false;
+    }
+    emit stateChanged();
 }
 
 QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
@@ -2367,11 +2457,12 @@ void AppBackend::rebuildButtonUiModel()
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const int capacity = vjoyButtonCount();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const ButtonBindings &activeBindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
     for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
         if (!runtime.buttonAvailable[source].load()) continue;
-        const ButtonBindings &bindings = currentProfile().buttons;
-        const ButtonBinding binding = source < static_cast<int>(bindings.size())
-            ? bindings[static_cast<size_t>(source)] : ButtonBinding{};
+        const ButtonBinding binding = source < static_cast<int>(activeBindings.size())
+            ? activeBindings[static_cast<size_t>(source)] : ButtonBinding{};
         const int target = binding.type == ButtonActionType::VirtualButton
             && isButtonBindingValid(binding, capacity) ? binding.target : 0;
         const ProfileTriggerBinding trigger = source < static_cast<int>(m_configuration.profileTriggers.size())
@@ -2450,6 +2541,9 @@ QVariantList AppBackend::povs() const
 {
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const NativePovBindings &nativeBindings = deviceMapping ? deviceMapping->nativePovBindings
+                                                             : m_configuration.nativePovBindings;
     const int count = std::clamp(povCount(), 0, kMaximumPhysicalPovs);
     for (int hat = 0; hat < count; ++hat) {
         const int raw = runtime.povValues[static_cast<size_t>(hat)].load();
@@ -2460,8 +2554,8 @@ QVariantList AppBackend::povs() const
         item.insert(u"centered"_qs, direction == PovDirection::Centered);
         item.insert(u"direction"_qs, povDirectionLabel(direction));
         item.insert(u"angle"_qs, direction == PovDirection::Centered ? -1 : raw / 100);
-        const NativePovBinding binding = hat < static_cast<int>(m_configuration.nativePovBindings.size())
-            ? m_configuration.nativePovBindings[static_cast<size_t>(hat)] : NativePovBinding{};
+        const NativePovBinding binding = hat < static_cast<int>(nativeBindings.size())
+            ? nativeBindings[static_cast<size_t>(hat)] : NativePovBinding{};
         const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
             ? binding.targetIndex <= vjoyContinuousPovCount()
             : binding.targetType == NativePovTargetType::Discrete
@@ -2489,7 +2583,8 @@ QVariantList AppBackend::povInputs() const
 {
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
-    const PovBindings &bindings = currentProfile().povs;
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const PovBindings &bindings = deviceMapping ? deviceMapping->povs : currentProfile().povs;
     const int capacity = vjoyButtonCount();
     const int hats = std::clamp(povCount(), 0, kMaximumPhysicalPovs);
     for (int hat = 0; hat < hats; ++hat) {
@@ -2706,8 +2801,11 @@ bool AppBackend::rebuildControllerUiModel()
     for (const DiscoveredController &controller : m_discoveredControllers) {
         if (controller.virtualDevice) continue;
         const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
-        const bool verified = !match.recordId.isEmpty() && !match.ambiguous;
-        const bool selected = verified && match.recordId == m_configuration.activeControllerRecordId;
+        const SavedControllerRecord *record = match.recordId.isEmpty() || match.ambiguous
+            ? nullptr : savedControllerRecord(match.recordId);
+        const bool known = record != nullptr;
+        const bool verified = known && !record->lastVerified.isEmpty();
+        const bool selected = known && match.recordId == m_configuration.activeControllerRecordId;
         const bool active = controller.connected && controller.directInputId == liveId;
         QVariantMap item{{u"id"_qs, match.recordId}, {u"directInputId"_qs, controller.directInputId},
                          {u"name"_qs, controller.name}, {u"connected"_qs, controller.connected},
@@ -2717,6 +2815,7 @@ bool AppBackend::rebuildControllerUiModel()
                          {u"povCount"_qs, controller.povCount}};
         item.insert(u"state"_qs, match.ambiguous ? u"Connected · Selection required"_qs
             : match.recordId.isEmpty() ? u"Connected · New device"_qs
+            : !verified ? u"Connected · Needs verification"_qs
             : active ? u"Connected · Verified · Active"_qs
             : selected ? u"Connected · Verified · Selected"_qs
                        : u"Connected · Verified"_qs);
@@ -2727,13 +2826,17 @@ bool AppBackend::rebuildControllerUiModel()
     for (const SavedControllerRecord &record : m_configuration.savedControllers) {
         if (represented.contains(record.id)) continue;
         result.append(QVariantMap{{u"id"_qs, record.id}, {u"directInputId"_qs, record.lastDirectInputId},
-            {u"name"_qs, record.displayName}, {u"connected"_qs, false}, {u"verified"_qs, true},
+            {u"name"_qs, record.displayName}, {u"connected"_qs, false},
+            {u"verified"_qs, !record.lastVerified.isEmpty()},
             {u"selected"_qs, record.id == m_configuration.activeControllerRecordId},
             {u"ambiguous"_qs, false}, {u"active"_qs, false},
             {u"axisCount"_qs, record.axisCount}, {u"buttonCount"_qs, record.buttonCount},
             {u"povCount"_qs, record.povCount},
             {u"state"_qs, record.id == m_configuration.activeControllerRecordId
-                ? u"Selected · Offline · Verified"_qs : u"Offline · Verified"_qs}});
+                ? (!record.lastVerified.isEmpty() ? u"Selected · Offline · Verified"_qs
+                                                   : u"Selected · Offline · Needs verification"_qs)
+                : (!record.lastVerified.isEmpty() ? u"Offline · Verified"_qs
+                                                   : u"Offline · Needs verification"_qs)}});
     }
     m_controllerUiModelLiveDeviceId = liveId;
     if (m_controllerUiModel == result) return false;
@@ -2748,10 +2851,12 @@ void AppBackend::rebuildCurveAxisChoices()
 {
     QVariantList choices;
     const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
     choices.reserve(kPhysicalAxisCount);
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
-        const QString customName = profile.axes[static_cast<size_t>(index)].customName.trimmed();
+        const QString customName = axes[static_cast<size_t>(index)].customName.trimmed();
         choices.append(QVariantMap{{u"index"_qs, index},
             {u"label"_qs, customName.isEmpty() ? physicalAxisLabel(axis) : customName}});
     }
@@ -2759,6 +2864,1179 @@ void AppBackend::rebuildCurveAxisChoices()
 }
 
 QString AppBackend::activeControllerRecordId() const { return m_configuration.activeControllerRecordId; }
+
+const SavedControllerRecord *AppBackend::savedControllerRecord(const QString &recordId) const
+{
+    const auto found = std::find_if(m_configuration.savedControllers.cbegin(),
+        m_configuration.savedControllers.cend(), [&recordId](const SavedControllerRecord &record) {
+            return record.id == recordId;
+        });
+    return found == m_configuration.savedControllers.cend() ? nullptr : &*found;
+}
+
+DeviceRig *AppBackend::activeDeviceRig()
+{
+    return findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
+}
+
+const DeviceRig *AppBackend::activeDeviceRig() const
+{
+    return findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
+}
+
+const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
+                                                      const QString &scopeId) const
+{
+    if (scopeType == u"deviceRig"_qs) return findDeviceRig(m_configuration, scopeId);
+    if (scopeType == u"device"_qs) {
+        const auto found = std::find_if(m_configuration.deviceRigs.cbegin(),
+            m_configuration.deviceRigs.cend(), [&scopeId](const DeviceRig &rig) {
+                return std::any_of(rig.members.cbegin(), rig.members.cend(), [&scopeId](const DeviceRigMember &member) {
+                    return member.controllerRecordId == scopeId;
+                });
+            });
+        return found == m_configuration.deviceRigs.cend() ? nullptr : &*found;
+    }
+    if (scopeType == u"virtualOutput"_qs) {
+        const auto found = std::find_if(m_configuration.deviceRigs.cbegin(),
+            m_configuration.deviceRigs.cend(), [&scopeId](const DeviceRig &rig) {
+                return std::any_of(rig.outputs.cbegin(), rig.outputs.cend(), [&scopeId](const DeviceRigOutputTarget &output) {
+                    return output.outputLayoutId == scopeId;
+                });
+            });
+        return found == m_configuration.deviceRigs.cend() ? nullptr : &*found;
+    }
+    return activeDeviceRig();
+}
+
+QVariantList AppBackend::deviceRigs() const
+{
+    QVariantList result;
+    result.reserve(static_cast<qsizetype>(m_configuration.deviceRigs.size()));
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const auto status = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [&rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig.id; });
+        const DeviceRigStatus fallback{rig.id, rig.enabled ? DeviceRigHealth::Offline : DeviceRigHealth::Disabled};
+        const DeviceRigStatus &health = status == m_deviceRigStatuses.cend() ? fallback : *status;
+        QVariantList members;
+        for (const DeviceRigMember &member : rig.members) {
+            const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            const QVariantMap detail = physicalDeviceDetail(member.controllerRecordId);
+            const bool connected = health.connectedMemberIds.contains(member.controllerRecordId);
+            members.append(QVariantMap{{u"id"_qs, member.controllerRecordId},
+                {u"name"_qs, record ? record->displayName : u"Unknown device"_qs},
+                {u"enabled"_qs, member.enabled}, {u"required"_qs, member.required},
+                {u"connected"_qs, connected},
+                {u"ambiguous"_qs, health.ambiguousMemberIds.contains(member.controllerRecordId)},
+                {u"verified"_qs, record && !record->lastVerified.isEmpty()},
+                // The Devices page and the persistent Device Context use this
+                // one configuration-owned scope. It deliberately says
+                // nothing about the active runtime rig.
+                {u"editing"_qs, rig.id == m_configuration.editingDeviceRigId
+                    && m_configuration.editingDeviceRecordIds.contains(member.controllerRecordId)},
+                {u"needsVerification"_qs, health.needsVerificationMemberIds.contains(member.controllerRecordId)},
+                {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId},
+                {u"visibilityManaged"_qs, detail.value(u"managedVisibility"_qs, false)},
+                {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
+                {u"visibilityKnown"_qs, detail.value(u"visibilityKnown"_qs, false)}});
+        }
+        QVariantList outputs;
+        for (const DeviceRigOutputTarget &target : rig.outputs) {
+            const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
+            // The landing-page projection needs the same compact readiness
+            // summary as the output detail view.  This is a UI/control-plane
+            // snapshot, never a mapper/report-path query.
+            const QVariantMap detail = virtualOutputDetail(target.outputLayoutId);
+            outputs.append(QVariantMap{{u"id"_qs, target.outputLayoutId},
+                {u"name"_qs, layout ? layout->name : u"Unavailable output"_qs},
+                {u"deviceId"_qs, layout ? layout->requirements.deviceId : 0},
+                {u"enabled"_qs, target.enabled},
+                {u"ready"_qs, detail.value(u"ready"_qs, false)},
+                {u"status"_qs, detail.value(u"status"_qs, u"Output unavailable"_qs)},
+                {u"routeCount"_qs, detail.value(u"routeCount"_qs, 0)},
+                {u"visibilityManaged"_qs, detail.value(u"managedVisibility"_qs, false)},
+                {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
+                {u"visibilityKnown"_qs, detail.value(u"visibilityKnown"_qs, false)}});
+        }
+        result.append(QVariantMap{{u"id"_qs, rig.id}, {u"name"_qs, rig.name},
+            {u"enabled"_qs, rig.enabled}, {u"default"_qs, rig.isDefault},
+            {u"autoActivate"_qs, rig.autoActivate}, {u"activationPriority"_qs, rig.activationPriority},
+            {u"fallbackRigId"_qs, rig.fallbackRigId},
+            {u"disconnectBehavior"_qs, static_cast<int>(rig.disconnectBehavior)},
+            {u"health"_qs, deviceRigHealthKey(health.health)},
+            {u"healthLabel"_qs, deviceRigHealthLabel(health.health)},
+            {u"complete"_qs, health.complete}, {u"active"_qs, rig.id == m_configuration.activeDeviceRigId},
+            {u"editing"_qs, rig.id == m_configuration.editingDeviceRigId},
+            {u"members"_qs, members}, {u"outputs"_qs, outputs}});
+    }
+    return result;
+}
+
+QString AppBackend::activeDeviceRigId() const { return m_configuration.activeDeviceRigId; }
+
+QString AppBackend::activeDeviceRigName() const
+{
+    if (const DeviceRig *rig = activeDeviceRig()) return rig->name;
+    return u"No active Device Rig"_qs;
+}
+
+QString AppBackend::editingDeviceRigId() const { return m_configuration.editingDeviceRigId; }
+
+QString AppBackend::editingDeviceRigName() const
+{
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId)) {
+        return rig->name;
+    }
+    return u"Device Rig"_qs;
+}
+
+QString AppBackend::editingScopeLabel() const
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    if (!rig || m_configuration.editingDeviceRecordIds.isEmpty()) return u"All Devices"_qs;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        if (const SavedControllerRecord *record = savedControllerRecord(
+                m_configuration.editingDeviceRecordIds.front())) return record->displayName;
+        return u"One Device"_qs;
+    }
+    return QString(u"%1 Devices"_qs).arg(m_configuration.editingDeviceRecordIds.size());
+}
+
+QVariantList AppBackend::editingDevices() const
+{
+    QVariantList result;
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    if (!rig) return result;
+    for (const DeviceRigMember &member : rig->members) {
+        const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+        result.append(QVariantMap{{u"id"_qs, member.controllerRecordId},
+            {u"name"_qs, record ? record->displayName : u"Unknown device"_qs},
+            {u"selected"_qs, m_configuration.editingDeviceRecordIds.contains(member.controllerRecordId)},
+            {u"required"_qs, member.required}, {u"enabled"_qs, member.enabled}});
+    }
+    return result;
+}
+
+QString AppBackend::deviceRigMigrationWarning() const { return m_configuration.deviceRigMigrationWarning; }
+QString AppBackend::deviceRigDetectionMessage() const { return m_deviceRigDetectionMessage; }
+
+QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
+{
+    const SavedControllerRecord *record = savedControllerRecord(recordId.trimmed());
+    if (!record) return {};
+    const DiscoveredController *discovered = nullptr;
+    for (const DiscoveredController &candidate : m_discoveredControllers) {
+        const ControllerMatch match = ControllerManager::match(candidate, m_configuration.savedControllers);
+        if (!match.ambiguous && match.recordId == record->id) {
+            discovered = &candidate;
+            break;
+        }
+    }
+    QStringList rigNames;
+    int mappedAxes = 0;
+    int mappedButtons = 0;
+    int mappedPovs = 0;
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        if (std::any_of(rig.members.cbegin(), rig.members.cend(), [record](const DeviceRigMember &member) {
+                return member.controllerRecordId == record->id;
+            })) rigNames.append(rig.name);
+    }
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        const DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, record->id);
+        if (!mapping) continue;
+        for (const AxisMapping &axis : mapping->axes) {
+            if (axis.target != VirtualAxis::Disabled) ++mappedAxes;
+        }
+        for (const ButtonBinding &button : mapping->buttons) {
+            if (button.type == ButtonActionType::VirtualButton) ++mappedButtons;
+        }
+        for (const auto &hat : mapping->povs) {
+            for (const ButtonBinding &binding : hat) {
+                if (binding.type == ButtonActionType::VirtualButton) ++mappedPovs;
+            }
+        }
+    }
+    int calibratedAxes = 0;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (record->axes[static_cast<size_t>(axis)] && record->calibration[static_cast<size_t>(axis)].enabled) {
+            ++calibratedAxes;
+        }
+    }
+    const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
+    QStringList managedInstances = record->ownedHidHideDeviceInstances;
+    for (QString &instance : managedInstances) {
+        instance = ControllerReadinessService::normalizeDeviceInstanceId(instance);
+    }
+    managedInstances.removeAll(QString{});
+    const bool managed = !managedInstances.isEmpty();
+    const bool hidden = managed && hidhide.cloakKnown && std::all_of(
+        managedInstances.cbegin(), managedInstances.cend(), [&hidhide](const QString &instance) {
+            return std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(), hidhide.hiddenDeviceInstanceIds.cend(),
+                [&instance](const QString &entry) {
+                    return ControllerReadinessService::normalizeDeviceInstanceId(entry) == instance;
+                });
+        });
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const bool currentConnection = discovered && discovered->connected
+        && record->lastDirectInputId == physical.directInputId;
+    // This counter is reset by a physical acquisition/disconnect, never when
+    // the assistant opens. Reading it here stays on the GUI control plane.
+    const bool inputDetected = currentConnection
+        && m_worker.runtime().meaningfulInputSequence.load(std::memory_order_relaxed) > 0;
+    return {{u"id"_qs, record->id}, {u"name"_qs, record->displayName},
+            {u"connected"_qs, discovered && discovered->connected},
+            {u"verified"_qs, !record->lastVerified.isEmpty()},
+            {u"lastVerified"_qs, record->lastVerified}, {u"lastSeen"_qs, record->lastSeen},
+            {u"axisCount"_qs, record->axisCount}, {u"buttonCount"_qs, record->buttonCount},
+            {u"povCount"_qs, record->povCount}, {u"calibratedAxes"_qs, calibratedAxes},
+            {u"rigs"_qs, rigNames.join(u" · "_qs)}, {u"mappedAxes"_qs, mappedAxes},
+            {u"mappedButtons"_qs, mappedButtons}, {u"mappedPovs"_qs, mappedPovs},
+            {u"hidhideManaged"_qs, managed}, {u"managedVisibility"_qs, managed},
+            {u"visibilityKnown"_qs, managed && hidhide.cloakKnown},
+            {u"hiddenFromGames"_qs, hidden},
+            {u"inputDetected"_qs, inputDetected},
+            {u"activityStatus"_qs, !discovered || !discovered->connected ? u"Offline"_qs
+                : inputDetected ? u"Input detected"_qs : u"Listening for controller input…"_qs},
+            {u"calibrationStatus"_qs, calibratedAxes > 0
+                ? QString(u"Custom calibration · %1 axes"_qs).arg(calibratedAxes)
+                : u"Using default controller range"_qs},
+            {u"hidInstanceId"_qs, record->hidInstanceId},
+            {u"hidContainerId"_qs, record->hidContainerId},
+            {u"directInputId"_qs, record->lastDirectInputId},
+            {u"capabilityFingerprint"_qs, record->capabilityFingerprint}};
+}
+
+QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
+{
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId.trimmed());
+    if (!layout) return {};
+    QStringList axes;
+    QStringList rigNames;
+    int routeCount = 0;
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+        if (layout->requirements.axes[static_cast<size_t>(axis)]) {
+            axes.append(virtualAxisLabel(static_cast<VirtualAxis>(axis)));
+        }
+    }
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const bool used = std::any_of(rig.outputs.cbegin(), rig.outputs.cend(), [layout](const auto &output) {
+            return output.outputLayoutId == layout->id;
+        });
+        if (used) rigNames.append(rig.name);
+    }
+    const auto countMappingRoutes = [&routeCount](const DeviceProfileMapping &mapping) {
+        for (const AxisMapping &axis : mapping.axes) {
+            if (axis.target != VirtualAxis::Disabled) ++routeCount;
+        }
+        for (const ButtonBinding &button : mapping.buttons) {
+            if (button.type == ButtonActionType::VirtualButton) ++routeCount;
+        }
+        for (const auto &pov : mapping.povs) {
+            for (const ButtonBinding &binding : pov) {
+                if (binding.type == ButtonActionType::VirtualButton) ++routeCount;
+            }
+        }
+    };
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        const DeviceRig *profileRig = findDeviceRig(m_configuration, profile.deviceRigId);
+        if (!profileRig) {
+            if (profile.outputLayoutId == layout->id) {
+                for (const DeviceProfileMapping &mapping : profile.deviceMappings) countMappingRoutes(mapping);
+            }
+            continue;
+        }
+        for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
+            const auto member = std::find_if(profileRig->members.cbegin(), profileRig->members.cend(),
+                [&mapping](const DeviceRigMember &candidate) {
+                    return candidate.controllerRecordId == mapping.controllerRecordId;
+                });
+            if (member == profileRig->members.cend()) continue;
+            const QString target = member->preferredOutputLayoutId.isEmpty()
+                ? profile.outputLayoutId : member->preferredOutputLayoutId;
+            if (target == layout->id) countMappingRoutes(mapping);
+        }
+    }
+    const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
+    const QString normalizedOutputInstance = ControllerReadinessService::normalizeDeviceInstanceId(
+        layout->hidHideDeviceInstanceId);
+    const bool hidden = layout->hidhideManaged && hidhide.cloakKnown
+        && !normalizedOutputInstance.isEmpty()
+        && std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(), hidhide.hiddenDeviceInstanceIds.cend(),
+            [&normalizedOutputInstance](const QString &entry) {
+                return ControllerReadinessService::normalizeDeviceInstanceId(entry) == normalizedOutputInstance;
+            });
+    const ControllerReadinessPlan *readiness = virtualOutputReadinessPlan(layout->id);
+    const bool inspected = readiness != nullptr;
+    const bool outputReady = inspected && readiness->vjoy.installed
+        && readiness->vjoy.configurationUtilityAvailable && readiness->vjoy.driverReady
+        && readiness->vjoy.devicePresent && (!readiness->vjoy.busy || readiness->vjoy.ownedByHotasBf6)
+        && !readiness->vjoyNeedsChanges && !hidden;
+    const QString readinessState = !inspected ? u"SAVED"_qs
+        : !readiness->vjoy.installed || !readiness->vjoy.devicePresent ? u"OFFLINE"_qs
+        : readiness->vjoy.busy && !readiness->vjoy.ownedByHotasBf6 ? u"BUSY"_qs
+        : readiness->vjoyNeedsChanges ? u"SETUP NEEDED"_qs
+        : hidden ? u"SETUP NEEDED"_qs : u"READY"_qs;
+    const QString readinessStatus = !inspected
+        ? u"Saved output — choose Check Output to inspect this vJoy device."_qs
+        : hidden ? u"This virtual output is hidden from games."_qs
+        : readiness->vjoySummary;
+    return {{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
+            {u"deviceId"_qs, layout->requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
+            {u"buttons"_qs, layout->requirements.buttons},
+            {u"continuousPovs"_qs, layout->requirements.continuousPovs},
+            {u"discretePovs"_qs, layout->requirements.discretePovs},
+            {u"rigs"_qs, rigNames.join(u" · "_qs)}, {u"routeCount"_qs, routeCount},
+            {u"managedVisibility"_qs, layout->hidhideManaged},
+            {u"visibilityPrepared"_qs, !layout->hidHideDeviceInstanceId.isEmpty()},
+            {u"visibilityKnown"_qs, layout->hidhideManaged && hidhide.cloakKnown},
+            {u"hiddenFromGames"_qs, hidden},
+            {u"ready"_qs, outputReady}, {u"inspected"_qs, inspected},
+            {u"readinessState"_qs, readinessState}, {u"status"_qs, readinessStatus}};
+}
+
+const ControllerReadinessPlan *AppBackend::virtualOutputReadinessPlan(const QString &layoutId) const
+{
+    const auto cached = m_virtualOutputReadinessPlans.constFind(layoutId);
+    if (cached != m_virtualOutputReadinessPlans.cend()) return &cached.value();
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    if (layout && plan.vjoy.deviceId == layout->requirements.deviceId && plan.lastChecked.isValid()) {
+        return &plan;
+    }
+    return nullptr;
+}
+
+void AppBackend::refreshVirtualOutputReadiness(const QString &layoutId)
+{
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    if (!layout) return;
+    MapperConfiguration scoped = m_configuration;
+    scoped.vjoyDeviceId = layout->requirements.deviceId;
+    ControllerReadinessService inspector;
+    const ControllerReadinessPlan &plan = inspector.inspectForRequirements(
+        scoped, currentPhysicalCapabilities(),
+        ControllerReadinessService::requirementsFor(layout->requirements));
+    m_virtualOutputReadinessPlans.insert(layout->id, plan);
+}
+
+QString AppBackend::createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
+                                    const QString &outputLayoutId)
+{
+    const QString trimmedName = name.trimmed().left(64);
+    if (trimmedName.isEmpty() || controllerRecordIds.isEmpty()
+        || controllerRecordIds.size() > kMaximumDeviceRigMembers) return {};
+    if (std::any_of(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+                    [&trimmedName](const DeviceRig &rig) {
+                        return rig.name.compare(trimmedName, Qt::CaseInsensitive) == 0;
+                    })) return {};
+    const QString selectedOutput = outputLayoutId.trimmed().isEmpty()
+        ? currentProfile().outputLayoutId : outputLayoutId.trimmed();
+    if (!findOutputLayout(m_configuration, selectedOutput)) return {};
+    QSet<QString> uniqueIds;
+    DeviceRig rig;
+    rig.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rig.name = trimmedName;
+    rig.isDefault = m_configuration.deviceRigs.empty();
+    rig.presentationOrder = static_cast<int>(m_configuration.deviceRigs.size());
+    for (const QString &recordId : controllerRecordIds) {
+        const QString id = recordId.trimmed();
+        if (!savedControllerRecord(id) || uniqueIds.contains(id)) return {};
+        uniqueIds.insert(id);
+        rig.members.push_back({id, true, true, selectedOutput});
+    }
+    rig.outputs.push_back({selectedOutput, true});
+    m_configuration.deviceRigs.push_back(rig);
+    if (m_configuration.editingDeviceRigId.isEmpty()) {
+        m_configuration.editingDeviceRigId = rig.id;
+        m_configuration.editingDeviceRecordIds = controllerRecordIds;
+    }
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (profile.deviceRigId.isEmpty()) profile.deviceRigId = rig.id;
+        for (const DeviceRigMember &member : rig.members) {
+            DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, member.controllerRecordId);
+            if (mapping.nativePovBindings.empty()) mapping.nativePovBindings = m_configuration.nativePovBindings;
+        }
+    }
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    appendEvent(QString(u"Created Device Rig: %1"_qs).arg(rig.name));
+    emit deviceRigsChanged();
+    return rig.id;
+}
+
+QVariantMap AppBackend::createDeviceRigResult(const QString &name,
+                                              const QStringList &controllerRecordIds,
+                                              const QString &outputLayoutId)
+{
+    const auto result = [](bool success, const QString &title, const QString &message,
+                           const QString &objectId = {}, const QString &nextAction = {}) {
+        return actionResult(success, title, message, u"deviceRig"_qs, objectId, nextAction);
+    };
+    const QString trimmedName = name.trimmed().left(64);
+    if (trimmedName.isEmpty()) {
+        return result(false, u"Device Rig was not created"_qs,
+                      u"Enter a name for the Device Rig."_qs);
+    }
+    if (controllerRecordIds.isEmpty()) {
+        return result(false, u"Device Rig needs a physical controller"_qs,
+                      u"Connect a controller to create your first Device Rig."_qs);
+    }
+    if (controllerRecordIds.size() > kMaximumDeviceRigMembers) {
+        return result(false, u"Too many physical controllers"_qs,
+                      QString(u"A Device Rig can contain at most %1 physical controllers."_qs)
+                          .arg(kMaximumDeviceRigMembers));
+    }
+    const QString selectedOutput = outputLayoutId.trimmed().isEmpty()
+        ? currentProfile().outputLayoutId : outputLayoutId.trimmed();
+    if (!findOutputLayout(m_configuration, selectedOutput)) {
+        return result(false, u"Device Rig needs a virtual output"_qs,
+                      u"Choose a saved virtual output before creating this Device Rig."_qs);
+    }
+    if (std::any_of(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+                    [&trimmedName](const DeviceRig &rig) {
+                        return rig.name.compare(trimmedName, Qt::CaseInsensitive) == 0;
+                    })) {
+        return result(false, u"Device Rig name is already used"_qs,
+                      u"Choose a different name for this Device Rig."_qs);
+    }
+
+    QStringList recordIds;
+    QSet<QString> seen;
+    QSet<QString> createdRecordIds;
+    std::vector<SavedControllerRecord> newRecords;
+    bool needsSetup = false;
+    for (const QString &entry : controllerRecordIds) {
+        const QString value = entry.trimmed();
+        if (value.isEmpty() || seen.contains(value)) {
+            return result(false, u"Physical controller selection is invalid"_qs,
+                          u"Choose each physical controller only once."_qs);
+        }
+        seen.insert(value);
+        if (const SavedControllerRecord *saved = savedControllerRecord(value)) {
+            recordIds.append(saved->id);
+            needsSetup = needsSetup || saved->lastVerified.isEmpty();
+            continue;
+        }
+        const DiscoveredController *discovered = discoveredController(value);
+        if (!discovered || !discovered->connected || discovered->virtualDevice) {
+            return result(false, u"Physical controller is unavailable"_qs,
+                          u"Reconnect the selected physical controller, then try again."_qs);
+        }
+        const ControllerMatch match = ControllerManager::match(*discovered, m_configuration.savedControllers);
+        if (match.ambiguous) {
+            return result(false, u"Physical controller identity is ambiguous"_qs,
+                          u"Resolve the matching controller in setup before creating this Device Rig."_qs);
+        }
+        if (!match.recordId.isEmpty()) {
+            const SavedControllerRecord *saved = savedControllerRecord(match.recordId);
+            if (!saved) return result(false, u"Physical controller is unavailable"_qs,
+                                      u"Refresh the device inventory, then try again."_qs);
+            recordIds.append(saved->id);
+            needsSetup = needsSetup || saved->lastVerified.isEmpty();
+            continue;
+        }
+        SavedControllerRecord record = ControllerManager::verifiedRecord(*discovered, {},
+            currentVjoyRequirements());
+        record.lastVerified.clear();
+        record.axisActivity = {};
+        recordIds.append(record.id);
+        createdRecordIds.insert(record.id);
+        newRecords.push_back(std::move(record));
+        needsSetup = true;
+    }
+    if (recordIds.isEmpty()) {
+        return result(false, u"Device Rig needs a physical controller"_qs,
+                      u"Connect a controller to create your first Device Rig."_qs);
+    }
+    m_configuration.savedControllers.insert(m_configuration.savedControllers.end(),
+        std::make_move_iterator(newRecords.begin()), std::make_move_iterator(newRecords.end()));
+    const QString rigId = createDeviceRig(trimmedName, recordIds, selectedOutput);
+    if (rigId.isEmpty()) {
+        m_configuration.savedControllers.erase(std::remove_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&createdRecordIds](const SavedControllerRecord &record) {
+                return createdRecordIds.contains(record.id);
+            }), m_configuration.savedControllers.end());
+        return result(false, u"Device Rig was not created"_qs,
+                      u"The selected devices or virtual output changed. Refresh and try again."_qs);
+    }
+    rebuildControllerUiModel();
+    return result(true, u"Device Rig created"_qs,
+                  needsSetup ? u"The rig was saved. Set up its controller and output before using it in a game."_qs
+                             : u"The rig was saved and is ready to review."_qs,
+                  rigId, needsSetup ? u"setup"_qs : u"details"_qs);
+}
+
+QString AppBackend::createDeviceRigFromDetected(const QString &name,
+                                                const QStringList &directInputIds,
+                                                const QString &outputLayoutId)
+{
+    const QString trimmedName = name.trimmed().left(64);
+    if (trimmedName.isEmpty() || directInputIds.isEmpty()
+        || directInputIds.size() > kMaximumDeviceRigMembers
+        || !findOutputLayout(m_configuration, outputLayoutId.trimmed().isEmpty()
+            ? currentProfile().outputLayoutId : outputLayoutId.trimmed())) return {};
+    if (std::any_of(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+                    [&trimmedName](const DeviceRig &rig) {
+                        return rig.name.compare(trimmedName, Qt::CaseInsensitive) == 0;
+                    })) return {};
+
+    QStringList recordIds;
+    QSet<QString> seenInputs;
+    QSet<QString> createdRecordIds;
+    std::vector<SavedControllerRecord> newRecords;
+    for (const QString &directInputId : directInputIds) {
+        const QString inputId = directInputId.trimmed();
+        const DiscoveredController *discovered = discoveredController(inputId);
+        if (inputId.isEmpty() || !discovered || !discovered->connected || discovered->virtualDevice
+            || seenInputs.contains(inputId)) return {};
+        seenInputs.insert(inputId);
+        const ControllerMatch match = ControllerManager::match(*discovered, m_configuration.savedControllers);
+        if (match.ambiguous) return {};
+        if (!match.recordId.isEmpty()) {
+            recordIds.append(match.recordId);
+            continue;
+        }
+        // Discovery gives us an exact DirectInput/HID identity and immutable
+        // capabilities, so it is safe to save an unverified record as the
+        // starting point for a grouped setup.  Do not claim setup or
+        // calibration completion: the unified rig verifier supplies that.
+        SavedControllerRecord record = ControllerManager::verifiedRecord(*discovered, {},
+            currentVjoyRequirements());
+        record.lastVerified.clear();
+        record.axisActivity = {};
+        recordIds.append(record.id);
+        createdRecordIds.insert(record.id);
+        newRecords.push_back(std::move(record));
+    }
+    if (recordIds.isEmpty()) return {};
+    m_configuration.savedControllers.insert(m_configuration.savedControllers.end(),
+        std::make_move_iterator(newRecords.begin()), std::make_move_iterator(newRecords.end()));
+    const QString rigId = createDeviceRig(trimmedName, recordIds, outputLayoutId);
+    if (rigId.isEmpty()) {
+        // All preconditions above were checked before adding records, but keep
+        // the operation transactional if a future create validation changes.
+        m_configuration.savedControllers.erase(std::remove_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&createdRecordIds](const SavedControllerRecord &record) {
+                return createdRecordIds.contains(record.id);
+            }), m_configuration.savedControllers.end());
+        return {};
+    }
+    rebuildControllerUiModel();
+    appendEvent(QString(u"Created an unverified Device Rig from %1 detected controller(s); verify the rig before use."_qs)
+        .arg(recordIds.size()));
+    return rigId;
+}
+
+bool AppBackend::addDetectedDeviceToRig(const QString &rigId, const QString &directInputId,
+                                        bool required)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const DiscoveredController *discovered = discoveredController(directInputId.trimmed());
+    if (!rig || !discovered || !discovered->connected || discovered->virtualDevice) return false;
+    const ControllerMatch match = ControllerManager::match(*discovered, m_configuration.savedControllers);
+    if (match.ambiguous) return false;
+    QString recordId = match.recordId;
+    bool createdRecord = false;
+    if (recordId.isEmpty()) {
+        SavedControllerRecord record = ControllerManager::verifiedRecord(*discovered, {},
+            currentVjoyRequirements());
+        record.lastVerified.clear();
+        record.axisActivity = {};
+        recordId = record.id;
+        m_configuration.savedControllers.push_back(std::move(record));
+        createdRecord = true;
+    }
+    if (!addDeviceRigMember(rig->id, recordId, required)) {
+        if (createdRecord) {
+            m_configuration.savedControllers.erase(std::remove_if(m_configuration.savedControllers.begin(),
+                m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &record) {
+                    return record.id == recordId;
+                }), m_configuration.savedControllers.end());
+        }
+        return false;
+    }
+    rebuildControllerUiModel();
+    appendEvent(QString(u"New controller added to %1; complete Device Rig verification before its routes are used."_qs)
+        .arg(rig->name));
+    return true;
+}
+
+bool AppBackend::activateDeviceRig(const QString &rigId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || !rig->enabled) return false;
+    const auto status = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+        [&rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
+    // Selecting a rig for setup is distinct from declaring it ready for live
+    // use.  An unverified but identity-safe rig must be activatable so the
+    // unified verifier can operate on it; MappingWorker rejects unverified
+    // required inputs at its compiled configuration boundary.
+    if (status == m_deviceRigStatuses.cend() || !status->ambiguousMemberIds.isEmpty()) return false;
+    m_configuration.activeDeviceRigId = rig->id;
+    if (m_configuration.editingDeviceRigId.isEmpty()) m_configuration.editingDeviceRigId = rig->id;
+    persistAndApply();
+    appendEvent(QString(u"Active Device Rig selected: %1"_qs).arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::deactivateDeviceRig(const QString &rigId)
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || rig->id != m_configuration.activeDeviceRigId) return false;
+    const QString name = rig->name;
+    m_configuration.activeDeviceRigId.clear();
+    persistAndApply();
+    appendEvent(QString(u"Deactivated Device Rig: %1"_qs).arg(name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDefaultDeviceRig(const QString &rigId)
+{
+    DeviceRig *target = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!target) return false;
+    for (DeviceRig &rig : m_configuration.deviceRigs) rig.isDefault = rig.id == target->id;
+    persistAndApply();
+    appendEvent(QString(u"Default Device Rig set to %1"_qs).arg(target->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::clearDefaultDeviceRig(const QString &rigId)
+{
+    DeviceRig *target = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!target || !target->isDefault) return false;
+    target->isDefault = false;
+    persistAndApply();
+    appendEvent(QString(u"Cleared default Device Rig: %1"_qs).arg(target->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigAutoActivate(const QString &rigId, bool enabled)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || rig->autoActivate == enabled) return false;
+    rig->autoActivate = enabled;
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigActivationPriority(const QString &rigId, int priority)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const int normalized = std::clamp(priority, 0, 100);
+    if (!rig || rig->activationPriority == normalized) return false;
+    rig->activationPriority = normalized;
+    persistAndApply();
+    appendEvent(QString(u"Device Rig activation priority set to %1: %2"_qs)
+        .arg(normalized).arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigMemberRequired(const QString &rigId, const QString &controllerRecordId,
+                                            bool required)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig) return false;
+    const auto member = std::find_if(rig->members.begin(), rig->members.end(),
+        [&controllerRecordId](const DeviceRigMember &item) { return item.controllerRecordId == controllerRecordId; });
+    if (member == rig->members.end() || member->required == required) return false;
+    member->required = required;
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigMemberEnabled(const QString &rigId, const QString &controllerRecordId,
+                                           bool enabled)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig) return false;
+    const auto member = std::find_if(rig->members.begin(), rig->members.end(),
+        [&controllerRecordId](const DeviceRigMember &item) { return item.controllerRecordId == controllerRecordId; });
+    if (member == rig->members.end() || member->enabled == enabled) return false;
+    member->enabled = enabled;
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigMemberOutput(const QString &rigId, const QString &controllerRecordId,
+                                          const QString &outputLayoutId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || !findOutputLayout(m_configuration, outputLayoutId.trimmed())) return false;
+    const bool ownedOutput = std::any_of(rig->outputs.cbegin(), rig->outputs.cend(),
+        [&outputLayoutId](const DeviceRigOutputTarget &output) {
+            return output.enabled && output.outputLayoutId == outputLayoutId.trimmed();
+        });
+    if (!ownedOutput) return false;
+    const auto member = std::find_if(rig->members.begin(), rig->members.end(),
+        [&controllerRecordId](const DeviceRigMember &item) { return item.controllerRecordId == controllerRecordId; });
+    if (member == rig->members.end() || member->preferredOutputLayoutId == outputLayoutId.trimmed()) return false;
+    member->preferredOutputLayoutId = outputLayoutId.trimmed();
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::addDeviceRigOutput(const QString &rigId, const QString &outputLayoutId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString outputId = outputLayoutId.trimmed();
+    if (!rig || !findOutputLayout(m_configuration, outputId)
+        || rig->outputs.size() >= kMaximumDeviceRigOutputs
+        || std::any_of(rig->outputs.cbegin(), rig->outputs.cend(), [&outputId](const auto &output) {
+               return output.outputLayoutId == outputId;
+           })) return false;
+    rig->outputs.push_back({outputId, true});
+    persistAndApply();
+    appendEvent(QString(u"Added virtual output to %1; assign an input before it receives routes."_qs)
+        .arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::removeDeviceRigOutput(const QString &rigId, const QString &outputLayoutId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString outputId = outputLayoutId.trimmed();
+    if (!rig || rig->outputs.size() <= 1) return false;
+    const auto found = std::find_if(rig->outputs.cbegin(), rig->outputs.cend(), [&outputId](const auto &output) {
+        return output.outputLayoutId == outputId;
+    });
+    if (found == rig->outputs.cend()
+        || std::any_of(rig->members.cbegin(), rig->members.cend(), [&outputId](const DeviceRigMember &member) {
+               return member.preferredOutputLayoutId == outputId;
+           })) return false;
+    rig->outputs.erase(rig->outputs.begin() + static_cast<std::ptrdiff_t>(
+        std::distance(rig->outputs.cbegin(), found)));
+    persistAndApply();
+    appendEvent(QString(u"Removed virtual output from %1."_qs).arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigOutputEnabled(const QString &rigId, const QString &outputLayoutId,
+                                            bool enabled)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString outputId = outputLayoutId.trimmed();
+    if (!rig) return false;
+    const auto target = std::find_if(rig->outputs.begin(), rig->outputs.end(), [&outputId](const auto &output) {
+        return output.outputLayoutId == outputId;
+    });
+    if (target == rig->outputs.end() || target->enabled == enabled) return false;
+    if (!enabled) {
+        const int enabledCount = static_cast<int>(std::count_if(rig->outputs.cbegin(), rig->outputs.cend(),
+            [](const auto &output) { return output.enabled; }));
+        const bool assigned = std::any_of(rig->members.cbegin(), rig->members.cend(),
+            [&outputId](const DeviceRigMember &member) { return member.preferredOutputLayoutId == outputId; });
+        if (enabledCount <= 1 || assigned) return false;
+    }
+    target->enabled = enabled;
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigInputVisibility(const QString &rigId,
+                                             const QStringList &controllerRecordIds, bool hidden)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || controllerRecordIds.isEmpty()) return false;
+
+    QStringList instances;
+    QList<SavedControllerRecord *> adoptedRecords;
+    QSet<QString> seenRecords;
+    for (const QString &value : controllerRecordIds) {
+        const QString recordId = value.trimmed();
+        if (recordId.isEmpty() || seenRecords.contains(recordId)) continue;
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&recordId](const DeviceRigMember &item) {
+            return item.controllerRecordId == recordId;
+        });
+        const auto recordFound = std::find_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &item) {
+                return item.id == recordId;
+            });
+        if (member == rig->members.cend() || recordFound == m_configuration.savedControllers.end()) {
+            appendEvent(u"Visibility actions can only target saved inputs in the selected Device Rig."_qs);
+            return false;
+        }
+        SavedControllerRecord *record = &*recordFound;
+        QStringList owned = record->ownedHidHideDeviceInstances;
+        if (owned.isEmpty()) {
+            // Selecting Hide in Devices is an explicit adoption choice. Show
+            // never adopts an unmanaged input, so upgraded users are not
+            // silently brought under isolation management.
+            if (!hidden || record->hidInstanceId.trimmed().isEmpty()) {
+                appendEvent(QString(u"%1 has not been explicitly adopted for managed game visibility."_qs)
+                    .arg(record->displayName));
+                return false;
+            }
+            owned = {record->hidInstanceId};
+        }
+        for (const QString &instance : owned) instances.append(instance);
+        adoptedRecords.append(record);
+        seenRecords.insert(recordId);
+    }
+    if (instances.isEmpty()) return false;
+
+    ControllerReadinessService visibility;
+    QStringList normalized;
+    QString validation;
+    if (!visibility.validateManagedPhysicalInputIdentities(instances, &normalized, &validation)) {
+        appendEvent(validation);
+        return false;
+    }
+    const ManagedVisibilityTransactionResult result = visibility.applyManagedPhysicalInputVisibility(normalized, hidden);
+    appendEvent(result.status);
+    if (!result.succeeded) return false;
+
+    if (hidden) {
+        // Store only exact identities just proved by HidHide. No broad
+        // friendly-name, VID, or unrelated-device rule enters this model.
+        for (SavedControllerRecord *record : adoptedRecords) {
+            if (!record->ownedHidHideDeviceInstances.isEmpty()) continue;
+            const QString identity = ControllerReadinessService::normalizeDeviceInstanceId(record->hidInstanceId);
+            if (!identity.isEmpty()) record->ownedHidHideDeviceInstances = {identity};
+        }
+    }
+    persistAndApply();
+    emit deviceRigsChanged();
+    // Command exit is not acceptance: re-inspect live HidHide state through
+    // the existing low-frequency verification path.
+    startQuickVerification();
+    return true;
+}
+
+bool AppBackend::setDeviceRigOutputVisibility(const QString &rigId,
+                                              const QStringList &outputLayoutIds, bool visible)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || outputLayoutIds.isEmpty()) return false;
+
+    QStringList instances;
+    QSet<QString> seenLayouts;
+    for (const QString &value : outputLayoutIds) {
+        const QString layoutId = value.trimmed();
+        if (layoutId.isEmpty() || seenLayouts.contains(layoutId)) continue;
+        const auto target = std::find_if(rig->outputs.cbegin(), rig->outputs.cend(), [&layoutId](const DeviceRigOutputTarget &item) {
+            return item.outputLayoutId == layoutId;
+        });
+        VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+        if (target == rig->outputs.cend() || !layout || !layout->hidhideManaged
+            || layout->hidHideDeviceInstanceId.trimmed().isEmpty()) {
+            appendEvent(u"Adopt an exact vJoy HID identity before changing virtual-output visibility."_qs);
+            return false;
+        }
+        if (!visible && rig->id == m_configuration.activeDeviceRigId && target->enabled) {
+            appendEvent(u"An enabled active-rig output must stay visible to games. Disable it or select another active output first."_qs);
+            return false;
+        }
+        instances.append(layout->hidHideDeviceInstanceId);
+        seenLayouts.insert(layoutId);
+    }
+    if (instances.isEmpty()) return false;
+
+    ControllerReadinessService visibility;
+    const ManagedVisibilityTransactionResult result = visibility.applyManagedVirtualOutputVisibility(instances, !visible);
+    appendEvent(result.status);
+    if (!result.succeeded) return false;
+    emit deviceRigsChanged();
+    startQuickVerification();
+    return true;
+}
+
+bool AppBackend::addDeviceRigMember(const QString &rigId, const QString &controllerRecordId, bool required)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString id = controllerRecordId.trimmed();
+    if (!rig || !savedControllerRecord(id) || rig->members.size() >= kMaximumDeviceRigMembers
+        || std::any_of(rig->members.cbegin(), rig->members.cend(), [&id](const DeviceRigMember &member) {
+               return member.controllerRecordId == id;
+           })) return false;
+    const auto output = std::find_if(rig->outputs.cbegin(), rig->outputs.cend(),
+        [](const DeviceRigOutputTarget &candidate) { return candidate.enabled; });
+    if (output == rig->outputs.cend()) return false;
+    rig->members.push_back({id, true, required, output->outputLayoutId});
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (profile.deviceRigId == rig->id) {
+            DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, id);
+            if (mapping.nativePovBindings.empty()) mapping.nativePovBindings = m_configuration.nativePovBindings;
+        }
+    }
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    appendEvent(QString(u"Added device to %1; review its routes before activation."_qs).arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::removeDeviceRigMember(const QString &rigId, const QString &controllerRecordId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    // A zero-member rig is not a recoverable topology. The explicit Delete
+    // Rig action preserves a clear transaction boundary for that case.
+    if (!rig || rig->members.size() <= 1) return false;
+    const auto found = std::find_if(rig->members.cbegin(), rig->members.cend(),
+        [&controllerRecordId](const DeviceRigMember &member) { return member.controllerRecordId == controllerRecordId; });
+    if (found == rig->members.cend()) return false;
+    const QString removed = found->controllerRecordId;
+    rig->members.erase(rig->members.begin() + static_cast<std::ptrdiff_t>(
+        std::distance(rig->members.cbegin(), found)));
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (profile.deviceRigId != rig->id) continue;
+        profile.deviceMappings.erase(std::remove_if(profile.deviceMappings.begin(), profile.deviceMappings.end(),
+            [&removed](const DeviceProfileMapping &mapping) { return mapping.controllerRecordId == removed; }),
+            profile.deviceMappings.end());
+    }
+    m_configuration.editingDeviceRecordIds.removeAll(removed);
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    appendEvent(QString(u"Removed device from %1; its mapping payload was retained only in unrelated rigs/profiles."_qs)
+        .arg(rig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::renameDeviceRig(const QString &rigId, const QString &name)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString trimmed = name.trimmed().left(64);
+    if (!rig || trimmed.isEmpty() || rig->name == trimmed
+        || std::any_of(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+                       [&rig, &trimmed](const DeviceRig &candidate) {
+                           return candidate.id != rig->id
+                               && candidate.name.compare(trimmed, Qt::CaseInsensitive) == 0;
+                       })) return false;
+    rig->name = trimmed;
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigEnabled(const QString &rigId, bool enabled)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || rig->enabled == enabled) return false;
+    rig->enabled = enabled;
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigFallback(const QString &rigId, const QString &fallbackRigId)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    const QString fallback = fallbackRigId.trimmed();
+    if (!rig || (!fallback.isEmpty() && (!findDeviceRig(m_configuration, fallback) || fallback == rig->id))
+        || rig->fallbackRigId == fallback) return false;
+    rig->fallbackRigId = fallback;
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::setDeviceRigDisconnectBehavior(const QString &rigId, int behavior)
+{
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig || behavior < static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes)
+        || behavior > static_cast<int>(DeviceRigDisconnectBehavior::UseFallback)) return false;
+    const auto desired = static_cast<DeviceRigDisconnectBehavior>(behavior);
+    if (rig->disconnectBehavior == desired) return false;
+    rig->disconnectBehavior = desired;
+    persistAndApply();
+    emit deviceRigsChanged();
+    return true;
+}
+
+void AppBackend::verifyDeviceRig(const QString &rigId)
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed().isEmpty()
+        ? m_configuration.activeDeviceRigId : rigId.trimmed());
+    if (!rig) return;
+    // The existing themed readiness dialog remains the sole verification UI.
+    // It now projects the selected rig's inputs, outputs, and compiled routes
+    // through controllerReadinessChecks while the established transaction
+    // retains the driver's repair/reacquire safeguards.
+    if (rig->id != m_configuration.activeDeviceRigId) {
+        appendEvent(u"Open Devices and activate the desired rig before a live verification transaction."_qs);
+        return;
+    }
+    verifyHotasSetup();
+}
+
+bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList &controllerRecordIds)
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId.trimmed());
+    if (!rig) return false;
+    QSet<QString> validMembers;
+    for (const DeviceRigMember &member : rig->members) validMembers.insert(member.controllerRecordId);
+    QSet<QString> unique;
+    QStringList selected;
+    for (const QString &value : controllerRecordIds) {
+        const QString id = value.trimmed();
+        if (!validMembers.contains(id) || unique.contains(id)) return false;
+        unique.insert(id);
+        selected.append(id);
+    }
+    m_configuration.editingDeviceRigId = rig->id;
+    m_configuration.editingDeviceRecordIds = selected;
+    persistAndApply();
+    // Editing context is a low-frequency control-plane action, but axes,
+    // buttons, POVs, curves, and Adaptive Response all consume the selected
+    // device mapping. Notify their QML properties immediately rather than
+    // waiting for the next telemetry snapshot.
+    emit inputTelemetryChanged();
+    emit buttonTelemetryChanged();
+    emit deviceRigsChanged();
+    return true;
+}
+
+bool AppBackend::focusIssueTarget(const QString &objectType, const QString &objectId)
+{
+    const QString type = objectType.trimmed();
+    const QString id = objectId.trimmed();
+    if (type == u"deviceRig"_qs) return setEditingDeviceContext(id, {});
+    if (id.isEmpty()) return false;
+
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(), [&id](const DeviceRigMember &candidate) {
+            return candidate.controllerRecordId == id;
+        });
+        const auto output = std::find_if(rig.outputs.cbegin(), rig.outputs.cend(), [&id](const DeviceRigOutputTarget &candidate) {
+            return candidate.outputLayoutId == id;
+        });
+        if (type == u"physicalDevice"_qs && member != rig.members.cend()) {
+            return setEditingDeviceContext(rig.id, {id});
+        }
+        if (type == u"virtualOutput"_qs && output != rig.outputs.cend()) {
+            return setEditingDeviceContext(rig.id, {});
+        }
+        if (type == u"gameVisibility"_qs) {
+            if (member != rig.members.cend()) return setEditingDeviceContext(rig.id, {id});
+            if (output != rig.outputs.cend()) return setEditingDeviceContext(rig.id, {});
+        }
+    }
+    return false;
+}
+
+void AppBackend::recordCrashPresentationState(int page, const QString &theme)
+{
+    m_crashPresentationPage = page;
+    m_crashPresentationTheme = theme.left(32);
+    // This updates the fixed crash-context snapshot only. It deliberately
+    // does not append an event for every page/property binding evaluation.
+    CrashDiagnostics::recordControlPlaneEvent(QString(), crashPresentationContext());
+}
+
+QVariantMap AppBackend::editingAxisBatchPreview(int physicalAxis, const QString &property,
+                                                const QVariant &value) const
+{
+    QVariantMap result{{u"property"_qs, property}, {u"value"_qs, value}};
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    const ControllerProfile &profile = currentProfile();
+    if (!validAxis(physicalAxis) || !rig || (!profile.deviceRigId.isEmpty()
+        && profile.deviceRigId != rig->id)
+        || (property != u"inverted"_qs && property != u"deadzone"_qs)) {
+        result.insert(u"valid"_qs, false);
+        result.insert(u"summary"_qs, u"This edit is unavailable for the current context."_qs);
+        return result;
+    }
+    QStringList ids = m_configuration.editingDeviceRecordIds;
+    if (ids.isEmpty()) {
+        for (const DeviceRigMember &member : rig->members) {
+            if (member.enabled) ids.append(member.controllerRecordId);
+        }
+    }
+    QVariantList targets;
+    for (const QString &id : ids) {
+        const SavedControllerRecord *record = savedControllerRecord(id);
+        if (!record) continue;
+        const DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, id);
+        const AxisMapping &axis = mapping ? mapping->axes[static_cast<size_t>(physicalAxis)]
+                                          : profile.axes[static_cast<size_t>(physicalAxis)];
+        targets.append(QVariantMap{{u"id"_qs, id}, {u"name"_qs, record->displayName},
+            {u"current"_qs, property == u"inverted"_qs ? QVariant(axis.inverted)
+                                                        : QVariant(axis.deadzone)},
+            {u"compatible"_qs, true}});
+    }
+    result.insert(u"valid"_qs, targets.size() > 1);
+    result.insert(u"targets"_qs, targets);
+    result.insert(u"compatibleCount"_qs, targets.size());
+    result.insert(u"summary"_qs, targets.size() > 1
+        ? QString(u"%1 selected physical inputs are compatible. Review before applying."_qs)
+              .arg(targets.size())
+        : u"Choose two or more physical inputs to make a batch edit."_qs);
+    return result;
+}
+
+bool AppBackend::applyEditingAxisBatch(int physicalAxis, const QString &property,
+                                       const QVariant &value, const QString &mode)
+{
+    if (mode != u"apply-compatible-only"_qs) return false;
+    const QVariantMap preview = editingAxisBatchPreview(physicalAxis, property, value);
+    if (!preview.value(u"valid"_qs).toBool()) return false;
+    DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    if (!rig) return false;
+    QStringList ids = m_configuration.editingDeviceRecordIds;
+    if (ids.isEmpty()) {
+        for (const DeviceRigMember &member : rig->members) {
+            if (member.enabled) ids.append(member.controllerRecordId);
+        }
+    }
+    ControllerProfile &profile = currentProfile();
+    int applied = 0;
+    for (const QString &id : ids) {
+        if (!savedControllerRecord(id)) continue;
+        DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, id);
+        AxisMapping &axis = mapping.axes[static_cast<size_t>(physicalAxis)];
+        if (property == u"inverted"_qs) {
+            axis.inverted = value.toBool();
+        } else {
+            axis.deadzone = std::clamp(static_cast<float>(value.toDouble()), 0.0F, 0.95F);
+        }
+        ++applied;
+    }
+    if (applied < 2) return false;
+    persistAndApply();
+    appendEvent(QString(u"Applied compatible %1 axis edit to %2 physical inputs."_qs)
+        .arg(property).arg(applied));
+    return true;
+}
+
+bool AppBackend::deleteDeviceRig(const QString &rigId)
+{
+    const auto found = std::find_if(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+        [&rigId](const DeviceRig &rig) { return rig.id == rigId.trimmed(); });
+    if (found == m_configuration.deviceRigs.cend()) return false;
+    const QString name = found->name;
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (profile.deviceRigId == found->id) profile.deviceRigId.clear();
+    }
+    const bool wasActive = found->id == m_configuration.activeDeviceRigId;
+    const bool wasEditing = found->id == m_configuration.editingDeviceRigId;
+    m_configuration.deviceRigs.erase(m_configuration.deviceRigs.begin()
+        + static_cast<std::ptrdiff_t>(std::distance(m_configuration.deviceRigs.cbegin(), found)));
+    if (wasActive) m_configuration.activeDeviceRigId.clear();
+    if (wasEditing) {
+        m_configuration.editingDeviceRigId.clear();
+        m_configuration.editingDeviceRecordIds.clear();
+    }
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    persistAndApply();
+    appendEvent(QString(u"Deleted Device Rig: %1. Saved devices and profile mappings were retained."_qs).arg(name));
+    emit deviceRigsChanged();
+    return true;
+}
 bool AppBackend::autoSwitchVerifiedController() const { return m_configuration.autoSwitchVerifiedController; }
 bool AppBackend::keepRunningInTray() const { return m_configuration.keepRunningInTray; }
 bool AppBackend::trayAvailable() const { return m_trayIcon && m_trayIcon->isVisible(); }
@@ -2843,7 +4121,15 @@ QString AppBackend::mappingStatus() const
     }
     return u"STARTING MAPPING"_qs;
 }
-bool AppBackend::vjoyReady() const { return m_worker.runtime().vjoyReady.load(); }
+bool AppBackend::vjoyReady() const
+{
+    // The deterministic Live Controller UI seam represents a deliberately
+    // suspended mapper with no usable output.  Keep that presentation state
+    // self-contained rather than letting a real, unrelated vJoy driver on a
+    // developer machine make the test outcome depend on external hardware.
+    // Production code never sets this flag.
+    return !m_liveInputTestSuspended && m_worker.runtime().vjoyReady.load();
+}
 QString AppBackend::vjoyStatus() const { return m_worker.vjoyStatus(); }
 QString AppBackend::vjoyStatusSeverity() const
 {
@@ -2863,6 +4149,166 @@ bool AppBackend::hidhideMapperAllowed() const
 
 QVariantList AppBackend::controllerReadinessChecks() const
 {
+    // The existing readiness panel is the shared setup surface.  A one-input
+    // rig therefore remains compact, while a multi-input rig contributes one
+    // clear row per physical member/output plus a compiled-routing result.
+    // This projection is control-plane only; no mapper report constructs it.
+    if (const DeviceRig *rig = setupAssistantDeviceRig(m_setupAssistantScopeType,
+                                                       m_setupAssistantScopeId)) {
+        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [rig](const DeviceRigStatus &status) { return status.rigId == rig->id; });
+        const DeviceRigStatus status = found == m_deviceRigStatuses.cend()
+            ? DeviceRigStatus{rig->id, rig->enabled ? DeviceRigHealth::Offline : DeviceRigHealth::Disabled}
+            : *found;
+        const auto appendRigCheck = [](QVariantList &checks, const QString &name, const QString &state,
+                                       const QString &message, const QString &severity) {
+            checks.append(QVariantMap{{u"name"_qs, name}, {u"state"_qs, state},
+                                      {u"message"_qs, message}, {u"severity"_qs, severity}});
+        };
+        QVariantList checks;
+        const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
+        // This is compiled once on the UI/control plane.  The worker only
+        // updates the fixed member/output counters below; it never produces
+        // readiness strings or traverses this durable model per report.
+        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+        appendRigCheck(checks, u"GAME VISIBILITY · HOTAS BF6"_qs,
+            hidhide.mapperAllowlisted ? u"READY"_qs : u"SETUP NEEDED"_qs,
+            hidhide.mapperAllowlisted
+                ? u"HOTAS BF6 can keep selected physical controllers hidden from games."_qs
+                : hidhide.installed
+                    ? u"Game visibility needs one setup change before HOTAS BF6 can hide physical controllers safely."_qs
+                    : u"Set up game visibility so your game uses the virtual controller instead of the physical controllers."_qs,
+            hidhide.mapperAllowlisted ? u"ready"_qs : u"warning"_qs);
+        for (const DeviceRigMember &member : rig->members) {
+            const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            const QString name = record ? record->displayName : u"Unknown device"_qs;
+            if (!member.enabled) {
+                appendRigCheck(checks, u"INPUT · "_qs + name, u"DISABLED"_qs,
+                    u"Excluded from this Device Rig."_qs, u"info"_qs);
+            } else if (status.ambiguousMemberIds.contains(member.controllerRecordId)) {
+                appendRigCheck(checks, u"INPUT · "_qs + name, u"SELECTION REQUIRED"_qs,
+                    u"Windows exposed more than one plausible saved identity. Choose the exact device in Devices."_qs,
+                    u"error"_qs);
+            } else if (!status.connectedMemberIds.contains(member.controllerRecordId)) {
+                appendRigCheck(checks, u"INPUT · "_qs + name,
+                    member.required ? u"OFFLINE"_qs : u"OPTIONAL · OFFLINE"_qs,
+                    member.required ? u"Required device is not connected."_qs
+                                    : u"Optional device is offline; the rig may continue without its routes."_qs,
+                    member.required ? u"error"_qs : u"info"_qs);
+            } else if (status.needsVerificationMemberIds.contains(member.controllerRecordId)) {
+                appendRigCheck(checks, u"INPUT · "_qs + name, u"NEEDS VERIFICATION"_qs,
+                    u"Identity is saved and connected; run setup verification before automatic activation."_qs,
+                    u"warning"_qs);
+            } else {
+                appendRigCheck(checks, u"INPUT · "_qs + name, u"READY"_qs,
+                    member.required ? u"Connected, identity matched, and verified."_qs
+                                    : u"Optional device connected, identity matched, and verified."_qs,
+                    u"ready"_qs);
+            }
+            if (!member.enabled || (!member.required
+                                    && !status.connectedMemberIds.contains(member.controllerRecordId))) {
+                continue;
+            }
+            const bool managed = record && !record->ownedHidHideDeviceInstances.isEmpty();
+            const QString persistedIdentity = record ? record->hidInstanceId : QString{};
+            const QString normalizedIdentity = ControllerReadinessService::normalizeDeviceInstanceId(
+                persistedIdentity);
+            const bool hidden = managed && std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(),
+                hidhide.hiddenDeviceInstanceIds.cend(), [&normalizedIdentity](const QString &candidate) {
+                    return !normalizedIdentity.isEmpty()
+                        && ControllerReadinessService::normalizeDeviceInstanceId(candidate) == normalizedIdentity;
+                });
+            appendRigCheck(checks, u"GAME VISIBILITY · "_qs + name,
+                !managed || !hidhide.cloakKnown || !hidden ? u"SETUP NEEDED"_qs : u"READY"_qs,
+                !managed ? u"Game visibility has not been set up for this physical controller."_qs
+                    : !hidhide.cloakKnown ? u"HOTAS BF6 needs to check whether this physical controller is hidden from games."_qs
+                    : hidden ? u"This physical controller is hidden from games."_qs
+                             : u"This physical controller is visible to games and may cause duplicate controls."_qs,
+                !managed || !hidhide.cloakKnown || !hidden ? u"warning"_qs : u"ready"_qs);
+
+            const auto compiledMember = std::find_if(compiled.members.cbegin(),
+                compiled.members.cbegin() + compiled.memberCount,
+                [&member](const CompiledDeviceRigMember &candidate) {
+                    return candidate.controllerRecordId == member.controllerRecordId;
+                });
+            if (compiledMember != compiled.members.cbegin() + compiled.memberCount) {
+                const int memberIndex = static_cast<int>(std::distance(compiled.members.cbegin(), compiledMember));
+                const bool reports = m_worker.runtime().deviceRigMeaningfulInputSequence[
+                    static_cast<size_t>(memberIndex)].load(std::memory_order_relaxed) > 0;
+                appendRigCheck(checks, u"LIVE INPUT · "_qs + name,
+                    reports ? u"PASSED"_qs : u"WAITING"_qs,
+                    reports ? u"Meaningful physical control movement has arrived from this Device Rig input."_qs
+                            : u"Move an axis about 2% or press and release a button to prove this live input path."_qs,
+                    reports ? u"ready"_qs : u"warning"_qs);
+            }
+        }
+        int enabledOutputIndex = 0;
+        bool everyConnectedInputReported = true;
+        bool everyEnabledOutputChanged = true;
+        for (int memberIndex = 0; memberIndex < compiled.memberCount; ++memberIndex) {
+            const CompiledDeviceRigMember &member = compiled.members[static_cast<size_t>(memberIndex)];
+            if (!status.connectedMemberIds.contains(member.controllerRecordId)) continue;
+            everyConnectedInputReported = everyConnectedInputReported
+                && m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)]
+                       .load(std::memory_order_relaxed) > 0;
+        }
+        for (const DeviceRigOutputTarget &target : rig->outputs) {
+            const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
+            const QString outputName = layout ? layout->name : u"Unavailable output"_qs;
+            // The rig worker publishes vjoyReady only after every enabled
+            // output has been checked. That makes this a truthful compact
+            // per-output readiness view without probing vJoy from QML.
+            const bool ready = target.enabled && m_worker.runtime().vjoyReady.load();
+            appendRigCheck(checks, u"OUTPUT · "_qs + outputName,
+                !target.enabled ? u"DISABLED"_qs : ready ? u"READY"_qs : u"VERIFY OUTPUT"_qs,
+                !target.enabled ? u"Excluded from this Device Rig."_qs
+                    : ready ? m_worker.vjoyStatus()
+                            : QString(u"Verify vJoy Device %1 and its required capabilities."_qs)
+                                  .arg(layout ? layout->requirements.deviceId : 0),
+                !target.enabled ? u"info"_qs : ready ? u"ready"_qs : u"warning"_qs);
+            const bool outputHidden = layout && layout->hidhideManaged
+                && std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(), hidhide.hiddenDeviceInstanceIds.cend(),
+                    [layout](const QString &candidate) {
+                        return !layout->hidHideDeviceInstanceId.isEmpty()
+                            && ControllerReadinessService::normalizeDeviceInstanceId(candidate)
+                                == ControllerReadinessService::normalizeDeviceInstanceId(
+                                    layout->hidHideDeviceInstanceId);
+                    });
+            appendRigCheck(checks, u"GAME VISIBILITY · "_qs + outputName,
+                !layout || !layout->hidhideManaged || outputHidden ? u"SETUP NEEDED"_qs : u"READY"_qs,
+                !layout || !layout->hidhideManaged
+                    ? u"Game visibility has not been set up for this virtual controller."_qs
+                    : outputHidden ? u"This virtual controller is hidden from games. Games need to see it."_qs
+                                   : u"This virtual controller is visible to games."_qs,
+                !layout || !layout->hidhideManaged || outputHidden ? u"warning"_qs : u"ready"_qs);
+            if (target.enabled) {
+                const bool writes = enabledOutputIndex < compiled.outputCount
+                    && m_worker.runtime().deviceRigMeaningfulOutputSequence[static_cast<size_t>(enabledOutputIndex)]
+                           .load(std::memory_order_relaxed) > 0;
+                appendRigCheck(checks, u"LIVE OUTPUT · "_qs + outputName,
+                    writes ? u"PASSED"_qs : u"WAITING"_qs,
+                    writes ? u"A mapped Device Rig route has changed this virtual output."_qs
+                           : u"Move a mapped control for this output to prove the live route."_qs,
+                    writes ? u"ready"_qs : u"warning"_qs);
+                everyEnabledOutputChanged = everyEnabledOutputChanged && writes;
+                ++enabledOutputIndex;
+            }
+        }
+        appendRigCheck(checks, u"ROUTING"_qs, compiled.valid ? u"READY"_qs : u"ACTION REQUIRED"_qs,
+            compiled.valid ? u"Device-qualified routes and output destinations are unambiguous."_qs
+                           : compiled.issue,
+            compiled.valid ? u"ready"_qs : u"error"_qs);
+        const bool liveInput = compiled.valid && everyConnectedInputReported;
+        const bool liveOutput = compiled.valid && m_worker.runtime().mappingActive.load()
+            && everyEnabledOutputChanged;
+        appendRigCheck(checks, u"LIVE MAPPING"_qs,
+            liveInput && liveOutput ? u"PASSED"_qs : liveInput ? u"INPUT ACTIVE"_qs : u"WAITING"_qs,
+            liveInput && liveOutput ? u"Meaningful input movement has reached the active Device Rig output."_qs
+                : liveInput ? u"Meaningful input is arriving; move a mapped control to confirm output activity."_qs
+                            : u"Move each required connected input during verification to prove the live chain."_qs,
+            liveInput && liveOutput ? u"ready"_qs : u"warning"_qs);
+        return checks;
+    }
     QVariantList checks;
     const ControllerReadinessPlan &plan = m_readiness.plan();
     const auto append = [&checks](const QString &name, VerificationSubsystemState state,
@@ -2877,8 +4323,810 @@ QVariantList AppBackend::controllerReadinessChecks() const
     };
     append(u"PHYSICAL CONTROLLER"_qs, plan.physicalStatus, plan.physicalSummary);
     append(u"VJOY OUTPUT"_qs, plan.vjoyStatus, plan.vjoySummary);
-    append(u"HIDHIDE ISOLATION"_qs, plan.hidhideStatus, plan.hidhideSummary);
+    const VerificationSubsystemState gameVisibilityState = plan.hidhideStatus == VerificationSubsystemState::Ready
+        ? VerificationSubsystemState::Ready : VerificationSubsystemState::Attention;
+    append(u"GAME VISIBILITY"_qs, gameVisibilityState,
+           plan.hidhideStatus == VerificationSubsystemState::Ready
+               ? u"HOTAS BF6 can keep the selected physical controller hidden from games."_qs
+               : u"Set up game visibility so games use the virtual controller instead of the physical controller."_qs);
     return checks;
+}
+
+QVariantList AppBackend::setupAssistantIssues() const
+{
+    return setupAssistantIssuesForScope(m_setupAssistantScopeType, m_setupAssistantScopeId);
+}
+
+QString AppBackend::setupAssistantScopeType() const
+{
+    return m_setupAssistantScopeType;
+}
+
+QString AppBackend::setupAssistantScopeId() const
+{
+    return m_setupAssistantScopeId;
+}
+
+QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
+                                                       const QString &scopeId) const
+{
+    QVariantList issues;
+    // Setup decisions are derived from durable records and typed readiness
+    // facts.  controllerReadinessChecks() remains a concise dashboard
+    // projection, but the assistant must never infer product behavior by
+    // parsing that projection's display strings.
+    const bool testFacts = !m_setupAssistantTestFacts.isEmpty();
+    const auto boolFact = [this](const QString &key, bool fallback) {
+        return m_setupAssistantTestFacts.value(key, fallback).toBool();
+    };
+    const auto stringFact = [this](const QString &key, const QString &fallback) {
+        return m_setupAssistantTestFacts.value(key, fallback).toString();
+    };
+
+    QVariantList inputs;
+    QVariantList outputs;
+    bool hidhideInstalled = false;
+    bool hidhideReady = false;
+    bool physicalVisible = false;
+    QStringList visiblePhysicalInputIds;
+    bool outputHidden = false;
+    bool routingConflict = false;
+    QString routingDetails;
+    bool noMappedControl = false;
+    bool vjoyInstalled = false;
+    bool vjoyPresent = false;
+    bool vjoyBusy = false;
+    bool vjoyOwned = false;
+    bool vjoySufficient = false;
+    QString missingCapabilities;
+
+    if (testFacts) {
+        inputs = m_setupAssistantTestFacts.value(u"inputs"_qs).toList();
+        outputs = m_setupAssistantTestFacts.value(u"outputs"_qs).toList();
+        hidhideInstalled = boolFact(u"hidhideInstalled"_qs, false);
+        hidhideReady = boolFact(u"hidhideReady"_qs, false);
+        physicalVisible = boolFact(u"physicalVisible"_qs, false);
+        outputHidden = boolFact(u"outputHidden"_qs, false);
+        routingConflict = boolFact(u"routingConflict"_qs, false);
+        routingDetails = stringFact(u"routingDetails"_qs, u"Two controls need the same output assignment."_qs);
+        noMappedControl = boolFact(u"noMappedControl"_qs, false);
+        vjoyInstalled = boolFact(u"vjoyInstalled"_qs, true);
+        vjoyPresent = boolFact(u"vjoyPresent"_qs, true);
+        vjoyBusy = boolFact(u"vjoyBusy"_qs, false);
+        vjoyOwned = boolFact(u"vjoyOwned"_qs, false);
+        vjoySufficient = boolFact(u"vjoySufficient"_qs, true);
+        missingCapabilities = stringFact(u"missingCapabilities"_qs, QString{});
+        if (physicalVisible) {
+            for (const QVariant &entry : inputs) {
+                const QVariantMap input = entry.toMap();
+                if (input.value(u"connected"_qs).toBool() && input.value(u"required"_qs, true).toBool()) {
+                    visiblePhysicalInputIds.append(input.value(u"id"_qs).toString());
+                }
+            }
+        }
+    } else {
+        const DeviceRig *rig = setupAssistantDeviceRig(scopeType, scopeId);
+        const DeviceRigStatus *status = nullptr;
+        if (rig) {
+            const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+                [rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
+            if (found != m_deviceRigStatuses.cend()) status = &*found;
+            int inputIndex = 0;
+            for (const DeviceRigMember &member : rig->members) {
+                if (!member.enabled) continue;
+                const int runtimeIndex = inputIndex++;
+                if (scopeType == u"device"_qs && member.controllerRecordId != scopeId) continue;
+                const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+                const bool connected = status && status->connectedMemberIds.contains(member.controllerRecordId);
+                const bool current = record && (record->lastDirectInputId == deviceId()
+                    || record->id == m_configuration.activeControllerRecordId);
+                inputs.append(QVariantMap{{u"id"_qs, member.controllerRecordId},
+                    {u"name"_qs, record ? record->displayName : u"Physical controller"_qs},
+                    {u"saved"_qs, record != nullptr}, {u"connected"_qs, connected},
+                    {u"required"_qs, member.required},
+                    {u"verified"_qs, record && !record->lastVerified.isEmpty()},
+                    {u"ambiguous"_qs, status && status->ambiguousMemberIds.contains(member.controllerRecordId)},
+                    {u"calibrationRequired"_qs, current && calibrationNeedsSetup(currentPhysicalCapabilities())},
+                    {u"runtimeIndex"_qs, runtimeIndex}});
+            }
+            int outputIndex = 0;
+            for (const DeviceRigOutputTarget &target : rig->outputs) {
+                if (!target.enabled) continue;
+                const int runtimeIndex = outputIndex++;
+                if (scopeType == u"virtualOutput"_qs && target.outputLayoutId != scopeId) continue;
+                const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
+                if (!layout) continue;
+                outputs.append(QVariantMap{{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
+                    {u"deviceId"_qs, layout->requirements.deviceId},
+                    {u"buttons"_qs, layout->requirements.buttons},
+                    {u"continuousPovs"_qs, layout->requirements.continuousPovs},
+                    {u"discretePovs"_qs, layout->requirements.discretePovs},
+                    {u"runtimeIndex"_qs, runtimeIndex}});
+            }
+            const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+            if (scopeType == u"application"_qs || scopeType == u"deviceRig"_qs) {
+                routingConflict = !compiled.valid;
+                routingDetails = routingConflict ? compiled.issue : QString{};
+            }
+            if (compiled.valid) {
+                bool mappedControlFound = false;
+                for (int memberIndex = 0; memberIndex < compiled.memberCount; ++memberIndex) {
+                    const CompiledDeviceRigMember &member = compiled.members[static_cast<size_t>(memberIndex)];
+                    if (scopeType == u"device"_qs && member.controllerRecordId != scopeId) continue;
+                    if (scopeType == u"virtualOutput"_qs && member.outputLayoutId != scopeId) continue;
+                    mappedControlFound = mappedControlFound || hasMappedControl(member);
+                }
+                noMappedControl = !mappedControlFound;
+            }
+        } else {
+            QSet<QString> represented;
+            for (const DiscoveredController &controller : m_discoveredControllers) {
+                if (controller.virtualDevice) continue;
+                const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+                const SavedControllerRecord *record = match.recordId.isEmpty() || match.ambiguous
+                    ? nullptr : savedControllerRecord(match.recordId);
+                const QString inputId = record ? record->id : controller.directInputId;
+                if (scopeType == u"device"_qs && inputId != scopeId) continue;
+                inputs.append(QVariantMap{{u"id"_qs, inputId},
+                    {u"name"_qs, controller.name}, {u"saved"_qs, record != nullptr},
+                    {u"connected"_qs, controller.connected}, {u"required"_qs, true},
+                    {u"verified"_qs, record && !record->lastVerified.isEmpty()},
+                    {u"ambiguous"_qs, match.ambiguous}, {u"calibrationRequired"_qs, false}});
+                if (record) represented.insert(record->id);
+            }
+            for (const SavedControllerRecord &record : m_configuration.savedControllers) {
+                if (represented.contains(record.id) || (scopeType == u"device"_qs && record.id != scopeId)) continue;
+                inputs.append(QVariantMap{{u"id"_qs, record.id}, {u"name"_qs, record.displayName},
+                    {u"saved"_qs, true}, {u"connected"_qs, false}, {u"required"_qs, true},
+                    {u"verified"_qs, !record.lastVerified.isEmpty()}, {u"ambiguous"_qs, false},
+                    {u"calibrationRequired"_qs, false}});
+            }
+            const VirtualOutputLayout *scopeOutput = scopeType == u"virtualOutput"_qs
+                ? findOutputLayout(m_configuration, scopeId) : activeOutputLayout();
+            if (scopeOutput) {
+                const VirtualOutputLayout *layout = scopeOutput;
+                outputs.append(QVariantMap{{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
+                    {u"deviceId"_qs, layout->requirements.deviceId},
+                    {u"buttons"_qs, layout->requirements.buttons},
+                    {u"continuousPovs"_qs, layout->requirements.continuousPovs},
+                    {u"discretePovs"_qs, layout->requirements.discretePovs}});
+            }
+        }
+        const ControllerReadinessPlan *scopedOutputPlan = scopeType == u"virtualOutput"_qs
+            ? virtualOutputReadinessPlan(scopeId) : nullptr;
+        const ControllerReadinessPlan &plan = scopedOutputPlan ? *scopedOutputPlan : m_readiness.plan();
+        hidhideInstalled = plan.hidhide.installed;
+        hidhideReady = plan.hidhide.installed && plan.hidhide.cliAvailable
+            && plan.hidhide.serviceReady && plan.hidhide.mapperAllowlisted;
+        vjoyInstalled = plan.vjoy.installed && plan.vjoy.configurationUtilityAvailable;
+        vjoyPresent = plan.vjoy.devicePresent;
+        vjoyBusy = plan.vjoy.busy;
+        vjoyOwned = plan.vjoy.ownedByHotasBf6;
+        vjoySufficient = !plan.vjoyNeedsChanges;
+        missingCapabilities = plan.vjoyNeedsChanges ? plan.vjoySummary : QString{};
+        for (const QVariant &entry : inputs) {
+            const QVariantMap input = entry.toMap();
+            if (!input.value(u"connected"_qs).toBool() || !input.value(u"required"_qs).toBool()) continue;
+            const SavedControllerRecord *record = savedControllerRecord(input.value(u"id"_qs).toString());
+            const QStringList identities = record && !record->ownedHidHideDeviceInstances.isEmpty()
+                ? record->ownedHidHideDeviceInstances
+                : record && !record->hidInstanceId.isEmpty() ? QStringList{record->hidInstanceId} : QStringList{};
+            const bool hidden = !identities.isEmpty() && plan.hidhide.cloakKnown
+                && std::all_of(identities.cbegin(), identities.cend(), [&plan](const QString &identity) {
+                    return std::any_of(plan.hidhide.hiddenDeviceInstanceIds.cbegin(),
+                                       plan.hidhide.hiddenDeviceInstanceIds.cend(), [&identity](const QString &candidate) {
+                        return ControllerReadinessService::normalizeDeviceInstanceId(candidate)
+                            == ControllerReadinessService::normalizeDeviceInstanceId(identity);
+                    });
+                });
+            if (!hidden) {
+                physicalVisible = true;
+                visiblePhysicalInputIds.append(input.value(u"id"_qs).toString());
+            }
+        }
+        for (const QVariant &entry : outputs) {
+            const VirtualOutputLayout *layout = findOutputLayout(m_configuration,
+                entry.toMap().value(u"id"_qs).toString());
+            if (!layout) continue;
+            outputHidden = outputHidden || (layout->hidhideManaged && !layout->hidHideDeviceInstanceId.isEmpty()
+                && std::any_of(plan.hidhide.hiddenDeviceInstanceIds.cbegin(), plan.hidhide.hiddenDeviceInstanceIds.cend(),
+                    [layout](const QString &candidate) {
+                        return ControllerReadinessService::normalizeDeviceInstanceId(candidate)
+                            == ControllerReadinessService::normalizeDeviceInstanceId(layout->hidHideDeviceInstanceId);
+                    }));
+        }
+    }
+
+    int sequence = 0;
+    const auto append = [&issues, &sequence, &scopeType, &scopeId](const QString &category, const QString &code,
+                                              const QString &severity, const QString &objectType,
+                                              const QString &objectId, const QString &title,
+                                              const QString &explanation, const QString &action,
+                                              const QString &actionLabel, bool automaticallyFixable,
+                                              bool requiresLiveHardware, int priority,
+                                              const QString &technicalDetails = {},
+                                              const QStringList &objectIds = {}) {
+        AppIssue issue;
+        issue.id = QString(u"%1-%2"_qs).arg(code).arg(sequence++);
+        issue.category = category;
+        issue.code = code;
+        issue.severity = severity;
+        issue.scopeType = scopeType;
+        issue.scopeId = scopeId;
+        issue.affectedObjectType = objectType;
+        issue.affectedObjectId = objectId;
+        issue.affectedObjectIds = objectIds.isEmpty()
+            ? (objectId.isEmpty() ? QStringList{} : QStringList{objectId}) : objectIds;
+        issue.title = title;
+        issue.explanation = explanation;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = actionLabel;
+        issue.alternativeActions = QVariantList{u"view-all-details"_qs};
+        issue.automaticallyFixable = automaticallyFixable;
+        issue.requiresLiveHardware = requiresLiveHardware;
+        issue.priority = priority;
+        issue.technicalDetails = technicalDetails;
+        issue.navigationTarget = issueNavigationTarget(code, objectType, objectId);
+        issues.append(issue.toVariantMap());
+    };
+
+    const bool deviceScope = scopeType == u"device"_qs;
+    const bool outputScope = scopeType == u"virtualOutput"_qs;
+    const bool needsPhysicalInput = !outputScope;
+    const bool needsVirtualOutput = !deviceScope;
+    if (needsPhysicalInput && inputs.isEmpty()) {
+        append(u"PhysicalInput"_qs, u"PhysicalDeviceMissing"_qs, u"setup-needed"_qs,
+            u"physicalDevice"_qs, {}, u"Let's set up your controller"_qs,
+            u"Connect a physical controller to Windows, then choose Check Setup to continue."_qs,
+            u"check-again"_qs, u"CHECK AGAIN"_qs, false, true, 10);
+    }
+
+    bool requiredOffline = false;
+    bool hasConnectedInput = false;
+    bool needsDeviceSetup = false;
+    for (const QVariant &entry : needsPhysicalInput ? inputs : QVariantList{}) {
+        const QVariantMap input = entry.toMap();
+        const QString id = input.value(u"id"_qs).toString();
+        const QString name = input.value(u"name"_qs, u"Physical controller"_qs).toString();
+        const bool connected = input.value(u"connected"_qs).toBool();
+        const bool required = input.value(u"required"_qs, true).toBool();
+        if (input.value(u"ambiguous"_qs).toBool()) {
+            append(u"Identity"_qs, u"PhysicalDeviceAmbiguous"_qs, u"setup-needed"_qs,
+                u"physicalDevice"_qs, id, u"Choose the correct physical controller"_qs,
+                u"Windows found more than one possible match for "_qs + name + u". Choose the correct controller before continuing."_qs,
+                u"check-again"_qs, u"CHECK AGAIN"_qs, false, true, 15);
+            needsDeviceSetup = true;
+        } else if (!connected) {
+            if (required) {
+                append(u"PhysicalInput"_qs, u"PhysicalDeviceOffline"_qs, u"offline"_qs,
+                    u"physicalDevice"_qs, id, u"Reconnect your "_qs + name,
+                    u"The controller is saved and configured, but it is not currently connected."_qs,
+                    u"check-again"_qs, u"CHECK AGAIN"_qs, false, true, 20);
+                requiredOffline = true;
+            } else {
+                append(u"PhysicalInput"_qs, u"OptionalDeviceOffline"_qs, u"note"_qs,
+                    u"physicalDevice"_qs, id, name + u" is optional and currently offline"_qs,
+                    u"This optional controller remains available for planning and saved mapping edits."_qs,
+                    u"none"_qs, {}, false, false, 900);
+            }
+        } else {
+            hasConnectedInput = true;
+            if (!input.value(u"verified"_qs).toBool()) {
+                append(u"PhysicalInput"_qs, u"PhysicalDeviceUnverified"_qs, u"setup-needed"_qs,
+                    u"physicalDevice"_qs, id, u"Finish setting up your "_qs + name,
+                    u"HOTAS BF6 found this controller, but it still needs setup before it can be used safely in a game."_qs,
+                    u"set-up-device"_qs, u"SET UP DEVICE"_qs, false, true, 30);
+                needsDeviceSetup = true;
+            } else if (input.value(u"calibrationRequired"_qs).toBool()) {
+                append(u"Calibration"_qs, u"CalibrationRequired"_qs, u"setup-needed"_qs,
+                    u"physicalDevice"_qs, id, u"Calibrate your controller"_qs,
+                    u"HOTAS BF6 needs to learn the full travel of its axes."_qs,
+                    u"start-calibration"_qs, u"START CALIBRATION"_qs, false, true, 35);
+                needsDeviceSetup = true;
+            }
+        }
+    }
+    const bool physicalSetupComplete = !needsPhysicalInput
+        || (!inputs.isEmpty() && !requiredOffline && hasConnectedInput && !needsDeviceSetup);
+
+    const QVariantMap output = outputs.isEmpty() ? QVariantMap{} : outputs.front().toMap();
+    const QString outputId = output.value(u"id"_qs).toString();
+    const QString outputName = output.value(u"name"_qs, u"Virtual controller"_qs).toString();
+    bool outputSetupComplete = !needsVirtualOutput;
+    if (needsVirtualOutput && (outputs.isEmpty() || !vjoyInstalled || !vjoyPresent)) {
+        append(u"Driver"_qs, u"VirtualOutputMissing"_qs, u"setup-needed"_qs,
+            u"virtualOutput"_qs, outputId, u"Virtual controller driver needed"_qs,
+            u"HOTAS BF6 uses vJoy to present one clean controller to your game."_qs,
+            u"setup-vjoy"_qs, u"SET UP VJOY"_qs, false, false, 40);
+    } else if (needsVirtualOutput && vjoyBusy && !vjoyOwned) {
+        append(u"VirtualOutput"_qs, u"VirtualOutputBusy"_qs, u"setup-needed"_qs,
+            u"virtualOutput"_qs, outputId, outputName + u" is already in use"_qs,
+            u"Another application currently owns this vJoy device. Close that application, then check setup again."_qs,
+            u"check-again"_qs, u"CHECK AGAIN"_qs, false, false, 45);
+    } else if (needsVirtualOutput && !vjoySufficient) {
+        append(u"VirtualOutput"_qs, u"VirtualOutputMisconfigured"_qs, u"setup-needed"_qs,
+            u"virtualOutput"_qs, outputId, outputName + u" needs different capabilities"_qs,
+            missingCapabilities.isEmpty()
+                ? u"This virtual controller does not have all of the axes, buttons, or POVs required by the current setup."_qs
+                : missingCapabilities,
+            u"reconfigure-output"_qs, u"RECONFIGURE OUTPUT"_qs, false, false, 50);
+    } else {
+        outputSetupComplete = true;
+    }
+    bool visibilitySetupComplete = hidhideInstalled && hidhideReady;
+    if (!hidhideInstalled || !hidhideReady) {
+        append(u"Driver"_qs, u"HidHideUnavailable"_qs, u"setup-needed"_qs,
+            u"gameVisibility"_qs, {}, u"Game visibility protection needs setup"_qs,
+            u"HOTAS BF6 needs HidHide so games see the virtual controller instead of duplicate physical controls."_qs,
+            u"setup-hidhide"_qs, u"SET UP HIDHIDE"_qs, false, false, 60);
+    }
+    if (physicalVisible && !visiblePhysicalInputIds.isEmpty()) {
+        QStringList targetNames;
+        QStringList directInputIds;
+        QStringList hidInstances;
+        bool exactIdentityAvailable = true;
+        for (const QString &recordId : visiblePhysicalInputIds) {
+            const SavedControllerRecord *record = savedControllerRecord(recordId);
+            const auto inputFound = std::find_if(inputs.cbegin(), inputs.cend(), [&recordId](const QVariant &entry) {
+                return entry.toMap().value(u"id"_qs).toString() == recordId;
+            });
+            const QVariantMap testInput = inputFound == inputs.cend() ? QVariantMap{} : inputFound->toMap();
+            targetNames.append(record ? record->displayName
+                                      : testInput.value(u"name"_qs, u"Physical controller"_qs).toString());
+            if (record) {
+                directInputIds.append(record->lastDirectInputId);
+                if (!record->ownedHidHideDeviceInstances.isEmpty()) {
+                    hidInstances.append(record->ownedHidHideDeviceInstances);
+                } else {
+                    hidInstances.append(record->hidInstanceId);
+                }
+                exactIdentityAvailable = exactIdentityAvailable && !record->hidInstanceId.trimmed().isEmpty();
+            } else if (!testFacts) {
+                exactIdentityAvailable = false;
+            }
+        }
+        directInputIds.removeAll(QString{});
+        hidInstances.removeAll(QString{});
+        const bool visibilityFixable = testFacts
+            ? boolFact(u"visibilityActionAvailable"_qs, hidhideReady)
+            : exactIdentityAvailable && m_readiness.plan().hidhide.installed
+                && m_readiness.plan().hidhide.cliAvailable && m_readiness.plan().hidhide.serviceReady
+                && m_readiness.plan().hidhide.mapperAllowlisted && m_readiness.plan().hidhide.cloakKnown
+                && m_readiness.plan().hidhide.cloaked;
+        const QString technical = QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nDIRECTINPUT ID\n%3\n\nHID INSTANCE(S)\n%4\n\nHIDHIDE\nInstalled: %5\nCLI available: %6\nService ready: %7\nMapper allowlisted: %8\nCloaking enabled: %9\nCurrent hidden state: visible\n\nREQUESTED ACTION\nHide from games\n\nCOMMAND/TRANSACTION RESULT\nNot attempted\n\nEXIT CODE\nNot run\n\nREADBACK RESULT\nPending\n\nROLLBACK\nNot needed\n\nLAST CHECK\n%10"_qs)
+            .arg(targetNames.join(u", "_qs), visiblePhysicalInputIds.join(u", "_qs),
+                 directInputIds.join(u", "_qs), hidInstances.join(u", "_qs),
+                 hidhideInstalled ? u"yes"_qs : u"no"_qs,
+                 testFacts ? (hidhideReady ? u"yes"_qs : u"no"_qs)
+                           : (m_readiness.plan().hidhide.cliAvailable ? u"yes"_qs : u"no"_qs),
+                 testFacts ? (hidhideReady ? u"yes"_qs : u"no"_qs)
+                           : (m_readiness.plan().hidhide.serviceReady ? u"yes"_qs : u"no"_qs),
+                 testFacts ? (hidhideReady ? u"yes"_qs : u"no"_qs)
+                           : (m_readiness.plan().hidhide.mapperAllowlisted ? u"yes"_qs : u"no"_qs),
+                 testFacts ? (hidhideReady ? u"yes"_qs : u"no"_qs)
+                           : (m_readiness.plan().hidhide.cloaked ? u"yes"_qs : u"no"_qs),
+                 m_readiness.plan().lastChecked.isValid()
+                     ? m_readiness.plan().lastChecked.toString(Qt::ISODate) : u"Not recorded"_qs);
+        append(u"Visibility"_qs, u"PhysicalInputVisible"_qs, u"setup-needed"_qs,
+            u"physicalDevice"_qs, visiblePhysicalInputIds.front(),
+            u"Hide "_qs + targetNames.front() + u" from games"_qs,
+            u"Your game may detect both "_qs + targetNames.front()
+                + u" and the HOTAS BF6 virtual controller. Hiding the physical controller avoids duplicate controls."_qs,
+            u"hide-from-games"_qs, u"HIDE FROM GAMES"_qs, visibilityFixable,
+            false, 70, technical, visiblePhysicalInputIds);
+        visibilitySetupComplete = false;
+    }
+    if (outputHidden) {
+        append(u"Visibility"_qs, u"VirtualOutputHidden"_qs, u"setup-needed"_qs,
+            u"virtualOutput"_qs, outputId, u"Show your virtual controller to games"_qs,
+            u"Games need to see "_qs + outputName + u" to use your HOTAS BF6 mappings."_qs,
+            u"check-again"_qs, u"CHECK VISIBILITY"_qs, false, false, 75);
+        visibilitySetupComplete = false;
+    }
+    const bool prerequisitesReadyForRouting = physicalSetupComplete && outputSetupComplete
+        && visibilitySetupComplete;
+    if (prerequisitesReadyForRouting && routingConflict) {
+        append(u"Routing"_qs, u"RoutingConflict"_qs, u"setup-needed"_qs,
+            u"deviceRig"_qs, activeDeviceRigId(), u"Review routing"_qs,
+            routingDetails.isEmpty() ? u"Two controls need the same output. Review the conflicting routes before testing."_qs
+                                     : routingDetails,
+            u"review-routing"_qs, u"REVIEW ROUTING"_qs, false, false, 80);
+    }
+    if (prerequisitesReadyForRouting && noMappedControl && !deviceScope) {
+        const QString affectedType = scopeType == u"device"_qs ? u"physicalDevice"_qs
+            : scopeType == u"virtualOutput"_qs ? u"virtualOutput"_qs : u"deviceRig"_qs;
+        const QString affectedId = scopeType == u"application"_qs ? activeDeviceRigId() : scopeId;
+        append(u"Routing"_qs, u"NoMappedControl"_qs, u"setup-needed"_qs,
+            affectedType, affectedId, u"No mapped control to test"_qs,
+            u"This setup has no enabled axis, button, or POV route for the selected scope. Assign a control before running live output proof."_qs,
+            u"review-routing"_qs, u"OPEN MAPPING"_qs, false, false, 85);
+    }
+    // Meaningful input/output evidence is continuously observed by existing
+    // fixed atomics and rendered as optional activity. It is deliberately not
+    // emitted as a setup issue or a blocking prerequisite.
+    return issues;
+}
+
+QVariantList AppBackend::setupAssistantSteps() const
+{
+    struct StepDefinition {
+        QString id;
+        QString title;
+        QString message;
+        bool required = true;
+        bool informational = false;
+    };
+
+    const QString scopeType = m_setupAssistantScopeType;
+    const bool deviceScope = scopeType == u"device"_qs;
+    const bool outputScope = scopeType == u"virtualOutput"_qs;
+    const QList<StepDefinition> definitions = deviceScope
+        ? QList<StepDefinition>{{u"device"_qs, u"DEVICE"_qs,
+                                 u"Confirm this physical controller is identified, connected, and verified."_qs},
+                                {u"calibration"_qs, u"CALIBRATION"_qs,
+                                 u"Using the default controller range. Calibration is optional."_qs, false},
+                                {u"visibility"_qs, u"GAME VISIBILITY"_qs,
+                                 u"Keep this physical controller out of games to avoid duplicate controls."_qs}}
+        : outputScope
+            ? QList<StepDefinition>{{u"output"_qs, u"OUTPUT EXISTS"_qs,
+                                     u"Confirm the selected virtual output is available."_qs},
+                                    {u"capabilities"_qs, u"CAPABILITIES"_qs,
+                                     u"Confirm its axes, buttons, and POVs satisfy the selected output."_qs},
+                                    {u"visibility"_qs, u"GAME VISIBILITY"_qs,
+                                     u"Games must be able to see the selected virtual output."_qs}}
+            : QList<StepDefinition>{{u"physical"_qs, u"PHYSICAL INPUTS"_qs,
+                                     u"Confirm every required physical controller is identified and ready."_qs},
+                                    {u"output"_qs, u"VIRTUAL CONTROLLER"_qs,
+                                     u"Confirm the selected vJoy output exists and has the needed capabilities."_qs},
+                                    {u"visibility"_qs, u"GAME VISIBILITY"_qs,
+                                     u"Keep physical inputs out of games while keeping the virtual controller visible."_qs}};
+
+    const auto stepIdForIssue = [deviceScope, outputScope](const QVariantMap &issue) {
+        const QString code = issue.value(u"code"_qs).toString();
+        const QString category = issue.value(u"category"_qs).toString();
+        if (deviceScope) {
+            if (category == u"Calibration"_qs) return u"calibration"_qs;
+            if (category == u"Visibility"_qs || code == u"HidHideUnavailable"_qs) return u"visibility"_qs;
+            if (category == u"PhysicalInput"_qs || category == u"Identity"_qs) return u"device"_qs;
+            return u"device"_qs;
+        }
+        if (outputScope) {
+            if (code == u"VirtualOutputMissing"_qs) return u"output"_qs;
+            if (category == u"Visibility"_qs || code == u"HidHideUnavailable"_qs) return u"visibility"_qs;
+            if (code == u"VirtualOutputMisconfigured"_qs || category == u"VirtualOutput"_qs) return u"capabilities"_qs;
+            return u"capabilities"_qs;
+        }
+        if (category == u"PhysicalInput"_qs || category == u"Identity"_qs || category == u"Calibration"_qs) {
+            return u"physical"_qs;
+        }
+        if (category == u"Visibility"_qs || code == u"HidHideUnavailable"_qs) return u"visibility"_qs;
+        if (category == u"VirtualOutput"_qs || (category == u"Driver"_qs && code != u"HidHideUnavailable"_qs)) {
+            return u"output"_qs;
+        }
+        return u"output"_qs;
+    };
+
+    QHash<QString, QVariantMap> blockingIssues;
+    QHash<QString, QVariantMap> optionalIssues;
+    for (const QVariant &entry : setupAssistantIssues()) {
+        const QVariantMap issue = entry.toMap();
+        const QString stepId = stepIdForIssue(issue);
+        const bool optional = issue.value(u"severity"_qs).toString() == u"note"_qs
+            || issue.value(u"code"_qs).toString() == u"OptionalDeviceOffline"_qs;
+        QHash<QString, QVariantMap> &destination = optional ? optionalIssues : blockingIssues;
+        if (!destination.contains(stepId)
+            || issue.value(u"priority"_qs).toInt() < destination.value(stepId).value(u"priority"_qs).toInt()) {
+            destination.insert(stepId, issue);
+        }
+    }
+
+    int currentIndex = -1;
+    for (int index = 0; index < definitions.size(); ++index) {
+        if (blockingIssues.contains(definitions.at(index).id)) {
+            currentIndex = index;
+            break;
+        }
+    }
+
+    QVariantList steps;
+    steps.reserve(definitions.size());
+    for (int index = 0; index < definitions.size(); ++index) {
+        const StepDefinition &definition = definitions.at(index);
+        const QVariantMap issue = blockingIssues.value(definition.id);
+        const QVariantMap optionalIssue = optionalIssues.value(definition.id);
+        const bool required = definition.required || !issue.isEmpty();
+        const bool isOptional = !required;
+        const bool isCurrent = currentIndex == index;
+        // Optional guidance remains visibly optional while a required step is
+        // unresolved; it is never a yellow prerequisite in disguise.
+        const bool isBlocked = !isOptional && currentIndex >= 0 && index > currentIndex;
+        const QString state = isOptional ? u"optional"_qs : isCurrent ? u"current"_qs
+            : isBlocked ? u"blocked"_qs : u"complete"_qs;
+        QVariantMap presentationIssue = !issue.isEmpty() ? issue : optionalIssue;
+        if (presentationIssue.isEmpty() && definition.id == u"calibration"_qs) {
+            presentationIssue = {{u"explanation"_qs, definition.message},
+                                 {u"recommendedAction"_qs, u"start-calibration"_qs},
+                                 {u"recommendedActionLabel"_qs, u"CALIBRATE"_qs},
+                                 {u"requiresLiveHardware"_qs, true}};
+        }
+        const QString prerequisiteMessage = currentIndex >= 0 && index > currentIndex
+            ? QString(u"Complete Step %1 first."_qs).arg(currentIndex + 1) : QString{};
+        const auto completedMessage = [&definition] {
+            if (definition.id == u"device"_qs || definition.id == u"physical"_qs) {
+                return u"Connected controller identity and required setup are verified."_qs;
+            }
+            if (definition.id == u"output"_qs || definition.id == u"capabilities"_qs) {
+                return u"The selected virtual output has the required capabilities."_qs;
+            }
+            if (definition.id == u"visibility"_qs) return u"Game visibility is configured for this scope."_qs;
+            return definition.message;
+        };
+        const QString message = isBlocked ? prerequisiteMessage
+            : state == u"complete"_qs ? completedMessage()
+            : presentationIssue.value(u"explanation"_qs, definition.message).toString();
+        steps.append(QVariantMap{{u"id"_qs, definition.id}, {u"order"_qs, index + 1},
+            {u"state"_qs, state}, {u"current"_qs, isCurrent}, {u"blocked"_qs, isBlocked},
+            {u"required"_qs, required}, {u"optional"_qs, isOptional},
+            {u"informational"_qs, definition.informational}, {u"skipped"_qs, false},
+            {u"complete"_qs, state == u"complete"_qs}, {u"title"_qs, definition.title},
+            {u"message"_qs, message},
+            {u"blockingIssueCode"_qs, issue.value(u"code"_qs).toString()},
+            {u"action"_qs, presentationIssue.value(u"recommendedAction"_qs).toString()},
+            {u"actionLabel"_qs, presentationIssue.value(u"recommendedActionLabel"_qs).toString()},
+            {u"requiresLiveHardware"_qs, presentationIssue.value(u"requiresLiveHardware"_qs).toBool()},
+            {u"technicalDetails"_qs, presentationIssue.value(u"technicalDetails"_qs).toString()},
+            {u"issue"_qs, presentationIssue}});
+    }
+    return steps;
+}
+
+QVariantMap AppBackend::setupAssistantSummary() const
+{
+    const QVariantList issues = setupAssistantIssues();
+    const QVariantList steps = setupAssistantSteps();
+    QVariantMap primaryIssue;
+    QStringList notes;
+    for (const QVariant &entry : issues) {
+        const QVariantMap issue = entry.toMap();
+        const QString severity = issue.value(u"severity"_qs).toString();
+        if (severity == u"note"_qs) {
+            notes.append(issue.value(u"title"_qs).toString());
+        }
+    }
+    for (const QVariant &entry : steps) {
+        const QVariantMap step = entry.toMap();
+        if (step.value(u"state"_qs).toString() != u"current"_qs) continue;
+        primaryIssue = step.value(u"issue"_qs).toMap();
+        break;
+    }
+    if (primaryIssue.isEmpty()) {
+        for (const QVariant &entry : issues) {
+            const QVariantMap issue = entry.toMap();
+            if (issue.value(u"severity"_qs).toString() == u"note"_qs) continue;
+            if (primaryIssue.isEmpty()
+                || issue.value(u"priority"_qs).toInt() < primaryIssue.value(u"priority"_qs).toInt()) {
+                primaryIssue = issue;
+            }
+        }
+    }
+    const QString scope = m_setupAssistantScopeType == u"deviceRig"_qs
+        ? (setupAssistantDeviceRig(m_setupAssistantScopeType, m_setupAssistantScopeId)
+               ? setupAssistantDeviceRig(m_setupAssistantScopeType, m_setupAssistantScopeId)->name
+               : u"Device Rig"_qs)
+        : m_setupAssistantScopeType == u"device"_qs
+            ? (savedControllerRecord(m_setupAssistantScopeId)
+                   ? savedControllerRecord(m_setupAssistantScopeId)->displayName
+                   : m_setupAssistantTestFacts.value(u"scopeLabel"_qs, u"Physical controller"_qs).toString())
+        : m_setupAssistantScopeType == u"virtualOutput"_qs
+            ? (findOutputLayout(m_configuration, m_setupAssistantScopeId)
+                   ? findOutputLayout(m_configuration, m_setupAssistantScopeId)->name
+                   : m_setupAssistantTestFacts.value(u"scopeLabel"_qs, u"Virtual Output"_qs).toString())
+        : !m_configuration.activeDeviceRigId.isEmpty()
+            ? activeDeviceRig() ? activeDeviceRig()->name : u"Device Rig"_qs
+        : activeOutputLayout() ? activeOutputLayout()->name
+            : m_setupAssistantTestFacts.value(u"scopeLabel"_qs, deviceName()).toString();
+    bool requiredStepIncomplete = false;
+    for (const QVariant &entry : steps) {
+        const QVariantMap step = entry.toMap();
+        if (step.value(u"required"_qs).toBool()
+            && step.value(u"state"_qs).toString() != u"complete"_qs) {
+            requiredStepIncomplete = true;
+            break;
+        }
+    }
+    QVariantList readyItems;
+    if (m_setupAssistantScopeType == u"device"_qs) {
+        readyItems = {u"Device recognized"_qs, u"Connected and verified"_qs,
+                      u"Game visibility configured"_qs};
+    } else if (m_setupAssistantScopeType == u"virtualOutput"_qs) {
+        readyItems = {u"vJoy device available"_qs, u"Required capabilities present"_qs,
+                      u"Game visibility configured"_qs};
+    } else {
+        readyItems = {u"Required physical inputs ready"_qs, u"Virtual output ready"_qs,
+                      u"Game visibility configured"_qs};
+    }
+    QString state = u"READY"_qs;
+    QString title = u"Your setup is ready"_qs;
+    QString message = scope + u" is ready to use."_qs;
+    if (m_verificationInProgress || m_readiness.plan().isChecking) {
+        state = u"WAITING"_qs;
+        title = u"Checking your setup"_qs;
+        message = u"HOTAS BF6 is checking your controller, virtual controller, and game visibility."_qs;
+    } else if (!primaryIssue.isEmpty() || requiredStepIncomplete) {
+        const QString severity = primaryIssue.value(u"severity"_qs).toString();
+        state = severity == u"offline"_qs ? u"OFFLINE"_qs
+            : severity == u"waiting"_qs ? u"WAITING"_qs : u"SETUP NEEDED"_qs;
+        title = primaryIssue.value(u"title"_qs, u"Complete the required setup steps"_qs).toString();
+        message = primaryIssue.value(u"explanation"_qs,
+            u"HOTAS BF6 is still waiting for a required setup condition."_qs).toString();
+    }
+    return QVariantMap{{u"state"_qs, state}, {u"title"_qs, title}, {u"message"_qs, message},
+        {u"scope"_qs, scope}, {u"issueCount"_qs, issues.size()},
+        {u"primaryIssue"_qs, primaryIssue}, {u"steps"_qs, steps}, {u"visibleSteps"_qs, steps},
+        {u"readyItems"_qs, readyItems},
+        {u"secondaryMessage"_qs, notes.join(u"\n"_qs)},
+        {u"scopeType"_qs, m_setupAssistantScopeType}, {u"scopeId"_qs, m_setupAssistantScopeId},
+        {u"primaryAction"_qs, primaryIssue.value(u"recommendedAction"_qs, u"done"_qs)},
+        {u"primaryActionLabel"_qs, primaryIssue.value(u"recommendedActionLabel"_qs, u"DONE"_qs)}};
+}
+
+QVariantList AppBackend::appIssues() const
+{
+    // The Setup Assistant is the canonical source for device/output/visibility
+    // findings. App Health deliberately omits its user-requested live-test
+    // reminders: the header surfaces structural problems, not an invitation
+    // to run an optional proof session.
+    QVariantList issues;
+    for (const QVariant &entry : setupAssistantIssuesForScope(u"application"_qs, {})) {
+        const QVariantMap issue = entry.toMap();
+        const QString code = issue.value(u"code"_qs).toString();
+        if (code == u"LiveInputNotTested"_qs || code == u"LiveOutputNotTested"_qs) continue;
+        issues.append(issue);
+    }
+
+    const auto append = [&issues](const QString &code, const QString &category,
+                                  const QString &severity, const QString &objectType,
+                                  const QString &objectId, const QString &title,
+                                  const QString &explanation, const QString &action,
+                                  const QString &actionLabel, int priority,
+                                  const QString &technicalDetails = {}) {
+        AppIssue issue;
+        issue.id = u"app-"_qs + code + u"-"_qs + objectId;
+        issue.code = code;
+        issue.category = category;
+        issue.severity = severity;
+        issue.scopeType = objectType;
+        issue.scopeId = objectId;
+        issue.affectedObjectType = objectType;
+        issue.affectedObjectId = objectId;
+        issue.title = title;
+        issue.explanation = explanation;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = actionLabel;
+        issue.alternativeActions = QVariantList{u"view-technical-details"_qs};
+        issue.priority = priority;
+        issue.technicalDetails = technicalDetails;
+        issue.navigationTarget = issueNavigationTarget(code, objectType, objectId);
+        issues.append(issue.toVariantMap());
+    };
+
+    if (m_mappingDesired && !m_worker.runtime().mappingActive.load(std::memory_order_relaxed)
+        && static_cast<MappingEffectiveState>(m_worker.runtime().mappingEffectiveState.load(
+               std::memory_order_relaxed)) == MappingEffectiveState::Suspended) {
+        const QString rigId = activeDeviceRigId();
+        append(u"MappingSuspended"_qs, u"Mapping"_qs, u"warning"_qs, u"deviceRig"_qs, rigId,
+               u"Mapping is suspended"_qs,
+               activeDeviceRig() ? activeDeviceRig()->name + u" needs attention before its routes can run."_qs
+                                 : u"Choose a ready Device Rig before mapping can run."_qs,
+               u"open-devices"_qs, u"OPEN DEVICES"_qs, 5, mappingStatus());
+    }
+
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        if (!profile.enabled) continue;
+        if (!profile.deviceRigId.isEmpty() && !findDeviceRig(m_configuration, profile.deviceRigId)) {
+            append(u"ProfileRigMissing"_qs, u"Profile"_qs, u"warning"_qs, u"profile"_qs, profile.id,
+                   u"Profile needs a Device Rig"_qs,
+                   profile.name + u" references a Device Rig that is no longer available."_qs,
+                   u"choose-rig"_qs, u"CHOOSE RIG"_qs, 110, profile.deviceRigId);
+        }
+        if (!profile.outputLayoutId.isEmpty() && !findOutputLayout(m_configuration, profile.outputLayoutId)) {
+            append(u"ProfileOutputMissing"_qs, u"Profile"_qs, u"warning"_qs, u"profile"_qs, profile.id,
+                   u"Profile needs a Virtual Output"_qs,
+                   profile.name + u" references a virtual output that is no longer available."_qs,
+                   u"choose-output"_qs, u"CHOOSE OUTPUT"_qs, 115, profile.outputLayoutId);
+        }
+    }
+
+    for (const AutomationDefinition &automation : m_configuration.automations) {
+        if (!automation.enabled || (!automation.conditions.empty() && !automation.actions.empty())) continue;
+        append(u"AutomationInvalid"_qs, u"Automation"_qs, u"warning"_qs, u"automation"_qs,
+               automation.id, u"Automation needs a complete rule"_qs,
+               automation.name + (automation.conditions.empty()
+                   ? u" has no trigger. Choose when it should run."_qs
+                   : u" has no action. Choose what HOTAS BF6 should do."_qs),
+               u"edit-automation"_qs,
+               automation.conditions.empty() ? u"ADD CONDITION"_qs : u"ADD ACTION"_qs, 120);
+    }
+    if (m_updateCheckFailed) {
+        append(u"UpdateCheckFailed"_qs, u"Update"_qs, u"note"_qs, u"application"_qs, {},
+               u"Could not check for updates"_qs,
+               u"The update server could not be reached. Your installed version is unchanged."_qs,
+               u"retry-update"_qs, u"TRY AGAIN"_qs, 900, m_updateStatusText);
+    }
+    return issues;
+}
+
+QVariantMap AppBackend::appHealthSummary() const
+{
+    return AppHealthService::summarize(appIssues());
+}
+
+QVariantMap AppBackend::setupAssistantLiveTest() const
+{
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    QVariantList activity;
+    bool allObserved = true;
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        const DeviceRigStatus *status = nullptr;
+        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
+        if (found != m_deviceRigStatuses.cend()) status = &*found;
+        int memberIndex = 0;
+        for (const DeviceRigMember &member : rig->members) {
+            if (!member.enabled) continue;
+            const int runtimeIndex = memberIndex++;
+            if (m_setupAssistantScopeType == u"device"_qs
+                && member.controllerRecordId != m_setupAssistantScopeId) continue;
+            const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            const QString name = record ? record->displayName : u"Physical controller"_qs;
+            const bool connected = status && status->connectedMemberIds.contains(member.controllerRecordId);
+            const bool observed = runtimeIndex < kMaximumDeviceRigMembers
+                && runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
+                    > 0;
+            const QString activityState = !connected ? u"offline"_qs : observed ? u"ready"_qs : u"listening"_qs;
+            activity.append(QVariantMap{{u"id"_qs, member.controllerRecordId}, {u"kind"_qs, u"input"_qs},
+                {u"title"_qs, name}, {u"optional"_qs, true}, {u"informational"_qs, true},
+                {u"state"_qs, activityState},
+                {u"message"_qs, !connected ? u"Calibration and live activity are available when connected."_qs
+                                     : observed ? u"Input detected during this connection session."_qs
+                                                : u"Listening for controller input…"_qs}});
+            if (connected) allObserved = allObserved && observed;
+        }
+        int outputIndex = 0;
+        for (const DeviceRigOutputTarget &target : rig->outputs) {
+            if (!target.enabled) continue;
+            const int runtimeIndex = outputIndex++;
+            if (m_setupAssistantScopeType == u"virtualOutput"_qs
+                && target.outputLayoutId != m_setupAssistantScopeId) continue;
+            const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
+            const bool observed = runtimeIndex < kMaximumDeviceRigOutputs
+                && runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
+                    > 0;
+            activity.append(QVariantMap{{u"id"_qs, target.outputLayoutId}, {u"kind"_qs, u"output"_qs},
+                {u"title"_qs, layout ? layout->name : u"Virtual controller"_qs},
+                {u"optional"_qs, true}, {u"informational"_qs, true},
+                {u"state"_qs, observed ? u"ready"_qs : u"listening"_qs},
+                {u"message"_qs, observed ? u"Mapped output activity detected."_qs
+                                           : u"Listening for mapped output activity…"_qs}});
+            allObserved = allObserved && observed;
+        }
+    } else {
+        const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+        const bool observed = physical.connected
+            && runtime.meaningfulInputSequence.load(std::memory_order_relaxed) > 0;
+        const QString title = m_setupAssistantScopeType == u"device"_qs
+            && savedControllerRecord(m_setupAssistantScopeId)
+            ? savedControllerRecord(m_setupAssistantScopeId)->displayName : u"Physical controller"_qs;
+        activity.append(QVariantMap{{u"id"_qs, u"physical"_qs}, {u"kind"_qs, u"input"_qs},
+            {u"title"_qs, title}, {u"optional"_qs, true}, {u"informational"_qs, true},
+            {u"state"_qs, !physical.connected ? u"offline"_qs : observed ? u"ready"_qs : u"listening"_qs},
+            {u"message"_qs, !physical.connected ? u"Activity is available when the controller is connected."_qs
+                                      : observed ? u"Input detected during this connection session."_qs
+                                                 : u"Listening for controller input…"_qs}});
+        allObserved = !physical.connected || observed;
+    }
+    return QVariantMap{{u"active"_qs, m_setupAssistantLiveTestActive},
+        {u"complete"_qs, allObserved}, {u"steps"_qs, activity}};
 }
 
 QVariantList AppBackend::controllerReadinessProposedChanges() const
@@ -2913,11 +5161,31 @@ QVariantList AppBackend::controllerRepairOperationResults() const
 
 QString AppBackend::controllerReadinessState() const
 {
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [rig](const DeviceRigStatus &status) { return status.rigId == rig->id; });
+        const DeviceRigHealth health = found == m_deviceRigStatuses.cend()
+            ? DeviceRigHealth::Offline : found->health;
+        return health == DeviceRigHealth::Ready ? u"READY"_qs
+            : health == DeviceRigHealth::Partial ? u"PARTIAL"_qs
+            : health == DeviceRigHealth::Conflict ? u"ACTION REQUIRED"_qs
+            : health == DeviceRigHealth::NeedsAttention ? u"NEEDS VERIFICATION"_qs
+            : u"OFFLINE"_qs;
+    }
     return ControllerReadinessService::stateLabel(m_readiness.plan().state);
 }
 
 QString AppBackend::controllerReadinessStatus() const
 {
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+        if (!compiled.valid) return u"ROUTING ACTION REQUIRED — "_qs + compiled.issue;
+        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [rig](const DeviceRigStatus &status) { return status.rigId == rig->id; });
+        if (found == m_deviceRigStatuses.cend()) return u"Device Rig has not yet been discovered."_qs;
+        return QString(u"%1 — %2/%3 physical inputs connected."_qs).arg(rig->name)
+            .arg(found->connectedMemberIds.size()).arg(rig->members.size());
+    }
     const QString status = m_readiness.plan().status;
     return status.isEmpty() ? QStringLiteral("Verify your controller setup from Settings.") : status;
 }
@@ -3024,9 +5292,18 @@ QVariantList AppBackend::virtualOutputLayouts() const
         for (const ControllerProfile &profile : m_configuration.profiles) {
             profileCount += profile.outputLayoutId == layout.id ? 1 : 0;
         }
+        const bool active = currentProfile().outputLayoutId == layout.id;
+        const QVariantMap detail = virtualOutputDetail(layout.id);
         result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
             {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
-            {u"profileCount"_qs, profileCount}, {u"active"_qs, currentProfile().outputLayoutId == layout.id},
+            {u"buttons"_qs, layout.requirements.buttons},
+            {u"continuousPovs"_qs, layout.requirements.continuousPovs},
+            {u"discretePovs"_qs, layout.requirements.discretePovs},
+            {u"profileCount"_qs, profileCount}, {u"active"_qs, active},
+            {u"ready"_qs, detail.value(u"ready"_qs, false)},
+            {u"inspected"_qs, detail.value(u"inspected"_qs, false)},
+            {u"readinessState"_qs, detail.value(u"readinessState"_qs, u"SAVED"_qs)},
+            {u"status"_qs, detail.value(u"status"_qs, u"Saved output"_qs)},
             {u"managedVisibility"_qs, layout.hidhideManaged},
             {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});
     }
@@ -3069,7 +5346,15 @@ QVariantList AppBackend::automationRules() const
         QVariantList conditions;
         QStringList conditionLabels;
         for (const AutomationConditionDefinition &condition : definition.conditions) {
-            conditionLabels.append(automationConditionSummary(condition, m_configuration));
+            QString label = automationConditionSummary(condition, m_configuration);
+            if (!condition.controllerRecordId.isEmpty()) {
+                if (const SavedControllerRecord *record = savedControllerRecord(condition.controllerRecordId)) {
+                    label = record->displayName + u" · "_qs + label;
+                } else {
+                    label = u"Missing device · "_qs + label;
+                }
+            }
+            conditionLabels.append(label);
             conditions.append(QVariantMap{{u"type"_qs, static_cast<int>(condition.type)},
                 {u"axis"_qs, condition.axis}, {u"minimum"_qs, condition.minimum},
                 {u"maximum"_qs, condition.maximum}, {u"hysteresis"_qs, condition.hysteresis},
@@ -3077,19 +5362,33 @@ QVariantList AppBackend::automationRules() const
                 {u"povDirection"_qs, static_cast<int>(condition.povDirection)},
                 {u"profileId"_qs, condition.profileId}, {u"pressCount"_qs, condition.pressCount},
                 {u"multiPressWindowMs"_qs, condition.multiPressWindowMs},
-                {u"longPressDurationMs"_qs, condition.longPressDurationMs}});
+                {u"longPressDurationMs"_qs, condition.longPressDurationMs},
+                {u"controllerRecordId"_qs, condition.controllerRecordId}});
         }
         QVariantList actions;
         QStringList actionLabels;
         for (const AutomationActionDefinition &action : definition.actions) {
-            actionLabels.append(automationActionSummary(action, m_configuration));
+            QString label = automationActionSummary(action, m_configuration);
+            if (!action.sourceControllerRecordId.isEmpty()) {
+                if (const SavedControllerRecord *record = savedControllerRecord(action.sourceControllerRecordId)) {
+                    label = record->displayName + u" · "_qs + label;
+                }
+            }
+            if (!action.outputLayoutId.isEmpty()) {
+                if (const VirtualOutputLayout *layout = findOutputLayout(m_configuration, action.outputLayoutId)) {
+                    label += u" → "_qs + layout->name;
+                }
+            }
+            actionLabels.append(label);
             actions.append(QVariantMap{{u"type"_qs, static_cast<int>(action.type)},
                 {u"virtualButton"_qs, action.virtualButton}, {u"profileId"_qs, action.profileId},
                 {u"adaptiveResponsePresetId"_qs, action.adaptiveResponsePresetId},
                 {u"targetAxis"_qs, action.targetAxis}, {u"sourceAxis"_qs, action.sourceAxis},
                 {u"sourceStage"_qs, static_cast<int>(action.sourceStage)}, {u"value"_qs, action.value},
                 {u"offset"_qs, action.offset}, {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum},
-                {u"tapDurationMs"_qs, action.tapDurationMs}});
+                {u"tapDurationMs"_qs, action.tapDurationMs},
+                {u"sourceControllerRecordId"_qs, action.sourceControllerRecordId},
+                {u"outputLayoutId"_qs, action.outputLayoutId}});
         }
         AutomationHealth health = AutomationHealth::Valid;
         QString healthMessage;
@@ -3216,11 +5515,13 @@ QStringList AppBackend::virtualAxisChoices() const
 {
     QStringList choices{u"Disabled"_qs};
     const AtomicRuntimeState &runtime = m_worker.runtime();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : currentProfile().axes;
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         const VirtualAxis axis = static_cast<VirtualAxis>(index);
         const bool available = runtime.virtualAxisAvailable[static_cast<size_t>(index)].load();
         bool configured = false;
-        for (const AxisMapping &mapping : currentProfile().axes) {
+        for (const AxisMapping &mapping : axes) {
             configured = configured || mapping.target == axis;
         }
         if (available || configured) choices.append(virtualAxisLabel(axis));
@@ -3262,9 +5563,10 @@ QVariantList AppBackend::quickMapButtonTargets() const
 {
     QSet<int> destinations;
     const int physicalCount = std::min(buttonCount(), kMaximumPhysicalButtons);
-    const ControllerProfile &profile = currentProfile();
-    for (int source = 0; source < std::min(physicalCount, static_cast<int>(profile.buttons.size())); ++source) {
-        const ButtonBinding &binding = profile.buttons[static_cast<size_t>(source)];
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
+    for (int source = 0; source < std::min(physicalCount, static_cast<int>(bindings.size())); ++source) {
+        const ButtonBinding &binding = bindings[static_cast<size_t>(source)];
         if (binding.type == ButtonActionType::VirtualButton && binding.target > 0
             && binding.target <= vjoyButtonCount()) {
             destinations.insert(binding.target);
@@ -3376,6 +5678,12 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
 {
     if (!validAxis(physicalAxis)) return false;
     ControllerProfile &profile = currentProfile();
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing an axis route. Multi-device routes require an explicit source."_qs);
+        return false;
+    }
+    AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
     const VirtualAxis virtualAxis = virtualAxisFromString(target);
     const int targetIndex = static_cast<int>(virtualAxis);
     if (virtualAxis != VirtualAxis::Disabled
@@ -3392,7 +5700,7 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     // Do not mutate any persistent state until the conflict decision has
     // completed. In particular, Cancel must leave both routes and output
     // layout metadata exactly as they were before the attempted selection.
-    if (hasMappingConflict(profile.axes, physicalAxis, virtualAxis)) {
+    if (hasMappingConflict(axes, physicalAxis, virtualAxis)) {
         if (!explicitOverride) return false;
     }
     // The device descriptor is authoritative for the editor. Persist an
@@ -3406,7 +5714,7 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
         }
         layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
     }
-    profile.axes[physicalAxis].target = virtualAxis;
+    axes[physicalAxis].target = virtualAxis;
     persistAndApply();
     return true;
 }
@@ -3414,7 +5722,13 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
 void AppBackend::setAxisCustomName(int physicalAxis, const QString &name)
 {
     if (!validAxis(physicalAxis)) return;
-    AxisMapping &mapping = currentProfile().axes[static_cast<size_t>(physicalAxis)];
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before renaming its axis."_qs);
+        return;
+    }
+    AxisMapping &mapping = deviceMapping ? deviceMapping->axes[static_cast<size_t>(physicalAxis)]
+                                         : currentProfile().axes[static_cast<size_t>(physicalAxis)];
     const QString normalized = name.trimmed().left(48);
     if (mapping.customName == normalized) return;
     mapping.customName = normalized;
@@ -3424,7 +5738,13 @@ void AppBackend::setAxisCustomName(int physicalAxis, const QString &name)
 void AppBackend::setAxisRangeMode(int physicalAxis, const QString &mode)
 {
     if (!validAxis(physicalAxis)) return;
-    AxisMapping &mapping = currentProfile().axes[static_cast<size_t>(physicalAxis)];
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing its axis domain."_qs);
+        return;
+    }
+    AxisMapping &mapping = deviceMapping ? deviceMapping->axes[static_cast<size_t>(physicalAxis)]
+                                         : currentProfile().axes[static_cast<size_t>(physicalAxis)];
     const AxisRangeMode normalized = axisRangeModeFromString(mode, mapping.rangeMode);
     if (mapping.rangeMode == normalized) return;
     const bool wasOneSided = mapping.rangeMode == AxisRangeMode::OneSided;
@@ -3562,21 +5882,37 @@ void AppBackend::setSelectedAxis(int physicalAxis)
 void AppBackend::setAxisInverted(int physicalAxis, bool inverted)
 {
     if (!validAxis(physicalAxis)) return;
-    currentProfile().axes[physicalAxis].inverted = inverted;
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing inversion."_qs);
+        return;
+    }
+    (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].inverted = inverted;
     persistAndApply();
 }
 
 void AppBackend::setAxisDeadzone(int physicalAxis, double deadzone)
 {
     if (!validAxis(physicalAxis)) return;
-    currentProfile().axes[physicalAxis].deadzone = std::clamp(static_cast<float>(deadzone), 0.0F, 0.95F);
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing deadzone."_qs);
+        return;
+    }
+    (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].deadzone =
+        std::clamp(static_cast<float>(deadzone), 0.0F, 0.95F);
     persistAndApply();
 }
 
 void AppBackend::setAxisHysteresis(int physicalAxis, double hysteresis)
 {
     if (!validAxis(physicalAxis)) return;
-    currentProfile().axes[physicalAxis].hysteresis = std::clamp(
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing hysteresis."_qs);
+        return;
+    }
+    (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].hysteresis = std::clamp(
         static_cast<float>(hysteresis), 0.0F, 0.25F);
     persistAndApply();
 }
@@ -3584,7 +5920,12 @@ void AppBackend::setAxisHysteresis(int physicalAxis, double hysteresis)
 bool AppBackend::setAxisOutputLimits(int physicalAxis, double minimum, double maximum)
 {
     if (!validAxis(physicalAxis)) return false;
-    AxisMapping &mapping = currentProfile().axes[physicalAxis];
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing output limits."_qs);
+        return false;
+    }
+    AxisMapping &mapping = (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis];
     const float domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
     const float boundedMinimum = std::clamp(static_cast<float>(minimum), domainMinimum, 1.0F);
     const float boundedMaximum = std::clamp(static_cast<float>(maximum), domainMinimum, 1.0F);
@@ -4043,10 +6384,16 @@ bool AppBackend::setButtonMapping(int physicalButton, int virtualButton, bool ex
         return false;
     }
     const int source = physicalButton - 1;
-    ButtonBindings &bindings = currentProfile().buttons;
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing a button route."_qs);
+        return false;
+    }
+    ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
+    PovBindings &povs = deviceMapping ? deviceMapping->povs : currentProfile().povs;
     const ButtonRouteChange change = analyzeButtonRouteChange(bindings, source, virtualButton,
                                                                vjoyButtonCount());
-    const bool povConflict = hasButtonMappingConflict(bindings, currentProfile().povs, source,
+    const bool povConflict = hasButtonMappingConflict(bindings, povs, source,
                                                        virtualButton, vjoyButtonCount())
         && !change.requiresResolution;
     if (change.requiresResolution || povConflict) {
@@ -4068,7 +6415,13 @@ bool AppBackend::resolveButtonRouteChange(int physicalButton, int virtualButton,
     if (decision == ButtonRouteResolution::Cancel) return false;
 
     const int source = physicalButton - 1;
-    ButtonBindings &bindings = currentProfile().buttons;
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before resolving a button route."_qs);
+        return false;
+    }
+    ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
+    PovBindings &povs = deviceMapping ? deviceMapping->povs : currentProfile().povs;
     const ButtonRouteChange change = analyzeButtonRouteChange(bindings, source, virtualButton,
                                                                vjoyButtonCount());
     if (!change.valid) return false;
@@ -4077,7 +6430,7 @@ bool AppBackend::resolveButtonRouteChange(int physicalButton, int virtualButton,
     // silently displaced, and physical-button Ignore is intentionally limited
     // to the documented many-physical-sources fan-in case.
     bool povConflict = false;
-    for (const PovDirectionBindings &hat : currentProfile().povs) {
+    for (const PovDirectionBindings &hat : povs) {
         for (const ButtonBinding &binding : hat) {
             povConflict = povConflict || (virtualButton > 0
                 && binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton);
@@ -4085,7 +6438,7 @@ bool AppBackend::resolveButtonRouteChange(int physicalButton, int virtualButton,
     }
     if (povConflict && decision != ButtonRouteResolution::Replace) return false;
     if (povConflict) {
-        for (PovDirectionBindings &hat : currentProfile().povs) {
+        for (PovDirectionBindings &hat : povs) {
             for (ButtonBinding &binding : hat) {
                 if (binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton) {
                     binding.type = ButtonActionType::Disabled;
@@ -4108,7 +6461,12 @@ void AppBackend::setButtonCustomName(int physicalButton, const QString &name)
 {
     if (!validPhysicalButton(physicalButton)) return;
     const int source = physicalButton - 1;
-    ButtonBindings &bindings = currentProfile().buttons;
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before naming a button."_qs);
+        return;
+    }
+    ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
     if (bindings.size() <= static_cast<size_t>(source)) {
         bindings.resize(static_cast<size_t>(source + 1));
     }
@@ -4122,6 +6480,12 @@ void AppBackend::setButtonCustomName(int physicalButton, const QString &name)
 bool AppBackend::setMappingControl(int physicalButton, const QString &action)
 {
     if (!validPhysicalButton(physicalButton)) return false;
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+        rig && std::count_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &member) { return member.enabled; }) > 1) {
+        appendEvent(u"Mapping controls are rig-global. Use a one-input rig or a qualified Automation rule for this control."_qs);
+        return false;
+    }
     const int source = physicalButton - 1;
     const MappingControlAction normalized = mappingControlActionFromString(action);
     if (m_configuration.mappingControls.size() <= static_cast<size_t>(source)) {
@@ -4143,12 +6507,18 @@ bool AppBackend::setPovMapping(int povHat, int direction, int virtualButton, boo
         || virtualButton > vjoyButtonCount()) {
         return false;
     }
-    PovBindings &povs = currentProfile().povs;
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing a POV route."_qs);
+        return false;
+    }
+    PovBindings &povs = deviceMapping ? deviceMapping->povs : currentProfile().povs;
+    ButtonBindings &buttons = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
     if (povs.size() <= static_cast<size_t>(hat)) povs.resize(static_cast<size_t>(hat + 1));
-    if (hasPovMappingConflict(currentProfile().buttons, povs, hat, direction, virtualButton,
+    if (hasPovMappingConflict(buttons, povs, hat, direction, virtualButton,
                               vjoyButtonCount())) {
         if (!explicitOverride) return false;
-        for (ButtonBinding &binding : currentProfile().buttons) {
+        for (ButtonBinding &binding : buttons) {
             if (binding.type == ButtonActionType::VirtualButton && binding.target == virtualButton) {
                 binding = {};
                 binding.explicitlyConfigured = true;
@@ -4181,6 +6551,12 @@ bool AppBackend::setProfileTrigger(int physicalButton, const QString &targetProf
 {
     const int source = physicalButton - 1;
     if (source < 0 || source >= kMaximumPhysicalButtons) return false;
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+        rig && std::count_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &member) { return member.enabled; }) > 1) {
+        appendEvent(u"Profile triggers are rig-global. Use a qualified Automation rule for a multi-device input."_qs);
+        return false;
+    }
     if (m_configuration.profileTriggers.size() <= static_cast<size_t>(source)) {
         m_configuration.profileTriggers.resize(static_cast<size_t>(source + 1));
     }
@@ -4208,6 +6584,12 @@ bool AppBackend::setPovProfileTrigger(int povHat, int direction,
 {
     const int hat = povHat - 1;
     if (hat < 0 || hat >= kMaximumPhysicalPovs || direction < 0 || direction >= kPovDirectionCount) {
+        return false;
+    }
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+        rig && std::count_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &member) { return member.enabled; }) > 1) {
+        appendEvent(u"POV profile triggers are rig-global. Use a qualified Automation rule for a multi-device input."_qs);
         return false;
     }
     if (m_configuration.povProfileTriggers.size() <= static_cast<size_t>(hat)) {
@@ -4239,9 +6621,14 @@ bool AppBackend::setNativePovOutput(int povHat, bool enabled, const QString &tar
 {
     const int hat = povHat - 1;
     if (hat < 0 || hat >= kMaximumPhysicalPovs) return false;
-    if (m_configuration.nativePovBindings.size() <= static_cast<size_t>(hat)) {
-        m_configuration.nativePovBindings.resize(static_cast<size_t>(hat + 1));
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before changing a native POV route."_qs);
+        return false;
     }
+    NativePovBindings &nativeBindings = deviceMapping ? deviceMapping->nativePovBindings
+                                                       : m_configuration.nativePovBindings;
+    if (nativeBindings.size() <= static_cast<size_t>(hat)) nativeBindings.resize(static_cast<size_t>(hat + 1));
     NativePovBinding binding;
     if (enabled) {
         const QStringList parts = targetKey.split(u":"_qs);
@@ -4256,9 +6643,9 @@ bool AppBackend::setNativePovOutput(int povHat, bool enabled, const QString &tar
             ? binding.targetIndex <= vjoyContinuousPovCount()
             : binding.targetIndex <= vjoyDiscretePovCount();
         if (!targetAvailable) return false;
-        for (int otherHat = 0; otherHat < static_cast<int>(m_configuration.nativePovBindings.size()); ++otherHat) {
+        for (int otherHat = 0; otherHat < static_cast<int>(nativeBindings.size()); ++otherHat) {
             if (otherHat == hat) continue;
-            const NativePovBinding &existing = m_configuration.nativePovBindings[static_cast<size_t>(otherHat)];
+            const NativePovBinding &existing = nativeBindings[static_cast<size_t>(otherHat)];
             if (existing.enabled && existing.targetType == binding.targetType
                 && existing.targetIndex == binding.targetIndex) {
                 appendEvent(u"Each native vJoy POV target can have only one physical POV owner"_qs);
@@ -4267,7 +6654,7 @@ bool AppBackend::setNativePovOutput(int povHat, bool enabled, const QString &tar
         }
         binding.enabled = true;
     }
-    m_configuration.nativePovBindings[static_cast<size_t>(hat)] = binding;
+    nativeBindings[static_cast<size_t>(hat)] = binding;
     persistAndApply();
     appendEvent(enabled ? QString(u"POV %1 native vJoy output enabled"_qs).arg(povHat)
                         : QString(u"POV %1 native vJoy output disabled"_qs).arg(povHat));
@@ -4282,7 +6669,13 @@ void AppBackend::resetButtonMappings()
         appendEvent(u"Connect a controller before resetting button mappings"_qs);
         return;
     }
-    currentProfile().buttons = defaultButtonMappings(physicalCount, virtualCount);
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        appendEvent(u"Select one physical input before resetting its button routes."_qs);
+        return;
+    }
+    (deviceMapping ? deviceMapping->buttons : currentProfile().buttons) =
+        defaultButtonMappings(physicalCount, virtualCount);
     persistAndApply();
     appendEvent(u"Button mappings reset to passthrough defaults"_qs);
 }
@@ -4932,6 +7325,33 @@ void AppBackend::beginCalibration()
     emit stateChanged();
 }
 
+bool AppBackend::beginCalibrationForDevice(const QString &recordId)
+{
+    const SavedControllerRecord *record = savedControllerRecord(recordId.trimmed());
+    if (!record) return false;
+    const auto discovered = std::find_if(m_discoveredControllers.cbegin(), m_discoveredControllers.cend(),
+        [this, record](const DiscoveredController &controller) {
+            const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+            return !match.ambiguous && match.recordId == record->id && controller.connected;
+        });
+    if (discovered == m_discoveredControllers.cend()) {
+        m_calibrationStatus = QString(u"Connect %1 to calibrate it."_qs).arg(record->displayName);
+        appendEvent(m_calibrationStatus);
+        emit stateChanged();
+        return false;
+    }
+    if (m_configuration.activeControllerRecordId != record->id) {
+        m_pendingCalibrationRecordId = record->id;
+        if (!setActiveController(record->id)) {
+            m_pendingCalibrationRecordId.clear();
+            return false;
+        }
+        return true;
+    }
+    beginCalibration();
+    return m_calibrationStage != CalibrationStageState::Idle;
+}
+
 bool AppBackend::beginCalibrationCenterCapture()
 {
     if (m_calibrationStage != CalibrationStageState::Range) return false;
@@ -5189,6 +7609,175 @@ QString AppBackend::createFiveAxisOutputLayout(const QString &name, int deviceId
     return id;
 }
 
+int AppBackend::suggestedVirtualOutputDeviceId() const
+{
+    for (int deviceId = 1; deviceId <= 16; ++deviceId) {
+        const bool used = std::any_of(m_configuration.outputLayouts.cbegin(),
+            m_configuration.outputLayouts.cend(), [deviceId](const VirtualOutputLayout &layout) {
+                return layout.requirements.deviceId == deviceId;
+            });
+        if (!used) return deviceId;
+    }
+    return 0;
+}
+
+QString AppBackend::createVirtualOutputLayout(const QString &name, int deviceId, const QString &preset)
+{
+    const QString normalizedPreset = preset.trimmed().toLower();
+    QVariantList axes;
+    if (normalizedPreset == u"full-8-axis"_qs) {
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) axes.append(axis);
+    } else if (normalizedPreset == u"bf6-4-axis"_qs || normalizedPreset == u"custom"_qs) {
+        for (const VirtualAxis axis : {VirtualAxis::X, VirtualAxis::Y, VirtualAxis::Z,
+                                       VirtualAxis::Rz}) axes.append(static_cast<int>(axis));
+    } else {
+        return {};
+    }
+    const QVariantMap created = createVirtualOutputLayoutResult(name, deviceId, u"custom"_qs,
+        {}, axes, normalizedPreset == u"custom"_qs ? 16 : 32, 0, 0);
+    return created.value(u"success"_qs).toBool() ? created.value(u"objectId"_qs).toString() : QString{};
+}
+
+QVariantMap AppBackend::createVirtualOutputLayoutResult(const QString &name, int deviceId,
+                                                         const QString &mode, const QString &sourceId,
+                                                         const QVariantList &customAxes, int buttons,
+                                                         int continuousPovs, int discretePovs)
+{
+    const auto result = [](bool success, const QString &title, const QString &message,
+                           const QString &objectId = {}, const QString &nextStep = {},
+                           const QString &technicalDetails = {}) {
+        return actionResult(success, title, message, u"virtualOutput"_qs, objectId, nextStep,
+                            {}, technicalDetails);
+    };
+    const QString trimmed = name.trimmed().left(64);
+    const QString normalizedMode = mode.trimmed().toLower();
+    if (trimmed.isEmpty()) {
+        return result(false, u"Virtual Output needs a name"_qs,
+                      u"Enter a name that will help you recognize this virtual controller."_qs);
+    }
+    if (deviceId < 1 || deviceId > 16 || static_cast<int>(m_configuration.outputLayouts.size()) >= 16) {
+        return result(false, u"Virtual Output needs an available vJoy Device ID"_qs,
+                      u"Choose an unused vJoy Device ID from 1 through 16."_qs);
+    }
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        if (layout.name.compare(trimmed, Qt::CaseInsensitive) == 0
+            || layout.requirements.deviceId == deviceId) {
+            return result(false, u"Virtual Output already exists"_qs,
+                          u"That output name or vJoy Device ID is already in use."_qs);
+        }
+    }
+
+    ControllerVJoyRequirements requirements;
+    requirements.deviceId = deviceId;
+    QString sourceName;
+    if (normalizedMode == u"match-physical"_qs) {
+        const SavedControllerRecord *saved = savedControllerRecord(sourceId.trimmed());
+        const DiscoveredController *discovered = saved ? nullptr : discoveredController(sourceId.trimmed());
+        if (!saved && (!discovered || discovered->virtualDevice)) {
+            return result(false, u"Choose a physical controller"_qs,
+                          u"Select a saved or connected physical controller to match."_qs);
+        }
+        const auto &axes = saved ? saved->axes : discovered->axes;
+        const int axisCount = saved ? saved->axisCount : discovered->axisCount;
+        const int buttonCount = saved ? saved->buttonCount : discovered->buttonCount;
+        const int povCount = saved ? saved->povCount : discovered->povCount;
+        sourceName = saved ? saved->displayName : discovered->name;
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            requirements.axes[static_cast<size_t>(axis + 1)] = axes[static_cast<size_t>(axis)];
+        }
+        if (axisCount <= 0 || std::none_of(requirements.axes.cbegin() + 1,
+                                            requirements.axes.cend(), [](bool enabled) { return enabled; })) {
+            return result(false, u"Physical controller has no usable axes"_qs,
+                          u"Choose a physical controller with at least one reported axis."_qs);
+        }
+        requirements.buttons = std::clamp(buttonCount, 0, kMaximumVirtualButtons);
+        requirements.continuousPovs = std::clamp(povCount, 0, kMaximumPhysicalPovs);
+        requirements.discretePovs = 0;
+    } else if (normalizedMode == u"copy-output"_qs) {
+        const VirtualOutputLayout *source = findOutputLayout(m_configuration, sourceId.trimmed());
+        if (!source) {
+            return result(false, u"Choose a Virtual Output to copy"_qs,
+                          u"Select an existing saved Virtual Output before creating a copy."_qs);
+        }
+        requirements = source->requirements;
+        requirements.deviceId = deviceId;
+        sourceName = source->name;
+    } else if (normalizedMode == u"custom"_qs) {
+        QSet<int> selectedAxes;
+        for (const QVariant &axis : customAxes) {
+            bool valid = false;
+            const int index = axis.toInt(&valid);
+            if (!valid || index < 1 || index >= kVirtualAxisSlotCount || selectedAxes.contains(index)) {
+                return result(false, u"Custom axes are invalid"_qs,
+                              u"Choose each supported virtual axis at most once."_qs);
+            }
+            selectedAxes.insert(index);
+            requirements.axes[static_cast<size_t>(index)] = true;
+        }
+        if (selectedAxes.isEmpty()) {
+            return result(false, u"Choose at least one axis"_qs,
+                          u"A Virtual Output needs at least one enabled axis."_qs);
+        }
+        if (buttons < 0 || buttons > kMaximumVirtualButtons) {
+            return result(false, u"Button count is invalid"_qs,
+                          QString(u"Choose a button count from 0 through %1."_qs).arg(kMaximumVirtualButtons));
+        }
+        if (continuousPovs < 0 || continuousPovs > kMaximumPhysicalPovs
+            || discretePovs < 0 || discretePovs > kMaximumPhysicalPovs) {
+            return result(false, u"POV count is invalid"_qs,
+                          QString(u"Choose up to %1 continuous or discrete POVs."_qs).arg(kMaximumPhysicalPovs));
+        }
+        if (continuousPovs > 0 && discretePovs > 0) {
+            return result(false, u"Choose one POV type"_qs,
+                          u"This vJoy configuration supports continuous POVs or discrete POVs, not both together."_qs);
+        }
+        requirements.buttons = buttons;
+        requirements.continuousPovs = continuousPovs;
+        requirements.discretePovs = discretePovs;
+    } else {
+        return result(false, u"Choose how to configure this Virtual Output"_qs,
+                      u"Choose Match a Physical Device, Copy an Existing vJoy Output, or Custom."_qs);
+    }
+
+    VirtualOutputLayout layout;
+    layout.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    layout.name = trimmed;
+    layout.requirements = requirements;
+    const QString id = layout.id;
+    m_configuration.outputLayouts.push_back(std::move(layout));
+    persistAndApply();
+    appendEvent(QString(u"Created Virtual Output %1 on vJoy Device %2."_qs).arg(trimmed).arg(deviceId));
+    emit deviceRigsChanged();
+    const QString description = normalizedMode == u"copy-output"_qs
+        ? QString(u"Virtual Output created. %1 was copied to vJoy Device %2."_qs).arg(sourceName).arg(deviceId)
+        : normalizedMode == u"match-physical"_qs
+            ? QString(u"Virtual Output created. Its capabilities match %1."_qs).arg(sourceName)
+            : u"Virtual Output created. Its custom capability configuration was saved."_qs;
+    return result(true, u"Virtual Output created"_qs,
+                  description + u" Check Setup before using it in a game."_qs,
+                  id, u"check-output"_qs,
+                  QString(u"vJoy Device %1; %2 buttons; %3 continuous POVs; %4 discrete POVs."_qs)
+                      .arg(deviceId).arg(requirements.buttons).arg(requirements.continuousPovs)
+                      .arg(requirements.discretePovs));
+}
+
+bool AppBackend::renameVirtualOutputLayout(const QString &layoutId, const QString &name)
+{
+    VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId.trimmed());
+    const QString trimmed = name.trimmed().left(64);
+    if (!layout || trimmed.isEmpty() || layout->name == trimmed
+        || std::any_of(m_configuration.outputLayouts.cbegin(), m_configuration.outputLayouts.cend(),
+            [&layout, &trimmed](const VirtualOutputLayout &candidate) {
+                return candidate.id != layout->id
+                    && candidate.name.compare(trimmed, Qt::CaseInsensitive) == 0;
+            })) return false;
+    layout->name = trimmed;
+    persistAndApply();
+    appendEvent(QString(u"Renamed virtual output: %1"_qs).arg(trimmed));
+    emit deviceRigsChanged();
+    return true;
+}
+
 bool AppBackend::adoptVirtualOutputVisibility(const QString &layoutId,
                                                const QString &deviceInstanceId)
 {
@@ -5331,6 +7920,51 @@ bool AppBackend::saveAutomation(const QVariantMap &automation)
         m_automationValidationMessage = reason;
         emit stateChanged();
         return false;
+    }
+    QString defaultSourceId;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        defaultSourceId = m_configuration.editingDeviceRecordIds.front();
+    } else if (const DeviceRig *rig = activeDeviceRig(); rig && rig->members.size() == 1) {
+        defaultSourceId = rig->members.front().controllerRecordId;
+    } else {
+        defaultSourceId = m_configuration.activeControllerRecordId;
+    }
+    const auto physicalCondition = [](AutomationConditionType type) {
+        return type != AutomationConditionType::Always && type != AutomationConditionType::BaseProfileIs
+            && type != AutomationConditionType::EffectiveProfileIs;
+    };
+    const auto deviceAction = [](AutomationActionType type) {
+        return type == AutomationActionType::AxisScale || type == AutomationActionType::AxisOffset
+            || type == AutomationActionType::AxisClamp || type == AutomationActionType::AxisOverride
+            || type == AutomationActionType::AxisMix || type == AutomationActionType::AxisFollow
+            || type == AutomationActionType::AdaptiveResponseEnable
+            || type == AutomationActionType::AdaptiveResponseDisable
+            || type == AutomationActionType::AdaptiveResponsePreset;
+    };
+    for (AutomationConditionDefinition &condition : candidate.conditions) {
+        if (!physicalCondition(condition.type) || !condition.controllerRecordId.isEmpty()) continue;
+        if (defaultSourceId.isEmpty()) {
+            m_automationValidationMessage = u"Choose one physical device before saving a physical Automation condition."_qs;
+            emit stateChanged();
+            return false;
+        }
+        condition.controllerRecordId = defaultSourceId;
+    }
+    for (AutomationActionDefinition &action : candidate.actions) {
+        if (deviceAction(action.type) && action.sourceControllerRecordId.isEmpty()) {
+            if (defaultSourceId.isEmpty()) {
+                m_automationValidationMessage = u"Choose one physical device before saving a device-scoped Automation action."_qs;
+                emit stateChanged();
+                return false;
+            }
+            action.sourceControllerRecordId = defaultSourceId;
+        }
+        if ((action.type == AutomationActionType::VJoyButtonHold
+             || action.type == AutomationActionType::VJoyButtonToggle
+             || action.type == AutomationActionType::VJoyButtonTap)
+            && action.outputLayoutId.isEmpty()) {
+            action.outputLayoutId = currentProfile().outputLayoutId;
+        }
     }
     const auto found = std::find_if(m_configuration.automations.begin(), m_configuration.automations.end(),
         [&candidate](const AutomationDefinition &existing) { return existing.id == candidate.id; });
@@ -5625,6 +8259,258 @@ void AppBackend::inspectControllerReadiness()
     verifyHotasSetup();
 }
 
+QVariantMap AppBackend::startSetupAssistantCheck()
+{
+    if (m_verificationInProgress) {
+        return actionResult(false, u"Setup check is already running"_qs,
+                            u"HOTAS BF6 is still checking the current setup."_qs,
+                            u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+    }
+    verifyHotasSetup();
+    return actionResult(true, u"Checking setup"_qs,
+                        u"HOTAS BF6 is checking your physical controller, virtual controller, and game visibility."_qs,
+                        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::startSetupAssistantCheckForScope(const QString &scopeType,
+                                                          const QString &scopeId)
+{
+    const QString normalizedType = scopeType.trimmed().isEmpty()
+        ? u"application"_qs : scopeType.trimmed();
+    const QString normalizedId = scopeId.trimmed();
+    const bool validType = normalizedType == u"application"_qs || normalizedType == u"device"_qs
+        || normalizedType == u"deviceRig"_qs || normalizedType == u"virtualOutput"_qs;
+    const bool validTarget = normalizedType == u"application"_qs
+        || (normalizedType == u"device"_qs && savedControllerRecord(normalizedId))
+        || (normalizedType == u"deviceRig"_qs && findDeviceRig(m_configuration, normalizedId))
+        || (normalizedType == u"virtualOutput"_qs && findOutputLayout(m_configuration, normalizedId));
+    if (!validType || !validTarget) {
+        return actionResult(false, u"Setup target is no longer available"_qs,
+                            u"Refresh Devices, choose the saved controller, Device Rig, or Virtual Output again, then retry."_qs,
+                            u"application"_qs, normalizedId, u"open-devices"_qs, u"OPEN DEVICES"_qs);
+    }
+    m_setupAssistantScopeType = normalizedType;
+    m_setupAssistantScopeId = normalizedType == u"application"_qs ? QString{} : normalizedId;
+    m_setupAssistantLiveTestActive = false;
+    if (normalizedType == u"virtualOutput"_qs && m_setupAssistantTestFacts.isEmpty()) {
+        refreshVirtualOutputReadiness(normalizedId);
+    }
+    emit stateChanged();
+    return startSetupAssistantCheck();
+}
+
+QVariantMap AppBackend::applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds,
+                                                          bool hidden)
+{
+    QStringList targetIds;
+    QStringList targetNames;
+    QStringList directInputIds;
+    QStringList instances;
+    QList<SavedControllerRecord *> records;
+    QSet<QString> seen;
+    for (const QString &value : controllerRecordIds) {
+        const QString recordId = value.trimmed();
+        if (recordId.isEmpty() || seen.contains(recordId)) continue;
+        const auto found = std::find_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &record) {
+                return record.id == recordId;
+            });
+        if (found == m_configuration.savedControllers.end()) {
+            if (!m_setupAssistantTestFacts.isEmpty()) {
+                const QVariantList testInputs = m_setupAssistantTestFacts.value(u"inputs"_qs).toList();
+                const auto testInput = std::find_if(testInputs.cbegin(), testInputs.cend(), [&recordId](const QVariant &entry) {
+                    return entry.toMap().value(u"id"_qs).toString() == recordId;
+                });
+                if (testInput != testInputs.cend()) {
+                    const QVariantMap input = testInput->toMap();
+                    targetIds.append(recordId);
+                    targetNames.append(input.value(u"name"_qs, u"Physical controller"_qs).toString());
+                    directInputIds.append(input.value(u"directInputId"_qs).toString());
+                    seen.insert(recordId);
+                    continue;
+                }
+            }
+            return actionResult(false, u"Could not change game visibility"_qs,
+                u"The saved physical controller is no longer available. Refresh Devices and try again."_qs,
+                u"physicalDevice"_qs, recordId, u"check-again"_qs, u"TRY AGAIN"_qs,
+                u"REQUESTED ACTION\nHide from games\n\nCOMMAND/TRANSACTION RESULT\nSaved device target was not found."_qs);
+        }
+        SavedControllerRecord *record = &*found;
+        const QStringList identities = !record->ownedHidHideDeviceInstances.isEmpty()
+            ? record->ownedHidHideDeviceInstances
+            : record->hidInstanceId.isEmpty() ? QStringList{} : QStringList{record->hidInstanceId};
+        if (identities.isEmpty()) {
+            return actionResult(false, u"Could not hide "_qs + record->displayName,
+                u"HOTAS BF6 does not have an exact HID identity for this saved controller, so it did not change HidHide."_qs,
+                u"physicalDevice"_qs, record->id, u"details"_qs, u"VIEW TECHNICAL DETAILS"_qs,
+                QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nDIRECTINPUT ID\n%3\n\nHID INSTANCE(S)\nUnavailable\n\nREQUESTED ACTION\nHide from games\n\nCOMMAND/TRANSACTION RESULT\nExact HID identity missing."_qs)
+                    .arg(record->displayName, record->id, record->lastDirectInputId));
+        }
+        targetIds.append(record->id);
+        targetNames.append(record->displayName);
+        directInputIds.append(record->lastDirectInputId);
+        instances.append(identities);
+        records.append(record);
+        seen.insert(recordId);
+    }
+    if (targetIds.isEmpty()) {
+        return actionResult(false, u"Could not change game visibility"_qs,
+            u"Select a saved physical controller before changing game visibility."_qs,
+            u"physicalDevice"_qs, {}, u"check-again"_qs, u"TRY AGAIN"_qs);
+    }
+
+    if (!m_setupAssistantTestFacts.isEmpty()) {
+        const bool succeeds = m_setupAssistantTestFacts.value(u"visibilityRepairSucceeds"_qs, true).toBool();
+        const QString failure = m_setupAssistantTestFacts.value(u"visibilityRepairFailure"_qs,
+            u"Fixture denied the requested HidHide repair."_qs).toString();
+        const QString technical = QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nDIRECTINPUT ID\n%3\n\nHID INSTANCE(S)\nFixture identity\n\nHIDHIDE\nInstalled: yes\nCLI available: yes\nService ready: yes\nMapper allowlisted: yes\nCloaking enabled: yes\n\nREQUESTED ACTION\nHide from games\n\nCOMMAND/TRANSACTION RESULT\n%4\n\nEXIT CODE\n%5\n\nREADBACK RESULT\n%6\n\nROLLBACK\n%7\n\nLAST CHECK\nFixture"_qs)
+            .arg(targetNames.join(u", "_qs), targetIds.join(u", "_qs), directInputIds.join(u", "_qs),
+                 succeeds ? u"Targeted fixture repair completed."_qs : failure,
+                 succeeds ? u"0"_qs : u"1"_qs,
+                 succeeds ? u"Target is hidden."_qs : u"Target remains visible."_qs,
+                 succeeds ? u"Not needed"_qs : u"Not needed"_qs);
+        if (!succeeds) {
+            return actionResult(false, u"Could not hide "_qs + targetNames.front(), failure,
+                u"physicalDevice"_qs, targetIds.front(), u"check-again"_qs, u"TRY AGAIN"_qs, technical);
+        }
+        m_setupAssistantTestFacts.insert(u"physicalVisible"_qs, false);
+        emit stateChanged();
+        return actionResult(true, u"✓ "_qs + targetNames.front() + u" is hidden from games."_qs,
+            u"Visibility changed. HOTAS BF6 reassessed this setup and advanced to the next blocking step."_qs,
+            u"physicalDevice"_qs, targetIds.front(), u"check-again"_qs, u"CHECK SETUP"_qs, technical);
+    }
+
+    ControllerReadinessService visibility;
+    QStringList normalized;
+    QString validation;
+    if (!visibility.validateManagedPhysicalInputIdentities(instances, &normalized, &validation)) {
+        return actionResult(false, u"Could not hide "_qs + targetNames.front(), validation,
+            u"physicalDevice"_qs, targetIds.front(), u"check-again"_qs, u"TRY AGAIN"_qs,
+            QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nHID INSTANCE(S)\n%3\n\nREQUESTED ACTION\nHide from games\n\nCOMMAND/TRANSACTION RESULT\n%4\n\nREADBACK RESULT\nNo change was made."_qs)
+                .arg(targetNames.join(u", "_qs), targetIds.join(u", "_qs), instances.join(u", "_qs), validation));
+    }
+    const ManagedVisibilityTransactionResult result = visibility.applyManagedPhysicalInputVisibility(normalized, hidden);
+    if (!result.succeeded) {
+        return actionResult(false, u"Could not hide "_qs + targetNames.front(), result.status,
+            u"physicalDevice"_qs, targetIds.front(), u"check-again"_qs, u"TRY AGAIN"_qs,
+            QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nDIRECTINPUT ID\n%3\n\nHID INSTANCE(S)\n%4\n\nHIDHIDE\nInstalled: yes\nCLI available: yes\nService ready: yes\nMapper allowlisted: verified before transaction\nCloaking enabled: verified before transaction\nCurrent hidden state: not confirmed\n\n%5\n\nLAST CHECK\n%6"_qs)
+                .arg(targetNames.join(u", "_qs), targetIds.join(u", "_qs), directInputIds.join(u", "_qs),
+                     normalized.join(u", "_qs), result.technicalDetails,
+                     QDateTime::currentDateTime().toString(Qt::ISODate)));
+    }
+    if (hidden) {
+        for (SavedControllerRecord *record : records) {
+            if (!record->ownedHidHideDeviceInstances.isEmpty()) continue;
+            const QString normalizedIdentity = ControllerReadinessService::normalizeDeviceInstanceId(record->hidInstanceId);
+            if (!normalizedIdentity.isEmpty()) record->ownedHidHideDeviceInstances = {normalizedIdentity};
+        }
+    }
+    persistAndApply();
+    appendEvent(result.status);
+    startQuickVerification();
+    emit stateChanged();
+    return actionResult(true, QString(u"✓ %1 is hidden from games."_qs).arg(targetNames.front()),
+        result.changed ? u"Visibility changed. HOTAS BF6 is reassessing this scoped setup now."_qs
+                       : u"This controller was already hidden. HOTAS BF6 is reassessing this scoped setup now."_qs,
+        u"physicalDevice"_qs, targetIds.front(), u"check-again"_qs, u"CHECK SETUP"_qs,
+        QString(u"ISSUE\nPhysicalInputVisible\n\nTARGET\n%1\n\nSAVED DEVICE ID\n%2\n\nDIRECTINPUT ID\n%3\n\nHID INSTANCE(S)\n%4\n\nHIDHIDE\nInstalled: yes\nCLI available: yes\nService ready: yes\nMapper allowlisted: verified before transaction\nCloaking enabled: verified before transaction\nCurrent hidden state: hidden\n\n%5\n\nLAST CHECK\n%6"_qs)
+            .arg(targetNames.join(u", "_qs), targetIds.join(u", "_qs), directInputIds.join(u", "_qs),
+                 normalized.join(u", "_qs), result.technicalDetails,
+                 QDateTime::currentDateTime().toString(Qt::ISODate)));
+}
+
+QVariantMap AppBackend::applySetupAssistantIssueAction(const QString &issueId)
+{
+    const QVariantList issues = setupAssistantIssues();
+    const auto found = std::find_if(issues.cbegin(), issues.cend(),
+        [&issueId](const QVariant &entry) { return entry.toMap().value(u"id"_qs).toString() == issueId; });
+    if (found == issues.cend()) {
+        return actionResult(false, u"Setup action is no longer available"_qs,
+            u"Run Check Setup again so HOTAS BF6 can rebuild the current scoped action."_qs,
+            u"application"_qs, {}, u"check-again"_qs, u"CHECK SETUP"_qs);
+    }
+    const QVariantMap issue = found->toMap();
+    if (issue.value(u"recommendedAction"_qs).toString() == u"hide-from-games"_qs) {
+        return applyPhysicalDeviceGameVisibility(issue.value(u"affectedObjectIds"_qs).toStringList(), true);
+    }
+    return actionResult(false, issue.value(u"title"_qs).toString(),
+        u"This setup action does not have an automatic repair transaction."_qs,
+        issue.value(u"affectedObjectType"_qs).toString(), issue.value(u"affectedObjectId"_qs).toString(),
+        u"details"_qs, u"VIEW TECHNICAL DETAILS"_qs, issue.value(u"technicalDetails"_qs).toString());
+}
+
+QVariantMap AppBackend::applySetupAssistantFix()
+{
+    const QVariantMap primary = setupAssistantSummary().value(u"primaryIssue"_qs).toMap();
+    if (primary.value(u"recommendedAction"_qs).toString() == u"hide-from-games"_qs) {
+        return applySetupAssistantIssueAction(primary.value(u"id"_qs).toString());
+    }
+    if (!m_readiness.plan().canApplyAutomatically) {
+        const QString title = primary.value(u"title"_qs,
+            u"This setup step needs manual attention"_qs).toString();
+        const QString explanation = primary.value(u"explanation"_qs,
+            u"HOTAS BF6 cannot safely apply this change automatically. Review Technical Details for the exact requirement."_qs).toString();
+        const QString technical = primary.value(u"technicalDetails"_qs).toString();
+        return actionResult(false, title, explanation,
+                            primary.value(u"affectedObjectType"_qs, u"application"_qs).toString(),
+                            primary.value(u"affectedObjectId"_qs).toString(), u"details"_qs,
+                            u"VIEW TECHNICAL DETAILS"_qs,
+                            technical.isEmpty()
+                                ? QString(u"ISSUE: %1\nCURRENT STATE: %2"_qs)
+                                      .arg(primary.value(u"code"_qs, u"Unknown"_qs).toString(),
+                                           m_readiness.plan().status)
+                                : technical);
+    }
+    if (!applyControllerReadiness()) {
+        return actionResult(false, u"HOTAS BF6 could not start the fix"_qs,
+                            m_readiness.plan().status.isEmpty()
+                                ? u"No changes were applied. Check the setup status and try again."_qs
+                                : m_readiness.plan().status,
+                            u"application"_qs, {}, u"check"_qs, u"CHECK AGAIN"_qs,
+                            QString(u"ATTEMPTED ACTION: automatic setup repair\nRESULT: %1"_qs)
+                                .arg(m_readiness.plan().status));
+    }
+    return actionResult(true, u"Fix started"_qs,
+                        u"HOTAS BF6 is applying the recommended setup change and will check the result."_qs,
+                        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::startSetupAssistantLiveTest()
+{
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    m_setupAssistantLiveTestActive = true;
+    m_setupAssistantInputBaseline = runtime.meaningfulInputSequence.load(std::memory_order_relaxed);
+    m_setupAssistantOutputBaseline = runtime.deviceRigMeaningfulOutputSequence[0].load(std::memory_order_relaxed);
+    for (int index = 0; index < kMaximumDeviceRigMembers; ++index) {
+        m_setupAssistantMemberBaselines[static_cast<size_t>(index)] = runtime.deviceRigMeaningfulInputSequence[
+            static_cast<size_t>(index)].load(std::memory_order_relaxed);
+    }
+    for (int index = 0; index < kMaximumDeviceRigOutputs; ++index) {
+        m_setupAssistantOutputBaselines[static_cast<size_t>(index)] = runtime.deviceRigMeaningfulOutputSequence[
+            static_cast<size_t>(index)].load(std::memory_order_relaxed);
+    }
+    emit inputTelemetryChanged();
+    return actionResult(true, u"Live control test started"_qs,
+                        u"Move an axis about 2% or press and release a mapped button on the highlighted physical controller."_qs,
+                        m_setupAssistantScopeType, m_setupAssistantScopeId,
+                        u"live-test"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)
+{
+    const QString target = recordId.trimmed().isEmpty() ? m_setupAssistantScopeId : recordId.trimmed();
+    const SavedControllerRecord *record = savedControllerRecord(target);
+    const QString name = record ? record->displayName : u"This controller"_qs;
+    // Default DirectInput normalization is already the safe normal path, so
+    // accepting this choice cannot mask an invalid saved calibration. Invalid
+    // data continues to produce CalibrationRequired and a blocking repair.
+    appendEvent(QString(u"Calibration deferred for %1; using the default controller range"_qs).arg(name));
+    emit stateChanged();
+    return actionResult(true, u"Using default controller range"_qs,
+                        name + u" remains ready to use. You can calibrate it any time from Device Details."_qs,
+                        u"physicalDevice"_qs, target, u"done"_qs);
+}
+
 void AppBackend::verifyHotasSetup()
 {
     if (m_readiness.reconnectVerificationPending() || m_readiness.reconnectReconciliationPending()) {
@@ -5874,11 +8760,20 @@ void AppBackend::startVerification(VerificationMode mode)
 
 bool AppBackend::calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const
 {
-    if (!physical.connected || m_configuration.preferredDeviceId != physical.directInputId) return true;
+    // An absent custom calibration is a safe, supported default: DirectInput
+    // still supplies its normalized range. Only malformed persisted custom
+    // calibration may block use of a controller.
+    if (!physical.connected || m_configuration.preferredDeviceId != physical.directInputId) return false;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         if (!physical.axes[static_cast<size_t>(index)]) continue;
-        if (currentProfile().axes[static_cast<size_t>(index)].rangeMode == AxisRangeMode::Centered
-            && !m_configuration.calibration[static_cast<size_t>(index)].enabled) {
+        const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
+        if (!calibration.enabled) continue;
+        const bool finite = std::isfinite(calibration.minimum) && std::isfinite(calibration.maximum)
+            && std::isfinite(calibration.center);
+        const bool rangeValid = calibration.minimum < calibration.maximum;
+        const bool centerValid = !calibration.centered
+            || (calibration.minimum < calibration.center && calibration.center < calibration.maximum);
+        if (!finite || !rangeValid || !centerValid) {
             return true;
         }
     }
@@ -6331,7 +9226,12 @@ bool AppBackend::setActiveController(const QString &recordId)
                 appendEvent(reusedExistingVjoy
                     ? QString(u"Active controller switched to %1; the selected vJoy device meets the required capabilities"_qs).arg(selectedTarget.name)
                     : QString(u"Active controller switched to %1; vJoy was configured and verified before mapping resumed"_qs).arg(selectedTarget.name));
+                if (m_pendingCalibrationRecordId == m_configuration.activeControllerRecordId) {
+                    m_pendingCalibrationRecordId.clear();
+                    beginCalibration();
+                }
             } else {
+                m_pendingCalibrationRecordId.clear();
                 appendEvent(QString(u"Active controller switch to %1 was not completed; prior mapping configuration was restored"_qs)
                     .arg(selectedTarget.name));
             }
@@ -6439,6 +9339,13 @@ void AppBackend::setTrayTheme(const QString &themeName)
             "QMenu::item:selected { background: #3b241c; color: #ff7b31; border: 1px solid #df6428; }"
             "QMenu::item:disabled { color: #816f55; }"
             "QMenu::separator { height: 1px; background: #765d37; margin: 5px 9px; }"));
+    } else if (normalized == u"day ops"_qs) {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #d9ddda; color: #142a38; border: 1px solid #2e5268; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Segoe UI Variable'; }"
+            "QMenu::item:selected { background: #b9d0d1; color: #0e2534; border: 1px solid #c56622; }"
+            "QMenu::item:disabled { color: #71828a; }"
+            "QMenu::separator { height: 1px; background: #78909a; margin: 5px 9px; }"));
     } else if (normalized == u"legacy"_qs) {
         m_trayMenu->setStyleSheet(QStringLiteral(
             "QMenu { background: #182126; color: #eef5f5; border: 1px solid #52717c; padding: 6px; }"
@@ -6533,6 +9440,7 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
         }
     }
     m_controllerInventoryInitialized = true;
+    reconcileDeviceRigInventory();
     tryAutoSwitchVerifiedController();
     if (!newlyDiscoveredUnverifiedIds.isEmpty() && !m_verificationInProgress && !m_controllerSelectionInProgress) {
         appendEvent(newlyDiscoveredUnverifiedIds.size() == 1
@@ -6543,6 +9451,24 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
         emit controllerSetupRequested(newlyDiscoveredUnverifiedIds);
     }
     if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();
+}
+
+void AppBackend::reconcileDeviceRigInventory()
+{
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+    const DeviceRigActivationDecision decision = chooseDeviceRigActivation(m_configuration,
+                                                                            m_deviceRigStatuses);
+    m_deviceRigDetectionMessage = decision.ambiguous ? decision.reason : QString{};
+    // The decision is intentionally applied only on an inventory/control-plane
+    // transition. Editing context never enters this function, so browsing a
+    // rig cannot affect live mapping selection.
+    if (!decision.rigId.isEmpty() && !decision.retainedActiveRig
+        && decision.rigId != m_configuration.activeDeviceRigId) {
+        m_configuration.activeDeviceRigId = decision.rigId;
+        ConfigStore::save(m_configuration);
+        appendEvent(QString(u"Device Rig detection: %1"_qs).arg(decision.reason));
+    }
+    emit deviceRigsChanged();
 }
 
 void AppBackend::tryAutoSwitchVerifiedController()
@@ -6768,7 +9694,9 @@ void AppBackend::enterInputLearningArming()
 QString AppBackend::learnedAxisLabel(int physicalAxis) const
 {
     if (!validAxis(physicalAxis)) return {};
-    const QString custom = currentProfile().axes[static_cast<size_t>(physicalAxis)].customName.trimmed();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : currentProfile().axes;
+    const QString custom = axes[static_cast<size_t>(physicalAxis)].customName.trimmed();
     return custom.isEmpty() ? physicalAxisLabel(static_cast<PhysicalAxis>(physicalAxis)) : custom;
 }
 
@@ -6776,7 +9704,8 @@ QString AppBackend::learnedButtonLabel(int physicalButton) const
 {
     if (!validPhysicalButton(physicalButton)) return {};
     const int source = physicalButton - 1;
-    const ButtonBindings &bindings = currentProfile().buttons;
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
     const QString custom = source < static_cast<int>(bindings.size())
         ? bindings[static_cast<size_t>(source)].customName.trimmed() : QString{};
     return custom.isEmpty() ? QString(u"Button %1"_qs).arg(physicalButton) : custom;
@@ -7139,8 +10068,27 @@ void AppBackend::resetUiPerformanceCounters()
 void AppBackend::appendEvent(const QString &event)
 {
     const QString timestamp = QDateTime::currentDateTime().toString(u"HH:mm:ss"_qs);
-    m_events.append(timestamp + u"  "_qs + event);
+    const QString entry = timestamp + u"  "_qs + event;
+    m_events.append(entry);
+    CrashDiagnostics::recordControlPlaneEvent(entry, crashPresentationContext());
     emit eventLogChanged();
+}
+
+QString AppBackend::crashPresentationContext() const
+{
+    static constexpr std::array<const char *, 11> pages{
+        "Axes", "Buttons", "Calibration", "Diagnostics", "Settings", "Profiles", "Curves", "Automation", "Overview", "Adaptive Response", "Devices"};
+    const QString page = m_crashPresentationPage >= 0 && m_crashPresentationPage < static_cast<int>(pages.size())
+        ? QString::fromLatin1(pages[static_cast<size_t>(m_crashPresentationPage)]) : u"Unknown"_qs;
+    const auto safe = [](QString value) {
+        return value.replace(u'\n', u' ').replace(u'\r', u' ').replace(u'"', u'\'').left(128);
+    };
+    return QString(u"page=%1\\ntheme=%2\\nactiveProfile=%3\\nactiveRig=%4\\neditingRig=%5\\neditingScope=%6\\nphysicalDevices=%7/%8 connected\\nmappingRequested=%9\\nmappingEffective=%10\\nvJoy=%11\\nHidHide=%12"_qs)
+        .arg(safe(page), safe(m_crashPresentationTheme), safe(activeProfileName()), safe(activeDeviceRigName()), safe(editingDeviceRigName()), safe(editingScopeLabel()))
+        .arg(m_connectedControllerCount).arg(m_discoveredControllers.size())
+        .arg(mappingRequested() ? u"true"_qs : u"false"_qs, mappingActive() ? u"true"_qs : u"false"_qs,
+             vjoyReady() ? u"ready"_qs : u"unavailable"_qs,
+             hidhideAvailable() && hidhideCloaked() && hidhideMapperAllowed() ? u"ready"_qs : u"needs attention"_qs);
 }
 
 void AppBackend::initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity)
@@ -7148,7 +10096,10 @@ void AppBackend::initializeDefaultButtonMappings(int physicalButtonCount, int vj
     if (physicalButtonCount <= 0 || vjoyButtonCapacity <= 0) {
         return;
     }
-    if (!ensureDefaultButtonMappings(currentProfile().buttons, physicalButtonCount, vjoyButtonCapacity)) {
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) return;
+    ButtonBindings &bindings = deviceMapping ? deviceMapping->buttons : currentProfile().buttons;
+    if (!ensureDefaultButtonMappings(bindings, physicalButtonCount, vjoyButtonCapacity)) {
         return;
     }
     persistAndApply();
@@ -7165,15 +10116,77 @@ ControllerProfile &AppBackend::currentProfile()
     return activeProfile(m_configuration);
 }
 
+bool AppBackend::editingScopeHasSinglePhysicalSource() const
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    if (!rig) return true;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) return true;
+    return m_configuration.editingDeviceRecordIds.isEmpty()
+        && std::count_if(rig->members.cbegin(), rig->members.cend(),
+                         [](const DeviceRigMember &member) { return member.enabled; }) == 1;
+}
+
+const DeviceProfileMapping *AppBackend::editingDeviceMapping() const
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    const ControllerProfile &profile = currentProfile();
+    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
+    QString controllerId;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        controllerId = m_configuration.editingDeviceRecordIds.front();
+    } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &candidate) { return candidate.enabled; });
+        if (member == rig->members.cend()
+            || std::count_if(rig->members.cbegin(), rig->members.cend(),
+                [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
+        controllerId = member->controllerRecordId;
+    } else {
+        return nullptr;
+    }
+    return findDeviceProfileMapping(profile, controllerId);
+}
+
+DeviceProfileMapping *AppBackend::editingDeviceMappingForWrite()
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    ControllerProfile &profile = currentProfile();
+    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
+    QString controllerId;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        controllerId = m_configuration.editingDeviceRecordIds.front();
+    } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &candidate) { return candidate.enabled; });
+        if (member == rig->members.cend()
+            || std::count_if(rig->members.cbegin(), rig->members.cend(),
+                [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
+        controllerId = member->controllerRecordId;
+    } else {
+        return nullptr;
+    }
+    return &ensureDeviceProfileMapping(profile, controllerId);
+}
+
 AxisMapping *AppBackend::selectedAxisMapping()
 {
     if (!validAxis(m_configuration.selectedAxisIndex)) return nullptr;
+    if (DeviceProfileMapping *mapping = editingDeviceMappingForWrite()) {
+        return &mapping->axes[m_configuration.selectedAxisIndex];
+    }
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId)
+        && !editingScopeHasSinglePhysicalSource()) return nullptr;
     return &currentProfile().axes[m_configuration.selectedAxisIndex];
 }
 
 const AxisMapping *AppBackend::selectedAxisMapping() const
 {
     if (!validAxis(m_configuration.selectedAxisIndex)) return nullptr;
+    if (const DeviceProfileMapping *mapping = editingDeviceMapping()) {
+        return &mapping->axes[m_configuration.selectedAxisIndex];
+    }
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId)
+        && !editingScopeHasSinglePhysicalSource()) return nullptr;
     return &currentProfile().axes[m_configuration.selectedAxisIndex];
 }
 
@@ -7203,7 +10216,9 @@ void AppBackend::rebuildSelectedAxisCurve()
     m_curveAnalysis.clear();
     if (!validAxis(m_configuration.selectedAxisIndex)) return;
     const int axisIndex = m_configuration.selectedAxisIndex;
-    const AxisMapping &axis = currentProfile().axes[axisIndex];
+    const AxisMapping *selected = selectedAxisMapping();
+    if (!selected) return;
+    const AxisMapping &axis = *selected;
     const bool unipolar = axis.rangeMode == AxisRangeMode::OneSided;
     RuntimeAxisMapping mapping;
     mapping.profile = axis;
@@ -7330,9 +10345,10 @@ bool AppBackend::validPhysicalButton(int physicalButton) const
 
 bool AppBackend::axisIsOneSided(int physicalAxis) const
 {
-    return validAxis(physicalAxis)
-        && currentProfile().axes[static_cast<size_t>(physicalAxis)].rangeMode
-            == AxisRangeMode::OneSided;
+    if (!validAxis(physicalAxis)) return false;
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : currentProfile().axes;
+    return axes[static_cast<size_t>(physicalAxis)].rangeMode == AxisRangeMode::OneSided;
 }
 
 } // namespace hotas

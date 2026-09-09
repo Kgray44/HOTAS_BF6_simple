@@ -1,4 +1,6 @@
 #include "mapping_worker.h"
+#include "crash_diagnostics.h"
+#include "device_rig.h"
 #include "hid_device_identity.h"
 
 #include "adaptive_response.h"
@@ -49,6 +51,56 @@ constexpr int kVjoyStatusBusy = 2;
 constexpr int kVjoyStatusMissing = 3;
 constexpr int kVjoyStatusUnknown = 4;
 constexpr DWORD kPhysicalPollIntervalMs = 4; // 250 Hz bounded worker cadence.
+constexpr float kMeaningfulInputAxisDelta = 0.02F;
+
+struct MeaningfulInputEvidence {
+    std::array<float, kPhysicalAxisCount> axes{};
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    std::array<int, kMaximumPhysicalPovs> povs{};
+    bool initialized = false;
+
+    MeaningfulInputEvidence() { povs.fill(-1); }
+};
+
+bool observeMeaningfulInput(MeaningfulInputEvidence &evidence,
+                            const PhysicalInputSnapshot &snapshot,
+                            const std::array<bool, kPhysicalAxisCount> &availableAxes,
+                            const std::array<bool, kMaximumPhysicalButtons> &availableButtons,
+                            int povCount)
+{
+    if (!evidence.initialized) {
+        evidence.axes = snapshot.axes;
+        evidence.buttons = snapshot.buttons;
+        evidence.povs = snapshot.povs;
+        evidence.initialized = true;
+        return false;
+    }
+    bool changed = false;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const size_t index = static_cast<size_t>(axis);
+        if (!availableAxes[index]) continue;
+        if (std::abs(snapshot.axes[index] - evidence.axes[index]) >= kMeaningfulInputAxisDelta) {
+            evidence.axes[index] = snapshot.axes[index];
+            changed = true;
+        }
+    }
+    for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
+        const size_t index = static_cast<size_t>(button);
+        if (!availableButtons[index]) continue;
+        if (snapshot.buttons[index] != evidence.buttons[index]) {
+            evidence.buttons[index] = snapshot.buttons[index];
+            changed = true;
+        }
+    }
+    for (int pov = 0; pov < std::min(povCount, kMaximumPhysicalPovs); ++pov) {
+        const size_t index = static_cast<size_t>(pov);
+        if (snapshot.povs[index] != evidence.povs[index]) {
+            evidence.povs[index] = snapshot.povs[index];
+            changed = true;
+        }
+    }
+    return changed;
+}
 
 bool sameAdaptiveResponseOverlay(const RuntimeAdaptiveResponseOverride &left,
                                  const RuntimeAdaptiveResponseOverride &right)
@@ -149,6 +201,12 @@ QString inputErrorMessage(HRESULT result)
 
 class VJoyAdapter final {
 public:
+    // The vJoy interface is process-global inside the vendor DLL, even though
+    // individual virtual devices are acquired and relinquished by this
+    // worker.  Releasing the module for every rig topology change allowed
+    // callbacks/window state in the DLL to outlive its code mapping.  Keep
+    // one worker-only interface loaded until process shutdown; adapters still
+    // relinquish only their owned device when the output itself is retired.
     ~VJoyAdapter() { unload(); }
 
     bool checkDevice(int deviceId, QString *status)
@@ -329,9 +387,71 @@ private:
     using SetContinuousPovFn = BOOL(__cdecl *)(DWORD, UINT, UCHAR);
     using SetDiscretePovFn = BOOL(__cdecl *)(int, UINT, UCHAR);
 
+    struct PersistentInterface {
+        HMODULE library = nullptr;
+        GetVJDStatusFn getStatus = nullptr;
+        GetVJDAxisExistFn axisExists = nullptr;
+        AcquireVJDFn acquire = nullptr;
+        RelinquishVJDFn relinquish = nullptr;
+        SetAxisFn setAxis = nullptr;
+        GetVJDButtonNumberFn getButtonNumber = nullptr;
+        SetBtnFn setButton = nullptr;
+        GetPovNumberFn getContinuousPovNumber = nullptr;
+        GetPovNumberFn getDiscretePovNumber = nullptr;
+        SetContinuousPovFn setContinuousPov = nullptr;
+        SetDiscretePovFn setDiscretePov = nullptr;
+    };
+
+    static PersistentInterface &persistentWorkerInterface()
+    {
+        // VJoyAdapter is instantiated only from MappingWorker's DirectInput
+        // thread.  This function-local state therefore gives that worker one
+        // DLL interface for its whole process lifetime without introducing
+        // GUI-thread driver ownership or report-path synchronization.
+        static PersistentInterface api;
+        return api;
+    }
+
+    void attachPersistentInterface(const PersistentInterface &api)
+    {
+        m_library = api.library;
+        m_getStatus = api.getStatus;
+        m_axisExists = api.axisExists;
+        m_acquire = api.acquire;
+        m_relinquish = api.relinquish;
+        m_setAxis = api.setAxis;
+        m_getButtonNumber = api.getButtonNumber;
+        m_setButton = api.setButton;
+        m_getContinuousPovNumber = api.getContinuousPovNumber;
+        m_getDiscretePovNumber = api.getDiscretePovNumber;
+        m_setContinuousPov = api.setContinuousPov;
+        m_setDiscretePov = api.setDiscretePov;
+    }
+
+    void detachInterface()
+    {
+        m_library = nullptr;
+        m_getStatus = nullptr;
+        m_axisExists = nullptr;
+        m_acquire = nullptr;
+        m_relinquish = nullptr;
+        m_setAxis = nullptr;
+        m_getButtonNumber = nullptr;
+        m_setButton = nullptr;
+        m_getContinuousPovNumber = nullptr;
+        m_getDiscretePovNumber = nullptr;
+        m_setContinuousPov = nullptr;
+        m_setDiscretePov = nullptr;
+    }
+
     bool load(QString *status)
     {
         if (m_library) {
+            return true;
+        }
+        PersistentInterface &persistent = persistentWorkerInterface();
+        if (persistent.library) {
+            attachPersistentInterface(persistent);
             return true;
         }
         QStringList candidates{u"vJoyInterface.dll"_qs};
@@ -364,28 +484,36 @@ private:
         m_setDiscretePov = reinterpret_cast<SetDiscretePovFn>(GetProcAddress(m_library, "SetDiscPov"));
         if (!m_getStatus || !m_axisExists || !m_acquire || !m_relinquish || !m_setAxis) {
             if (status) *status = u"vJoyInterface.dll is missing a required API"_qs;
-            unload();
+            // No device was acquired yet, so it is safe to discard this
+            // failed initial load.  Successful loads are intentionally kept
+            // by persistentWorkerInterface() until the process exits.
+            FreeLibrary(m_library);
+            detachInterface();
             return false;
         }
+        persistent.library = m_library;
+        persistent.getStatus = m_getStatus;
+        persistent.axisExists = m_axisExists;
+        persistent.acquire = m_acquire;
+        persistent.relinquish = m_relinquish;
+        persistent.setAxis = m_setAxis;
+        persistent.getButtonNumber = m_getButtonNumber;
+        persistent.setButton = m_setButton;
+        persistent.getContinuousPovNumber = m_getContinuousPovNumber;
+        persistent.getDiscretePovNumber = m_getDiscretePovNumber;
+        persistent.setContinuousPov = m_setContinuousPov;
+        persistent.setDiscretePov = m_setDiscretePov;
         return true;
     }
 
     void unload()
     {
         release();
-        if (m_library) FreeLibrary(m_library);
-        m_library = nullptr;
-        m_getStatus = nullptr;
-        m_axisExists = nullptr;
-        m_acquire = nullptr;
-        m_relinquish = nullptr;
-        m_setAxis = nullptr;
-        m_getButtonNumber = nullptr;
-        m_setButton = nullptr;
-        m_getContinuousPovNumber = nullptr;
-        m_getDiscretePovNumber = nullptr;
-        m_setContinuousPov = nullptr;
-        m_setDiscretePov = nullptr;
+        // Do not call FreeLibrary here.  A topology transaction may destroy
+        // this small adapter while the vendor interface still owns internal
+        // window/callback state.  The persistent worker interface owns the
+        // single module reference through orderly process shutdown.
+        detachInterface();
     }
 
     HMODULE m_library = nullptr;
@@ -408,6 +536,17 @@ struct DirectInputDevice {
     GUID guid{};
     QString name;
 };
+
+bool requiresMultiDeviceRuntime(const MapperConfiguration &configuration)
+{
+    const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    if (!rig || !rig->enabled) return false;
+    const int memberCount = static_cast<int>(std::count_if(rig->members.cbegin(), rig->members.cend(),
+        [](const DeviceRigMember &member) { return member.enabled; }));
+    const int outputCount = static_cast<int>(std::count_if(rig->outputs.cbegin(), rig->outputs.cend(),
+        [](const DeviceRigOutputTarget &output) { return output.enabled; }));
+    return memberCount > 1 || outputCount > 1;
+}
 
 struct EnumerationContext {
     std::vector<DirectInputDevice> devices;
@@ -492,6 +631,21 @@ std::optional<DirectInputDevice> selectDevice(LPDIRECTINPUT8W directInput, const
     if (physical.size() == 1) return physical.front();
     // A mapper must never consume the vJoy controller it produces. Wait for a
     // real DirectInput device rather than creating a feedback loop.
+    return std::nullopt;
+}
+
+std::optional<DirectInputDevice> selectDeviceByPersistedId(LPDIRECTINPUT8W directInput,
+                                                           const QString &directInputId)
+{
+    if (directInputId.isEmpty()) return std::nullopt;
+    EnumerationContext context;
+    directInput->EnumDevices(DI8DEVCLASS_GAMECTRL, enumDeviceCallback, &context, DIEDFL_ATTACHEDONLY);
+    for (const DirectInputDevice &candidate : context.devices) {
+        if (!isVirtualControllerName(candidate.name)
+            && guidToString(candidate.guid).compare(directInputId, Qt::CaseInsensitive) == 0) {
+            return candidate;
+        }
+    }
     return std::nullopt;
 }
 
@@ -653,7 +807,11 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
     const auto compileUs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - compileStarted).count());
+    const bool requestedMultiRuntime = requiresMultiDeviceRuntime(configuration);
     QMutexLocker locker(&m_configurationMutex);
+    if (requiresMultiDeviceRuntime(m_configuration) != requestedMultiRuntime) {
+        m_runtimeTopologyChangeRequested = true;
+    }
     m_configuration = configuration;
     m_preparedProfileCache = std::move(compiled);
     ++m_configurationVersion;
@@ -842,6 +1000,21 @@ void MappingWorker::run()
         return;
     }
 
+    while (!m_stopRequested.load()) {
+        if (requiresMultiDeviceRuntime(configurationCopy())) {
+            runDeviceRig(directInput);
+        } else {
+            runSingleDevice(directInput);
+        }
+        // Topology changes are handled as bounded acquisition boundaries.
+        // A fresh loop resolves only durable configuration, never QML state.
+        m_runtimeTopologyChangeRequested = false;
+    }
+    directInput->Release();
+}
+
+void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
+{
     VJoyAdapter vjoy;
 
     LPDIRECTINPUTDEVICE8W device = nullptr;
@@ -850,6 +1023,16 @@ void MappingWorker::run()
     std::array<bool, kPhysicalAxisCount> fixedAxes{};
     std::array<bool, kMaximumPhysicalButtons> availableButtons{};
     PhysicalInputMonitor physicalMonitor;
+    MeaningfulInputEvidence meaningfulInput;
+    quint64 latestMeaningfulInputSequence = 0;
+    quint64 lastPublishedMeaningfulInputSequence = 0;
+    m_runtime.meaningfulInputSequence.store(0, std::memory_order_relaxed);
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulInputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulOutputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
     auto preparedConfiguration = preparedConfigurationCopy();
     MapperConfiguration configuration = std::move(preparedConfiguration.first);
     std::shared_ptr<const RuntimeProfileCache> activeProfileCache
@@ -1074,6 +1257,9 @@ void MappingWorker::run()
         availableAxes.fill(false);
         availableButtons.fill(false);
         physicalMonitor.disconnect();
+        meaningfulInput = {};
+        latestMeaningfulInputSequence = 0;
+        lastPublishedMeaningfulInputSequence = 0;
         for (auto &axis : m_runtime.axisAvailable) axis = false;
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
@@ -1296,6 +1482,7 @@ void MappingWorker::run()
     };
 
     while (!m_stopRequested.load()) {
+        if (m_runtimeTopologyChangeRequested.exchange(false)) break;
         const auto now = std::chrono::steady_clock::now();
         applyLatestConfiguration();
         const bool mappingRequestedNow = m_mappingRequested.load();
@@ -1424,6 +1611,13 @@ void MappingWorker::run()
         physicalMonitor.accept(physicalReport);
         const PhysicalInputSnapshot &physicalSnapshot = physicalMonitor.snapshot();
         ++m_runtime.physicalReportsSinceAcquisition;
+        if (observeMeaningfulInput(meaningfulInput, physicalSnapshot, availableAxes, availableButtons,
+                                   m_runtime.povCount.load(std::memory_order_relaxed))) {
+            latestMeaningfulInputSequence = m_runtime.meaningfulInputSequence.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+            m_runtime.deviceRigMeaningfulInputSequence[0].store(latestMeaningfulInputSequence,
+                                                                  std::memory_order_relaxed);
+        }
 
         // Global mapping controls are intentionally evaluated from the fixed
         // physical snapshot before profile/game routing. The first post-
@@ -1781,6 +1975,7 @@ void MappingWorker::run()
             emit workerEvent(u"Mapping off; virtual controller neutralized"_qs);
         }
         if (m_runtime.mappingActive.load()) {
+            bool outputChanged = false;
             for (int target = 1; target < static_cast<int>(output.size()); ++target) {
                 if (!vjoyAxisAvailable[static_cast<size_t>(target)]
                     || !outputLayoutAxes[static_cast<size_t>(target)]) continue;
@@ -1795,6 +1990,7 @@ void MappingWorker::run()
                     const int source = virtualAxisSources[target];
                     if (source >= 0) m_runtime.virtualValues[source] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
             }
 
@@ -1817,6 +2013,7 @@ void MappingWorker::run()
                     lastVirtualButtonStates[target] = desired;
                     m_runtime.virtualButtonPressed[target - 1] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
             }
             // Native POV passthrough is deliberately a separate path from
@@ -1835,7 +2032,13 @@ void MappingWorker::run()
                 if (vjoy.setPov(binding, desired)) {
                     lastNativePovValues[static_cast<size_t>(hat)] = desired;
                     ++m_runtime.vjoyWrites;
+                    outputChanged = true;
                 }
+            }
+            if (outputChanged && latestMeaningfulInputSequence > lastPublishedMeaningfulInputSequence) {
+                m_runtime.deviceRigMeaningfulOutputSequence[0].store(latestMeaningfulInputSequence,
+                                                                       std::memory_order_relaxed);
+                lastPublishedMeaningfulInputSequence = latestMeaningfulInputSequence;
             }
         }
 
@@ -1871,7 +2074,629 @@ void MappingWorker::run()
     quiesceVirtualController();
     releaseInput();
     vjoy.release();
-    directInput->Release();
+}
+
+void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
+{
+    // One worker owns a bounded collection of input and output sessions.
+    // Every QString/identity lookup and every DirectInput/vJoy capability
+    // query happens at an acquisition/configuration boundary; report work is
+    // fixed-array state plus change-driven driver writes.
+    MapperConfiguration configuration = configurationCopy();
+    CompiledDeviceRigRuntime plan = compileDeviceRigRuntime(configuration,
+        configuration.activeDeviceRigId, configuration.activeProfileId);
+    const quint64 appliedVersion = m_configurationVersion.load();
+
+    struct InputSession {
+        const CompiledDeviceRigMember *member = nullptr;
+        LPDIRECTINPUTDEVICE8W device = nullptr;
+        std::array<bool, kPhysicalAxisCount> availableAxes{};
+        std::array<bool, kMaximumPhysicalButtons> availableButtons{};
+        PhysicalInputMonitor monitor;
+        std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresis{};
+        std::array<AxisCenterResolverState, kPhysicalAxisCount> centers{};
+        std::array<AdaptiveResponseProcessor, kPhysicalAxisCount> adaptive{};
+        AutomationRuntime automation;
+        AutomationEvaluationResult automationEffects{};
+        std::array<RuntimeAdaptiveResponseOverride, kPhysicalAxisCount> activeAutomationOverlays{};
+        std::array<float, kPhysicalAxisCount> transformed{};
+        std::array<int, kMaximumPhysicalPovs> lastNativePovs{};
+        MeaningfulInputEvidence meaningfulInput;
+        quint64 latestMeaningfulInputSequence = 0;
+        int axisCount = 0;
+        int buttonCount = 0;
+        int povCount = 0;
+        bool connected = false;
+        std::chrono::steady_clock::time_point nextDiscovery{};
+
+        InputSession() { lastNativePovs.fill(-2); }
+    };
+    struct OutputSession {
+        const CompiledDeviceRigOutput *configured = nullptr;
+        VJoyAdapter vjoy;
+        std::array<bool, kVirtualAxisSlotCount> axes{};
+        std::array<float, kVirtualAxisSlotCount> lastAxes{};
+        VirtualButtonStates lastButtons{};
+        int buttonCapacity = 0;
+        int continuousPovCapacity = 0;
+        int discretePovCapacity = 0;
+        bool ready = false;
+        bool acquired = false;
+        std::chrono::steady_clock::time_point nextCheck{};
+
+        OutputSession() { lastAxes.fill(std::numeric_limits<float>::quiet_NaN()); }
+    };
+
+    std::array<InputSession, kMaximumDeviceRigMembers> inputs{};
+    std::array<OutputSession, kMaximumDeviceRigOutputs> outputs{};
+    m_runtime.meaningfulInputSequence.store(0, std::memory_order_relaxed);
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulInputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulOutputSequence) {
+        sequence.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &reports : m_runtime.deviceRigInputReports) {
+        reports.store(0, std::memory_order_relaxed);
+    }
+    for (std::atomic_uint64_t &writes : m_runtime.deviceRigOutputWrites) {
+        writes.store(0, std::memory_order_relaxed);
+    }
+    for (int index = 0; index < plan.memberCount; ++index) {
+        inputs[static_cast<size_t>(index)].member = &plan.members[static_cast<size_t>(index)];
+        inputs[static_cast<size_t>(index)].automation.setCompiled(
+            plan.members[static_cast<size_t>(index)].automation.get());
+    }
+    for (int index = 0; index < plan.outputCount; ++index) {
+        outputs[static_cast<size_t>(index)].configured = &plan.outputs[static_cast<size_t>(index)];
+    }
+
+    const auto clearPrimarySnapshot = [&] {
+        for (std::atomic_bool &axis : m_runtime.axisAvailable) axis = false;
+        for (std::atomic_bool &button : m_runtime.buttonAvailable) button = false;
+        for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
+        for (std::atomic_bool &button : m_runtime.physicalButtonPressed) button = false;
+        m_runtime.axisCount = 0;
+        m_runtime.buttonCount = 0;
+        m_runtime.povCount = 0;
+        m_runtime.lastPhysicalButton = 0;
+        m_runtime.lastPhysicalButtonTarget = 0;
+    };
+    const auto releaseInput = [](InputSession &session) {
+        if (session.device) {
+            session.device->Unacquire();
+            session.device->Release();
+            session.device = nullptr;
+        }
+        session.availableAxes.fill(false);
+        session.availableButtons.fill(false);
+        session.monitor.disconnect();
+        session.connected = false;
+        session.axisCount = 0;
+        session.buttonCount = 0;
+        session.povCount = 0;
+        session.hysteresis = {};
+        session.centers = {};
+        for (AdaptiveResponseProcessor &processor : session.adaptive) processor.reset();
+        session.automation.reset();
+        session.activeAutomationOverlays = {};
+        session.transformed.fill(0.0F);
+        session.lastNativePovs.fill(-2);
+        session.meaningfulInput = {};
+        session.latestMeaningfulInputSequence = 0;
+    };
+    const auto releaseOutput = [](OutputSession &output) {
+        output.vjoy.release();
+        output.acquired = false;
+        output.lastAxes.fill(std::numeric_limits<float>::quiet_NaN());
+        output.lastButtons.fill(false);
+    };
+    const auto quiesceOutput = [this, &outputs](OutputSession &output) {
+        const auto outputIndex = static_cast<size_t>(&output - outputs.data());
+        if (!output.vjoy.acquired()) return;
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            if (output.axes[static_cast<size_t>(axis)]
+                && output.vjoy.setAxis(static_cast<VirtualAxis>(axis), 0.0F)) {
+                ++m_runtime.vjoyWrites;
+                ++m_runtime.deviceRigOutputWrites[outputIndex];
+            }
+        }
+        for (int button = 1; button <= output.buttonCapacity; ++button) {
+            if (output.vjoy.setButton(button, false)) {
+                ++m_runtime.vjoyWrites;
+                ++m_runtime.deviceRigOutputWrites[outputIndex];
+            }
+        }
+        for (int pov = 1; pov <= output.continuousPovCapacity; ++pov) {
+            if (output.vjoy.centerContinuousPov(pov)) {
+                ++m_runtime.vjoyWrites;
+                ++m_runtime.deviceRigOutputWrites[outputIndex];
+            }
+        }
+        for (int pov = 1; pov <= output.discretePovCapacity; ++pov) {
+            if (output.vjoy.centerDiscretePov(pov)) {
+                ++m_runtime.vjoyWrites;
+                ++m_runtime.deviceRigOutputWrites[outputIndex];
+            }
+        }
+        output.lastAxes.fill(0.0F);
+        output.lastButtons.fill(false);
+    };
+    const auto refreshOutput = [this](OutputSession &output, QString *status) {
+        if (!output.configured) return false;
+        QString checkStatus;
+        if (!output.vjoy.checkDevice(output.configured->vjoyDeviceId, &checkStatus)) {
+            output.ready = false;
+            if (status) *status = checkStatus;
+            return false;
+        }
+        output.axes = output.vjoy.axisCapabilities(output.configured->vjoyDeviceId, nullptr);
+        output.buttonCapacity = output.vjoy.buttonCapacity(output.configured->vjoyDeviceId, nullptr);
+        const VJoyAdapter::PovCapabilities povs = output.vjoy.povCapabilities(
+            output.configured->vjoyDeviceId, nullptr);
+        output.continuousPovCapacity = povs.continuous;
+        output.discretePovCapacity = povs.discrete;
+        bool sufficient = true;
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            sufficient = sufficient && (!output.configured->requiredAxes[static_cast<size_t>(axis)]
+                || output.axes[static_cast<size_t>(axis)]);
+        }
+        sufficient = sufficient && output.buttonCapacity >= output.configured->requiredButtons
+            && output.continuousPovCapacity >= output.configured->requiredContinuousPovs
+            && output.discretePovCapacity >= output.configured->requiredDiscretePovs;
+        output.ready = sufficient;
+        if (status) {
+            *status = sufficient ? checkStatus
+                : QString(u"Device %1 does not meet this Device Rig output layout's requirements."_qs)
+                      .arg(output.configured->vjoyDeviceId);
+        }
+        return sufficient;
+    };
+    const auto discoverInput = [&](InputSession &session) {
+        if (!session.member) return false;
+        const std::optional<DirectInputDevice> selected = selectDeviceByPersistedId(
+            directInput, session.member->directInputId);
+        if (!selected) return false;
+        LPDIRECTINPUTDEVICE8W device = nullptr;
+        const HRESULT created = directInput->CreateDevice(selected->guid, &device, nullptr);
+        if (FAILED(created)) return false;
+        if (FAILED(device->SetDataFormat(&c_dfDIJoystick2))
+            || FAILED(device->SetCooperativeLevel(GetDesktopWindow(),
+                                                  DISCL_BACKGROUND | DISCL_NONEXCLUSIVE))) {
+            device->Release();
+            return false;
+        }
+        ObjectEnumerationContext objects{device, &session.availableAxes, &session.availableButtons};
+        device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+        if (FAILED(device->Acquire())) {
+            device->Release();
+            return false;
+        }
+        session.device = device;
+        session.monitor.configure(session.availableAxes, session.availableButtons, objects.povCount);
+        session.axisCount = objects.axisCount;
+        session.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
+        session.povCount = objects.povCount;
+        session.connected = true;
+        return true;
+    };
+
+    bool lastMappingAllowed = false;
+    std::uint64_t processedReports = 0;
+    std::uint64_t handledReacquireRequest = m_reacquireInputAcknowledged.load();
+    const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    if (!plan.valid) {
+        setVjoyStatus(u"Device Rig needs attention: "_qs + plan.issue);
+        emit workerEvent(u"Device Rig mapping is suspended: "_qs + plan.issue);
+    }
+
+    while (!m_stopRequested.load()) {
+        if (m_runtimeTopologyChangeRequested.exchange(false)
+            || m_configurationVersion.load() != appliedVersion) {
+            break;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (m_releaseVjoyRequested.exchange(false)) {
+            // A full verification or explicit driver-configuration
+            // transaction is the only control-plane case that relinquishes
+            // an output.  Ordinary member loss and membership edits retain
+            // the persistent worker vJoy interface and never touch the
+            // driver configuration.
+            for (int index = 0; index < plan.outputCount; ++index) {
+                quiesceOutput(outputs[static_cast<size_t>(index)]);
+                releaseOutput(outputs[static_cast<size_t>(index)]);
+            }
+            lastMappingAllowed = false;
+            m_runtime.mappingActive = false;
+            m_runtime.outputNeutralized = true;
+            m_runtime.vjoyReady = false;
+            m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
+            setVjoyStatus(u"vJoy released for controller verification"_qs);
+            m_vjoyReleasedForControlPlane = true;
+            emit hardwareStateChanged();
+        }
+        const std::uint64_t requestedReacquire = m_reacquireInputRequested.load();
+        if (requestedReacquire != handledReacquireRequest) {
+            // A successful HidHide/identity transaction must reopen every
+            // affected DirectInput session.  Acknowledge the control-plane
+            // handoff only after old sessions and their pressed state have
+            // been released; the caller separately waits for a fresh report.
+            for (int index = 0; index < plan.memberCount; ++index) {
+                InputSession &session = inputs[static_cast<size_t>(index)];
+                releaseInput(session);
+                session.nextDiscovery = now;
+            }
+            clearPrimarySnapshot();
+            m_runtime.physicalConnected = false;
+            m_runtime.physicalReportsSinceAcquisition = 0;
+            handledReacquireRequest = requestedReacquire;
+            m_reacquireInputAcknowledged = requestedReacquire;
+            emit workerEvent(u"Device Rig DirectInput sessions released for controlled reacquisition"_qs);
+        }
+        if (!plan.valid) {
+            m_runtime.mappingActive = false;
+            m_runtime.physicalConnected = false;
+            m_runtime.vjoyReady = false;
+            m_runtime.mappingEffectiveState = m_mappingRequested.load()
+                ? static_cast<int>(MappingEffectiveState::Suspended)
+                : static_cast<int>(MappingEffectiveState::Off);
+            QThread::msleep(50);
+            continue;
+        }
+
+        std::array<DeviceRigInputSessionState, kMaximumDeviceRigMembers> inputStates{};
+        inputStates.fill(DeviceRigInputSessionState::Disconnected);
+        int activeAutomationRules = 0;
+        for (std::atomic_bool &active : m_runtime.automationRuleActive) active = false;
+        for (int index = 0; index < plan.memberCount; ++index) {
+            InputSession &session = inputs[static_cast<size_t>(index)];
+            if (!session.connected && now >= session.nextDiscovery) {
+                if (discoverInput(session)) {
+                    emit workerEvent(QString(u"Device Rig input connected: %1"_qs)
+                        .arg(session.member->displayName));
+                }
+                session.nextDiscovery = now + std::chrono::seconds(1);
+            }
+            if (!session.connected) {
+                continue;
+            }
+            inputStates[static_cast<size_t>(index)] = DeviceRigInputSessionState::Connected;
+            const HRESULT poll = session.device->Poll();
+            DIJOYSTATE2 state{};
+            const HRESULT read = SUCCEEDED(poll)
+                ? session.device->GetDeviceState(sizeof(state), &state) : poll;
+            if (read == DIERR_INPUTLOST || read == DIERR_NOTACQUIRED || FAILED(read)) {
+                const QString phase = SUCCEEDED(poll) ? u"GetDeviceState"_qs : u"Poll"_qs;
+                const int outputIndex = session.member->outputIndex;
+                const int vjoyDeviceId = outputIndex >= 0 && outputIndex < plan.outputCount
+                    ? plan.outputs[static_cast<size_t>(outputIndex)].vjoyDeviceId : 0;
+                const QString detail = QString(u"runtime=device-rig\nmember=%1\nmemberId=%2\noutputIndex=%3\noutputLayout=%4\nvjoyDevice=%5\nphase=%6\nhresult=0x%7"_qs)
+                    .arg(session.member->displayName)
+                    .arg(session.member->controllerRecordId)
+                    .arg(outputIndex)
+                    .arg(session.member->outputLayoutId)
+                    .arg(vjoyDeviceId)
+                    .arg(phase)
+                    .arg(static_cast<quint32>(read), 8, 16, QLatin1Char('0'));
+                // This is a disconnect boundary, never a report-path log.
+                // Record it before releasing the DirectInput object so an
+                // unexpected native fault leaves the actual member/phase in
+                // the crash reporter's bounded event history.
+                CrashDiagnostics::recordControlPlaneEvent(
+                    u"Device Rig DirectInput loss: "_qs + session.member->displayName, detail);
+                emit workerEvent(QString(u"Device Rig input disconnected during %1: %2"_qs)
+                    .arg(phase, session.member->displayName));
+                inputStates[static_cast<size_t>(index)] = read == DIERR_INPUTLOST
+                    ? DeviceRigInputSessionState::InputLost
+                    : read == DIERR_NOTACQUIRED ? DeviceRigInputSessionState::NotAcquired
+                                             : DeviceRigInputSessionState::Disconnected;
+                releaseInput(session);
+                continue;
+            }
+
+            PhysicalInputReport report;
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                if (session.availableAxes[static_cast<size_t>(axis)]) {
+                    report.axes[static_cast<size_t>(axis)] = normalizedFromDirectInput(
+                        directInputValue(state, axis));
+                }
+            }
+            for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
+                report.buttons[static_cast<size_t>(button)] = session.availableButtons[static_cast<size_t>(button)]
+                    && (state.rgbButtons[static_cast<size_t>(button)] & 0x80U) != 0;
+            }
+            for (int pov = 0; pov < session.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+                const DWORD raw = state.rgdwPOV[static_cast<size_t>(pov)];
+                report.povs[static_cast<size_t>(pov)] = raw != kVjoyPovCentered && raw < 36000UL
+                    ? static_cast<int>(raw) : -1;
+            }
+            session.monitor.accept(report);
+            const PhysicalInputSnapshot &snapshot = session.monitor.snapshot();
+            if (observeMeaningfulInput(session.meaningfulInput, snapshot, session.availableAxes,
+                                       session.availableButtons, session.povCount)) {
+                session.latestMeaningfulInputSequence = m_runtime.meaningfulInputSequence.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
+                m_runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(index)].store(
+                    session.latestMeaningfulInputSequence, std::memory_order_relaxed);
+            }
+            const auto timestamp = std::chrono::steady_clock::now();
+            AutomationInputSnapshot automationInput;
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                const RuntimeAxisMapping &mapping = session.member->mapping.axes[static_cast<size_t>(axis)];
+                automationInput.physicalAxes[static_cast<size_t>(axis)] = normalizeCalibrated(
+                    snapshot.axes[static_cast<size_t>(axis)], mapping.calibration);
+                automationInput.axisAvailable[static_cast<size_t>(axis)] =
+                    session.availableAxes[static_cast<size_t>(axis)]
+                    && !session.member->fixedAxes[static_cast<size_t>(axis)];
+            }
+            automationInput.buttons = snapshot.buttons;
+            automationInput.povs = snapshot.povs;
+            automationInput.povCount = session.povCount;
+            automationInput.buttonCount = session.buttonCount;
+            automationInput.timestamp = timestamp;
+            const AutomationEvaluationResult *automationEffects = m_mappingRequested.load()
+                ? &session.automation.evaluate(automationInput)
+                : &session.automation.evaluateMappingControls(automationInput);
+            session.automationEffects = *automationEffects;
+            if (automationEffects->mappingControlAction != MappingControlAction::None) {
+                const bool current = m_mappingRequested.load();
+                const bool desired = automationEffects->mappingControlAction == MappingControlAction::MappingOn
+                    ? true : automationEffects->mappingControlAction == MappingControlAction::MappingOff
+                    ? false : !current;
+                if (desired != current) {
+                    m_mappingRequested = desired;
+                    emit workerEvent(u"Device Rig Automation: "_qs
+                        + mappingControlActionLabel(automationEffects->mappingControlAction));
+                }
+            }
+            activeAutomationRules += automationEffects->activeRuleCount;
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                if (!session.availableAxes[static_cast<size_t>(axis)]) continue;
+                const RuntimeAxisMapping &mapping = session.member->mapping.axes[static_cast<size_t>(axis)];
+                const float normalized = normalizeCalibrated(snapshot.axes[static_cast<size_t>(axis)],
+                                                             mapping.calibration);
+                const float resolved = resolveNormalizedAxisCenter(normalized, mapping,
+                    session.centers[static_cast<size_t>(axis)]);
+                RuntimeAdaptiveResponseConfig prediction = mapping.adaptiveResponse;
+                const RuntimeAdaptiveResponseOverride nextOverlay = automationEffects
+                    ? automationEffects->adaptiveResponseOverlays[static_cast<size_t>(axis)]
+                    : RuntimeAdaptiveResponseOverride{};
+                RuntimeAdaptiveResponseOverride &activeOverlay = session.activeAutomationOverlays[
+                    static_cast<size_t>(axis)];
+                if (!sameAdaptiveResponseOverlay(activeOverlay, nextOverlay)) {
+                    activeOverlay = nextOverlay;
+                    session.adaptive[static_cast<size_t>(axis)].reset();
+                    session.centers[static_cast<size_t>(axis)] = {};
+                    session.hysteresis[static_cast<size_t>(axis)] = {};
+                }
+                if (activeOverlay.active) {
+                    prediction = applyAdaptiveResponseRuntimeOverride(prediction, activeOverlay);
+                }
+                prediction.maximumLead = 0.50F;
+                const AdaptiveResponseTelemetry adaptive = session.adaptive[static_cast<size_t>(axis)].process(
+                    resolved, prediction, timestamp);
+                const AdaptiveMappedAxisOutput mapped = applyCurveAwareAdaptiveResponse(resolved,
+                    adaptive.predicted, mapping.adaptiveResponse.enabled,
+                    mapping.adaptiveResponse.maximumLead, mapping,
+                    session.hysteresis[static_cast<size_t>(axis)]);
+                session.transformed[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
+                // Existing overview/diagnostics atomics retain a useful
+                // primary-session view; device-specific details use the rig
+                // status model and never imply that axis indexes are global.
+                if (index == 0) {
+                    m_runtime.raw[static_cast<size_t>(axis)] = snapshot.axes[static_cast<size_t>(axis)];
+                    m_runtime.normalized[static_cast<size_t>(axis)] = resolved;
+                    m_runtime.afterDeadzone[static_cast<size_t>(axis)] = mapped.baselineSignalPath.afterDeadzone;
+                    m_runtime.afterHysteresis[static_cast<size_t>(axis)] = mapped.baselineSignalPath.afterHysteresis;
+                    m_runtime.afterInversion[static_cast<size_t>(axis)] = mapped.baselineSignalPath.afterInversion;
+                    m_runtime.curveResponse[static_cast<size_t>(axis)] = mapped.baselineSignalPath.afterCurve;
+                    m_runtime.transformed[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
+                    m_runtime.adaptiveEstimated[static_cast<size_t>(axis)] = adaptive.estimated;
+                    m_runtime.adaptivePredicted[static_cast<size_t>(axis)] = adaptive.predicted;
+                    m_runtime.adaptiveOutput[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
+                    m_runtime.adaptiveRuntimeEnabled[static_cast<size_t>(axis)] = mapping.adaptiveResponse.enabled;
+                }
+            }
+            session.automation.applyAxisActions(automationInput, session.transformed);
+            if (index == 0) {
+                for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                    m_runtime.axisAvailable[static_cast<size_t>(axis)] = session.availableAxes[static_cast<size_t>(axis)];
+                }
+                for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
+                    m_runtime.buttonAvailable[static_cast<size_t>(button)] = session.availableButtons[static_cast<size_t>(button)];
+                    m_runtime.physicalButtonPressed[static_cast<size_t>(button)] = snapshot.buttons[static_cast<size_t>(button)];
+                }
+                for (int pov = 0; pov < kMaximumPhysicalPovs; ++pov) {
+                    m_runtime.povValues[static_cast<size_t>(pov)] = snapshot.povs[static_cast<size_t>(pov)];
+                }
+                m_runtime.axisCount = session.axisCount;
+                m_runtime.buttonCount = session.buttonCount;
+                m_runtime.povCount = session.povCount;
+                m_runtime.lastPhysicalButton = snapshot.lastChangedButton;
+                for (int rule = 0; rule < kMaximumAutomationRules; ++rule) {
+                    m_runtime.automationRuleActive[static_cast<size_t>(rule)] =
+                        automationEffects->activeRules[static_cast<size_t>(rule)];
+                }
+            }
+            ++processedReports;
+            ++m_runtime.deviceRigInputReports[static_cast<size_t>(index)];
+        }
+        m_runtime.automationActiveRuleCount = activeAutomationRules;
+
+        const DeviceRigDisconnectBehavior disconnectBehavior = activeRig
+            ? activeRig->disconnectBehavior : DeviceRigDisconnectBehavior::SuspendAffectedRoutes;
+        const DeviceRigRuntimeAvailability availability = evaluateDeviceRigRuntimeAvailability(
+            plan, inputStates, m_mappingRequested.load(), true, disconnectBehavior);
+        const bool anyConnected = availability.anyConnected;
+        const int connectedCount = availability.connectedMemberCount;
+
+        QString outputStatus;
+        bool allOutputsReady = plan.outputCount > 0;
+        for (int index = 0; index < plan.outputCount; ++index) {
+            OutputSession &output = outputs[static_cast<size_t>(index)];
+            if (now >= output.nextCheck) {
+                QString status;
+                refreshOutput(output, &status);
+                if (index == 0) outputStatus = status;
+                output.nextCheck = now + std::chrono::seconds(1);
+            }
+            allOutputsReady = allOutputsReady && output.ready;
+        }
+        if (plan.outputCount > 0) {
+            const OutputSession &primaryOutput = outputs.front();
+            for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
+                m_runtime.virtualAxisAvailable[static_cast<size_t>(axis)] = axis > 0
+                    && primaryOutput.axes[static_cast<size_t>(axis)];
+            }
+            m_runtime.vjoyButtonCount = primaryOutput.buttonCapacity;
+            m_runtime.vjoyContinuousPovCount = primaryOutput.continuousPovCapacity;
+            m_runtime.vjoyDiscretePovCount = primaryOutput.discretePovCapacity;
+        }
+        m_runtime.physicalConnected = anyConnected;
+        m_runtime.physicalReportsSinceAcquisition = processedReports;
+        m_runtime.inputReports = processedReports;
+        if (anyConnected && inputs.front().connected && inputs.front().device) {
+            const QString hid = hidInstanceIdForDevice(inputs.front().device);
+            setDeviceSnapshot({inputs.front().member->displayName, inputs.front().member->directInputId,
+                               hid, hidDeviceContainerId(hid)});
+        } else {
+            clearPrimarySnapshot();
+            setDeviceSnapshot({});
+        }
+
+        const bool mappingAllowed = evaluateDeviceRigRuntimeAvailability(plan, inputStates,
+            m_mappingRequested.load(), allOutputsReady, disconnectBehavior).mappingAllowed;
+        if (!mappingAllowed && lastMappingAllowed) {
+            for (int index = 0; index < plan.outputCount; ++index) quiesceOutput(outputs[static_cast<size_t>(index)]);
+            emit workerEvent(u"Device Rig mapping suspended; affected routes were neutralized."_qs);
+        }
+        lastMappingAllowed = mappingAllowed;
+
+        if (mappingAllowed) {
+            bool acquired = true;
+            for (int index = 0; index < plan.outputCount; ++index) {
+                OutputSession &output = outputs[static_cast<size_t>(index)];
+                if (!output.acquired) {
+                    QString status;
+                    output.acquired = output.vjoy.acquire(output.configured->vjoyDeviceId, &status);
+                    if (!output.acquired) {
+                        output.ready = false;
+                        acquired = false;
+                        outputStatus = status;
+                    } else {
+                        quiesceOutput(output);
+                        output.lastAxes.fill(std::numeric_limits<float>::quiet_NaN());
+                    }
+                }
+            }
+            if (acquired) {
+                for (int outputIndex = 0; outputIndex < plan.outputCount; ++outputIndex) {
+                    OutputSession &output = outputs[static_cast<size_t>(outputIndex)];
+                    std::array<float, kVirtualAxisSlotCount> desiredAxes{};
+                    desiredAxes.fill(sanitizedDisabledAxisValue(configuration.disabledAxisValue));
+                    VirtualButtonStates desiredButtons{};
+                    bool outputChanged = false;
+                    quint64 mappedInputSequence = 0;
+                    for (int memberIndex = 0; memberIndex < plan.memberCount; ++memberIndex) {
+                        InputSession &input = inputs[static_cast<size_t>(memberIndex)];
+                        if (!input.connected || input.member->outputIndex != outputIndex) continue;
+                        mappedInputSequence = std::max(mappedInputSequence, input.latestMeaningfulInputSequence);
+                        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                            const int target = static_cast<int>(input.member->mapping.axes[static_cast<size_t>(axis)].profile.target);
+                            if (input.availableAxes[static_cast<size_t>(axis)]
+                                && !input.member->fixedAxes[static_cast<size_t>(axis)]
+                                && target > 0 && target < kVirtualAxisSlotCount
+                                && output.axes[static_cast<size_t>(target)]) {
+                                desiredAxes[static_cast<size_t>(target)] = input.transformed[static_cast<size_t>(axis)];
+                            }
+                        }
+                        const RuntimeButtonTargets buttonTargets = buildRuntimeButtonTargets(
+                            input.member->mapping.buttons, output.buttonCapacity);
+                        VirtualButtonStates localButtons = mapButtonStates(input.monitor.snapshot().buttons,
+                            buttonTargets, output.buttonCapacity);
+                        const RuntimePovTargets povTargets = buildRuntimePovTargets(
+                            input.member->mapping.povs, output.buttonCapacity);
+                        mapPovStates(localButtons, input.monitor.snapshot().povs, input.povCount,
+                                     povTargets, output.buttonCapacity);
+                        for (int button = 1; button <= output.buttonCapacity; ++button) {
+                            desiredButtons[static_cast<size_t>(button)] = desiredButtons[static_cast<size_t>(button)]
+                                || localButtons[static_cast<size_t>(button)]
+                                || input.automationEffects.heldButtons[static_cast<size_t>(button)]
+                                || input.automationEffects.toggledButtons[static_cast<size_t>(button)]
+                                || input.automationEffects.pulsedButtons[static_cast<size_t>(button)];
+                        }
+                        for (int pov = 0; pov < input.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+                            const NativePovBinding &binding = input.member->nativePovBindings[static_cast<size_t>(pov)];
+                            const bool available = binding.targetType == NativePovTargetType::Continuous
+                                ? binding.targetIndex <= output.continuousPovCapacity
+                                : binding.targetType == NativePovTargetType::Discrete
+                                    && binding.targetIndex <= output.discretePovCapacity;
+                            const int desired = input.monitor.snapshot().povs[static_cast<size_t>(pov)];
+                            if (binding.enabled && available
+                                && desired != input.lastNativePovs[static_cast<size_t>(pov)]
+                                && output.vjoy.setPov(binding, desired)) {
+                                input.lastNativePovs[static_cast<size_t>(pov)] = desired;
+                                ++m_runtime.vjoyWrites;
+                                ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                                outputChanged = true;
+                            }
+                        }
+                    }
+                    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+                        if (!output.axes[static_cast<size_t>(axis)]) continue;
+                        const float desired = desiredAxes[static_cast<size_t>(axis)];
+                        if (std::isfinite(output.lastAxes[static_cast<size_t>(axis)])
+                            && std::abs(output.lastAxes[static_cast<size_t>(axis)] - desired) < 0.00001F) continue;
+                        if (output.vjoy.setAxis(static_cast<VirtualAxis>(axis), desired)) {
+                            output.lastAxes[static_cast<size_t>(axis)] = desired;
+                            ++m_runtime.vjoyWrites;
+                            ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                            outputChanged = true;
+                        }
+                    }
+                    for (int button = 1; button <= output.buttonCapacity; ++button) {
+                        const bool desired = desiredButtons[static_cast<size_t>(button)];
+                        if (desired == output.lastButtons[static_cast<size_t>(button)]) continue;
+                        if (output.vjoy.setButton(button, desired)) {
+                            output.lastButtons[static_cast<size_t>(button)] = desired;
+                            ++m_runtime.vjoyWrites;
+                            ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                            outputChanged = true;
+                        }
+                    }
+                    if (outputChanged && mappedInputSequence > 0) {
+                        m_runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(outputIndex)].store(
+                            mappedInputSequence, std::memory_order_relaxed);
+                    }
+                }
+                m_runtime.mappingActive = true;
+                m_runtime.outputNeutralized = false;
+                m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Active);
+            }
+        }
+        if (!mappingAllowed || !m_runtime.mappingActive.load()) {
+            m_runtime.mappingActive = false;
+            m_runtime.outputNeutralized = true;
+            m_runtime.mappingEffectiveState = m_mappingRequested.load()
+                ? static_cast<int>(MappingEffectiveState::Suspended)
+                : static_cast<int>(MappingEffectiveState::Off);
+        }
+        m_runtime.vjoyReady = allOutputsReady;
+        if (!outputStatus.isEmpty()) setVjoyStatus(outputStatus);
+        if (connectedCount == 0) QThread::msleep(25);
+        else QThread::msleep(kPhysicalPollIntervalMs);
+    }
+
+    for (int index = 0; index < plan.outputCount; ++index) {
+        quiesceOutput(outputs[static_cast<size_t>(index)]);
+        releaseOutput(outputs[static_cast<size_t>(index)]);
+    }
+    for (int index = 0; index < plan.memberCount; ++index) releaseInput(inputs[static_cast<size_t>(index)]);
+    m_runtime.mappingActive = false;
+    m_runtime.outputNeutralized = true;
+    m_runtime.vjoyReady = false;
+    m_runtime.physicalConnected = false;
+    clearPrimarySnapshot();
 }
 
 } // namespace hotas

@@ -22,8 +22,9 @@ Item {
     property var presentationState: ({})
     signal presentationStateCaptured(var state)
 
-    readonly property color panelFill: legacy ? "#e9161d23" : (themeTokens ? (topGun ? "#d80b1b20" : "#ed182128") : "#1a1d23")
+    readonly property color panelFill: legacy ? "#e9161d23" : (themeTokens ? (topGun ? "#d80b1b20" : themeTokens.panel) : "#1a1d23")
     readonly property color raisedFill: legacy ? "#1b2a31" : (themeTokens ? themeTokens.panelRaised : "#20282d")
+    readonly property color insetFill: legacy ? "#10171b" : (themeTokens ? themeTokens.panelInset : "#10171b")
     readonly property color controlFill: legacy ? "#10171b" : (themeTokens ? themeTokens.control : "#10171b")
     readonly property color borderColor: legacy ? "#52717c" : (themeTokens ? themeTokens.border : "#435660")
     readonly property color strongBorder: legacy ? "#78aab9" : (themeTokens ? themeTokens.borderStrong : "#78aab9")
@@ -35,6 +36,8 @@ Item {
     readonly property color readyColor: legacy ? "#8fd5c9" : (themeTokens ? themeTokens.ready : "#8fd5c9")
     readonly property color warningColor: legacy ? "#d4ad69" : (themeTokens ? themeTokens.warning : "#d4ad69")
     readonly property color dangerColor: legacy ? "#ca9090" : (themeTokens ? themeTokens.danger : "#ca9090")
+    readonly property color dangerSurface: legacy || topGun ? "#2d2021" : (themeTokens ? themeTokens.destructive : "#2c2223")
+    readonly property color activeToggleThumb: legacy || topGun ? "#0b1012" : (themeTokens ? themeTokens.textStrong : "#f3f7f7")
     readonly property string displayFont: topGun && themeTokens ? themeTokens.displayFont : "Segoe UI Variable"
     readonly property string telemetryFont: themeTokens ? themeTokens.telemetryFont : "Consolas"
     readonly property var rules: backendObject ? backendObject.automationRules : []
@@ -289,7 +292,7 @@ Item {
         implicitWidth: Math.max(108, buttonLabel.implicitWidth + 28)
         implicitHeight: 34
         radius: root.topGun ? 1 : 4
-        color: !commandEnabled ? root.controlFill : buttonMouse.containsMouse ? (destructive ? "#492728" : (subdued ? root.raisedFill : root.accentColor)) : (destructive ? "#352225" : (subdued ? root.controlFill : root.accentColor))
+        color: !commandEnabled ? root.insetFill : buttonMouse.containsMouse ? (destructive ? root.dangerColor : (subdued ? root.raisedFill : root.accentColor)) : (destructive ? root.dangerColor : (subdued ? root.controlFill : root.accentColor))
         border.color: destructive ? root.dangerColor : (subdued ? root.borderColor : root.strongBorder)
         opacity: commandEnabled ? 1.0 : 0.42
         Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.dangerColor : (parent.subdued ? root.textColor : "#081013"); font.pixelSize: 10; font.bold: true; font.family: root.displayFont }
@@ -302,12 +305,12 @@ Item {
         leftPadding: 10; rightPadding: 10; topPadding: 7; bottomPadding: 7
         color: root.textColor; placeholderTextColor: root.faintColor; selectByMouse: true
         font.pixelSize: 11; font.family: root.displayFont
-        background: Rectangle { radius: root.topGun ? 1 : 4; color: !field.enabled ? "#0b1012" : (field.activeFocus ? root.raisedFill : root.controlFill); border.color: field.activeFocus ? root.accentColor : (field.hovered ? root.strongBorder : root.borderColor) }
+        background: Rectangle { radius: root.topGun ? 1 : 4; color: !field.enabled ? root.insetFill : (field.activeFocus ? root.raisedFill : root.controlFill); border.color: field.activeFocus ? root.accentColor : (field.hovered ? root.strongBorder : root.borderColor) }
     }
     component EditorCombo: ComboBox {
         id: combo
         implicitHeight: 34; leftPadding: 10; rightPadding: 28; font.pixelSize: 10; font.family: root.displayFont
-        background: Rectangle { radius: root.topGun ? 1 : 4; color: combo.enabled ? (combo.hovered ? root.raisedFill : root.controlFill) : "#0b1012"; border.color: combo.activeFocus ? root.accentColor : (combo.hovered ? root.strongBorder : root.borderColor) }
+        background: Rectangle { radius: root.topGun ? 1 : 4; color: combo.enabled ? (combo.hovered ? root.raisedFill : root.controlFill) : root.insetFill; border.color: combo.activeFocus ? root.accentColor : (combo.hovered ? root.strongBorder : root.borderColor) }
         contentItem: Text { leftPadding: combo.leftPadding; rightPadding: combo.rightPadding; text: combo.displayText; color: combo.enabled ? root.textColor : root.faintColor; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; font: combo.font }
         indicator: Text { x: combo.width - width - 9; y: (combo.height - height) / 2; text: "⌄"; color: root.mutedColor; font.pixelSize: 15 }
         delegate: ItemDelegate {
@@ -335,7 +338,7 @@ Item {
         indicator: Rectangle {
             implicitWidth: 38; implicitHeight: 20; x: toggle.leftPadding - width; y: (toggle.height - height) / 2; radius: root.topGun ? 1 : 10
             color: toggle.checked ? root.readyColor : root.controlFill; border.color: toggle.checked ? root.readyColor : root.borderColor
-            Rectangle { width: 14; height: 14; radius: root.topGun ? 1 : 7; x: toggle.checked ? parent.width - width - 3 : 3; anchors.verticalCenter: parent.verticalCenter; color: toggle.checked ? "#0b1012" : root.mutedColor; Behavior on x { NumberAnimation { duration: 110 } } }
+            Rectangle { width: 14; height: 14; radius: root.topGun ? 1 : 7; x: toggle.checked ? parent.width - width - 3 : 3; anchors.verticalCenter: parent.verticalCenter; color: toggle.checked ? root.activeToggleThumb : root.mutedColor; Behavior on x { NumberAnimation { duration: 110 } } }
         }
         contentItem: Text { text: toggle.text; color: root.mutedColor; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter; font.family: root.displayFont }
     }
@@ -388,7 +391,7 @@ Item {
                     model: root.rules
                     delegate: ThemedPanel {
                         required property var modelData
-                        Layout.fillWidth: true; implicitHeight: cardContent.implicitHeight + 28; surfaceColor: modelData.health === 2 ? "#2d2021" : root.panelFill; edgeColor: modelData.health === 2 ? root.dangerColor : (modelData.active ? root.readyColor : root.borderColor)
+                        Layout.fillWidth: true; implicitHeight: cardContent.implicitHeight + 28; surfaceColor: modelData.health === 2 ? root.dangerSurface : root.panelFill; edgeColor: modelData.health === 2 ? root.dangerColor : (modelData.active ? root.readyColor : root.borderColor)
                         MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openRule(modelData) }
                         ColumnLayout {
                             id: cardContent

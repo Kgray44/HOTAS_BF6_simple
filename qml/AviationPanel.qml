@@ -6,7 +6,9 @@ import QtQuick 6.5
 Rectangle {
     Theme { id: defaultTheme }
     property var theme: defaultTheme
-    color: theme ? (theme.topGun ? "#e80b1b21" : "#e9161d23") : "#e9161d23"
+    // Day Ops retains the same geometry but uses its aluminum panel token;
+    // dark translucent cockpit surfaces are not readable on carrier gray.
+    color: theme ? (theme.topGun ? "#e80b1b21" : theme.dayOps ? theme.panel : "#e9161d23") : "#e9161d23"
     border.color: theme ? theme.border : "#41546770"
     border.width: 1
     radius: theme ? theme.panelRadius : 6
@@ -17,9 +19,9 @@ Rectangle {
         radius: theme ? Math.max(1, theme.panelRadius - 1) : 5
         opacity: 0.5
         gradient: Gradient {
-            GradientStop { position: 0.0; color: theme && theme.topGun ? "#273c3740" : "#2438434d" }
-            GradientStop { position: 0.38; color: theme && theme.topGun ? "#121d1d20" : "#0a101419" }
-            GradientStop { position: 1.0; color: theme && theme.topGun ? "#050c0f24" : "#0a0d1016" }
+            GradientStop { position: 0.0; color: theme && theme.dayOps ? "#54ffffff" : theme && theme.topGun ? "#273c3740" : "#2438434d" }
+            GradientStop { position: 0.38; color: theme && theme.dayOps ? "#18ffffff" : theme && theme.topGun ? "#121d1d20" : "#0a101419" }
+            GradientStop { position: 1.0; color: theme && theme.dayOps ? "#1f425b66" : theme && theme.topGun ? "#050c0f24" : "#0a0d1016" }
         }
     }
     Rectangle {

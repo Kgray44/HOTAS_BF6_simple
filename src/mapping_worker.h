@@ -11,6 +11,8 @@
 #include <memory>
 #include <utility>
 
+struct IDirectInput8W;
+
 namespace hotas {
 
 constexpr size_t kLatencyTelemetrySamples = 2048;
@@ -125,6 +127,17 @@ struct AtomicRuntimeState {
     std::atomic_bool hidhideCloaked{false};
     std::atomic_bool hidhideMapperAllowed{false};
     std::atomic_uint64_t inputReports{0};
+    // A Device Rig is verified as a collection of independent physical
+    // sources. These fixed sequence values carry meaningful changes only:
+    // an axis crosses the configured evidence threshold, a button changes,
+    // or a POV changes. They never build strings, allocate, lock, or signal
+    // QML from MappingWorker's report loop.
+    std::atomic_uint64_t meaningfulInputSequence{0};
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigMembers> deviceRigMeaningfulInputSequence{};
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigOutputs> deviceRigMeaningfulOutputSequence{};
+    // Report/write counters remain diagnostics, not user-movement proof.
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigMembers> deviceRigInputReports{};
+    std::array<std::atomic_uint64_t, kMaximumDeviceRigOutputs> deviceRigOutputWrites{};
     // This resets at a DirectInput acquisition boundary. It lets setup prove
     // that a freshly reopened physical device is still delivering reports,
     // without confusing historical report totals for current access.
@@ -213,6 +226,8 @@ protected:
     void run() override;
 
 private:
+    void runSingleDevice(IDirectInput8W *directInput);
+    void runDeviceRig(IDirectInput8W *directInput);
     MapperConfiguration configurationCopy();
     std::pair<MapperConfiguration, std::shared_ptr<const RuntimeProfileCache>>
     preparedConfigurationCopy();
@@ -230,6 +245,7 @@ private:
     std::atomic_uint64_t m_reacquireInputRequested{0};
     std::atomic_uint64_t m_reacquireInputAcknowledged{0};
     std::atomic_uint64_t m_configurationVersion{0};
+    std::atomic_bool m_runtimeTopologyChangeRequested{false};
     mutable QMutex m_configurationMutex;
     MapperConfiguration m_configuration;
     // Built by the caller before it acquires the configuration mutex. The

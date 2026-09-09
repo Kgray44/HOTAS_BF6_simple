@@ -8,6 +8,10 @@ Page {
     padding: 0
 
     property int currentPage: 8
+    property bool setupAssistantReturnAfterCalibration: false
+    property bool deviceDetailsReturnAfterCalibration: false
+    onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, "Legacy")
+    Component.onCompleted: backend.recordCrashPresentationState(currentPage, "Legacy")
     property bool menuOpen: false
     // Retain only compact values across page unloads, never page object trees.
     property var profileLibraryPresentationState: ({})
@@ -16,13 +20,13 @@ Page {
     // Do not materialize telemetry-shaped models when their page is unloaded.
     property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3 || currentPage === 9) ? backend.axes : []
     readonly property var adaptiveThemeTokens: ({
-        panel: "#e61a282e", panelInset: "#10171b", border: "#52717c", borderStrong: "#78aab9",
+        topGun: false, dayOps: false, legacy: true, background: "#0d1013", panel: "#1a1d23", panelRaised: "#20282d", panelInset: "#10171b", panelRadius: 6, border: "#52717c", borderStrong: "#78aab9", fastener: "#5c9caf",
         controlRadius: 4, textStrong: "#f3f7f7", text: "#d5e0e3", textMuted: "#9aa3a7",
         textFaint: "#77919a", telemetryFont: "Consolas", displayFont: "Segoe UI Variable",
-        control: "#1b2a31", controlDisabled: "#142126", controlPressed: "#29414a",
-        controlHover: "#22343c", buttonSurface: "#294a57", buttonSecondary: "#1b2a31",
-        tooltip: "#16252b", selection: "#294a57", orange: "#78aab9", cyan: "#8fc8c0",
-        warning: "#d4ad69", divider: "#335268", ready: "#8fd5c9"
+        control: "#10171b", controlDisabled: "#0c1013", controlPressed: "#29414a",
+        controlHover: "#142128", buttonSurface: "#324f5a", buttonHover: "#456c78", buttonSecondary: "#222c32", buttonSecondaryHover: "#303d44",
+        tooltip: "#151e23", selection: "#315a66", selectionCurrent: "#244650", orange: "#78aab9", cyan: "#8fc8c0",
+        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9"
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
@@ -50,6 +54,7 @@ Page {
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
+        + (devicesPageLoader.item ? 1 : 0)
 
     function pageItem(page) {
         switch (page) {
@@ -63,10 +68,22 @@ Page {
         case 7: return automationPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
+        case 10: return devicesPageLoader.item
         }
         return null
     }
     function loadedPage(page) { return pageItem(page) !== null }
+    function navigateToIssue(target) {
+        const destination = target && target.page !== undefined ? Number(target.page) : 3
+        if (target && backend && target.objectType !== undefined && target.objectId !== undefined)
+            backend.focusIssueTarget(String(target.objectType), String(target.objectId))
+        currentPage = destination
+        menuOpen = false
+        if (destination === 10 && target) Qt.callLater(function() {
+            const devices = pageItem(10)
+            if (devices && devices.focusIssueTarget) devices.focusIssueTarget(target)
+        })
+    }
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -247,6 +264,16 @@ Page {
                 radius: 5
             }
         }
+    }
+
+    AppHealthPopup {
+        id: appHealthPopup
+        objectName: "legacyAppHealthPopup"
+        health: backend.appHealthSummary
+        issues: backend.appIssues
+        theme: root.adaptiveThemeTokens
+        legacy: true
+        onNavigationRequested: function(target) { root.navigateToIssue(target) }
     }
     component FlightTextInput: TextField {
         id: flightTextInput
@@ -1062,9 +1089,9 @@ Page {
      font.bold: true }
                 }
             }
-            FineLine { Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 940; Layout.preferredWidth: 1
  Layout.preferredHeight: 24 }
-            Row { spacing: 7
+            Row { visible: root.width >= 940; spacing: 7
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
  color: "#c3cecf"
@@ -1086,9 +1113,9 @@ Page {
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
-            FineLine { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"; spacing: 6
+            Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
                 Text { text: "PROFILE"
                     color: "#78919a"; font.pixelSize: 9; font.bold: true }
                 Text { text: backend.effectiveProfileDisplayName.toUpperCase()
@@ -1098,7 +1125,36 @@ Page {
                     text: "· " + backend.profileSourceLabel.toUpperCase()
                     color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
             }
+            FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
+            DeviceContextSelector {
+                objectName: "legacyDeviceContextSelector"
+                // Preserve an editing-only Device Context at compact widths.
+                // It contracts to the selector affordance below 720px rather
+                // than vanishing at the former arbitrary 640px breakpoint.
+                visible: root.width >= 480
+                compact: root.width < 720
+                Layout.preferredWidth: compact ? implicitWidth : Math.min(272, Math.max(174, root.width - 900))
+                Layout.maximumWidth: compact ? implicitWidth : 272
+                backendObject: backend
+                theme: root.adaptiveThemeTokens
+                legacy: true
+                onManageDevices: root.currentPage = 10
+            }
             Item { Layout.fillWidth: true }
+            Rectangle {
+                id: appHealthControl
+                objectName: "legacyAppHealthControl"
+                visible: root.width >= 780
+                implicitWidth: appHealthRow.implicitWidth + 16; implicitHeight: 30; radius: 3
+                color: appHealthMouse.containsMouse ? "#263f49" : "#18242a"
+                border.color: backend.appHealthSummary.ready ? "#52717c" : "#d6bd78"
+                Row { id: appHealthRow; anchors.centerIn: parent; spacing: 6
+                    StatusDot { tone: backend.appHealthSummary.ready ? "#9fcbbf" : "#d6bd78" }
+                    Text { text: backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? "#a5afb3" : "#e1c887"; font.pixelSize: 9; font.bold: true }
+                }
+                MouseArea { id: appHealthMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appHealthPopup.open() }
+                ToolTip { visible: appHealthMouse.containsMouse; delay: 350; text: backend.appHealthSummary.ready ? "Open App Health" : "Review issues that need attention" }
+            }
             Rectangle {
                 visible: backend.updateAvailable && root.width >= 980
                 width: 27; height: 24; radius: 3
@@ -1114,6 +1170,7 @@ Page {
             }
             Rectangle {
                 id: globalMappingControl
+                objectName: "globalMappingControl"
                 implicitWidth: legacyMappingRow.implicitWidth + 18; implicitHeight: 30; radius: 3
                 color: legacyMappingMouse.pressed ? "#284751" : legacyMappingMouse.containsMouse ? "#263f49" : "#18242a"
                 border.color: backend.mappingActive ? "#91c4a4" : backend.mappingRequested ? "#d6bd78" : "#52717c"
@@ -1137,7 +1194,7 @@ Page {
         x: 12
  y: headerBar.height + 10
         width: 248
-        height: 452
+        height: 487
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
         visible: root.menuOpen
@@ -1183,7 +1240,7 @@ Page {
             }
             Repeater {
                 model: [
-                    { label: "OVERVIEW", page: 8, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
+                    { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
                     { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
@@ -1243,7 +1300,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 8
             sourceComponent: Component {
-                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true }
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true
+                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
             }
         }
         Loader {
@@ -1251,7 +1309,37 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 4
             sourceComponent: Component {
-                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true }
+                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: true
+                    onManageDevicesRequested: root.currentPage = 10 }
+            }
+        }
+        Loader {
+            id: devicesPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 10
+            sourceComponent: Component {
+                DevicesPage {
+                    anchors.fill: parent; visible: root.currentPage === 10
+                    backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
+                    onVerificationRequested: function(rigId, deviceId, outputId) {
+                        controllerSetupDialog.open()
+                        if (outputId && outputId !== "") {
+                            backend.startSetupAssistantCheckForScope("virtualOutput", outputId)
+                        } else if (deviceId !== "") {
+                            if (rigId !== "") backend.setEditingDeviceContext(rigId, [deviceId])
+                            backend.startSetupAssistantCheckForScope("device", deviceId)
+                        } else if (rigId !== "") {
+                            backend.setEditingDeviceContext(rigId, [])
+                            backend.startSetupAssistantCheckForScope("deviceRig", rigId)
+                        } else backend.startSetupAssistantCheckForScope("application")
+                    }
+                    onCalibrationRequested: function(deviceId) {
+                        if (backend.beginCalibrationForDevice(deviceId)) {
+                            root.deviceDetailsReturnAfterCalibration = true
+                            root.currentPage = 2
+                        }
+                    }
+                }
             }
         }
         Loader {
@@ -2030,17 +2118,41 @@ Page {
     }
     Dialog {
         id: controllerSetupDialog
+        objectName: "controllerSetupDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent
         modal: true
         width: Math.min(740, root.width - 36)
+        height: Math.min(setupAssistantPanel.implicitHeight + setupAssistantHeader.implicitHeight + 28, root.height - 36)
         title: ""
         standardButtons: Dialog.NoButton
-        padding: 18
+        padding: 14
+        header: ThemedDialogHeader {
+            id: setupAssistantHeader
+            theme: root.adaptiveThemeTokens
+            legacy: true
+            heading: "HOTAS BF6 SETUP ASSISTANT"
+            detail: backend.activeDeviceRigName
+            dialog: controllerSetupDialog
+        }
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: "#182a30"; border.color: "#536975"; radius: 4 }
-        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; legacy: true
-            onCloseRequested: controllerSetupDialog.close() }
+        contentItem: Flickable {
+            id: setupAssistantScroll
+            clip: true
+            contentWidth: width
+            contentHeight: setupAssistantPanel.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; activityMonitoring: controllerSetupDialog.visible
+                onCloseRequested: controllerSetupDialog.close()
+                onCalibrationRequested: {
+                    root.setupAssistantReturnAfterCalibration = true
+                    controllerSetupDialog.close()
+                    root.currentPage = 2
+                    backend.beginCalibration()
+                }
+            }
+        }
     }
 
     Dialog {
@@ -2139,6 +2251,18 @@ Page {
             }
         }
         background: Panel { color: "#241b1b"; border.color: "#44bd7777" }
+    }
+    Connections {
+        target: backend
+        function onStateChanged() {
+            if (root.setupAssistantReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
+                root.setupAssistantReturnAfterCalibration = false
+                controllerSetupDialog.open()
+            } else if (root.deviceDetailsReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
+                root.deviceDetailsReturnAfterCalibration = false
+                root.currentPage = 10
+            }
+        }
     }
     Connections {
         target: backend

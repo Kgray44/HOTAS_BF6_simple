@@ -12,6 +12,7 @@ class ThemeManager final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString currentTheme READ currentTheme WRITE setCurrentTheme NOTIFY themeChanged)
     Q_PROPERTY(bool topGun READ isTopGun NOTIFY themeChanged)
+    Q_PROPERTY(bool dayOps READ isDayOps NOTIFY themeChanged)
     Q_PROPERTY(QStringList themeChoices READ themeChoices CONSTANT)
 
 public:
@@ -19,6 +20,7 @@ public:
 
     QString currentTheme() const { return m_currentTheme; }
     bool isTopGun() const;
+    bool isDayOps() const;
     QStringList themeChoices() const;
 
     Q_INVOKABLE void setCurrentTheme(const QString &theme);
