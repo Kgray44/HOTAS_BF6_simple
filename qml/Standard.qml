@@ -18,6 +18,7 @@ Page {
 
     property int currentPage: 8
     property bool setupAssistantReturnAfterCalibration: false
+    property bool deviceDetailsReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     Component.onCompleted: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     property bool menuOpen: false
@@ -1469,15 +1470,23 @@ Page {
                 DevicesPage {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.themeTokens; legacy: false
-                    onVerificationRequested: function(rigId, deviceId) {
+                    onVerificationRequested: function(rigId, deviceId, outputId) {
                         controllerSetupDialog.open()
-                        if (deviceId !== "") {
+                        if (outputId && outputId !== "") {
+                            backend.startSetupAssistantCheckForScope("virtualOutput", outputId)
+                        } else if (deviceId !== "") {
                             if (rigId !== "") backend.setEditingDeviceContext(rigId, [deviceId])
                             backend.startSetupAssistantCheckForScope("device", deviceId)
                         } else if (rigId !== "") {
                             backend.setEditingDeviceContext(rigId, [])
                             backend.startSetupAssistantCheckForScope("deviceRig", rigId)
                         } else backend.startSetupAssistantCheckForScope("application")
+                    }
+                    onCalibrationRequested: function(deviceId) {
+                        if (backend.beginCalibrationForDevice(deviceId)) {
+                            root.deviceDetailsReturnAfterCalibration = true
+                            root.currentPage = 2
+                        }
                     }
                 }
             }
@@ -2282,10 +2291,12 @@ Page {
         anchors.centerIn: parent
         modal: true
         width: Math.min(740, root.width - 36)
+        height: Math.min(setupAssistantPanel.implicitHeight + setupAssistantHeader.implicitHeight + 28, root.height - 36)
         title: ""
         standardButtons: Dialog.NoButton
         padding: 14
         header: ThemedDialogHeader {
+            id: setupAssistantHeader
             theme: root.themeTokens
             heading: "HOTAS BF6 SETUP ASSISTANT"
             detail: backend.activeDeviceRigName
@@ -2293,13 +2304,20 @@ Page {
         }
         onClosed: backend.acknowledgeControllerSetup()
         background: Rectangle { color: theme.panel; border.color: theme.borderStrong; radius: theme.panelRadius }
-        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.themeTokens
-            onCloseRequested: controllerSetupDialog.close()
-            onCalibrationRequested: {
-                root.setupAssistantReturnAfterCalibration = true
-                controllerSetupDialog.close()
-                root.currentPage = 2
-                backend.beginCalibration()
+        contentItem: Flickable {
+            id: setupAssistantScroll
+            clip: true
+            contentWidth: width
+            contentHeight: setupAssistantPanel.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.themeTokens; activityMonitoring: controllerSetupDialog.visible
+                onCloseRequested: controllerSetupDialog.close()
+                onCalibrationRequested: {
+                    root.setupAssistantReturnAfterCalibration = true
+                    controllerSetupDialog.close()
+                    root.currentPage = 2
+                    backend.beginCalibration()
+                }
             }
         }
     }
@@ -2410,6 +2428,9 @@ Page {
             if (root.setupAssistantReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
                 root.setupAssistantReturnAfterCalibration = false
                 controllerSetupDialog.open()
+            } else if (root.deviceDetailsReturnAfterCalibration && backend.calibrationStage === "IDLE" && backend.calibrationSuccess) {
+                root.deviceDetailsReturnAfterCalibration = false
+                root.currentPage = 10
             }
         }
     }

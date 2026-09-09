@@ -14,7 +14,8 @@ Page {
     property string selectedDeviceId: ""
     property string selectedOutputId: ""
     property var actionFeedback: ({})
-    signal verificationRequested(string rigId, string deviceId)
+    signal verificationRequested(string rigId, string deviceId, string outputId)
+    signal calibrationRequested(string deviceId)
 
     readonly property var rigs: backendObject ? backendObject.deviceRigs : []
     readonly property var controllers: backendObject ? backendObject.controllers : []
@@ -143,10 +144,10 @@ Page {
         }
         return null
     }
-    function requestVerification(rigId, deviceId) {
+    function requestVerification(rigId, deviceId, outputId) {
         if (rigDetailsActions.visible) rigDetailsActions.close()
         showTransientActionFeedback({ success: true, inProgress: true, title: "Checking setup", message: "Opening the Setup Assistant…" }, "", "", 1200)
-        verificationRequested(rigId || selectedRigId, deviceId || "")
+        verificationRequested(rigId || selectedRigId, deviceId || "", outputId || "")
     }
     function openStandaloneOutputCreator() {
         createOutputDialog.returnToRig = false
@@ -804,14 +805,14 @@ Page {
                             implicitHeight: 64
                             theme: root.themeTokens; legacy: root.legacy
                             color: root.legacy ? "#e9161d23" : themeTokens.panelRaised
-                            border.color: modelData.ready ? themeTokens.ready : themeTokens.warning
+                            border.color: modelData.ready ? themeTokens.ready : modelData.readinessState === "SAVED" ? themeTokens.border : themeTokens.warning
                             RowLayout {
                                 anchors.fill: parent; anchors.margins: 9; spacing: 8
-                                Rectangle { width: 7; height: 7; radius: 4; color: modelData.ready ? themeTokens.ready : themeTokens.warning }
+                                Rectangle { width: 7; height: 7; radius: 4; color: modelData.ready ? themeTokens.ready : modelData.readinessState === "SAVED" ? themeTokens.textMuted : themeTokens.warning }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 1
                                     Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight }
-                                    Text { Layout.fillWidth: true; text: (modelData.ready ? "Ready" : modelData.status || "Needs setup") + "  ·  " + (modelData.axes || "No axes") + "  ·  " + (modelData.profileCount || 0) + " profile" + (modelData.profileCount === 1 ? "" : "s"); color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                                    Text { Layout.fillWidth: true; text: (modelData.readinessState || (modelData.ready ? "READY" : "SAVED")) + " · " + (modelData.status || "Output status unavailable") + "  ·  " + (modelData.axes || "No axes") + "  ·  " + (modelData.profileCount || 0) + " profile" + (modelData.profileCount === 1 ? "" : "s"); color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
                                 }
                                 ThemedButton { theme: themeTokens; compact: true; text: "DETAILS"; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
                             }
@@ -1131,7 +1132,9 @@ Page {
                 SmallLabel { text: "CAPABILITIES" }
                 Text { text: (physicalDeviceDialog.detail.axisCount || 0) + " axes · " + (physicalDeviceDialog.detail.buttonCount || 0) + " buttons · " + (physicalDeviceDialog.detail.povCount || 0) + " POV"; color: themeTokens.text }
                 SmallLabel { text: "CALIBRATION" }
-                Text { text: (physicalDeviceDialog.detail.calibratedAxes || 0) + " calibrated axes"; color: themeTokens.text }
+                Text { text: physicalDeviceDialog.detail.calibrationStatus || "Using default controller range"; color: themeTokens.text }
+                SmallLabel { text: "ACTIVITY" }
+                Text { text: physicalDeviceDialog.detail.activityStatus || "Listening for controller input…"; color: physicalDeviceDialog.detail.inputDetected ? themeTokens.ready : themeTokens.textMuted }
                 SmallLabel { text: "LAST SEEN" }
                 Text { text: physicalDeviceDialog.detail.lastSeen || "No recorded use yet"; color: themeTokens.text }
                 SmallLabel { text: "VERIFICATION" }
@@ -1150,6 +1153,7 @@ Page {
                            : physicalDeviceDialog.detail.hiddenFromGames ? themeTokens.ready : themeTokens.warning
                 }
             }
+            Text { Layout.fillWidth: true; visible: !physicalDeviceDialog.detail.connected; text: "Connect " + (physicalDeviceDialog.detail.name || "this controller") + " to calibrate it."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             Text { text: "TECHNICAL DETAILS"; color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
             Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.hidInstanceId || physicalDeviceDialog.detail.directInputId || "No current raw identity"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideMiddle }
@@ -1157,6 +1161,9 @@ Page {
                 ThemedButton { theme: themeTokens; text: "CHECK DEVICE SETUP"; tone: "secondary"
                     commandEnabled: !!backendObject
                     onTriggered: { root.requestVerification(root.selectedRigId, root.selectedDeviceId); physicalDeviceDialog.close() } }
+                ThemedButton { theme: themeTokens; text: (physicalDeviceDialog.detail.calibratedAxes || 0) > 0 ? "RECALIBRATE" : "CALIBRATE"; tone: "secondary"
+                    commandEnabled: !!backendObject && !!physicalDeviceDialog.detail.connected
+                    onTriggered: { root.calibrationRequested(root.selectedDeviceId); physicalDeviceDialog.close() } }
                 ThemedButton {
                     theme: themeTokens; tone: "secondary"
                     visible: root.selectedRig && root.rigHasMember(root.selectedRig, root.selectedDeviceId)
@@ -1183,8 +1190,8 @@ Page {
             width: parent.width; spacing: 12
             Text { Layout.fillWidth: true; text: outputDetailDialog.detail.name || "Virtual output"; color: themeTokens.textStrong; font.pixelSize: 22; font.bold: true }
             RowLayout { Layout.fillWidth: true
-                Rectangle { width: 9; height: 9; radius: 5; color: outputDetailDialog.detail.ready ? themeTokens.ready : themeTokens.warning }
-                Text { Layout.fillWidth: true; text: outputDetailDialog.detail.ready ? "Ready / usable" : outputDetailDialog.detail.status || "Verify output"; color: themeTokens.text; font.pixelSize: 12; elide: Text.ElideRight }
+                Rectangle { width: 9; height: 9; radius: 5; color: outputDetailDialog.detail.ready ? themeTokens.ready : outputDetailDialog.detail.readinessState === "SAVED" ? themeTokens.textMuted : themeTokens.warning }
+                Text { Layout.fillWidth: true; text: (outputDetailDialog.detail.readinessState || (outputDetailDialog.detail.ready ? "READY" : "SAVED")) + " · " + (outputDetailDialog.detail.status || "Verify output"); color: themeTokens.text; font.pixelSize: 12; elide: Text.ElideRight }
                 Text { text: "VJOY " + (outputDetailDialog.detail.deviceId || "—"); color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
@@ -1225,7 +1232,7 @@ Page {
             RowLayout { Layout.fillWidth: true
                 ThemedButton { theme: themeTokens; text: "CHECK OUTPUT"; tone: "secondary"
                     commandEnabled: !!backendObject
-                    onTriggered: { root.requestVerification(root.selectedRigId, ""); outputDetailDialog.close() } }
+                    onTriggered: { root.requestVerification(root.selectedRigId, "", root.selectedOutputId); outputDetailDialog.close() } }
                 ThemedButton {
                     theme: themeTokens; tone: "secondary"
                     visible: outputDetailDialog.detail.managedVisibility && root.selectedRig

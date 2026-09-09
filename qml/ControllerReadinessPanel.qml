@@ -10,6 +10,7 @@ Item {
     property var backendObject
     property var themeTokens: null
     property bool legacy: false
+    property bool activityMonitoring: false
     property bool detailsExpanded: false
     property bool technicalDetailsExpanded: false
     property int liveTick: 0
@@ -41,6 +42,7 @@ Item {
     function stateColor(state) {
         if (state === "READY" || state === "ready") return readyColor
         if (state === "ERROR" || state === "error" || state === "offline") return dangerColor
+        if (state === "optional" || state === "listening" || state === "skipped") return mutedColor
         return warningColor
     }
     function activeGuidedStep() {
@@ -82,12 +84,21 @@ Item {
         }
         showActionResult(backendObject.startSetupAssistantCheck())
     }
-    function nextLivePrompt() {
-        const steps = liveTest.steps || []
-        for (let i = 0; i < steps.length; ++i) if (steps[i].state === "waiting") return steps[i].message
-        return liveTest.complete ? "Live routes verified." : "Start the control test when you are ready."
+    function performStepAction(step) {
+        if (!backendObject || !step) return
+        const action = step.action || ""
+        if (action === "hide-from-games") { fixConfirmation.open(); return }
+        if (action === "start-calibration") { calibrationRequested(); return }
+        if (action === "skip-calibration") {
+            showActionResult(backendObject.skipCalibrationForSetup(root.summary.scopeId || ""))
+            return
+        }
+        if (action === "start-live-test") {
+            showActionResult(backendObject.startSetupAssistantLiveTest())
+            return
+        }
+        if (action !== "") root.performPrimaryAction()
     }
-
     onStepsChanged: {
         for (let i = 0; i < steps.length; ++i) {
             if (steps[i].state === "current") {
@@ -100,7 +111,9 @@ Item {
 
     Timer {
         interval: 180; repeat: true
-        running: root.liveTest.active && !root.liveTest.complete
+        // Activity is passive evidence, not a gated test session. This only
+        // refreshes the visible control-plane projection of existing atomics.
+        running: root.backendObject && root.activityMonitoring
         onTriggered: root.liveTick++
     }
 
@@ -138,7 +151,19 @@ Item {
 
         ColumnLayout {
             Layout.fillWidth: true; spacing: 7; visible: root.summary.state === "READY"
-            Text { Layout.fillWidth: true; text: "✓ Physical controller detected\n✓ Virtual controller ready\n✓ Game visibility checked\n✓ Controls ready to test"; color: root.textColor; font.pixelSize: 11; lineHeight: 1.4 }
+            Repeater { model: root.summary.readyItems || []
+                delegate: Text { required property var modelData; Layout.fillWidth: true; text: "✓ " + modelData; color: root.textColor; font.pixelSize: 11 }
+            }
+            ColumnLayout { Layout.fillWidth: true; spacing: 3; visible: (root.liveTest.steps || []).length > 0
+                Text { text: "ACTIVITY"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                Repeater { model: root.liveTest.steps || []
+                    delegate: RowLayout { required property var modelData; Layout.fillWidth: true; spacing: 7
+                        Rectangle { width: 7; height: 7; radius: 4; color: modelData.state === "ready" ? root.readyColor : modelData.state === "offline" ? root.dangerColor : root.mutedColor }
+                        Text { Layout.fillWidth: true; text: modelData.title + " · " + modelData.message; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight }
+                        Text { text: modelData.state === "ready" ? "INPUT DETECTED" : modelData.state === "offline" ? "OFFLINE" : "LISTENING"; color: modelData.state === "ready" ? root.readyColor : modelData.state === "offline" ? root.dangerColor : root.mutedColor; font.pixelSize: 9; font.bold: true }
+                    }
+                }
+            }
             Text { Layout.fillWidth: true; visible: !!root.summary.secondaryMessage; text: root.summary.secondaryMessage || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
         }
 
@@ -174,39 +199,19 @@ Item {
                         anchors.fill: parent; anchors.margins: 11; spacing: 6
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "STEP " + modelData.order + "  ·  " + modelData.title; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                            Text { text: "STEP " + modelData.order + "  ·  " + modelData.title + (modelData.optional ? "  ·  OPTIONAL" : ""); color: root.mutedColor; font.pixelSize: 10; font.bold: true }
                             Item { Layout.fillWidth: true }
                             ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: (modelData.state || "waiting").toUpperCase(); onTriggered: root.focusGuidedStep(index) }
                         }
                         Text { Layout.fillWidth: true; text: modelData.message; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                        Repeater { model: (modelData.id === "physical" || modelData.id === "device") ? (root.liveTest.steps || []) : []
-                            delegate: RowLayout { required property var modelData; visible: modelData.kind === "input"; Layout.fillWidth: true; spacing: 7
-                                Rectangle { width: 7; height: 7; radius: 4; color: root.stateColor(modelData.state) }
-                                Text { Layout.fillWidth: true; text: modelData.title; color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                Text { text: modelData.state === "offline" ? (modelData.optional ? "OPTIONAL · OFFLINE" : "OFFLINE") : modelData.state === "ready" ? "DETECTED" : "WAITING"; color: root.stateColor(modelData.state); font.pixelSize: 9; font.bold: true }
-                            }
-                        }
                         Text { Layout.fillWidth: true; visible: (modelData.id === "physical" || modelData.id === "device") && (root.summary.state === "OFFLINE" || (root.backendObject && root.backendObject.controllerDisconnectObserved)); text: "RECONNECT CONTROLLER\nReconnect the required physical controller, then choose Check Setup."; color: root.warningColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap }
-                        ThemedButton { theme: root.themeTokens; visible: modelData.state === "current" && modelData.action === "hide-from-games"; text: modelData.actionLabel || "HIDE FROM GAMES"; emphasis: "ready"; commandEnabled: root.backendObject && modelData.issue.automaticallyFixable; onTriggered: fixConfirmation.open() }
-                        ColumnLayout { Layout.fillWidth: true; visible: modelData.id === "live"; spacing: 5
-                            Repeater { model: root.liveTest.steps || []
-                                delegate: RowLayout { required property var modelData; Layout.fillWidth: true; spacing: 7
-                                    Rectangle { width: 7; height: 7; radius: 4; color: root.stateColor(modelData.state) }
-                                    Text { Layout.fillWidth: true; text: modelData.title + "  ·  " + modelData.message; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight }
-                                    Text { text: modelData.state === "ready" ? "✓" : modelData.state === "offline" ? "OFFLINE" : "WAITING"; color: root.stateColor(modelData.state); font.pixelSize: 10; font.bold: true }
-                                }
-                            }
-                            RowLayout { Layout.fillWidth: true
-                                ThemedButton { theme: root.themeTokens; text: root.liveTest.active ? "TEST RUNNING" : "START LIVE TEST"; emphasis: "ready"; commandEnabled: root.backendObject && !root.liveTest.active && modelData.state === "current"; onTriggered: root.showActionResult(root.backendObject.startSetupAssistantLiveTest()) }
-                                Item { Layout.fillWidth: true }
-                                Text { visible: root.liveTest.complete; text: "✓ COMPLETE"; color: root.readyColor; font.pixelSize: 10; font.bold: true }
-                            }
+                        RowLayout { Layout.fillWidth: true; visible: modelData.action !== "" && (modelData.state === "current" || modelData.id === "calibration")
+                            ThemedButton { theme: root.themeTokens; text: modelData.actionLabel || "CONTINUE"; emphasis: "ready"; commandEnabled: root.backendObject && (modelData.action !== "hide-from-games" || modelData.issue.automaticallyFixable); onTriggered: root.performStepAction(modelData) }
+                            ThemedButton { theme: root.themeTokens; visible: modelData.id === "calibration" && modelData.optional; text: "USE DEFAULT RANGE"; tone: "secondary"; commandEnabled: root.backendObject; onTriggered: root.showActionResult(root.backendObject.skipCalibrationForSetup(root.summary.scopeId || "")) }
+                            Item { Layout.fillWidth: true }
                         }
                     }
                 }
-            }
-            Rectangle { Layout.fillWidth: true; visible: root.liveTest.complete; Layout.preferredHeight: visible ? completionText.implicitHeight + 22 : 0; color: Qt.rgba(root.readyColor.r, root.readyColor.g, root.readyColor.b, 0.10); border.color: root.readyColor; radius: root.radius
-                Text { id: completionText; anchors.fill: parent; anchors.margins: 11; text: "SETUP COMPLETE\nInputs detected, virtual controller ready, game visibility checked, and live routes verified."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
             }
         }
 
@@ -216,10 +221,10 @@ Item {
                 Text { text: "TECHNICAL DETAILS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
                 Text { Layout.fillWidth: true; text: "ISSUE  ·  " + (root.primaryIssue.code || "None"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
                 Text { Layout.fillWidth: true; text: "TARGET  ·  " + (root.summary.scope || "HOTAS BF6"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: "CURRENT STATE  ·  " + (root.backendObject ? root.backendObject.controllerReadinessStatus : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: "LAST CHECK  ·  " + (root.backendObject ? root.backendObject.controllerReadinessLastChecked : "Not recorded"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: "Virtual controller: " + (root.backendObject ? root.backendObject.activeOutputLayoutDescriptor : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Repeater { model: root.backendObject ? root.backendObject.controllerReadinessChecks : []
+                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "CURRENT STATE  ·  " + (root.backendObject ? root.backendObject.controllerReadinessStatus : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "LAST CHECK  ·  " + (root.backendObject ? root.backendObject.controllerReadinessLastChecked : "Not recorded"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "Virtual controller: " + (root.backendObject ? root.backendObject.activeOutputLayoutDescriptor : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Repeater { model: (root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig") && root.backendObject ? root.backendObject.controllerReadinessChecks : []
                     delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.name + "  ·  " + modelData.state + "\n" + modelData.message; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
                 }
                 Repeater { model: root.issues

@@ -544,6 +544,10 @@ public:
     Q_INVOKABLE bool selectPortableImportDevice(int descriptorIndex,
                                                 const QString &savedControllerId);
     Q_INVOKABLE void beginCalibration();
+    // Device Details can start the existing calibration workflow directly.
+    // Selecting another connected saved controller remains an explicit
+    // control-plane switch; no report-path selection is introduced here.
+    Q_INVOKABLE bool beginCalibrationForDevice(const QString &recordId);
     Q_INVOKABLE bool beginCalibrationCenterCapture();
     Q_INVOKABLE bool saveCalibration();
     Q_INVOKABLE void resetCalibration();
@@ -598,6 +602,7 @@ public:
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
+    Q_INVOKABLE QVariantMap skipCalibrationForSetup(const QString &recordId = {});
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
     Q_INVOKABLE bool copyControllerDiagnostics();
@@ -894,6 +899,8 @@ private:
     void appendCalibrationHistory(const std::array<Calibration, kPhysicalAxisCount> &calibration,
                                   int calibratedAxisCount);
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
+    void refreshVirtualOutputReadiness(const QString &layoutId);
+    const ControllerReadinessPlan *virtualOutputReadinessPlan(const QString &layoutId) const;
     ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
 
     enum class CalibrationStageState {
@@ -931,6 +938,10 @@ private:
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;
+    // Output inspection is explicit and scoped.  A rig/device check must not
+    // accidentally change another saved output's readiness presentation.
+    QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;
+    QString m_pendingCalibrationRecordId;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.

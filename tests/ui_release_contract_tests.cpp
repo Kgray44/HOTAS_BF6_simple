@@ -241,7 +241,7 @@ void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
     QVERIFY(readinessPanel.contains(QStringLiteral("model: root.steps")));
     QVERIFY(readinessPanel.contains(QStringLiteral("modelData.state === \"current\"")));
     QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
-    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
+    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
 }
 
 void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
@@ -577,6 +577,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantSteps READ setupAssistantSteps")));
     QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
     QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
+    QVERIFY(backendHeader.contains(QStringLiteral("beginCalibrationForDevice")));
+    QVERIFY(backendHeader.contains(QStringLiteral("skipCalibrationForSetup")));
     QVERIFY(backendHeader.contains(QStringLiteral("applySetupAssistantIssueAction")));
     QVERIFY(backendHeader.contains(QStringLiteral("focusIssueTarget")));
     QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
@@ -594,6 +596,10 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("NoMappedControl")));
     QVERIFY(backend.contains(QStringLiteral("meaningfulInputSequence")));
     QVERIFY(backend.contains(QStringLiteral("deviceRigMeaningfulOutputSequence")));
+    QVERIFY(backend.contains(QStringLiteral("m_virtualOutputReadinessPlans")));
+    QVERIFY(backend.contains(QStringLiteral("refreshVirtualOutputReadiness(normalizedId)")));
+    QVERIFY(backend.contains(QStringLiteral("An absent custom calibration is a safe, supported default")));
+    QVERIFY(!backend.contains(QStringLiteral("const bool ready = active && !m_configuration.activeDeviceRigId.isEmpty()")));
     QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::setupAssistantSteps")));
     QVERIFY(backend.contains(QStringLiteral("applyPhysicalDeviceGameVisibility")));
     QVERIFY(!backend.contains(QStringLiteral("name.startsWith(u\"INPUT")));
@@ -605,6 +611,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(standard.contains(QStringLiteral("devices.focusIssueTarget(target)")));
     for (const QString &ui : {standard, legacy}) {
         QVERIFY(ui.contains(QStringLiteral("if (deviceId !== \"\")")));
+        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"virtualOutput\", outputId)")));
         QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"device\", deviceId)")));
         QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"deviceRig\", rigId)")));
     }
@@ -619,7 +626,11 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupAssistantSteps")));
     QVERIFY(assistant.contains(QStringLiteral("model: root.steps")));
-    QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
+    QVERIFY(assistant.contains(QStringLiteral("INPUT DETECTED")));
+    QVERIFY(assistant.contains(QStringLiteral("Activity is passive evidence, not a gated test session")));
+    QVERIFY(assistant.contains(QStringLiteral("root.activityMonitoring")));
+    QVERIFY(assistant.contains(QStringLiteral("USE DEFAULT RANGE")));
+    QVERIFY(assistant.contains(QStringLiteral("root.summary.scopeType === \"deviceRig\"")));
     QVERIFY(assistant.contains(QStringLiteral("VIEW ALL SETUP STEPS")));
     QVERIFY(!assistant.contains(QStringLiteral("guidedStepState")));
     QVERIFY(!assistant.contains(QStringLiteral("guidedStepIndex")));
@@ -649,11 +660,19 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("function focusIssueTarget(target)")));
     QVERIFY(devices.contains(QStringLiteral("REFRESH DEVICES")));
+    QVERIFY(devices.contains(QStringLiteral("verificationRequested(string rigId, string deviceId, string outputId)")));
+    QVERIFY(devices.contains(QStringLiteral("root.requestVerification(root.selectedRigId, \"\", root.selectedOutputId)")));
+    QVERIFY(devices.contains(QStringLiteral("calibrationRequested")));
+    QVERIFY(devices.contains(QStringLiteral("to calibrate it.")));
     QVERIFY(devices.contains(QStringLiteral("SAVED / OFFLINE")));
     QVERIFY(devices.contains(QStringLiteral("savedOfflineControllerRepeater")));
     QVERIFY(!devices.contains(QStringLiteral("NOT ADOPTED")));
     QVERIFY(!devices.contains(QStringLiteral("HID identity")));
     QVERIFY(!devices.contains(QStringLiteral("CREATE & VERIFY")));
+    for (const QString &ui : {standard, legacy}) {
+        QVERIFY(ui.contains(QStringLiteral("contentItem: Flickable")));
+        QVERIFY(ui.contains(QStringLiteral("contentHeight: setupAssistantPanel.implicitHeight")));
+    }
     QVERIFY(overview.contains(QStringLiteral("systemReadinessList")));
     QVERIFY(overview.contains(QStringLiteral("CHECK SETUP")));
     QVERIFY(issue.contains(QStringLiteral("struct AppIssue")));

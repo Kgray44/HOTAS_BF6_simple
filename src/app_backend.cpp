@@ -3076,6 +3076,13 @@ QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
                     return ControllerReadinessService::normalizeDeviceInstanceId(entry) == instance;
                 });
         });
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const bool currentConnection = discovered && discovered->connected
+        && record->lastDirectInputId == physical.directInputId;
+    // This counter is reset by a physical acquisition/disconnect, never when
+    // the assistant opens. Reading it here stays on the GUI control plane.
+    const bool inputDetected = currentConnection
+        && m_worker.runtime().meaningfulInputSequence.load(std::memory_order_relaxed) > 0;
     return {{u"id"_qs, record->id}, {u"name"_qs, record->displayName},
             {u"connected"_qs, discovered && discovered->connected},
             {u"verified"_qs, !record->lastVerified.isEmpty()},
@@ -3087,6 +3094,12 @@ QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
             {u"hidhideManaged"_qs, managed}, {u"managedVisibility"_qs, managed},
             {u"visibilityKnown"_qs, managed && hidhide.cloakKnown},
             {u"hiddenFromGames"_qs, hidden},
+            {u"inputDetected"_qs, inputDetected},
+            {u"activityStatus"_qs, !discovered || !discovered->connected ? u"Offline"_qs
+                : inputDetected ? u"Input detected"_qs : u"Listening for controller input…"_qs},
+            {u"calibrationStatus"_qs, calibratedAxes > 0
+                ? QString(u"Custom calibration · %1 axes"_qs).arg(calibratedAxes)
+                : u"Using default controller range"_qs},
             {u"hidInstanceId"_qs, record->hidInstanceId},
             {u"hidContainerId"_qs, record->hidContainerId},
             {u"directInputId"_qs, record->lastDirectInputId},
@@ -3152,7 +3165,21 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
             [&normalizedOutputInstance](const QString &entry) {
                 return ControllerReadinessService::normalizeDeviceInstanceId(entry) == normalizedOutputInstance;
             });
-    const bool isCurrentOutput = layout->requirements.deviceId == m_configuration.vjoyDeviceId;
+    const ControllerReadinessPlan *readiness = virtualOutputReadinessPlan(layout->id);
+    const bool inspected = readiness != nullptr;
+    const bool outputReady = inspected && readiness->vjoy.installed
+        && readiness->vjoy.configurationUtilityAvailable && readiness->vjoy.driverReady
+        && readiness->vjoy.devicePresent && (!readiness->vjoy.busy || readiness->vjoy.ownedByHotasBf6)
+        && !readiness->vjoyNeedsChanges && !hidden;
+    const QString readinessState = !inspected ? u"SAVED"_qs
+        : !readiness->vjoy.installed || !readiness->vjoy.devicePresent ? u"OFFLINE"_qs
+        : readiness->vjoy.busy && !readiness->vjoy.ownedByHotasBf6 ? u"BUSY"_qs
+        : readiness->vjoyNeedsChanges ? u"SETUP NEEDED"_qs
+        : hidden ? u"SETUP NEEDED"_qs : u"READY"_qs;
+    const QString readinessStatus = !inspected
+        ? u"Saved output — choose Check Output to inspect this vJoy device."_qs
+        : hidden ? u"This virtual output is hidden from games."_qs
+        : readiness->vjoySummary;
     return {{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
             {u"deviceId"_qs, layout->requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
             {u"buttons"_qs, layout->requirements.buttons},
@@ -3163,9 +3190,33 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
             {u"visibilityPrepared"_qs, !layout->hidHideDeviceInstanceId.isEmpty()},
             {u"visibilityKnown"_qs, layout->hidhideManaged && hidhide.cloakKnown},
             {u"hiddenFromGames"_qs, hidden},
-            {u"ready"_qs, isCurrentOutput && m_worker.runtime().vjoyReady.load()},
-            {u"status"_qs, isCurrentOutput ? m_worker.vjoyStatus()
-                                               : u"Verify this output from its Device Rig."_qs}};
+            {u"ready"_qs, outputReady}, {u"inspected"_qs, inspected},
+            {u"readinessState"_qs, readinessState}, {u"status"_qs, readinessStatus}};
+}
+
+const ControllerReadinessPlan *AppBackend::virtualOutputReadinessPlan(const QString &layoutId) const
+{
+    const auto cached = m_virtualOutputReadinessPlans.constFind(layoutId);
+    if (cached != m_virtualOutputReadinessPlans.cend()) return &cached.value();
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    if (layout && plan.vjoy.deviceId == layout->requirements.deviceId && plan.lastChecked.isValid()) {
+        return &plan;
+    }
+    return nullptr;
+}
+
+void AppBackend::refreshVirtualOutputReadiness(const QString &layoutId)
+{
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    if (!layout) return;
+    MapperConfiguration scoped = m_configuration;
+    scoped.vjoyDeviceId = layout->requirements.deviceId;
+    ControllerReadinessService inspector;
+    const ControllerReadinessPlan &plan = inspector.inspectForRequirements(
+        scoped, currentPhysicalCapabilities(),
+        ControllerReadinessService::requirementsFor(layout->requirements));
+    m_virtualOutputReadinessPlans.insert(layout->id, plan);
 }
 
 QString AppBackend::createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
@@ -4322,8 +4373,6 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
     bool routingConflict = false;
     QString routingDetails;
     bool noMappedControl = false;
-    bool liveInputPending = false;
-    bool liveOutputPending = false;
     bool vjoyInstalled = false;
     bool vjoyPresent = false;
     bool vjoyBusy = false;
@@ -4341,8 +4390,6 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
         routingConflict = boolFact(u"routingConflict"_qs, false);
         routingDetails = stringFact(u"routingDetails"_qs, u"Two controls need the same output assignment."_qs);
         noMappedControl = boolFact(u"noMappedControl"_qs, false);
-        liveInputPending = boolFact(u"liveInputPending"_qs, false);
-        liveOutputPending = boolFact(u"liveOutputPending"_qs, false);
         vjoyInstalled = boolFact(u"vjoyInstalled"_qs, true);
         vjoyPresent = boolFact(u"vjoyPresent"_qs, true);
         vjoyBusy = boolFact(u"vjoyBusy"_qs, false);
@@ -4411,24 +4458,6 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
                 }
                 noMappedControl = !mappedControlFound;
             }
-            liveInputPending = !m_setupAssistantLiveTestActive;
-            liveOutputPending = !m_setupAssistantLiveTestActive;
-            if (m_setupAssistantLiveTestActive) {
-                liveInputPending = std::any_of(inputs.cbegin(), inputs.cend(), [this](const QVariant &entry) {
-                    const QVariantMap input = entry.toMap();
-                    const int index = input.value(u"runtimeIndex"_qs, -1).toInt();
-                    return input.value(u"connected"_qs).toBool() && input.value(u"required"_qs).toBool()
-                        && (index < 0 || index >= kMaximumDeviceRigMembers
-                            || m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(index)].load(
-                                std::memory_order_relaxed) <= m_setupAssistantMemberBaselines[static_cast<size_t>(index)]);
-                });
-                liveOutputPending = std::any_of(outputs.cbegin(), outputs.cend(), [this](const QVariant &entry) {
-                    const int index = entry.toMap().value(u"runtimeIndex"_qs, -1).toInt();
-                    return index < 0 || index >= kMaximumDeviceRigOutputs
-                        || m_worker.runtime().deviceRigMeaningfulOutputSequence[static_cast<size_t>(index)].load(
-                            std::memory_order_relaxed) <= m_setupAssistantOutputBaselines[static_cast<size_t>(index)];
-                });
-            }
         } else {
             QSet<QString> represented;
             for (const DiscoveredController &controller : m_discoveredControllers) {
@@ -4463,7 +4492,9 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
                     {u"discretePovs"_qs, layout->requirements.discretePovs}});
             }
         }
-        const ControllerReadinessPlan &plan = m_readiness.plan();
+        const ControllerReadinessPlan *scopedOutputPlan = scopeType == u"virtualOutput"_qs
+            ? virtualOutputReadinessPlan(scopeId) : nullptr;
+        const ControllerReadinessPlan &plan = scopedOutputPlan ? *scopedOutputPlan : m_readiness.plan();
         hidhideInstalled = plan.hidhide.installed;
         hidhideReady = plan.hidhide.installed && plan.hidhide.cliAvailable
             && plan.hidhide.serviceReady && plan.hidhide.mapperAllowlisted;
@@ -4692,16 +4723,16 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
             u"check-again"_qs, u"CHECK VISIBILITY"_qs, false, false, 75);
         visibilitySetupComplete = false;
     }
-    const bool prerequisitesReadyForLiveTest = physicalSetupComplete && outputSetupComplete
+    const bool prerequisitesReadyForRouting = physicalSetupComplete && outputSetupComplete
         && visibilitySetupComplete;
-    if (prerequisitesReadyForLiveTest && routingConflict) {
+    if (prerequisitesReadyForRouting && routingConflict) {
         append(u"Routing"_qs, u"RoutingConflict"_qs, u"setup-needed"_qs,
             u"deviceRig"_qs, activeDeviceRigId(), u"Review routing"_qs,
             routingDetails.isEmpty() ? u"Two controls need the same output. Review the conflicting routes before testing."_qs
                                      : routingDetails,
             u"review-routing"_qs, u"REVIEW ROUTING"_qs, false, false, 80);
     }
-    if (prerequisitesReadyForLiveTest && noMappedControl && !deviceScope) {
+    if (prerequisitesReadyForRouting && noMappedControl && !deviceScope) {
         const QString affectedType = scopeType == u"device"_qs ? u"physicalDevice"_qs
             : scopeType == u"virtualOutput"_qs ? u"virtualOutput"_qs : u"deviceRig"_qs;
         const QString affectedId = scopeType == u"application"_qs ? activeDeviceRigId() : scopeId;
@@ -4710,18 +4741,9 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
             u"This setup has no enabled axis, button, or POV route for the selected scope. Assign a control before running live output proof."_qs,
             u"review-routing"_qs, u"OPEN MAPPING"_qs, false, false, 85);
     }
-    if (prerequisitesReadyForLiveTest && liveInputPending && !outputScope) {
-        append(u"LiveInput"_qs, u"LiveInputNotTested"_qs, u"waiting"_qs,
-            u"physicalDevice"_qs, {}, u"Setup looks good — let's test it"_qs,
-            u"Move a control meaningfully (about 2% axis travel) or press and release a button so HOTAS BF6 can confirm that input is arriving."_qs,
-            u"start-live-test"_qs, u"START LIVE TEST"_qs, false, true, 90);
-    }
-    if (prerequisitesReadyForLiveTest && liveOutputPending && !deviceScope) {
-        append(u"LiveOutput"_qs, u"LiveOutputNotTested"_qs, u"waiting"_qs,
-            u"virtualOutput"_qs, outputId, u"Setup looks good — let's test it"_qs,
-            u"Move a mapped control meaningfully so HOTAS BF6 can confirm that the virtual controller responds."_qs,
-            u"start-live-test"_qs, u"START LIVE TEST"_qs, false, true, 95);
-    }
+    // Meaningful input/output evidence is continuously observed by existing
+    // fixed atomics and rendered as optional activity. It is deliberately not
+    // emitted as a setup issue or a blocking prerequisite.
     return issues;
 }
 
@@ -4731,7 +4753,8 @@ QVariantList AppBackend::setupAssistantSteps() const
         QString id;
         QString title;
         QString message;
-        bool optional = false;
+        bool required = true;
+        bool informational = false;
     };
 
     const QString scopeType = m_setupAssistantScopeType;
@@ -4741,28 +4764,22 @@ QVariantList AppBackend::setupAssistantSteps() const
         ? QList<StepDefinition>{{u"device"_qs, u"DEVICE"_qs,
                                  u"Confirm this physical controller is identified, connected, and verified."_qs},
                                 {u"calibration"_qs, u"CALIBRATION"_qs,
-                                 u"Calibrate only when this controller needs it."_qs, true},
+                                 u"Using the default controller range. Calibration is optional."_qs, false},
                                 {u"visibility"_qs, u"GAME VISIBILITY"_qs,
-                                 u"Keep this physical controller out of games to avoid duplicate controls."_qs},
-                                {u"live"_qs, u"LIVE INPUT TEST"_qs,
-                                 u"Move a control to confirm HOTAS BF6 receives input from this device."_qs}}
+                                 u"Keep this physical controller out of games to avoid duplicate controls."_qs}}
         : outputScope
             ? QList<StepDefinition>{{u"output"_qs, u"OUTPUT EXISTS"_qs,
                                      u"Confirm the selected virtual output is available."_qs},
                                     {u"capabilities"_qs, u"CAPABILITIES"_qs,
                                      u"Confirm its axes, buttons, and POVs satisfy the selected output."_qs},
                                     {u"visibility"_qs, u"GAME VISIBILITY"_qs,
-                                     u"Games must be able to see the selected virtual output."_qs},
-                                    {u"live"_qs, u"LIVE OUTPUT PROOF"_qs,
-                                     u"Move a mapped control to confirm the virtual output changes."_qs}}
+                                     u"Games must be able to see the selected virtual output."_qs}}
             : QList<StepDefinition>{{u"physical"_qs, u"PHYSICAL INPUTS"_qs,
                                      u"Confirm every required physical controller is identified and ready."_qs},
                                     {u"output"_qs, u"VIRTUAL CONTROLLER"_qs,
                                      u"Confirm the selected vJoy output exists and has the needed capabilities."_qs},
                                     {u"visibility"_qs, u"GAME VISIBILITY"_qs,
-                                     u"Keep physical inputs out of games while keeping the virtual controller visible."_qs},
-                                    {u"live"_qs, u"LIVE MAPPING TEST"_qs,
-                                     u"Move a mapped control to prove the complete route."_qs}};
+                                     u"Keep physical inputs out of games while keeping the virtual controller visible."_qs}};
 
     const auto stepIdForIssue = [deviceScope, outputScope](const QVariantMap &issue) {
         const QString code = issue.value(u"code"_qs).toString();
@@ -4771,13 +4788,13 @@ QVariantList AppBackend::setupAssistantSteps() const
             if (category == u"Calibration"_qs) return u"calibration"_qs;
             if (category == u"Visibility"_qs || code == u"HidHideUnavailable"_qs) return u"visibility"_qs;
             if (category == u"PhysicalInput"_qs || category == u"Identity"_qs) return u"device"_qs;
-            return u"live"_qs;
+            return u"device"_qs;
         }
         if (outputScope) {
             if (code == u"VirtualOutputMissing"_qs) return u"output"_qs;
             if (category == u"Visibility"_qs || code == u"HidHideUnavailable"_qs) return u"visibility"_qs;
             if (code == u"VirtualOutputMisconfigured"_qs || category == u"VirtualOutput"_qs) return u"capabilities"_qs;
-            return u"live"_qs;
+            return u"capabilities"_qs;
         }
         if (category == u"PhysicalInput"_qs || category == u"Identity"_qs || category == u"Calibration"_qs) {
             return u"physical"_qs;
@@ -4786,7 +4803,7 @@ QVariantList AppBackend::setupAssistantSteps() const
         if (category == u"VirtualOutput"_qs || (category == u"Driver"_qs && code != u"HidHideUnavailable"_qs)) {
             return u"output"_qs;
         }
-        return u"live"_qs;
+        return u"output"_qs;
     };
 
     QHash<QString, QVariantMap> blockingIssues;
@@ -4817,19 +4834,42 @@ QVariantList AppBackend::setupAssistantSteps() const
         const StepDefinition &definition = definitions.at(index);
         const QVariantMap issue = blockingIssues.value(definition.id);
         const QVariantMap optionalIssue = optionalIssues.value(definition.id);
+        const bool required = definition.required || !issue.isEmpty();
+        const bool isOptional = !required;
         const bool isCurrent = currentIndex == index;
-        const bool isBlocked = currentIndex >= 0 && index > currentIndex;
-        const bool isOptional = !isBlocked && issue.isEmpty() && (definition.optional || !optionalIssue.isEmpty());
-        const QString state = isCurrent ? u"current"_qs : isBlocked ? u"blocked"_qs
-            : isOptional ? u"optional"_qs : u"complete"_qs;
-        const QVariantMap presentationIssue = !issue.isEmpty() ? issue : optionalIssue;
+        // Optional guidance remains visibly optional while a required step is
+        // unresolved; it is never a yellow prerequisite in disguise.
+        const bool isBlocked = !isOptional && currentIndex >= 0 && index > currentIndex;
+        const QString state = isOptional ? u"optional"_qs : isCurrent ? u"current"_qs
+            : isBlocked ? u"blocked"_qs : u"complete"_qs;
+        QVariantMap presentationIssue = !issue.isEmpty() ? issue : optionalIssue;
+        if (presentationIssue.isEmpty() && definition.id == u"calibration"_qs) {
+            presentationIssue = {{u"explanation"_qs, definition.message},
+                                 {u"recommendedAction"_qs, u"start-calibration"_qs},
+                                 {u"recommendedActionLabel"_qs, u"CALIBRATE"_qs},
+                                 {u"requiresLiveHardware"_qs, true}};
+        }
         const QString prerequisiteMessage = currentIndex >= 0 && index > currentIndex
             ? QString(u"Complete Step %1 first."_qs).arg(currentIndex + 1) : QString{};
+        const auto completedMessage = [&definition] {
+            if (definition.id == u"device"_qs || definition.id == u"physical"_qs) {
+                return u"Connected controller identity and required setup are verified."_qs;
+            }
+            if (definition.id == u"output"_qs || definition.id == u"capabilities"_qs) {
+                return u"The selected virtual output has the required capabilities."_qs;
+            }
+            if (definition.id == u"visibility"_qs) return u"Game visibility is configured for this scope."_qs;
+            return definition.message;
+        };
+        const QString message = isBlocked ? prerequisiteMessage
+            : state == u"complete"_qs ? completedMessage()
+            : presentationIssue.value(u"explanation"_qs, definition.message).toString();
         steps.append(QVariantMap{{u"id"_qs, definition.id}, {u"order"_qs, index + 1},
             {u"state"_qs, state}, {u"current"_qs, isCurrent}, {u"blocked"_qs, isBlocked},
-            {u"optional"_qs, isOptional}, {u"title"_qs, definition.title},
-            {u"message"_qs, isBlocked ? prerequisiteMessage
-                : presentationIssue.value(u"explanation"_qs, definition.message).toString()},
+            {u"required"_qs, required}, {u"optional"_qs, isOptional},
+            {u"informational"_qs, definition.informational}, {u"skipped"_qs, false},
+            {u"complete"_qs, state == u"complete"_qs}, {u"title"_qs, definition.title},
+            {u"message"_qs, message},
             {u"blockingIssueCode"_qs, issue.value(u"code"_qs).toString()},
             {u"action"_qs, presentationIssue.value(u"recommendedAction"_qs).toString()},
             {u"actionLabel"_qs, presentationIssue.value(u"recommendedActionLabel"_qs).toString()},
@@ -4883,8 +4923,28 @@ QVariantMap AppBackend::setupAssistantSummary() const
                    : m_setupAssistantTestFacts.value(u"scopeLabel"_qs, u"Virtual Output"_qs).toString())
         : !m_configuration.activeDeviceRigId.isEmpty()
             ? activeDeviceRig() ? activeDeviceRig()->name : u"Device Rig"_qs
-            : activeOutputLayout() ? activeOutputLayout()->name
+        : activeOutputLayout() ? activeOutputLayout()->name
             : m_setupAssistantTestFacts.value(u"scopeLabel"_qs, deviceName()).toString();
+    bool requiredStepIncomplete = false;
+    for (const QVariant &entry : steps) {
+        const QVariantMap step = entry.toMap();
+        if (step.value(u"required"_qs).toBool()
+            && step.value(u"state"_qs).toString() != u"complete"_qs) {
+            requiredStepIncomplete = true;
+            break;
+        }
+    }
+    QVariantList readyItems;
+    if (m_setupAssistantScopeType == u"device"_qs) {
+        readyItems = {u"Device recognized"_qs, u"Connected and verified"_qs,
+                      u"Game visibility configured"_qs};
+    } else if (m_setupAssistantScopeType == u"virtualOutput"_qs) {
+        readyItems = {u"vJoy device available"_qs, u"Required capabilities present"_qs,
+                      u"Game visibility configured"_qs};
+    } else {
+        readyItems = {u"Required physical inputs ready"_qs, u"Virtual output ready"_qs,
+                      u"Game visibility configured"_qs};
+    }
     QString state = u"READY"_qs;
     QString title = u"Your setup is ready"_qs;
     QString message = scope + u" is ready to use."_qs;
@@ -4892,16 +4952,18 @@ QVariantMap AppBackend::setupAssistantSummary() const
         state = u"WAITING"_qs;
         title = u"Checking your setup"_qs;
         message = u"HOTAS BF6 is checking your controller, virtual controller, and game visibility."_qs;
-    } else if (!primaryIssue.isEmpty()) {
+    } else if (!primaryIssue.isEmpty() || requiredStepIncomplete) {
         const QString severity = primaryIssue.value(u"severity"_qs).toString();
         state = severity == u"offline"_qs ? u"OFFLINE"_qs
             : severity == u"waiting"_qs ? u"WAITING"_qs : u"SETUP NEEDED"_qs;
-        title = primaryIssue.value(u"title"_qs).toString();
-        message = primaryIssue.value(u"explanation"_qs).toString();
+        title = primaryIssue.value(u"title"_qs, u"Complete the required setup steps"_qs).toString();
+        message = primaryIssue.value(u"explanation"_qs,
+            u"HOTAS BF6 is still waiting for a required setup condition."_qs).toString();
     }
     return QVariantMap{{u"state"_qs, state}, {u"title"_qs, title}, {u"message"_qs, message},
         {u"scope"_qs, scope}, {u"issueCount"_qs, issues.size()},
         {u"primaryIssue"_qs, primaryIssue}, {u"steps"_qs, steps}, {u"visibleSteps"_qs, steps},
+        {u"readyItems"_qs, readyItems},
         {u"secondaryMessage"_qs, notes.join(u"\n"_qs)},
         {u"scopeType"_qs, m_setupAssistantScopeType}, {u"scopeId"_qs, m_setupAssistantScopeId},
         {u"primaryAction"_qs, primaryIssue.value(u"recommendedAction"_qs, u"done"_qs)},
@@ -5002,9 +5064,8 @@ QVariantMap AppBackend::appHealthSummary() const
 QVariantMap AppBackend::setupAssistantLiveTest() const
 {
     const AtomicRuntimeState &runtime = m_worker.runtime();
-    QVariantList steps;
-    bool everyRequiredInputReady = true;
-    bool allComplete = true;
+    QVariantList activity;
+    bool allObserved = true;
     if (const DeviceRig *rig = activeDeviceRig()) {
         const DeviceRigStatus *status = nullptr;
         const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
@@ -5019,18 +5080,17 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
             const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
             const QString name = record ? record->displayName : u"Physical controller"_qs;
             const bool connected = status && status->connectedMemberIds.contains(member.controllerRecordId);
-            const bool changed = m_setupAssistantLiveTestActive && runtimeIndex < kMaximumDeviceRigMembers
+            const bool observed = runtimeIndex < kMaximumDeviceRigMembers
                 && runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
-                    > m_setupAssistantMemberBaselines[static_cast<size_t>(runtimeIndex)];
-            const QString stepState = !connected ? u"offline"_qs : changed ? u"ready"_qs : u"waiting"_qs;
-            steps.append(QVariantMap{{u"id"_qs, member.controllerRecordId}, {u"kind"_qs, u"input"_qs},
-                {u"title"_qs, name}, {u"optional"_qs, !member.required}, {u"state"_qs, stepState},
-                {u"message"_qs, !connected ? (member.required ? u"Required controller is offline."_qs
-                                                               : u"Optional controller is offline."_qs)
-                                     : changed ? u"Controller input detected."_qs
-                                               : u"Move an axis about 2% or press and release a button."_qs}});
-            if (member.required) everyRequiredInputReady = everyRequiredInputReady && changed;
-            if (member.required && !changed) allComplete = false;
+                    > 0;
+            const QString activityState = !connected ? u"offline"_qs : observed ? u"ready"_qs : u"listening"_qs;
+            activity.append(QVariantMap{{u"id"_qs, member.controllerRecordId}, {u"kind"_qs, u"input"_qs},
+                {u"title"_qs, name}, {u"optional"_qs, true}, {u"informational"_qs, true},
+                {u"state"_qs, activityState},
+                {u"message"_qs, !connected ? u"Calibration and live activity are available when connected."_qs
+                                     : observed ? u"Input detected during this connection session."_qs
+                                                : u"Listening for controller input…"_qs}});
+            if (connected) allObserved = allObserved && observed;
         }
         int outputIndex = 0;
         for (const DeviceRigOutputTarget &target : rig->outputs) {
@@ -5039,38 +5099,34 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
             if (m_setupAssistantScopeType == u"virtualOutput"_qs
                 && target.outputLayoutId != m_setupAssistantScopeId) continue;
             const VirtualOutputLayout *layout = findOutputLayout(m_configuration, target.outputLayoutId);
-            const bool changed = m_setupAssistantLiveTestActive && runtimeIndex < kMaximumDeviceRigOutputs
+            const bool observed = runtimeIndex < kMaximumDeviceRigOutputs
                 && runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(runtimeIndex)].load(std::memory_order_relaxed)
-                    > m_setupAssistantOutputBaselines[static_cast<size_t>(runtimeIndex)];
-            steps.append(QVariantMap{{u"id"_qs, target.outputLayoutId}, {u"kind"_qs, u"output"_qs},
-                {u"title"_qs, layout ? layout->name : u"Virtual controller"_qs}, {u"optional"_qs, false},
-                {u"state"_qs, changed ? u"ready"_qs : u"waiting"_qs},
-                {u"message"_qs, changed ? u"Virtual controller responded."_qs
-                                          : everyRequiredInputReady ? u"Move a mapped control to test the virtual controller."_qs
-                                                                     : u"Finish testing the physical controllers first."_qs}});
-            allComplete = allComplete && changed;
+                    > 0;
+            activity.append(QVariantMap{{u"id"_qs, target.outputLayoutId}, {u"kind"_qs, u"output"_qs},
+                {u"title"_qs, layout ? layout->name : u"Virtual controller"_qs},
+                {u"optional"_qs, true}, {u"informational"_qs, true},
+                {u"state"_qs, observed ? u"ready"_qs : u"listening"_qs},
+                {u"message"_qs, observed ? u"Mapped output activity detected."_qs
+                                           : u"Listening for mapped output activity…"_qs}});
+            allObserved = allObserved && observed;
         }
     } else {
-        const bool inputChanged = m_setupAssistantLiveTestActive
-            && runtime.meaningfulInputSequence.load(std::memory_order_relaxed) > m_setupAssistantInputBaseline;
-        const bool outputChanged = m_setupAssistantLiveTestActive
-            && runtime.deviceRigMeaningfulOutputSequence[0].load(std::memory_order_relaxed)
-                > m_setupAssistantOutputBaseline;
-        steps.append(QVariantMap{{u"id"_qs, u"physical"_qs}, {u"kind"_qs, u"input"_qs},
-            {u"title"_qs, u"Physical controller"_qs}, {u"optional"_qs, false},
-            {u"state"_qs, inputChanged ? u"ready"_qs : u"waiting"_qs},
-            {u"message"_qs, inputChanged ? u"Controller input detected."_qs
-                                           : u"Move an axis about 2% or press and release a button."_qs}});
-        steps.append(QVariantMap{{u"id"_qs, u"virtual"_qs}, {u"kind"_qs, u"output"_qs},
-            {u"title"_qs, u"Virtual controller"_qs}, {u"optional"_qs, false},
-            {u"state"_qs, outputChanged ? u"ready"_qs : u"waiting"_qs},
-            {u"message"_qs, outputChanged ? u"Virtual controller responded."_qs
-                                            : inputChanged ? u"Move a mapped control to test the virtual controller."_qs
-                                                           : u"Test your physical controller first."_qs}});
-        allComplete = inputChanged && outputChanged;
+        const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+        const bool observed = physical.connected
+            && runtime.meaningfulInputSequence.load(std::memory_order_relaxed) > 0;
+        const QString title = m_setupAssistantScopeType == u"device"_qs
+            && savedControllerRecord(m_setupAssistantScopeId)
+            ? savedControllerRecord(m_setupAssistantScopeId)->displayName : u"Physical controller"_qs;
+        activity.append(QVariantMap{{u"id"_qs, u"physical"_qs}, {u"kind"_qs, u"input"_qs},
+            {u"title"_qs, title}, {u"optional"_qs, true}, {u"informational"_qs, true},
+            {u"state"_qs, !physical.connected ? u"offline"_qs : observed ? u"ready"_qs : u"listening"_qs},
+            {u"message"_qs, !physical.connected ? u"Activity is available when the controller is connected."_qs
+                                      : observed ? u"Input detected during this connection session."_qs
+                                                 : u"Listening for controller input…"_qs}});
+        allObserved = !physical.connected || observed;
     }
     return QVariantMap{{u"active"_qs, m_setupAssistantLiveTestActive},
-        {u"complete"_qs, m_setupAssistantLiveTestActive && allComplete}, {u"steps"_qs, steps}};
+        {u"complete"_qs, allObserved}, {u"steps"_qs, activity}};
 }
 
 QVariantList AppBackend::controllerReadinessProposedChanges() const
@@ -5237,17 +5293,17 @@ QVariantList AppBackend::virtualOutputLayouts() const
             profileCount += profile.outputLayoutId == layout.id ? 1 : 0;
         }
         const bool active = currentProfile().outputLayoutId == layout.id;
-        const bool ready = active && !m_configuration.activeDeviceRigId.isEmpty();
-        const QString status = active
-            ? u"Active profile output — verify it from its Device Rig."_qs
-            : u"Saved layout — add it to a Device Rig to verify its live output."_qs;
+        const QVariantMap detail = virtualOutputDetail(layout.id);
         result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
             {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
             {u"buttons"_qs, layout.requirements.buttons},
             {u"continuousPovs"_qs, layout.requirements.continuousPovs},
             {u"discretePovs"_qs, layout.requirements.discretePovs},
-            {u"profileCount"_qs, profileCount}, {u"active"_qs, active}, {u"ready"_qs, ready},
-            {u"status"_qs, status},
+            {u"profileCount"_qs, profileCount}, {u"active"_qs, active},
+            {u"ready"_qs, detail.value(u"ready"_qs, false)},
+            {u"inspected"_qs, detail.value(u"inspected"_qs, false)},
+            {u"readinessState"_qs, detail.value(u"readinessState"_qs, u"SAVED"_qs)},
+            {u"status"_qs, detail.value(u"status"_qs, u"Saved output"_qs)},
             {u"managedVisibility"_qs, layout.hidhideManaged},
             {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});
     }
@@ -7269,6 +7325,33 @@ void AppBackend::beginCalibration()
     emit stateChanged();
 }
 
+bool AppBackend::beginCalibrationForDevice(const QString &recordId)
+{
+    const SavedControllerRecord *record = savedControllerRecord(recordId.trimmed());
+    if (!record) return false;
+    const auto discovered = std::find_if(m_discoveredControllers.cbegin(), m_discoveredControllers.cend(),
+        [this, record](const DiscoveredController &controller) {
+            const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
+            return !match.ambiguous && match.recordId == record->id && controller.connected;
+        });
+    if (discovered == m_discoveredControllers.cend()) {
+        m_calibrationStatus = QString(u"Connect %1 to calibrate it."_qs).arg(record->displayName);
+        appendEvent(m_calibrationStatus);
+        emit stateChanged();
+        return false;
+    }
+    if (m_configuration.activeControllerRecordId != record->id) {
+        m_pendingCalibrationRecordId = record->id;
+        if (!setActiveController(record->id)) {
+            m_pendingCalibrationRecordId.clear();
+            return false;
+        }
+        return true;
+    }
+    beginCalibration();
+    return m_calibrationStage != CalibrationStageState::Idle;
+}
+
 bool AppBackend::beginCalibrationCenterCapture()
 {
     if (m_calibrationStage != CalibrationStageState::Range) return false;
@@ -8209,6 +8292,9 @@ QVariantMap AppBackend::startSetupAssistantCheckForScope(const QString &scopeTyp
     m_setupAssistantScopeType = normalizedType;
     m_setupAssistantScopeId = normalizedType == u"application"_qs ? QString{} : normalizedId;
     m_setupAssistantLiveTestActive = false;
+    if (normalizedType == u"virtualOutput"_qs && m_setupAssistantTestFacts.isEmpty()) {
+        refreshVirtualOutputReadiness(normalizedId);
+    }
     emit stateChanged();
     return startSetupAssistantCheck();
 }
@@ -8408,6 +8494,21 @@ QVariantMap AppBackend::startSetupAssistantLiveTest()
                         u"Move an axis about 2% or press and release a mapped button on the highlighted physical controller."_qs,
                         m_setupAssistantScopeType, m_setupAssistantScopeId,
                         u"live-test"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)
+{
+    const QString target = recordId.trimmed().isEmpty() ? m_setupAssistantScopeId : recordId.trimmed();
+    const SavedControllerRecord *record = savedControllerRecord(target);
+    const QString name = record ? record->displayName : u"This controller"_qs;
+    // Default DirectInput normalization is already the safe normal path, so
+    // accepting this choice cannot mask an invalid saved calibration. Invalid
+    // data continues to produce CalibrationRequired and a blocking repair.
+    appendEvent(QString(u"Calibration deferred for %1; using the default controller range"_qs).arg(name));
+    emit stateChanged();
+    return actionResult(true, u"Using default controller range"_qs,
+                        name + u" remains ready to use. You can calibrate it any time from Device Details."_qs,
+                        u"physicalDevice"_qs, target, u"done"_qs);
 }
 
 void AppBackend::verifyHotasSetup()
@@ -8659,11 +8760,20 @@ void AppBackend::startVerification(VerificationMode mode)
 
 bool AppBackend::calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const
 {
-    if (!physical.connected || m_configuration.preferredDeviceId != physical.directInputId) return true;
+    // An absent custom calibration is a safe, supported default: DirectInput
+    // still supplies its normalized range. Only malformed persisted custom
+    // calibration may block use of a controller.
+    if (!physical.connected || m_configuration.preferredDeviceId != physical.directInputId) return false;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         if (!physical.axes[static_cast<size_t>(index)]) continue;
-        if (currentProfile().axes[static_cast<size_t>(index)].rangeMode == AxisRangeMode::Centered
-            && !m_configuration.calibration[static_cast<size_t>(index)].enabled) {
+        const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
+        if (!calibration.enabled) continue;
+        const bool finite = std::isfinite(calibration.minimum) && std::isfinite(calibration.maximum)
+            && std::isfinite(calibration.center);
+        const bool rangeValid = calibration.minimum < calibration.maximum;
+        const bool centerValid = !calibration.centered
+            || (calibration.minimum < calibration.center && calibration.center < calibration.maximum);
+        if (!finite || !rangeValid || !centerValid) {
             return true;
         }
     }
@@ -9116,7 +9226,12 @@ bool AppBackend::setActiveController(const QString &recordId)
                 appendEvent(reusedExistingVjoy
                     ? QString(u"Active controller switched to %1; the selected vJoy device meets the required capabilities"_qs).arg(selectedTarget.name)
                     : QString(u"Active controller switched to %1; vJoy was configured and verified before mapping resumed"_qs).arg(selectedTarget.name));
+                if (m_pendingCalibrationRecordId == m_configuration.activeControllerRecordId) {
+                    m_pendingCalibrationRecordId.clear();
+                    beginCalibration();
+                }
             } else {
+                m_pendingCalibrationRecordId.clear();
                 appendEvent(QString(u"Active controller switch to %1 was not completed; prior mapping configuration was restored"_qs)
                     .arg(selectedTarget.name));
             }
