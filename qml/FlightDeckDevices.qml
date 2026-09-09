@@ -36,6 +36,7 @@ Flickable {
     readonly property var physicalCheck: checkFor(["PHYSICAL", "CONTROLLER"])
     readonly property var controllerItems: controllerPresentationOverride === null
         ? backend.controllers : controllerPresentationOverride
+    readonly property var axisItems: backend.axes
     readonly property bool checking: state.controllerSetupInProgress === undefined
         ? backend.controllerSetupInProgress : state.controllerSetupInProgress
     readonly property bool canRepairSetup: (state.controllerSetupCanApply === undefined
@@ -586,6 +587,40 @@ Flickable {
         Item { id: verificationSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
         Text { text: "SETUP / VERIFICATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
+            objectName: "flightDeckCalibration"
+            tokens: deck
+            Layout.fillWidth: true
+            implicitHeight: calibrationEntry.implicitHeight + deck.space24
+            color: deck.secondarySurface
+            ColumnLayout {
+                id: calibrationEntry
+                anchors.fill: parent
+                anchors.margins: deck.space12
+                spacing: deck.space8
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: deck.space4
+                        Text { text: "CONTROLLER CALIBRATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                        Text { text: backend.calibrationActive ? "Calibration in progress" : (backend.calibrationSuccess ? "Calibration complete" : "Capture controller ranges and centered controls"); color: backend.calibrationActive ? deck.attention : backend.calibrationSuccess ? deck.healthy : deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 15; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: backend.calibrationStatus || "Calibration is scoped to the selected controller. Profiles, mappings, and Automation are not changed."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                    Button {
+                        id: openCalibration
+                        objectName: "flightDeckOpenCalibration"
+                        text: backend.calibrationActive ? "RESUME" : "CALIBRATE"
+                        enabled: backend.physicalConnected
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.controlHeight
+                        onClicked: calibrationDialog.open()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                }
+            }
+        }
+        FlightDeckCard {
             objectName: "flightDeckVerification"
             tokens: deck
             Layout.fillWidth: true
@@ -764,6 +799,165 @@ Flickable {
                     onClicked: { repairConfirmation.close(); backend.applyControllerReadiness() }
                     background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: calibrationDialog
+        objectName: "flightDeckCalibrationDialog"
+        tokens: deck
+        heading: "Controller calibration"
+        tone: backend.calibrationActive ? "attention" : backend.calibrationSuccess ? "informational" : "informational"
+        preferredWidth: 620
+        contentItem: Flickable {
+            width: calibrationDialog.width - deck.space32
+            implicitHeight: Math.min(calibrationContent.implicitHeight, 430)
+            contentWidth: width
+            contentHeight: calibrationContent.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ColumnLayout {
+                id: calibrationContent
+                width: parent.width
+                spacing: deck.space12
+                Text {
+                    Layout.fillWidth: true
+                    text: backend.calibrationStatus || "Calibration is ready when a selected controller is connected."
+                    color: deck.textSecondary
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: calibrationInstruction.implicitHeight + deck.space20
+                    radius: deck.radiusControl
+                    color: backend.calibrationActive ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.10) : deck.secondarySurface
+                    border.color: backend.calibrationActive ? deck.attention : deck.border
+                    Text {
+                        id: calibrationInstruction
+                        anchors.fill: parent
+                        anchors.margins: deck.space10
+                        text: backend.calibrationStage === "RANGE"
+                            ? "STEP 1 OF 2 — Move every stick, twist, throttle, paddle, slider, and other axis through its full travel several times."
+                            : backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING"
+                                ? "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Throttles and sliders do not need to be centered."
+                                : backend.calibrationSuccess
+                                    ? "Calibration completed through the existing controller-scoped command path. You can begin another calibration when ready."
+                                    : "Start calibration only when the selected controller is stable and available."
+                        color: deck.textPrimary
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                Text { text: "AXIS RANGE STATUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
+                Repeater {
+                    model: root.axisItems
+                    delegate: Rectangle {
+                        required property var modelData
+                        visible: Boolean(modelData.available)
+                        Layout.fillWidth: true
+                        implicitHeight: rangeRow.implicitHeight + deck.space16
+                        radius: deck.radiusControl
+                        color: deck.elevatedSurface
+                        border.color: backend.calibrationActive ? deck.attention : deck.border
+                        RowLayout {
+                            id: rangeRow
+                            anchors.fill: parent
+                            anchors.margins: deck.space8
+                            spacing: deck.space8
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text { text: String(modelData.label || "Axis").toUpperCase(); color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: backend.calibrationStage === "RANGE" ? "CAPTURING RANGE" : backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING" ? "CAPTURING CENTER" : (modelData.calibrationEnabled ? "CALIBRATED" : "RAW DEFAULT"); color: backend.calibrationActive ? deck.attention : modelData.calibrationEnabled ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                            }
+                            ColumnLayout {
+                                Layout.preferredWidth: 58
+                                Text { text: "MIN"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                Text { text: Number(modelData.calibrationMinimum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                            }
+                            ColumnLayout {
+                                Layout.preferredWidth: 58
+                                Text { text: "NOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                Text { text: Number(modelData.raw || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                            }
+                            ColumnLayout {
+                                Layout.preferredWidth: 58
+                                Text { text: "MAX"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                Text { text: Number(modelData.calibrationMaximum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                            }
+                        }
+                    }
+                }
+                Text { text: "CALIBRATION HISTORY"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
+                Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for the selected and saved controllers appear here."; color: deck.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater {
+                    model: backend.calibrationHistory
+                    delegate: Text {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        text: String(modelData.name || "Controller") + (modelData.currentDevice ? " · CURRENT DEVICE" : "") + "\n" + String(modelData.when || "") + " · " + String(modelData.axes || 0) + " axes calibrated"
+                        color: modelData.currentDevice ? deck.healthy : deck.textSecondary
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "flightDeckCalibrationClose"
+                        text: "CLOSE"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: calibrationDialog.close()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        objectName: "flightDeckCalibrationReset"
+                        visible: backend.calibrationStage !== "IDLE" || backend.calibrationSuccess
+                        text: "RESET"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.resetCalibration()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        objectName: "flightDeckCalibrationStart"
+                        visible: backend.calibrationStage === "IDLE"
+                        text: "START CALIBRATION"
+                        enabled: backend.physicalConnected
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.beginCalibration()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        objectName: "flightDeckCalibrationCenter"
+                        visible: backend.calibrationStage === "RANGE"
+                        text: "CAPTURE CENTER"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.beginCalibrationCenterCapture()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.accentMuted; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        objectName: "flightDeckCalibrationSave"
+                        visible: backend.calibrationStage === "CENTER"
+                        text: "COMPLETE CALIBRATION"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.saveCalibration()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.accentMuted; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
                 }
             }
         }

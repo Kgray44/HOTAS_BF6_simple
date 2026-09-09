@@ -172,7 +172,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
     // A real pointer sequence is deliberately used here. A retry covers the
     // transient frame where the popup is promoted into QQuickOverlay between
     // the initial button release and the first offscreen paint.
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
         const bool viewportCoordinates = scroll->objectName() == QStringLiteral("flightDeckAdaptiveResponse");
         const QPointF relative = viewportCoordinates ? contentPoint(comboItem, scroll)
             : comboItem->mapToScene(QPointF{}) - scroll->mapToScene(QPointF{});
@@ -183,8 +183,9 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         const QPoint comboPoint = viewportCoordinates
             ? viewportPoint(comboItem, scroll, QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5))
             : comboItem->mapToScene(QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5)).toPoint();
+        QTest::qWait(16);
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
-        QTest::qWait(8);
+        QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
         settlePresentation();
         QObject *popup = combo->findChild<QObject *>(combo->objectName() + QStringLiteral("Popup"));
@@ -200,7 +201,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         const QPointF rowPoint = delegate->mapToScene(QPointF(delegate->width() * 0.5,
                                                                delegate->height() * 0.5));
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
-        QTest::qWait(8);
+        QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         settlePresentation();
         if (!popup->property("visible").toBool()
@@ -2545,11 +2546,13 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
 
     settlePresentation();
     QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
-    QObject *tokens = window->findChild<QObject *>(QStringLiteral("flightDeckTheme"));
-    if (!surface || !tokens || tokens->property("light").toBool()
-        != (appearance == QStringLiteral("Light"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 resources did not resolve")
-            .arg(appearance));
+    QQmlExpression tokensLightExpression(qmlContext(surface), surface, QStringLiteral("themeTokens.light"));
+    const bool tokensLight = surface && tokensLightExpression.evaluate().toBool();
+    if (!surface || tokensLightExpression.hasError()
+        || tokensLight != (appearance == QStringLiteral("Light"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 semantic resources did not resolve (surface=%2 light=%3 error=%4)")
+            .arg(appearance).arg(surface != nullptr).arg(tokensLight)
+            .arg(tokensLightExpression.hasError() ? tokensLightExpression.error().toString() : QStringLiteral("none")));
     }
 
     QObject *readinessModel = surface->findChild<QObject *>(QStringLiteral("flightDeckReadinessModel"));
@@ -2633,6 +2636,24 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || deviceValue(QStringLiteral("toneFor({state:'ACTION REQUIRED', severity:'error'})")).toString()
             != QStringLiteral("fault")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Devices state presentation is incomplete"));
+    }
+    // Calibration is controller-gated, but its Flight Deck entry and native
+    // modal must remain available without fabricating a physical controller.
+    // Opening and dismissing the modal cannot start capture or alter a route.
+    const QVariantMap calibrationBeforePresentation = flightDeckConfigurationSnapshot(backend);
+    QObject *calibrationEntry = devices->findChild<QObject *>(QStringLiteral("flightDeckCalibration"));
+    QObject *calibrationDialog = devices->findChild<QObject *>(QStringLiteral("flightDeckCalibrationDialog"));
+    if (!calibrationEntry || !calibrationDialog || !QMetaObject::invokeMethod(calibrationDialog, "open")
+        || !calibrationDialog->property("visible").toBool()
+        || !calibrationDialog->findChild<QObject *>(QStringLiteral("flightDeckCalibrationStart"))
+        || backend.calibrationActive()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck calibration entry did not stay native and controller-gated"));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (calibrationDialog->property("visible").toBool() || backend.calibrationActive()
+        || flightDeckConfigurationSnapshot(backend) != calibrationBeforePresentation) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck calibration presentation changed controller configuration"));
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
@@ -3236,6 +3257,38 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview")
             .arg(appearance));
     }
+    const QVariantMap axisLearningBefore = flightDeckConfigurationSnapshot(backend);
+    auto *axisLearningButton = findVisualItemByObjectName(axesItem,
+        QStringLiteral("flightDeckAxisLearn_0"));
+    if (!axisLearningButton || !clickFlightDeckSettingsItem(window, axesItem, axisLearningButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axis Learn pointer entry was not reachable")
+            .arg(appearance));
+    }
+    settlePresentation();
+    QObject *axisLearningDialog = window->findChild<QObject *>(QStringLiteral("flightDeckInputLearningDialog"));
+    const bool axisDialogVisible = axisLearningDialog && axisLearningDialog->property("visible").toBool();
+    const QString axisWorkflow = axisLearningDialog ? axisLearningDialog->property("workflow").toString() : QString{};
+    const bool axisLearningActive = backend.inputLearning().value(QStringLiteral("active")).toBool();
+    QObject *axisLearningHost = window->findChild<QObject *>(QStringLiteral("standardSurface"));
+    const QString queuedAxisOperation = axisLearningHost
+        ? axisLearningHost->property("flightDeckLearningOperation").toString() : QString{};
+    const bool cachedAxisDialog = axisLearningHost
+        && qvariant_cast<QObject *>(axisLearningHost->property("flightDeckLearningDialog"));
+    if (!axisLearningDialog || !axisDialogVisible || axisWorkflow != QStringLiteral("single-axis")
+        || !axisLearningActive
+        || !captureShell(QStringLiteral("axes-learn-safe-unavailable"))) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 Axis Learn escaped its native safety dialog (dialog=%2 visible=%3 workflow=%4 active=%5 queued=%6 cached=%7)")
+            .arg(appearance).arg(axisLearningDialog != nullptr).arg(axisDialogVisible).arg(axisWorkflow)
+            .arg(axisLearningActive).arg(queuedAxisOperation).arg(cachedAxisDialog));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (axisLearningDialog->property("visible").toBool()
+        || flightDeckConfigurationSnapshot(backend) != axisLearningBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axis Learn entry changed configuration while unavailable")
+            .arg(appearance));
+    }
     // Exercise the actual native mapping selector, then its command path with
     // three independent rows. Both must survive immediate model refresh.
     if (!backend.setMapping(0, QStringLiteral("X"), true)
@@ -3378,6 +3431,52 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance).arg(buttons->property("buttonItems").toList().size()).arg(count)
             .arg(assigned).arg(findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_1")) != nullptr)
             .arg(findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_3")) != nullptr));
+    }
+    // The quick-map pointer route must stay inside the Flight Deck modal. The
+    // bounded startup fixture may arm the existing control-plane state, but
+    // emits no input report; escaping it must cancel safely without mutating
+    // mappings or falling back to the Standard dialog.
+    const QVariantMap quickMapBefore = flightDeckConfigurationSnapshot(backend);
+    auto *quickMapButton = findVisualItemByObjectName(buttonsItem,
+        QStringLiteral("flightDeckButtonsQuickMap"));
+    if (!quickMapButton || !clickFlightDeckSettingsItem(window, buttonsItem, quickMapButton)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Quick Map pointer entry was not reachable")
+            .arg(appearance));
+    }
+    settlePresentation();
+    QObject *learningDialog = window->findChild<QObject *>(QStringLiteral("flightDeckInputLearningDialog"));
+    if (!learningDialog || !learningDialog->property("visible").toBool()
+        || learningDialog->property("workflow").toString() != QStringLiteral("quick-buttons")
+        || !learningDialog->findChild<QObject *>(QStringLiteral("flightDeckLearningOutputSelector"))
+        || !backend.inputLearning().value(QStringLiteral("active")).toBool()
+        || !captureShell(QStringLiteral("buttons-quick-map-safe-unavailable"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Quick Map escaped its native modal")
+            .arg(appearance));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (learningDialog->property("visible").toBool() || backend.inputLearning().value(QStringLiteral("active")).toBool()
+        || flightDeckConfigurationSnapshot(backend) != quickMapBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Quick Map entry changed configuration while unavailable")
+            .arg(appearance));
+    }
+    const QVariantMap buttonLearningBefore = flightDeckConfigurationSnapshot(backend);
+    QQmlExpression openButtonLearning(qmlContext(buttons), buttons,
+        QStringLiteral("(function() { requestButtonLearning(); return true; })()"));
+    openButtonLearning.evaluate();
+    settlePresentation();
+    if (openButtonLearning.hasError() || !learningDialog->property("visible").toBool()
+        || learningDialog->property("workflow").toString() != QStringLiteral("single-button")
+        || !learningDialog->findChild<QObject *>(QStringLiteral("flightDeckLearningOutputSelector"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Button Learn did not stay in the native modal")
+            .arg(appearance));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (learningDialog->property("visible").toBool()
+        || flightDeckConfigurationSnapshot(backend) != buttonLearningBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Button Learn entry changed configuration while unavailable")
+            .arg(appearance));
     }
     QQmlExpression configureButton(qmlContext(buttons), buttons, QStringLiteral("setExpandedButton(2)"));
     configureButton.evaluate();
@@ -3651,6 +3750,25 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance).arg(povSelectorClicked)
             .arg(targetForPovDirection(backend.povInputs(), 1, 0))
             .arg(targetForPovDirection(backend.povInputs(), 1, 1)));
+    }
+    const QVariantMap povLearningBefore = flightDeckConfigurationSnapshot(backend);
+    QQmlExpression openPovLearning(qmlContext(buttons), buttons,
+        QStringLiteral("(function() { requestPovLearning(5); return true; })()"));
+    openPovLearning.evaluate();
+    settlePresentation();
+    QObject *povLearningDialog = window->findChild<QObject *>(QStringLiteral("flightDeckInputLearningDialog"));
+    if (openPovLearning.hasError() || !povLearningDialog || !povLearningDialog->property("visible").toBool()
+        || povLearningDialog->property("workflow").toString() != QStringLiteral("single-pov")
+        || !backend.inputLearning().value(QStringLiteral("active")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 POV Learn did not stay in the native safety dialog")
+            .arg(appearance));
+    }
+    QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (povLearningDialog->property("visible").toBool()
+        || flightDeckConfigurationSnapshot(backend) != povLearningBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 POV Learn entry changed configuration while unavailable")
+            .arg(appearance));
     }
     if (!buttons->setProperty("buttonPresentationOverride", largeButtons)
         || !captureShell(QStringLiteral("buttons-large-normal"))) {
@@ -4455,7 +4573,14 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
         if (!item || !scrollTo(item)) return false;
         const QPoint point = viewportPoint(item, adaptiveItem, QPointF(item->width() * 0.5,
                                                                          item->height() * 0.5));
-        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+        // A native window may promote a just-scrolled control in the next
+        // polish frame. Match the ComboBox pointer helper's press/release
+        // sequencing so this remains an actual pointer route on both the
+        // Windows and offscreen platforms.
+        QTest::qWait(8);
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, point);
+        QTest::qWait(8);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, point);
         settlePresentation();
         return true;
     };

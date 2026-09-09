@@ -35,6 +35,11 @@ Page {
     property string flightDeckProfileContext: ""
     property string flightDeckAutomationContext: ""
     property string flightDeckAdaptiveProfileContext: ""
+    // Flight Deck owns the shared learning modal at the alternate-shell
+    // level. Retain a first request until that preview-only surface arrives.
+    property string flightDeckLearningOperation: ""
+    property var flightDeckLearningArgument: null
+    property var flightDeckLearningDialog: null
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -101,8 +106,31 @@ Page {
             if (devices && devices.focusIssueTarget) devices.focusIssueTarget(target)
         })
     }
-    function openFlightDeckButtonLearning() { learnButtonDialog.open() }
-    function openFlightDeckQuickMap() { quickMapButtonDialog.open() }
+    function requestFlightDeckLearning(operation, argument) {
+        flightDeckLearningOperation = operation
+        flightDeckLearningArgument = argument
+        dispatchFlightDeckLearning()
+    }
+    function dispatchFlightDeckLearning() {
+        const dialog = flightDeckLearningDialog
+        if (!dialog || flightDeckLearningOperation.length === 0)
+            return
+        const operation = flightDeckLearningOperation
+        const argument = flightDeckLearningArgument
+        flightDeckLearningOperation = ""
+        flightDeckLearningArgument = null
+        if (operation === "button") dialog.openButtonLearning()
+        else if (operation === "quick-buttons") dialog.openQuickButtons()
+        else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
+        else if (operation === "quick-axes") dialog.openQuickAxes()
+        else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+    }
+    function openFlightDeckButtonLearning() { requestFlightDeckLearning("button", null) }
+    function openFlightDeckQuickMap() { requestFlightDeckLearning("quick-buttons", null) }
+    function openFlightDeckAxisLearning(target) { requestFlightDeckLearning("axis", target) }
+    function openFlightDeckQuickAxisMap() { requestFlightDeckLearning("quick-axes", null) }
+    function openFlightDeckPovLearning(virtualButton) { requestFlightDeckLearning("pov", virtualButton) }
+    onFlightDeckLearningDialogChanged: dispatchFlightDeckLearning()
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -1054,6 +1082,10 @@ Page {
     }
 
     background: Rectangle {
+        // Flight Deck supplies the surrounding card surface. Keeping the
+        // standalone Standard background visible in its embedded host leaves
+        // an unnecessary full-surface item in the native pointer stack.
+        visible: !root.embedded
         color: theme.background
         gradient: Gradient { GradientStop { position: 0.0
  color: theme.shellGradientTop }
@@ -1829,6 +1861,8 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 onNavigateToPage: function(page) { root.currentPage = page }
+                onRequestAxisLearning: function(target) { root.openFlightDeckAxisLearning(target) }
+                onRequestQuickMap: root.openFlightDeckQuickAxisMap()
             }
         }
         Component {
@@ -1847,6 +1881,7 @@ Page {
                 }
                 onRequestButtonLearning: root.openFlightDeckButtonLearning()
                 onRequestQuickMap: root.openFlightDeckQuickMap()
+                onRequestPovLearning: function(virtualButton) { root.openFlightDeckPovLearning(virtualButton) }
             }
         }
         Loader {
@@ -2604,6 +2639,8 @@ Page {
     Connections {
         target: backend
         function onInputLearningChanged() {
+            if (root.flightDeckMode)
+                return
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
             if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
             if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()

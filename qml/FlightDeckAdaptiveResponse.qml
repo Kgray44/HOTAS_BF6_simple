@@ -1494,9 +1494,14 @@ Flickable {
         minimumWidth: 460
         minimumHeight: 280
         color: deck.applicationBackground
+        modality: Qt.NonModal
+        transientParent: root.window
         flags: Qt.Window | (root.responseMonitorPinned ? Qt.WindowStaysOnTopHint : 0)
         onClosing: function (close) {
-            close.accepted = true;
+            // Keep the reusable monitor component alive and let its visible
+            // binding own dismissal, matching the existing Adaptive Response
+            // monitor lifecycle on native Windows windows.
+            close.accepted = false;
             root.responseMonitorVisible = false;
         }
         Rectangle {
@@ -1997,7 +2002,12 @@ Flickable {
                             id: presetButton
                             required property var modelData
                             objectName: "adaptivePresetButton_" + modelData.id
-                            implicitWidth: Math.max(132, presetText.implicitWidth + deck.space24)
+                            // Do not size the Button from its anchored contentItem: the
+                            // resulting Button -> Column -> Button implicit-size cycle only
+                            // surfaces on the native Windows scene graph as a polish loop.
+                            // The Flow remains responsive and the two labels elide/wrap inside
+                            // this comfortably sized control.
+                            implicitWidth: 156
                             implicitHeight: 76
                             padding: deck.space12
                             enabled: root.editScope !== "preset"
@@ -3027,13 +3037,18 @@ Flickable {
                         RowLayout {
                             width: parent.width
                             Text {
+                                Layout.minimumWidth: 118
+                                Layout.preferredWidth: 128
+                                Layout.maximumWidth: 150
                                 text: root.responseLabSource === "live" ? (root.historyPaused ? "PAUSED INSPECTION" : "LIVE CONTROLLER") : (root.simulatorReplaying ? "SYNTHETIC REPLAY" : root.simulatorPaused ? "INTERACTIVE PAUSED" : "INTERACTIVE LIVE")
                                 color: deck.accent
                                 font.family: deck.telemetryFont
                                 font.pixelSize: 10
                                 font.bold: true
+                                elide: Text.ElideRight
                             }
                             Text {
+                                Layout.minimumWidth: 220
                                 Layout.fillWidth: true
                                 text: root.responseLabSource === "live" ? "Existing 83 Hz bounded history; Flight Deck renders at a bounded display cadence." : "Isolated simulator using the same existing preview engine; no physical or vJoy output is written."
                                 color: deck.textSecondary

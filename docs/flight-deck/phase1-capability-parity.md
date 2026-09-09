@@ -18,10 +18,10 @@ of the established theme family.
 | --- | --- | --- | --- |
 | Mapper health and active configuration | Overview; `AppBackend` mapping, controller, vJoy, profile, and telemetry properties | Overview primary status and persistent readiness card | Primary; mapping live/off/suspended, controller absent/stale, vJoy ready/offline/capacity warning, active profile |
 | Controller inventory and setup | Settings, controller setup dialog, `ControllerManager` and readiness model | Native Flight Deck Devices & setup; health summary first, repair and details contextual | Primary; connected/new/verified/offline/ambiguous device, calibration required, HidHide/vJoy attention, repair/progress/rollback/reconnect |
-| Axis routing and processing | Axes workspace; shared mapping/configuration commands | Native Flight Deck Axes scan view with expanded routing, response, limits, advanced, and Adaptive Response handoff | Primary; unavailable/fixed inputs, route conflict, disabled/unsupported output, live/calibrated/output state, learn/quick-map |
-| Axis calibration | Calibration workspace and controller-scoped calibration state | Devices & setup with a contextual calibration entry point | Primary/contextual; range/center stages, success/failure, history, selected/offline controller |
+| Axis routing and processing | Axes workspace; shared mapping/configuration commands | Native Flight Deck Axes scan view with expanded routing, response, limits, advanced, Adaptive Response handoff, and the shared learning/quick-map entry | Primary; unavailable/fixed inputs, route conflict, disabled/unsupported output, live/calibrated/output state, learn/quick-map |
+| Axis calibration | Calibration workspace and controller-scoped calibration state | Devices & setup with a contextual native calibration dialog over the existing controller-scoped commands | Primary/contextual; range/center stages, success/failure, history, selected/offline controller |
 | Response curves | Curve editor; shared curve state and compiled LUT configuration | Axes deep link / advanced Curve editor | Advanced; preset/custom/point editing, undo/redo, comparison, live graph, validation and profile scope |
-| Button and POV routing | Buttons workspace; shared route and native-POV commands | Native Flight Deck Buttons scan view with expanded physical-button and hat-direction configuration | Primary; press/live output, disabled, destination conflict, learn/quick-map, profile hold/toggle controls, mapping controls, Automation relationships, hat directions/native continuous or discrete routes |
+| Button and POV routing | Buttons workspace; shared route and native-POV commands | Native Flight Deck Buttons scan view with expanded physical-button and hat-direction configuration plus shared learning/quick-map entry points | Primary; press/live output, disabled, destination conflict, learn/quick-map, profile hold/toggle controls, mapping controls, Automation relationships, hat directions/native continuous or discrete routes |
 | Profiles and categories | Profile Library, `ProfileModel`, trigger runtime | Profiles; activation, automatic source, and category context primary | Primary; create/clone/rename/delete/move/duplicate, enabled/default/last active category, hold/toggle override, controller/layout compatibility |
 | Import and export | Profile Library portability flows and `ProfilePortability` | Profiles > Import/export, with preview before apply | Advanced/contextual; `.hbf6profile`/`.hbf6pack` validation, dependency preview, conflict handling, calibration opt-in |
 | Game association / detection | Profile Library and low-frequency trigger runtime | Profiles > Automatic activation | Automatic; automatic detection enabled/disabled, executable match transitions, manual base profile and runtime hold/toggle precedence |
@@ -30,7 +30,7 @@ of the established theme family.
 | Diagnostics and event log | Diagnostics workspace and `AppBackend` snapshots | Native Flight Deck Diagnostics: centralized readiness, real signal path, live inspection, performance, and progressive technical detail | Diagnostic; raw/calibrated/virtual axes, buttons/POVs, event log, update age, capacity, HidHide, Automation timing, Adaptive telemetry, warnings, and redacted controller diagnostics export |
 | Global application and mapper settings | Settings; configuration store and launcher handoff | Settings; grouped application, mapping, controller, device-hiding, update, and maintenance controls | Advanced; tray behavior, start on launch, output layout, disabled-axis value, curve transition smoothing, update state, destructive confirmations |
 | System tray and close behavior | `AppBackend`, native tray menu, Main window close handler | Remains platform-owned; Flight Deck does not replace it | Automatic/contextual; open, mapping toggle, close-to-tray, exit, tray availability |
-| Dialogs, flyouts, confirmations, and notifications | Standard/Legacy shells and page components | Native setup-repair confirmation and undo confirmation within Flight Deck Devices; preserve other established behavior | Contextual; learning, conflicts, create/rename/delete, setup/recovery, import preview, tooltips, empty/loading/error/validation states |
+| Dialogs, flyouts, confirmations, and notifications | Standard/Legacy shells and page components | Native setup-repair confirmation and undo confirmation, controller calibration, and shared Input Learning within Flight Deck; preserve other established behavior | Contextual; learning, conflicts, create/rename/delete, setup/recovery, import preview, tooltips, empty/loading/error/validation states |
 
 ## Cross-cutting preservation rules
 
@@ -218,3 +218,23 @@ does not emulate them. The established Curve Editor remains a separately
 routed advanced primary workspace, not a secondary modal. Legacy, Standard,
 and Top Gun retain their prior dialog/popup implementations. Day Ops was
 absent from this baseline and remains a later coexistence integration item.
+
+## Phase 12 parity integration coverage
+
+- `FlightDeckInputLearningDialog.qml` is a Flight Deck-native presentation of
+  the established `AppBackend.inputLearning` transaction. Axis, button, POV,
+  and quick-map entry points dispatch to the existing start/retry/cancel and
+  conflict-resolution commands; it does not sample hardware reports or retain
+  a competing mapping model. The destructive button-map reset remains a
+  deliberately confirmed existing backend command.
+- Devices & setup now presents the existing calibration stages, ranges, and
+  history with the existing start, center, save, and reset commands. It makes
+  no claim that an unavailable controller can be calibrated.
+- The Flight Deck embedding bridge transfers only a learning request into its
+  presentation-owned dialog. Standard, Legacy, and Top Gun preserve their
+  established dialog lifecycles, while an embedded Standard background is not
+  left in Flight Deck's pointer stack.
+- The Phase 12 validation record in
+  `phase12-parity-integration-validation.md` is the source-of-truth evidence
+  for cross-workflow coverage, native visual limits, fixes, and the remaining
+  owner-session checks. Day Ops remains absent from this source baseline.

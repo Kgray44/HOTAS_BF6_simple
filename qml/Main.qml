@@ -13,6 +13,7 @@ ApplicationWindow {
     minimumHeight: 650
     visible: true
     title: "HOTAS BF6"
+    property var flightDeckLearningDialog: null
     onClosing: function(close) {
         if (backend.keepRunningInTray && backend.trayAvailable) {
             close.accepted = false
@@ -22,7 +23,10 @@ ApplicationWindow {
     Theme { id: shellTheme }
     color: themeManager.currentExperience === "Flight Deck" ? "#0b1219" : shellTheme.background
     font.family: shellTheme.displayFont
-    Component.onCompleted: backend.setTrayTheme(themeManager.currentTheme)
+    Component.onCompleted: {
+        backend.setTrayTheme(themeManager.currentTheme)
+        syncFlightDeckLearningDialog()
+    }
     Connections {
         target: themeManager
         function onCurrentThemeChanged() {
@@ -30,11 +34,26 @@ ApplicationWindow {
             const page = presentation.item && presentation.item.currentPage !== undefined ? presentation.item.currentPage : 8
             backend.recordCrashPresentationState(page, themeManager.currentTheme)
         }
+        function onCurrentExperienceChanged() { shell.syncFlightDeckLearningDialog() }
+    }
+
+    function syncFlightDeckLearningDialog() {
+        if (themeManager.currentExperience === "Flight Deck") {
+            if (!flightDeckLearningDialog)
+                flightDeckLearningDialog = flightDeckLearningDialogComponent.createObject(shell)
+            return
+        }
+        if (flightDeckLearningDialog) {
+            flightDeckLearningDialog.close()
+            flightDeckLearningDialog.destroy()
+            flightDeckLearningDialog = null
+        }
     }
 
     Component { id: legacySurface; Legacy { } }
     Component { id: standardSurface; Standard { } }
-    Component { id: flightDeckSurface; FlightDeck { } }
+    Component { id: flightDeckSurface; FlightDeck { learningDialog: shell.flightDeckLearningDialog } }
+    Component { id: flightDeckLearningDialogComponent; FlightDeckInputLearningDialog { } }
 
     Loader {
         id: presentation

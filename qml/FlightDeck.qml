@@ -14,10 +14,12 @@ Item {
         id: deck
         objectName: "flightDeckTheme"
     }
+    readonly property var themeTokens: deck
     property int currentPage: 8
     property string flightDeckAutomationContext: ""
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
+    property var learningDialog: null
     readonly property int loadedPageCount: currentPage === 7
         ? (automationPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
 
@@ -64,7 +66,6 @@ Item {
     FlightDeckReadiness {
         id: readinessModel
     }
-
     onCurrentPageChanged: {
         standardPageHost.currentPage = currentPage === 7 ? -1 : currentPage;
         if (currentPage === 1 && flightDeckButtonContext > 0)
@@ -337,6 +338,7 @@ Item {
                         embedded: true
                         flightDeckMode: true
                         flightDeckReadiness: readinessModel
+                        flightDeckLearningDialog: root.learningDialog
                         currentPage: 8
                         onCurrentPageChanged: {
                             if (currentPage === 7 && flightDeckAutomationContext.length > 0)
