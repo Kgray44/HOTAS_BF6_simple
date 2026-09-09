@@ -1,0 +1,2145 @@
+import QtQuick 6.5
+import QtQuick.Controls 6.5
+import QtQuick.Layouts 6.5
+
+// Native Flight Deck Profiles presentation. The page owns only navigation and
+// low-frequency configuration summaries. It reads AppBackend's published
+// profile/category models and routes every mutation through the established
+// command path; inspecting a card never changes the active runtime profile.
+Flickable {
+    id: root
+    objectName: "flightDeckProfiles"
+
+    property var readinessModel
+    // Startup-test-only presentation seams. They never call an AppBackend
+    // command and are deliberately ignored by production rendering.
+    property var profilesPresentationOverride: null
+    property var categoriesPresentationOverride: null
+    property var runningApplicationsPresentationOverride: null
+    property var profileDetailPresentationOverride: null
+    property string view: "library" // library, category, profile
+    property string selectedCategoryId: ""
+    property string selectedProfileId: ""
+    property string profileFilter: "all" // all, active, associated
+    property string searchText: ""
+    property var runningApplicationsSnapshot: []
+    property var presentationState: ({})
+
+    signal navigateToPage(int page)
+    signal navigateToAutomation(string automationId)
+    signal navigateToAdaptiveProfile(string profileId)
+    signal requestClassicTransfer
+    signal presentationStateCaptured(var state)
+
+    readonly property var categories: categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined ? categoriesPresentationOverride : backend.profileCategories
+    readonly property var profiles: profilesPresentationOverride !== null && profilesPresentationOverride !== undefined ? profilesPresentationOverride : backend.profiles
+    readonly property var runningApplications: runningApplicationsPresentationOverride !== null && runningApplicationsPresentationOverride !== undefined ? runningApplicationsPresentationOverride : runningApplicationsSnapshot
+    readonly property var selectedCategory: categoryById(selectedCategoryId)
+    readonly property var selectedProfile: profileById(selectedProfileId)
+    readonly property var selectedDetail: detailFor(selectedProfileId)
+    readonly property bool usingPresentationFixture: (profilesPresentationOverride !== null && profilesPresentationOverride !== undefined) || (categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined)
+
+    contentWidth: width
+    contentHeight: profileContent.implicitHeight + deck.space24
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    ScrollBar.vertical: ScrollBar {
+        policy: ScrollBar.AsNeeded
+    }
+
+    FlightDeckTheme {
+        id: deck
+    }
+
+    Rectangle {
+        parent: root
+        anchors.fill: parent
+        color: deck.primarySurface
+        z: -1
+    }
+
+    function lower(value) {
+        return String(value || "").toLowerCase();
+    }
+    function copyValue(value) {
+        return JSON.parse(JSON.stringify(value || ({})));
+    }
+    function categoryById(id) {
+        for (let index = 0; index < categories.length; ++index) {
+            if (String(categories[index].id || "") === String(id || ""))
+                return categories[index];
+        }
+        return null;
+    }
+    function profileById(id) {
+        for (let index = 0; index < profiles.length; ++index) {
+            if (String(profiles[index].id || "") === String(id || ""))
+                return profiles[index];
+        }
+        return null;
+    }
+    function detailFor(id) {
+        // Referencing profiles makes this recalculation follow stateChanged,
+        // while avoiding a separate profile detail cache in the presentation.
+        profiles;
+        if (!id || String(id).length === 0)
+            return ({});
+        if (profileDetailPresentationOverride && profileDetailPresentationOverride[String(id)] !== undefined) {
+            return profileDetailPresentationOverride[String(id)];
+        }
+        return backend.profileDetail(String(id));
+    }
+    function profilesForCategory(id) {
+        const result = [];
+        for (let index = 0; index < profiles.length; ++index) {
+            if (String(profiles[index].categoryId || "") === String(id || ""))
+                result.push(profiles[index]);
+        }
+        return result;
+    }
+    function friendlyGameName(executable) {
+        const base = String(executable || "").split(/[\\/]/).pop();
+        const stem = base.replace(/\.exe$/i, "");
+        if (stem.toLowerCase() === "bf6")
+            return "Battlefield 6";
+        if (stem.toLowerCase() === "starcitizen")
+            return "Star Citizen";
+        return stem.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ") || base;
+    }
+    function runningApplicationFor(executable) {
+        const target = String(executable || "").split(/[\\/]/).pop().toLowerCase();
+        for (let index = 0; index < runningApplications.length; ++index) {
+            if (String(runningApplications[index].executable || "").toLowerCase() === target) {
+                return runningApplications[index];
+            }
+        }
+        return null;
+    }
+    function categoryHasRunningGame(category) {
+        const rules = category ? (category.executableRules || []) : [];
+        for (let index = 0; index < rules.length; ++index) {
+            if (runningApplicationFor(rules[index]))
+                return true;
+        }
+        return false;
+    }
+    function categoryBehavior(category) {
+        if (!category)
+            return "No category selected";
+        if (category.restoreLastProfile) {
+            return category.lastActiveProfileName && String(category.lastActiveProfileName).length > 0 ? "Use the last profile: " + category.lastActiveProfileName : "Use the last profile when one is available";
+        }
+        return category.defaultProfileName && String(category.defaultProfileName).length > 0 ? "Always use: " + category.defaultProfileName : "Always use the category default";
+    }
+    function profileMatchesFilter(profile) {
+        if (!profile)
+            return false;
+        if (profileFilter === "active" && !profile.active)
+            return false;
+        if (profileFilter === "associated") {
+            const category = categoryById(profile.categoryId);
+            if (!category || (category.executableRules || []).length === 0)
+                return false;
+        }
+        const needle = lower(searchText).trim();
+        if (needle.length === 0)
+            return true;
+        const category = categoryById(profile.categoryId);
+        const fields = [profile.name, profile.displayName, profile.categoryName, category ? category.name : ""];
+        for (let index = 0; index < fields.length; ++index) {
+            if (lower(fields[index]).indexOf(needle) >= 0)
+                return true;
+        }
+        return false;
+    }
+    function openCategory(id) {
+        selectedCategoryId = String(id || "");
+        selectedProfileId = "";
+        view = "category";
+        refreshRunningApplications();
+    }
+    function openProfile(id) {
+        selectedProfileId = String(id || "");
+        const profile = profileById(selectedProfileId);
+        selectedCategoryId = profile ? String(profile.categoryId || "") : "";
+        view = "profile";
+    }
+    function returnToLibrary() {
+        view = "library";
+        selectedCategoryId = "";
+        selectedProfileId = "";
+    }
+    function activateProfile(id) {
+        if (usingPresentationFixture)
+            return false;
+        return backend.activateProfile(String(id || ""));
+    }
+    function openActiveProfileEditor(page) {
+        // Axes and Buttons are intentionally active-profile editors in this
+        // baseline. Never activate an inspected profile merely to satisfy a
+        // navigation request.
+        if (!selectedDetail.active)
+            return false;
+        navigateToPage(page);
+        return true;
+    }
+    function openAdaptiveForSelectedProfile() {
+        if (!selectedProfileId.length)
+            return false;
+        navigateToAdaptiveProfile(selectedProfileId);
+        return true;
+    }
+    function openAutomationForSelectedProfile() {
+        const rules = selectedDetail.automations || [];
+        navigateToAutomation(rules.length > 0 ? String(rules[0].id || "") : "");
+    }
+    function refreshRunningApplications() {
+        if (usingPresentationFixture)
+            return;
+        runningApplicationsSnapshot = backend.runningApplications();
+        backend.refreshRunningApplications();
+    }
+    function addGameRule(categoryId, rawRule) {
+        const category = categoryById(categoryId);
+        const rule = String(rawRule || "").trim();
+        if (!category || rule.length === 0 || usingPresentationFixture)
+            return false;
+        const rules = (category.executableRules || []).slice();
+        rules.push(rule);
+        return backend.setCategoryGameDetectionRules(categoryId, rules);
+    }
+    function removeGameRule(categoryId, rule) {
+        const category = categoryById(categoryId);
+        if (!category || usingPresentationFixture)
+            return false;
+        const remaining = (category.executableRules || []).filter(function (candidate) {
+            return String(candidate).toLowerCase() !== String(rule).toLowerCase();
+        });
+        return backend.setCategoryGameDetectionRules(categoryId, remaining);
+    }
+    function capturePresentationState() {
+        presentationStateCaptured({
+            view: view,
+            selectedCategoryId: selectedCategoryId,
+            selectedProfileId: selectedProfileId,
+            profileFilter: profileFilter,
+            searchText: searchText,
+            contentY: contentY
+        });
+    }
+    function restorePresentationState() {
+        const saved = presentationState || ({});
+        if (!saved.view)
+            return;
+        view = saved.view;
+        selectedCategoryId = saved.selectedCategoryId || "";
+        selectedProfileId = saved.selectedProfileId || "";
+        profileFilter = saved.profileFilter || "all";
+        searchText = saved.searchText || "";
+        contentY = Number(saved.contentY || 0);
+    }
+
+    Component.onCompleted: {
+        restorePresentationState();
+        refreshRunningApplications();
+    }
+    Component.onDestruction: capturePresentationState()
+
+    Connections {
+        target: backend
+        function onRunningApplicationsChanged() {
+            if (!root.usingPresentationFixture)
+                root.runningApplicationsSnapshot = backend.runningApplications();
+        }
+    }
+
+    component SectionLabel: RowLayout {
+        property string label: "SECTION"
+        Layout.fillWidth: true
+        spacing: deck.space8
+        Rectangle {
+            Layout.preferredWidth: 7
+            Layout.preferredHeight: 7
+            radius: width / 2
+            color: deck.accent
+        }
+        Text {
+            text: parent.label
+            color: deck.textMuted
+            font.family: deck.telemetryFont
+            font.pixelSize: 9
+            font.bold: true
+        }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: deck.divider
+        }
+    }
+
+    component SummaryChip: Rectangle {
+        property string label: "STATUS"
+        property string tone: "informational"
+        implicitHeight: 23
+        implicitWidth: chipText.implicitWidth + deck.space16
+        radius: deck.radiusPill
+        color: Qt.rgba(deck.statusColor(tone).r, deck.statusColor(tone).g, deck.statusColor(tone).b, deck.light ? 0.11 : 0.18)
+        border.width: 1
+        border.color: Qt.rgba(deck.statusColor(tone).r, deck.statusColor(tone).g, deck.statusColor(tone).b, 0.75)
+        Text {
+            id: chipText
+            anchors.centerIn: parent
+            text: parent.label
+            color: deck.textPrimary
+            font.family: deck.telemetryFont
+            font.pixelSize: 8
+            font.bold: true
+            elide: Text.ElideRight
+        }
+    }
+
+    component DeckButton: Button {
+        id: control
+        property bool subdued: false
+        property bool destructive: false
+        implicitHeight: deck.compactControlHeight
+        focusPolicy: Qt.StrongFocus
+        contentItem: Text {
+            text: control.text
+            color: control.enabled ? (control.destructive ? deck.fault : control.subdued ? deck.textSecondary : deck.primarySurface) : deck.disabled
+            font.family: deck.telemetryFont
+            font.pixelSize: 9
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: deck.radiusControl
+            color: !control.enabled ? deck.secondarySurface : control.down ? (control.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.2) : deck.accentMuted) : control.hovered ? (control.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.16) : control.subdued ? deck.selected : deck.focus) : control.destructive ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.08) : control.subdued ? deck.secondarySurface : deck.accent
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? deck.focus : control.destructive ? deck.fault : deck.border
+        }
+    }
+
+    component DeckField: TextField {
+        id: control
+        implicitHeight: deck.controlHeight
+        selectByMouse: true
+        color: deck.textPrimary
+        placeholderTextColor: deck.textMuted
+        font.family: deck.telemetryFont
+        font.pixelSize: 10
+        leftPadding: deck.space12
+        rightPadding: deck.space12
+        background: Rectangle {
+            radius: deck.radiusControl
+            color: deck.primarySurface
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? deck.focus : deck.border
+        }
+    }
+
+    component DeckCombo: ComboBox {
+        id: control
+        implicitHeight: deck.controlHeight
+        focusPolicy: Qt.StrongFocus
+        contentItem: Text {
+            leftPadding: deck.space12
+            rightPadding: deck.space24
+            text: control.displayText
+            color: control.enabled ? deck.textPrimary : deck.disabled
+            font.family: deck.telemetryFont
+            font.pixelSize: 10
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        indicator: Text {
+            x: control.width - width - deck.space12
+            anchors.verticalCenter: parent.verticalCenter
+            text: "⌄"
+            color: deck.textSecondary
+            font.pixelSize: 16
+        }
+        background: Rectangle {
+            radius: deck.radiusControl
+            color: control.pressed ? deck.selected : deck.primarySurface
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? deck.focus : deck.border
+        }
+        delegate: ItemDelegate {
+            required property int index
+            required property var modelData
+            objectName: control.objectName + "Choice_" + index
+            width: ListView.view.width
+            height: 34
+            highlighted: control.highlightedIndex === index
+            contentItem: Text {
+                text: control.textAt(index)
+                color: deck.textPrimary
+                font.family: deck.telemetryFont
+                font.pixelSize: 10
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+            background: Rectangle {
+                color: control.highlightedIndex === index ? deck.selected : deck.elevatedSurface
+            }
+        }
+        popup: Popup {
+            objectName: control.objectName + "Popup"
+            y: control.height - 1
+            width: control.width
+            padding: 4
+            contentItem: ListView {
+                clip: true
+                implicitHeight: Math.min(contentHeight, 224)
+                model: control.delegateModel
+                currentIndex: control.highlightedIndex
+                ScrollIndicator.vertical: ScrollIndicator {}
+            }
+            background: Rectangle {
+                radius: deck.radiusControl
+                color: deck.elevatedSurface
+                border.color: deck.border
+            }
+        }
+    }
+
+    component FilterButton: Button {
+        id: control
+        property string filterValue: "all"
+        implicitHeight: 28
+        implicitWidth: filterLabel.implicitWidth + deck.space16
+        focusPolicy: Qt.StrongFocus
+        onClicked: root.profileFilter = filterValue
+        contentItem: Text {
+            id: filterLabel
+            text: control.text
+            color: root.profileFilter === control.filterValue ? deck.primarySurface : deck.textSecondary
+            font.family: deck.telemetryFont
+            font.pixelSize: 8
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: deck.radiusPill
+            color: root.profileFilter === control.filterValue ? deck.accent : deck.secondarySurface
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? deck.focus : deck.border
+        }
+    }
+
+    component CategoryCard: FlightDeckCard {
+        id: card
+        tokens: deck
+        property var category: ({})
+        readonly property var categoryProfiles: root.profilesForCategory(String(category.id || ""))
+        readonly property bool running: root.categoryHasRunningGame(category)
+        objectName: "flightDeckCategoryCard_" + String(category.id || "")
+        width: root.width >= 1110 ? (categoryFlow.width - deck.space12) / 2 : categoryFlow.width
+        implicitHeight: categoryContent.implicitHeight + deck.space24
+        color: category.active ? deck.selected : deck.elevatedSurface
+        border.color: category.active ? deck.accent : deck.border
+
+        ColumnLayout {
+            id: categoryContent
+            anchors.fill: parent
+            anchors.margins: deck.space12
+            spacing: deck.space12
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: String(category.name || "Unnamed category")
+                        color: deck.textPrimary
+                        font.family: deck.displayFont
+                        font.pixelSize: 17
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: Number(category.profileCount !== undefined ? category.profileCount : categoryProfiles.length) + " profile" + (categoryProfiles.length === 1 ? "" : "s")
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                }
+                SummaryChip {
+                    visible: !!category.active
+                    label: "ACTIVE CATEGORY"
+                    tone: "healthy"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                SummaryChip {
+                    label: (category.executableRules || []).length === 0 ? "MANUAL" : running ? "GAME RUNNING" : "GAME CONFIGURED"
+                    tone: running ? "healthy" : (category.executableRules || []).length > 0 ? "informational" : "attention"
+                }
+                SummaryChip {
+                    visible: !category.enabled
+                    label: "AUTO OFF"
+                    tone: "attention"
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+            }
+            Text {
+                text: (category.executableRules || []).length > 0 ? (category.executableRules || []).map(root.friendlyGameName).join(" · ") : "No game association — activate this category manually."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: deck.divider
+            }
+            Text {
+                text: "WHEN SELECTED  ·  " + root.categoryBehavior(category)
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 8
+                font.bold: true
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Repeater {
+                    model: categoryProfiles.slice(0, 4)
+                    delegate: Rectangle {
+                        required property var modelData
+                        implicitWidth: profileTag.implicitWidth + deck.space16
+                        implicitHeight: 25
+                        radius: deck.radiusPill
+                        color: modelData.active ? deck.accentMuted : deck.secondarySurface
+                        border.width: 1
+                        border.color: modelData.active ? deck.accent : deck.border
+                        Text {
+                            id: profileTag
+                            anchors.centerIn: parent
+                            text: String(modelData.name || "Profile") + (modelData.active ? "  ACTIVE" : "")
+                            color: deck.textSecondary
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 8
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+            }
+            Text {
+                visible: categoryProfiles.length === 0
+                text: "No profiles yet. Create one to define this category's controller setup."
+                color: deck.textMuted
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    Layout.fillWidth: true
+                    visible: Number(category.adaptiveOverrideAxes || 0) > 0
+                    text: Number(category.adaptiveOverrideAxes) + " category Response override" + (Number(category.adaptiveOverrideAxes) === 1 ? "" : "s")
+                    color: deck.textMuted
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 8
+                    elide: Text.ElideRight
+                }
+                DeckButton {
+                    text: "OPEN CATEGORY"
+                    subdued: true
+                    onClicked: root.openCategory(category.id)
+                }
+            }
+        }
+    }
+
+    component ProfileCard: FlightDeckCard {
+        id: card
+        tokens: deck
+        property var profile: ({})
+        readonly property bool selectedForEditing: root.view === "profile" && String(root.selectedProfileId) === String(profile.id || "")
+        objectName: "flightDeckProfileCard_" + String(profile.id || "")
+        width: root.width >= 1160 ? (profileFlow.width - deck.space12) / 2 : profileFlow.width
+        implicitHeight: profileContent.implicitHeight + deck.space24
+        color: profile.active ? deck.selected : selectedForEditing ? deck.secondarySurface : deck.elevatedSurface
+        border.color: profile.active ? deck.accent : selectedForEditing ? deck.focus : deck.border
+
+        ColumnLayout {
+            id: profileContent
+            anchors.fill: parent
+            anchors.margins: deck.space12
+            spacing: deck.space8
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: String(profile.name || "Unnamed profile")
+                        color: deck.textPrimary
+                        font.family: deck.displayFont
+                        font.pixelSize: 15
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: String(profile.categoryName || "General")
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 8
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                }
+                SummaryChip {
+                    visible: !!profile.active
+                    label: "ACTIVE"
+                    tone: "healthy"
+                }
+                SummaryChip {
+                    visible: !profile.active && selectedForEditing
+                    label: "VIEWING"
+                    tone: "informational"
+                }
+            }
+            Text {
+                text: Number(profile.mappedAxes || 0) + " axes configured  ·  " + Number(profile.mappedButtons || 0) + " buttons assigned  ·  " + Number(profile.mappedPovs || 0) + " POV routes"
+                color: deck.textSecondary
+                font.family: deck.telemetryFont
+                font.pixelSize: 8
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                SummaryChip {
+                    label: Number(profile.adaptiveOverrideAxes || 0) > 0 ? Number(profile.adaptiveOverrideAxes) + " RESPONSE CUSTOM" : "RESPONSE INHERITED"
+                    tone: Number(profile.adaptiveOverrideAxes || 0) > 0 ? "informational" : "healthy"
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: Number(profile.automationCount || 0) + " Automation relationship" + (Number(profile.automationCount || 0) === 1 ? "" : "s")
+                    color: deck.textMuted
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 8
+                    elide: Text.ElideRight
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                DeckButton {
+                    text: "OPEN PROFILE"
+                    subdued: true
+                    onClicked: root.openProfile(profile.id)
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    objectName: "flightDeckProfileActivate_" + String(profile.id || "")
+                    text: profile.active ? "ACTIVE NOW" : "ACTIVATE"
+                    enabled: !profile.active && !!profile.enabled && !root.usingPresentationFixture
+                    onClicked: root.activateProfile(profile.id)
+                }
+            }
+        }
+    }
+
+    ColumnLayout {
+        id: profileContent
+        x: deck.space4
+        width: root.width - deck.space8
+        spacing: deck.space16
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: deck.space8
+            DeckButton {
+                visible: root.view !== "library"
+                text: "← CONFIGURATIONS"
+                subdued: true
+                onClicked: root.returnToLibrary()
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                    text: root.view === "library" ? "Profiles" : root.view === "category" ? String((root.selectedCategory || {}).name || "Category") : String((root.selectedDetail || {}).name || "Profile")
+                    color: deck.textPrimary
+                    font.family: deck.displayFont
+                    font.pixelSize: 24
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: root.view === "library" ? "Game-aware controller configurations" : root.view === "category" ? "Game association, category behavior, and contained profiles" : "Selected for editing — inspecting this profile does not activate it"
+                    color: deck.textMuted
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 10
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+            }
+            DeckButton {
+                visible: root.view === "library"
+                text: "IMPORT / EXPORT"
+                subdued: true
+                onClicked: root.requestClassicTransfer()
+            }
+            DeckButton {
+                visible: root.view === "library"
+                text: "+ CATEGORY"
+                subdued: true
+                enabled: !root.usingPresentationFixture
+                onClicked: newCategoryDialog.open()
+            }
+            DeckButton {
+                visible: root.view === "library"
+                text: "+ PROFILE"
+                enabled: !root.usingPresentationFixture && root.categories.length > 0
+                onClicked: {
+                    newProfileDialog.categoryId = backend.activeCategoryId;
+                    newProfileDialog.open();
+                }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            visible: root.view === "library"
+            Layout.preferredHeight: visible ? libraryColumn.implicitHeight : 0
+            ColumnLayout {
+                id: libraryColumn
+                width: parent.width
+                spacing: deck.space16
+
+                FlightDeckCard {
+                    id: activeHero
+                    objectName: "flightDeckActiveProfileHero"
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: activeHeroContent.implicitHeight + deck.space32
+                    color: deck.selected
+                    border.color: deck.accent
+                    ColumnLayout {
+                        id: activeHeroContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space16
+                        spacing: deck.space8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "ACTIVE NOW"
+                                color: deck.accent
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            SummaryChip {
+                                label: "RUNTIME ACTIVE"
+                                tone: "healthy"
+                            }
+                        }
+                        Text {
+                            text: backend.activeProfileDisplayName || backend.activeProfileName || "No active profile"
+                            color: deck.textPrimary
+                            font.family: deck.displayFont
+                            font.pixelSize: 23
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "CATEGORY  ·  " + (backend.activeCategoryName || "General")
+                                color: deck.textSecondary
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 1
+                                Layout.preferredHeight: 15
+                                color: deck.divider
+                            }
+                            Text {
+                                text: "SOURCE  ·  " + (backend.profileSourceLabel || "Manual base profile")
+                                color: deck.textSecondary
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            DeckButton {
+                                text: "VIEW ACTIVE"
+                                subdued: true
+                                onClicked: root.openProfile(backend.activeProfileId)
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "YOUR CONFIGURATIONS"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: deck.space8
+                    FilterButton {
+                        text: "ALL"
+                        filterValue: "all"
+                    }
+                    FilterButton {
+                        text: "ACTIVE"
+                        filterValue: "active"
+                    }
+                    FilterButton {
+                        text: "GAME LINKED"
+                        filterValue: "associated"
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    DeckField {
+                        objectName: "flightDeckProfileSearch"
+                        Layout.preferredWidth: root.width >= 900 ? 260 : 180
+                        placeholderText: "Search profiles…"
+                        text: root.searchText
+                        onTextEdited: root.searchText = text
+                    }
+                }
+                Text {
+                    visible: root.categories.length === 0
+                    text: "No categories yet. Create a category first, then add a profile to define a controller setup."
+                    color: deck.textSecondary
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                Flow {
+                    id: categoryFlow
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Repeater {
+                        model: root.categories
+                        delegate: CategoryCard {
+                            required property var modelData
+                            category: modelData
+                        }
+                    }
+                }
+                SectionLabel {
+                    label: "PROFILES"
+                }
+                Text {
+                    visible: root.profiles.length === 0
+                    text: "No profiles are available. A profile stores the controller mappings for a category."
+                    color: deck.textSecondary
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    visible: root.profiles.length > 0 && root.profiles.filter(root.profileMatchesFilter).length === 0
+                    text: "No profiles match this filter. Filtering changes only this view."
+                    color: deck.textMuted
+                    font.pixelSize: 10
+                    Layout.fillWidth: true
+                }
+                Flow {
+                    id: profileFlow
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Repeater {
+                        model: root.profiles
+                        delegate: ProfileCard {
+                            required property var modelData
+                            visible: root.profileMatchesFilter(modelData)
+                            profile: modelData
+                        }
+                    }
+                }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            visible: root.view === "category"
+            Layout.preferredHeight: visible ? categoryColumn.implicitHeight : 0
+            ColumnLayout {
+                id: categoryColumn
+                width: parent.width
+                spacing: deck.space16
+
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: categoryHeroContent.implicitHeight + deck.space24
+                    color: deck.selected
+                    border.color: deck.accent
+                    ColumnLayout {
+                        id: categoryHeroContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: String((root.selectedCategory || {}).name || "Category")
+                                    color: deck.textPrimary
+                                    font.family: deck.displayFont
+                                    font.pixelSize: 20
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: Number((root.selectedCategory || {}).profileCount || 0) + " profiles  ·  " + root.categoryBehavior(root.selectedCategory)
+                                    color: deck.textSecondary
+                                    font.family: deck.telemetryFont
+                                    font.pixelSize: 9
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            SummaryChip {
+                                visible: !!(root.selectedCategory || {}).active
+                                label: "ACTIVE CATEGORY"
+                                tone: "healthy"
+                            }
+                            SummaryChip {
+                                visible: !(root.selectedCategory || {}).active
+                                label: "VIEWING"
+                                tone: "informational"
+                            }
+                        }
+                        Text {
+                            text: "Viewing a category never activates it. Use ‘Activate category now’ only when you deliberately want its configured behavior to choose a profile."
+                            color: deck.textMuted
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            DeckButton {
+                                text: "ACTIVATE CATEGORY NOW"
+                                enabled: !(root.selectedCategory || {}).active && !!(root.selectedCategory || {}).enabled && !root.usingPresentationFixture
+                                onClicked: backend.activateProfileCategory(root.selectedCategoryId)
+                            }
+                            DeckButton {
+                                text: "RENAME"
+                                subdued: true
+                                enabled: !root.usingPresentationFixture
+                                onClicked: {
+                                    renameCategoryDialog.categoryId = root.selectedCategoryId;
+                                    renameCategoryDialog.name = root.selectedCategory.name;
+                                    renameCategoryDialog.open();
+                                }
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            DeckButton {
+                                text: "+ PROFILE"
+                                enabled: !root.usingPresentationFixture
+                                onClicked: {
+                                    newProfileDialog.categoryId = root.selectedCategoryId;
+                                    newProfileDialog.open();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "GAME ASSOCIATIONS"
+                }
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: gameAssociationContent.implicitHeight + deck.space24
+                    ColumnLayout {
+                        id: gameAssociationContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        Text {
+                            text: backend.automaticGameDetection ? "When a configured game runs, HOTAS BF6 selects this category." : "Game detection is currently disabled globally; these associations are retained but will not select a category."
+                            color: deck.textSecondary
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Repeater {
+                            model: (root.selectedCategory || {}).executableRules || []
+                            delegate: Rectangle {
+                                required property string modelData
+                                readonly property var application: root.runningApplicationFor(modelData)
+                                Layout.fillWidth: true
+                                implicitHeight: gameRow.implicitHeight + deck.space16
+                                radius: deck.radiusControl
+                                color: deck.secondarySurface
+                                border.color: application ? deck.healthy : deck.border
+                                RowLayout {
+                                    id: gameRow
+                                    anchors.fill: parent
+                                    anchors.margins: deck.space8
+                                    spacing: deck.space8
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text {
+                                            text: root.friendlyGameName(modelData)
+                                            color: deck.textPrimary
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            text: modelData + "  ·  " + (application ? "RUNNING" : "CONFIGURED — NOT RUNNING")
+                                            color: application ? deck.healthy : deck.textMuted
+                                            font.family: deck.telemetryFont
+                                            font.pixelSize: 8
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    DeckButton {
+                                        text: "REMOVE"
+                                        subdued: true
+                                        enabled: !root.usingPresentationFixture
+                                        onClicked: root.removeGameRule(root.selectedCategoryId, modelData)
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: ((root.selectedCategory || {}).executableRules || []).length === 0
+                            text: "No games are associated. This category remains available for manual activation."
+                            color: deck.textMuted
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            DeckButton {
+                                text: backend.automaticGameDetection ? "DETECTION ON" : "DETECTION OFF"
+                                subdued: true
+                                enabled: !root.usingPresentationFixture
+                                onClicked: backend.setAutomaticGameDetection(!backend.automaticGameDetection)
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            DeckButton {
+                                text: "+ ADD GAME"
+                                enabled: !root.usingPresentationFixture
+                                onClicked: {
+                                    addGameDialog.categoryId = root.selectedCategoryId;
+                                    addGameDialog.open();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "WHEN THIS CATEGORY BECOMES ACTIVE"
+                }
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: behaviorContent.implicitHeight + deck.space24
+                    ColumnLayout {
+                        id: behaviorContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        Text {
+                            text: "Choose how HOTAS BF6 picks a profile after this category is selected manually or by game detection."
+                            color: deck.textSecondary
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        DeckCombo {
+                            id: categoryBehaviorSelector
+                            objectName: "flightDeckCategoryBehaviorSelector"
+                            Layout.fillWidth: true
+                            model: [
+                                {
+                                    name: "Keep the last profile I used",
+                                    value: true
+                                },
+                                {
+                                    name: "Always use a specific profile",
+                                    value: false
+                                }
+                            ]
+                            textRole: "name"
+                            valueRole: "value"
+                            currentIndex: (root.selectedCategory || {}).restoreLastProfile ? 0 : 1
+                            enabled: !root.usingPresentationFixture
+                            onActivated: function (index) {
+                                backend.setCategoryRestoreLastProfile(root.selectedCategoryId, index === 0);
+                            }
+                        }
+                        Text {
+                            text: (root.selectedCategory || {}).restoreLastProfile ? "HOTAS BF6 remembers the most recently active profile in this category. If it cannot be used, the category default or another enabled profile is used." : "HOTAS BF6 always chooses the specific profile below when this category becomes active."
+                            color: deck.textMuted
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            visible: !(root.selectedCategory || {}).restoreLastProfile
+                            Layout.fillWidth: true
+                            Text {
+                                text: "DEFAULT PROFILE"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 8
+                                font.bold: true
+                            }
+                            DeckCombo {
+                                id: categoryDefaultSelector
+                                objectName: "flightDeckCategoryDefaultProfileSelector"
+                                Layout.fillWidth: true
+                                model: root.profilesForCategory(root.selectedCategoryId)
+                                textRole: "name"
+                                valueRole: "id"
+                                currentIndex: {
+                                    const choices = root.profilesForCategory(root.selectedCategoryId);
+                                    for (let index = 0; index < choices.length; ++index) {
+                                        if (String(choices[index].id) === String((root.selectedCategory || {}).defaultProfileId || ""))
+                                            return index;
+                                    }
+                                    return 0;
+                                }
+                                enabled: !root.usingPresentationFixture
+                                onActivated: backend.setCategoryDefaultProfile(root.selectedCategoryId, currentValue)
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "PROFILES IN THIS CATEGORY"
+                }
+                Text {
+                    visible: root.profilesForCategory(root.selectedCategoryId).length === 0
+                    text: "No profiles are in this category yet."
+                    color: deck.textSecondary
+                    font.pixelSize: 10
+                    Layout.fillWidth: true
+                }
+                Flow {
+                    id: categoryProfileFlow
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Repeater {
+                        model: root.profilesForCategory(root.selectedCategoryId)
+                        delegate: ProfileCard {
+                            required property var modelData
+                            profile: modelData
+                        }
+                    }
+                }
+                SectionLabel {
+                    label: "ADVANCED"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    DeckButton {
+                        text: (root.selectedCategory || {}).enabled ? "DISABLE AUTO ACTIVATION" : "ENABLE AUTO ACTIVATION"
+                        subdued: true
+                        enabled: !(root.selectedCategory || {}).active && !root.usingPresentationFixture
+                        onClicked: backend.setProfileCategoryEnabled(root.selectedCategoryId, !(root.selectedCategory || {}).enabled)
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    DeckButton {
+                        text: "DELETE EMPTY CATEGORY"
+                        destructive: true
+                        enabled: Number((root.selectedCategory || {}).profileCount || 0) === 0 && !(root.selectedCategory || {}).active && !root.usingPresentationFixture
+                        onClicked: {
+                            deleteCategoryDialog.categoryId = root.selectedCategoryId;
+                            deleteCategoryDialog.name = root.selectedCategory.name;
+                            deleteCategoryDialog.open();
+                        }
+                    }
+                }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            visible: root.view === "profile"
+            Layout.preferredHeight: visible ? profileDetailColumn.implicitHeight : 0
+            ColumnLayout {
+                id: profileDetailColumn
+                width: parent.width
+                spacing: deck.space16
+
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: profileHeroContent.implicitHeight + deck.space24
+                    color: root.selectedDetail.active ? deck.selected : deck.elevatedSurface
+                    border.color: root.selectedDetail.active ? deck.accent : deck.focus
+                    ColumnLayout {
+                        id: profileHeroContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: String(root.selectedDetail.name || "Profile")
+                                    color: deck.textPrimary
+                                    font.family: deck.displayFont
+                                    font.pixelSize: 21
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: String(root.selectedDetail.category || "General") + "  /  " + String(root.selectedDetail.name || "Profile")
+                                    color: deck.textMuted
+                                    font.family: deck.telemetryFont
+                                    font.pixelSize: 9
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            SummaryChip {
+                                label: root.selectedDetail.active ? "ACTIVE AT RUNTIME" : "VIEWING FOR EDITING"
+                                tone: root.selectedDetail.active ? "healthy" : "informational"
+                            }
+                        }
+                        Text {
+                            text: root.selectedDetail.active ? "This is the base profile currently selected by HOTAS BF6." : "This profile is selected for editing only. It is not active until you explicitly activate it."
+                            color: deck.textSecondary
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            DeckButton {
+                                objectName: "flightDeckSelectedProfileActivate"
+                                text: root.selectedDetail.active ? "ACTIVE NOW" : "ACTIVATE PROFILE"
+                                enabled: !root.selectedDetail.active && !!root.selectedDetail.enabled && !root.usingPresentationFixture
+                                onClicked: root.activateProfile(root.selectedProfileId)
+                            }
+                            DeckButton {
+                                text: "OPEN CATEGORY"
+                                subdued: true
+                                onClicked: root.openCategory(root.selectedDetail.categoryId)
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            SummaryChip {
+                                visible: !root.selectedDetail.enabled
+                                label: "DISABLED"
+                                tone: "attention"
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "WHAT THIS PROFILE CONFIGURES"
+                }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: root.width >= 980 ? 2 : 1
+                    rowSpacing: deck.space12
+                    columnSpacing: deck.space12
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: axesSummary.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: axesSummary
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "AXES"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Text {
+                                text: Number(root.selectedDetail.mappedAxes || 0) + " configured"
+                                color: deck.textPrimary
+                                font.family: deck.displayFont
+                                font.pixelSize: 18
+                                font.bold: true
+                            }
+                            Text {
+                                text: root.selectedDetail.active ? "Open the native Axes workspace for this active profile." : "The current Axes editor is active-profile scoped. Viewing this profile never activates it."
+                                color: deck.textSecondary
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                objectName: "flightDeckConfigureAxes"
+                                text: root.selectedDetail.active ? "CONFIGURE AXES" : "ACTIVE PROFILE REQUIRED"
+                                subdued: true
+                                enabled: !!root.selectedDetail.active
+                                onClicked: root.openActiveProfileEditor(0)
+                            }
+                        }
+                    }
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: buttonsSummary.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: buttonsSummary
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "BUTTONS & HATS"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Text {
+                                text: Number(root.selectedDetail.mappedButtons || 0) + " buttons assigned  ·  " + Number(root.selectedDetail.mappedPovs || 0) + " POV routes"
+                                color: deck.textPrimary
+                                font.family: deck.displayFont
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                text: root.selectedDetail.active ? "Open the native Buttons workspace for this active profile." : "The current Buttons editor is active-profile scoped. No activation is performed here."
+                                color: deck.textSecondary
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                objectName: "flightDeckConfigureButtons"
+                                text: root.selectedDetail.active ? "CONFIGURE BUTTONS" : "ACTIVE PROFILE REQUIRED"
+                                subdued: true
+                                enabled: !!root.selectedDetail.active
+                                onClicked: root.openActiveProfileEditor(1)
+                            }
+                        }
+                    }
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: adaptiveSummary.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: adaptiveSummary
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "ADAPTIVE RESPONSE"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Text {
+                                text: Number(root.selectedDetail.adaptiveProfileOverrideAxes || 0) > 0 ? Number(root.selectedDetail.adaptiveProfileOverrideAxes) + " custom profile override" + (Number(root.selectedDetail.adaptiveProfileOverrideAxes) === 1 ? "" : "s") : "No profile-specific overrides"
+                                color: deck.textPrimary
+                                font.family: deck.displayFont
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                text: String(root.selectedDetail.adaptiveSource || "Inherited response defaults")
+                                color: deck.textSecondary
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                objectName: "flightDeckConfigureAdaptive"
+                                text: "CONFIGURE ADAPTIVE"
+                                subdued: true
+                                onClicked: root.openAdaptiveForSelectedProfile()
+                            }
+                        }
+                    }
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: automationSummary.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: automationSummary
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "AUTOMATION"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Text {
+                                text: Number(root.selectedDetail.automationCount || 0) + " related rule" + (Number(root.selectedDetail.automationCount || 0) === 1 ? "" : "s")
+                                color: deck.textPrimary
+                                font.family: deck.displayFont
+                                font.pixelSize: 16
+                                font.bold: true
+                            }
+                            Text {
+                                text: (root.selectedDetail.automations || []).length > 0 ? (root.selectedDetail.automations || []).map(function (rule) {
+                                    return rule.name || "Rule";
+                                }).join(" · ") : "No Automation rule currently references this profile."
+                                color: deck.textSecondary
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                objectName: "flightDeckOpenAutomation"
+                                text: "OPEN AUTOMATION"
+                                subdued: true
+                                onClicked: root.openAutomationForSelectedProfile()
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "EFFECTIVE CONFIGURATION"
+                }
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: inheritanceContent.implicitHeight + deck.space24
+                    ColumnLayout {
+                        id: inheritanceContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            SummaryChip {
+                                label: "MAPPINGS ARE PROFILE-SPECIFIC"
+                                tone: "informational"
+                            }
+                            SummaryChip {
+                                label: root.selectedDetail.curveTransitionSmoothingOverride ? "CURVE TRANSITION CUSTOM" : "CURVE TRANSITION INHERITED"
+                                tone: root.selectedDetail.curveTransitionSmoothingOverride ? "informational" : "healthy"
+                            }
+                        }
+                        Text {
+                            text: "Axes, buttons, and hats are stored with this profile. Adaptive Response can inherit Global → Category defaults until this profile defines an override."
+                            color: deck.textSecondary
+                            font.pixelSize: 10
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            text: "Adaptive Response: " + String(root.selectedDetail.adaptiveSource || "Built-in response defaults") + "  ·  Curve transfer: " + (root.selectedDetail.curveTransitionSmoothingOverride ? "Custom for this profile" : "Inherited from global settings")
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "GAME & RELATIONSHIPS"
+                }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: root.width >= 980 ? 2 : 1
+                    rowSpacing: deck.space12
+                    columnSpacing: deck.space12
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: gameProfileContent.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: gameProfileContent
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "CATEGORY & GAMES"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Text {
+                                text: String(root.selectedDetail.category || "General")
+                                color: deck.textPrimary
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+                            Text {
+                                text: (root.selectedDetail.categoryGames || []).length > 0 ? (root.selectedDetail.categoryGames || []).map(root.friendlyGameName).join(" · ") : "Manual category — no games linked"
+                                color: deck.textSecondary
+                                font.pixelSize: 10
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                text: String(root.selectedDetail.categoryActivationBehavior || "Category behavior unavailable")
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+                    FlightDeckCard {
+                        tokens: deck
+                        Layout.fillWidth: true
+                        implicitHeight: relationshipContent.implicitHeight + deck.space24
+                        ColumnLayout {
+                            id: relationshipContent
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
+                                text: "PROFILE REFERENCES"
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            Repeater {
+                                model: ((root.selectedDetail.relationships || {}).referencedBy || [])
+                                delegate: Text {
+                                    required property var modelData
+                                    text: "Used by  ·  " + String(modelData.profile || "Profile control") + "  ·  " + String(modelData.via || "Reference")
+                                    color: deck.textSecondary
+                                    font.pixelSize: 10
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            Repeater {
+                                model: ((root.selectedDetail.relationships || {}).references || [])
+                                delegate: Text {
+                                    required property var modelData
+                                    text: "References  ·  " + String(modelData.profile || "Profile") + "  ·  " + String(modelData.via || "Reference")
+                                    color: deck.textSecondary
+                                    font.pixelSize: 10
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            Text {
+                                visible: ((root.selectedDetail.relationships || {}).referencedBy || []).length === 0 && ((root.selectedDetail.relationships || {}).references || []).length === 0
+                                text: "No profile-control references were found."
+                                color: deck.textMuted
+                                font.pixelSize: 10
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "PROFILE ACTIONS"
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: deck.space8
+                    DeckButton {
+                        text: "RENAME"
+                        subdued: true
+                        enabled: !root.usingPresentationFixture && !root.selectedDetail.protected
+                        onClicked: {
+                            renameProfileDialog.profileId = root.selectedProfileId;
+                            renameProfileDialog.name = root.selectedDetail.name;
+                            renameProfileDialog.open();
+                        }
+                    }
+                    DeckButton {
+                        text: "DUPLICATE"
+                        subdued: true
+                        enabled: !root.usingPresentationFixture
+                        onClicked: {
+                            duplicateProfileDialog.profileId = root.selectedProfileId;
+                            duplicateProfileDialog.name = root.selectedDetail.name + " Copy";
+                            duplicateProfileDialog.categoryId = root.selectedDetail.categoryId;
+                            duplicateProfileDialog.open();
+                        }
+                    }
+                    DeckButton {
+                        text: "MOVE CATEGORY"
+                        subdued: true
+                        enabled: !root.usingPresentationFixture
+                        onClicked: {
+                            moveProfileDialog.profileId = root.selectedProfileId;
+                            moveProfileDialog.categoryId = root.selectedDetail.categoryId;
+                            moveProfileDialog.open();
+                        }
+                    }
+                    DeckButton {
+                        text: root.selectedDetail.enabled ? "DISABLE" : "ENABLE"
+                        subdued: true
+                        enabled: !root.selectedDetail.active && !root.usingPresentationFixture
+                        onClicked: backend.setProfileEnabled(root.selectedProfileId, !root.selectedDetail.enabled)
+                    }
+                    DeckButton {
+                        text: "DELETE PROFILE"
+                        destructive: true
+                        enabled: !root.selectedDetail.active && !root.selectedDetail.protected && !root.usingPresentationFixture
+                        onClicked: {
+                            deleteProfileDialog.profileId = root.selectedProfileId;
+                            deleteProfileDialog.name = root.selectedDetail.displayName || root.selectedDetail.name;
+                            deleteProfileDialog.open();
+                        }
+                    }
+                }
+            }
+        }
+        Item {
+            Layout.preferredHeight: deck.space12
+        }
+    }
+
+    component DeckDialog: Dialog {
+        id: dialog
+        property string heading: ""
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(480, root.width - deck.space32)
+        padding: deck.space16
+        standardButtons: Dialog.NoButton
+        background: Rectangle {
+            radius: deck.radiusPanel
+            color: deck.elevatedSurface
+            border.color: deck.border
+        }
+        header: Text {
+            x: deck.space16
+            y: deck.space16
+            width: dialog.width - deck.space32
+            height: implicitHeight + deck.space16
+            text: dialog.heading
+            color: deck.textPrimary
+            font.family: deck.displayFont
+            font.pixelSize: 17
+            font.bold: true
+        }
+    }
+
+    DeckDialog {
+        id: newCategoryDialog
+        heading: "New category"
+        contentItem: ColumnLayout {
+            width: newCategoryDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "CATEGORY NAME"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckField {
+                id: newCategoryName
+                Layout.fillWidth: true
+                placeholderText: "Battlefield"
+            }
+            Text {
+                text: "Categories group profiles and can optionally be selected when a configured game is running."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: newCategoryDialog.close()
+                }
+                DeckButton {
+                    text: "CREATE CATEGORY"
+                    enabled: newCategoryName.text.trim().length > 0
+                    onClicked: {
+                        if (backend.createProfileCategory(newCategoryName.text))
+                            newCategoryDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            newCategoryName.text = "";
+            newCategoryName.forceActiveFocus();
+        }
+    }
+
+    DeckDialog {
+        id: newProfileDialog
+        property string categoryId: ""
+        heading: "New profile"
+        contentItem: ColumnLayout {
+            width: newProfileDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "PROFILE NAME"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckField {
+                id: newProfileName
+                Layout.fillWidth: true
+                placeholderText: "Helicopter Precision"
+            }
+            Text {
+                text: "CATEGORY"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckCombo {
+                id: newProfileCategory
+                Layout.fillWidth: true
+                model: root.categories
+                textRole: "name"
+                valueRole: "id"
+                currentIndex: {
+                    for (let index = 0; index < root.categories.length; ++index) {
+                        if (String(root.categories[index].id) === String(newProfileDialog.categoryId))
+                            return index;
+                    }
+                    return 0;
+                }
+            }
+            Text {
+                text: "START FROM"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckCombo {
+                id: newProfileSource
+                Layout.fillWidth: true
+                model: root.profiles
+                textRole: "displayName"
+                valueRole: "id"
+                currentIndex: backend.activeProfileIndex
+            }
+            Text {
+                text: "A new profile copies the selected existing profile. Creating it does not activate it."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: newProfileDialog.close()
+                }
+                DeckButton {
+                    text: "CREATE PROFILE"
+                    enabled: newProfileName.text.trim().length > 0 && root.categories.length > 0
+                    onClicked: {
+                        if (backend.createProfileInCategory(newProfileName.text, newProfileCategory.currentValue, newProfileSource.currentValue))
+                            newProfileDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            newProfileName.text = "";
+            newProfileName.forceActiveFocus();
+        }
+    }
+
+    DeckDialog {
+        id: renameCategoryDialog
+        property string categoryId: ""
+        property string name: ""
+        heading: "Rename category"
+        contentItem: ColumnLayout {
+            width: renameCategoryDialog.availableWidth
+            spacing: deck.space12
+            DeckField {
+                id: renameCategoryName
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: renameCategoryDialog.close()
+                }
+                DeckButton {
+                    text: "RENAME"
+                    enabled: renameCategoryName.text.trim().length > 0
+                    onClicked: {
+                        if (backend.renameProfileCategory(renameCategoryDialog.categoryId, renameCategoryName.text))
+                            renameCategoryDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            renameCategoryName.text = name;
+            renameCategoryName.forceActiveFocus();
+        }
+    }
+
+    DeckDialog {
+        id: renameProfileDialog
+        property string profileId: ""
+        property string name: ""
+        heading: "Rename profile"
+        contentItem: ColumnLayout {
+            width: renameProfileDialog.availableWidth
+            spacing: deck.space12
+            DeckField {
+                id: renameProfileName
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: renameProfileDialog.close()
+                }
+                DeckButton {
+                    text: "RENAME"
+                    enabled: renameProfileName.text.trim().length > 0
+                    onClicked: {
+                        if (backend.renameProfile(renameProfileDialog.profileId, renameProfileName.text))
+                            renameProfileDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            renameProfileName.text = name;
+            renameProfileName.forceActiveFocus();
+        }
+    }
+
+    DeckDialog {
+        id: duplicateProfileDialog
+        property string profileId: ""
+        property string categoryId: ""
+        property string name: ""
+        heading: "Duplicate profile"
+        contentItem: ColumnLayout {
+            width: duplicateProfileDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "NEW PROFILE NAME"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckField {
+                id: duplicateProfileName
+                Layout.fillWidth: true
+            }
+            Text {
+                text: "DESTINATION CATEGORY"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckCombo {
+                id: duplicateProfileCategory
+                Layout.fillWidth: true
+                model: root.categories
+                textRole: "name"
+                valueRole: "id"
+                currentIndex: {
+                    for (let index = 0; index < root.categories.length; ++index)
+                        if (String(root.categories[index].id) === String(duplicateProfileDialog.categoryId))
+                            return index;
+                    return 0;
+                }
+            }
+            Text {
+                text: "This copies the profile's stored configuration. Category game rules and global Automation ownership are not duplicated."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: duplicateProfileDialog.close()
+                }
+                DeckButton {
+                    text: "DUPLICATE"
+                    enabled: duplicateProfileName.text.trim().length > 0
+                    onClicked: {
+                        if (backend.duplicateProfileToCategory(duplicateProfileDialog.profileId, duplicateProfileName.text, duplicateProfileCategory.currentValue))
+                            duplicateProfileDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            duplicateProfileName.text = name;
+            duplicateProfileName.forceActiveFocus();
+        }
+    }
+
+    DeckDialog {
+        id: moveProfileDialog
+        property string profileId: ""
+        property string categoryId: ""
+        heading: "Move profile"
+        contentItem: ColumnLayout {
+            width: moveProfileDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "DESTINATION CATEGORY"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckCombo {
+                id: moveProfileCategory
+                Layout.fillWidth: true
+                model: root.categories
+                textRole: "name"
+                valueRole: "id"
+                currentIndex: {
+                    for (let index = 0; index < root.categories.length; ++index)
+                        if (String(root.categories[index].id) === String(moveProfileDialog.categoryId))
+                            return index;
+                    return 0;
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: moveProfileDialog.close()
+                }
+                DeckButton {
+                    text: "MOVE"
+                    onClicked: {
+                        if (backend.moveProfileToCategory(moveProfileDialog.profileId, moveProfileCategory.currentValue))
+                            moveProfileDialog.close();
+                    }
+                }
+            }
+        }
+    }
+
+    DeckDialog {
+        id: deleteProfileDialog
+        property string profileId: ""
+        property string name: ""
+        heading: "Delete profile?"
+        contentItem: ColumnLayout {
+            width: deleteProfileDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "Delete ‘" + deleteProfileDialog.name + "’? This removes this profile and its profile-specific configuration. Active and protected baseline profiles cannot be deleted."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: deleteProfileDialog.close()
+                }
+                DeckButton {
+                    text: "DELETE PROFILE"
+                    destructive: true
+                    onClicked: {
+                        if (backend.deleteProfile(deleteProfileDialog.profileId)) {
+                            deleteProfileDialog.close();
+                            root.returnToLibrary();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    DeckDialog {
+        id: deleteCategoryDialog
+        property string categoryId: ""
+        property string name: ""
+        heading: "Delete empty category?"
+        contentItem: ColumnLayout {
+            width: deleteCategoryDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "Delete ‘" + deleteCategoryDialog.name + "’? Categories must be empty, inactive, and leave at least one category behind. No profiles are cascaded."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: deleteCategoryDialog.close()
+                }
+                DeckButton {
+                    text: "DELETE CATEGORY"
+                    destructive: true
+                    onClicked: {
+                        if (backend.deleteProfileCategory(deleteCategoryDialog.categoryId)) {
+                            deleteCategoryDialog.close();
+                            root.returnToLibrary();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    DeckDialog {
+        id: addGameDialog
+        property string categoryId: ""
+        heading: "Add game association"
+        contentItem: ColumnLayout {
+            width: addGameDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: "EXECUTABLE"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            DeckField {
+                id: gameExecutable
+                Layout.fillWidth: true
+                placeholderText: "bf6.exe"
+            }
+            Text {
+                text: "HOTAS BF6 stores the executable name for low-frequency game detection. Adding an association does not activate this category now."
+                color: deck.textSecondary
+                font.pixelSize: 10
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                DeckButton {
+                    text: "CANCEL"
+                    subdued: true
+                    onClicked: addGameDialog.close()
+                }
+                DeckButton {
+                    text: "ADD GAME"
+                    enabled: gameExecutable.text.trim().length > 0
+                    onClicked: {
+                        if (root.addGameRule(addGameDialog.categoryId, gameExecutable.text))
+                            addGameDialog.close();
+                    }
+                }
+            }
+        }
+        onOpened: {
+            gameExecutable.text = "";
+            gameExecutable.forceActiveFocus();
+        }
+    }
+}

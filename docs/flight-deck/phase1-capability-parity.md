@@ -89,3 +89,29 @@ of the established theme family.
 - Like Axes, the current Button/POV model is the selected-controller scope.
   Flight Deck directs controller selection and recovery to Devices & setup
   rather than claiming simultaneous multi-controller mapping.
+
+## Phase 6 profiles and categories presentation coverage
+
+- Flight Deck Profiles is a native category-first configuration surface over
+  the existing `AppBackend.profiles`, `profileCategories`, `profileDetail`,
+  running-application snapshot, and immediate-apply profile/category commands.
+  It does not retain a second profile store, activation state, game detector,
+  or inheritance implementation.
+- The Active Now hero reads the existing authoritative active category/profile
+  and profile-source values. Opening a category or profile sets presentation
+  selection only; the explicit Activate Profile and Activate Category actions
+  alone invoke the established activation commands.
+- Category cards and detail expose the actual executable rules, configured but
+  not-running state, automatic-detection switch, enabled state, and the two
+  existing category behaviors: restore the last-used profile or select a
+  category default. The existing portability flow remains reachable through a
+  deliberate handoff rather than a partial import/export rewrite.
+- Profile cards and detail use low-frequency configuration summaries for axes,
+  buttons, POV routes, Automation relationships, output context, and Adaptive
+  Response override sources. Axes and Buttons stay honest about their current
+  active-profile editor constraint; Adaptive Response accepts a presentation
+  profile target without activating it.
+- Profile create, duplicate, rename, move, enable/disable, and delete retain
+  existing model rules. Delete remains unavailable for an active or protected
+  profile; category delete remains limited to an empty, inactive category that
+  leaves another category in place.
