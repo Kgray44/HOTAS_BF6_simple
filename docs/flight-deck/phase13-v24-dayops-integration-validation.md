@@ -9,14 +9,16 @@ configuration rules.
 
 | Source point | SHA | Meaning |
 | --- | --- | --- |
-| Released V2.4.0 baseline | `15f3f4067fdd2dcb6705659c944b0e1142f5d80e` | `origin/main`, and the peeled target of annotated tag `v2.4.0`. |
+| Current released V2.4.0 baseline | `6f7e7a2` | Current `origin/main`, and the peeled target of annotated tag `v2.4.0`; includes the V2.4 schema-release acceptance repair. |
+| V2.4.0 Device Rigs source | `15f3f4067fdd2dcb6705659c944b0e1142f5d80e` | The preceding V2.4.0 Device Rigs and Setup Health product source. |
 | Accepted Flight Deck Phase 12 | `fc18eb7a113d6f49c0512f2928d9cd2df0c0ccb0` | Existing accepted parity-integration worktree source. |
 | Common merge base | `7bfa244e98d06219163c9c9cab4f562b60e0cf47` | Common ancestor used to audit both incoming changes. |
 | Phase 13 candidate | Recorded by the commit that adds this document | Local-only integration candidate on `codex/flight-deck-phase13-v24-integration`. |
 
-The candidate is based on V2.4.0, with Phase 12 merged into the isolated
-worktree. It is not merged, pushed, tagged, released, installed, or used in a
-live mapper session. Existing user processes and the parent worktree were not
+The candidate is based on current released V2.4.0, including its
+schema-release acceptance repair, with Phase 12 merged into the isolated
+worktree. It is not pushed, tagged, released, installed, or used in a live
+mapper session. Existing user processes and the parent worktree were not
 modified.
 
 ## Reconciliation result
@@ -68,8 +70,8 @@ toolchain, the MSVC 2022 x64 environment, and Ninja in `b15`.
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Release application build | Pass | `cmake --build b15 --config Release --target HOTASMapper --parallel 4` completed and deployed the candidate-local Qt runtime. |
-| Full CTest matrix | Pass | `ctest --test-dir b15 --output-on-failure -j 1` passed **12/12** in 116.68 s. |
-| Flight Deck QML lifecycle | Pass | The final full-matrix `app_qml_startup_tests` pass completed in 101.96 s after the V2.4 device-context and Day Ops switch reconciliation. A separate visual-capture invocation also passed in 104.45 s. |
+| Full CTest matrix | Pass | After merging the current V2.4 release-repair baseline, `ctest --test-dir b15 --output-on-failure -j 1` passed **12/12** in 114.20 s. |
+| Flight Deck QML lifecycle | Pass | The final current-baseline `app_qml_startup_tests` pass completed in 99.37 s after the V2.4 device-context and Day Ops switch reconciliation. A separate visual-capture invocation also passed in 104.45 s. |
 | Five-presentation lifecycle | Pass | Legacy, Standard, Top Gun, Day Ops, and preview Flight Deck run through the QML suite. The suite verifies Standard-to-Flight-Deck pointer selection and forward/back host switching through all four real themes. |
 | Configuration invariance | Pass, local fixture | Cross-presentation checks compare profile/category, axes, buttons, POVs, Automation, Adaptive Response, controllers, Device Rigs, edit context, vJoy device, disabled-axis value, and mapping request state before/after the presentation switches. |
 | Device Rig/App Health integration | Pass, local fixture | V2.4's Devices lifecycle, explicit single-device edit scope, Device Rig deletion transition, recovery/deep-link surfaces, and current Settings route remain in the same QML lifecycle traversal. |
