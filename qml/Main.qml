@@ -1,9 +1,9 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 
-// A single application window hosts exactly one presentation tree. Standard
-// Top Gun, and Day Ops are live token variants of Standard; Legacy loads the concrete
-// v1.6.3 surface. Neither path owns mapper state or the worker.
+// A single application window hosts exactly one presentation tree. Legacy,
+// Standard, Top Gun, and Day Ops remain token variants of the established
+// surfaces; Flight Deck owns an alternate shell over the same backend.
 ApplicationWindow {
     id: shell
     objectName: "hotasShell"
@@ -13,6 +13,7 @@ ApplicationWindow {
     minimumHeight: 650
     visible: true
     title: "HOTAS BF6"
+    property var flightDeckLearningDialog: null
     onClosing: function(close) {
         if (backend.keepRunningInTray && backend.trayAvailable) {
             close.accepted = false
@@ -20,9 +21,12 @@ ApplicationWindow {
         }
     }
     Theme { id: shellTheme }
-    color: shellTheme.background
+    color: themeManager.currentExperience === "Flight Deck" ? "#0b1219" : shellTheme.background
     font.family: shellTheme.displayFont
-    Component.onCompleted: backend.setTrayTheme(themeManager.currentTheme)
+    Component.onCompleted: {
+        backend.setTrayTheme(themeManager.currentTheme)
+        syncFlightDeckLearningDialog()
+    }
     Connections {
         target: themeManager
         function onCurrentThemeChanged() {
@@ -30,15 +34,33 @@ ApplicationWindow {
             const page = presentation.item && presentation.item.currentPage !== undefined ? presentation.item.currentPage : 8
             backend.recordCrashPresentationState(page, themeManager.currentTheme)
         }
+        function onCurrentExperienceChanged() { shell.syncFlightDeckLearningDialog() }
+    }
+
+    function syncFlightDeckLearningDialog() {
+        if (themeManager.currentExperience === "Flight Deck") {
+            if (!flightDeckLearningDialog)
+                flightDeckLearningDialog = flightDeckLearningDialogComponent.createObject(shell)
+            return
+        }
+        if (flightDeckLearningDialog) {
+            flightDeckLearningDialog.close()
+            flightDeckLearningDialog.destroy()
+            flightDeckLearningDialog = null
+        }
     }
 
     Component { id: legacySurface; Legacy { } }
     Component { id: standardSurface; Standard { } }
+    Component { id: flightDeckSurface; FlightDeck { learningDialog: shell.flightDeckLearningDialog } }
+    Component { id: flightDeckLearningDialogComponent; FlightDeckInputLearningDialog { } }
 
     Loader {
         id: presentation
         objectName: "presentationLoader"
         anchors.fill: parent
-        sourceComponent: themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface
+        sourceComponent: themeManager.currentExperience === "Flight Deck"
+            ? flightDeckSurface
+            : (themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface)
     }
 }

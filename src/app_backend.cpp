@@ -110,6 +110,14 @@ QString friendlyApplicationName(const QString &executable)
     return spaced.isEmpty() ? executable : spaced;
 }
 
+int adaptiveOverrideAxisCount(const AdaptiveResponseLayer &layer)
+{
+    return static_cast<int>(std::count_if(layer.axes.cbegin(), layer.axes.cend(),
+        [](const AdaptiveResponseAxisOverride &entry) {
+            return entry.properties != 0 || !entry.presetId.isEmpty();
+        }));
+}
+
 bool isUsefulRunningApplication(const QString &executable)
 {
     static const QSet<QString> excluded = {
@@ -1447,6 +1455,31 @@ void AppBackend::setSetupAssistantFactsForTest(const QVariantMap &facts)
     }
     emit stateChanged();
 }
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
+                                           int physicalPovCount, int continuousPovCapacity)
+{
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    const int buttonCount = std::clamp(physicalButtonCount, 0, kMaximumPhysicalButtons);
+    runtime.physicalConnected = buttonCount > 0 || physicalPovCount > 0;
+    runtime.buttonCount = buttonCount;
+    runtime.vjoyButtonCount = std::clamp(vjoyButtonCapacity, 0, kMaximumVirtualButtons);
+    runtime.povCount = std::clamp(physicalPovCount, 0, kMaximumPhysicalPovs);
+    runtime.vjoyContinuousPovCount = std::max(0, continuousPovCapacity);
+    runtime.vjoyDiscretePovCount = 0;
+    for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+        runtime.buttonAvailable[static_cast<size_t>(index)] = index < buttonCount;
+        runtime.physicalButtonPressed[static_cast<size_t>(index)] = false;
+        runtime.virtualButtonPressed[static_cast<size_t>(index)] = false;
+    }
+    for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+        runtime.povValues[static_cast<size_t>(index)] = -1;
+    }
+    rebuildButtonUiModel();
+    emit inputTelemetryChanged();
+    emit stateChanged();
+}
+#endif
 
 QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
                                                      int physicalAxis) const
@@ -2681,6 +2714,15 @@ QVariantList AppBackend::profiles() const
         item.insert(u"mappedPovs"_qs, mappedPovs);
         item.insert(u"customCurves"_qs, customCurves);
         item.insert(u"automationCount"_qs, automationCount);
+        const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile.adaptiveResponse);
+        const int categoryAdaptiveOverrides = category
+            ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+        item.insert(u"adaptiveOverrideAxes"_qs, profileAdaptiveOverrides);
+        item.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+            ? u"Custom profile response"_qs
+            : categoryAdaptiveOverrides > 0 ? u"Category response defaults"_qs
+                                        : u"Global response defaults"_qs);
+        item.insert(u"curveTransitionInherited"_qs, !profile.curveTransitionSmoothingOverride);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
         item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
         item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
@@ -2708,6 +2750,7 @@ QVariantList AppBackend::profileCategories() const
         item.insert(u"enabled"_qs, category.enabled);
         item.insert(u"restoreLastProfile"_qs, category.restoreLastProfile);
         item.insert(u"executableRules"_qs, category.executableRules);
+        item.insert(u"adaptiveOverrideAxes"_qs, adaptiveOverrideAxisCount(category.adaptiveResponse));
         result.append(item);
     }
     return result;
@@ -7006,6 +7049,7 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
+    detail.insert(u"protected"_qs, profile->id == normalProfileId());
     const CurveTransitionSmoothingSettings transitionSettings = sanitizedCurveTransitionSmoothing(
         profile->curveTransitionSmoothingOverride ? profile->curveTransitionSmoothing
                                                   : m_configuration.curveTransitionSmoothing);
@@ -7017,6 +7061,18 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
                   curveTransitionSmoothingEnabled());
     detail.insert(u"globalCurveTransitionDurationMs"_qs,
                   curveTransitionDurationMs());
+    const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile->adaptiveResponse);
+    const int categoryAdaptiveOverrides = category
+        ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+    const int globalAdaptiveOverrides = adaptiveOverrideAxisCount(m_configuration.adaptiveResponseGlobal);
+    detail.insert(u"adaptiveProfileOverrideAxes"_qs, profileAdaptiveOverrides);
+    detail.insert(u"adaptiveCategoryOverrideAxes"_qs, categoryAdaptiveOverrides);
+    detail.insert(u"adaptiveGlobalOverrideAxes"_qs, globalAdaptiveOverrides);
+    detail.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+        ? u"Custom response overrides in this profile"_qs
+        : categoryAdaptiveOverrides > 0 ? u"Inherited from this category"_qs
+        : globalAdaptiveOverrides > 0 ? u"Inherited from global defaults"_qs
+                                    : u"Built-in response defaults"_qs);
     QVariantList axes;
     QVariantList curves;
     int mappedAxes = 0;

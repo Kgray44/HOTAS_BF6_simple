@@ -4,6 +4,7 @@ import QtQuick.Layouts 6.5
 
 Page {
     id: root
+    objectName: "standardSurface"
     anchors.fill: parent
     padding: 0
 
@@ -21,10 +22,30 @@ Page {
     property bool deviceDetailsReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
     Component.onCompleted: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
+    // Flight Deck consumes this established page host during its Phase 1
+    // proof. Hiding only Standard's chrome preserves the existing page and
+    // dialog behavior without forking backend-facing QML.
+    property bool embedded: false
+    // Flight Deck owns one native Overview composition while this established
+    // host continues to own every route, dialog, and backend command.
+    property bool flightDeckMode: false
+    property var flightDeckReadiness: null
+    property string flightDeckDevicesContext: ""
+    // Flight Deck deep links carry only presentation selection. They never
+    // activate a profile, execute Automation, or change mapper configuration.
+    property string flightDeckProfileContext: ""
+    property string flightDeckAutomationContext: ""
+    property string flightDeckAdaptiveProfileContext: ""
+    // Flight Deck owns the shared learning modal at the alternate-shell
+    // level. Retain a first request until that preview-only surface arrives.
+    property string flightDeckLearningOperation: ""
+    property var flightDeckLearningArgument: null
+    property var flightDeckLearningDialog: null
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
     property var profileLibraryPresentationState: ({})
+    property var flightDeckProfilesPresentationState: ({})
     property var automationPresentationState: ({})
     property var curveEditorPresentationState: ({})
     // Keep telemetry-shaped QVariant lists out of pages that cannot render
@@ -86,6 +107,31 @@ Page {
             if (devices && devices.focusIssueTarget) devices.focusIssueTarget(target)
         })
     }
+    function requestFlightDeckLearning(operation, argument) {
+        flightDeckLearningOperation = operation
+        flightDeckLearningArgument = argument
+        dispatchFlightDeckLearning()
+    }
+    function dispatchFlightDeckLearning() {
+        const dialog = flightDeckLearningDialog
+        if (!dialog || flightDeckLearningOperation.length === 0)
+            return
+        const operation = flightDeckLearningOperation
+        const argument = flightDeckLearningArgument
+        flightDeckLearningOperation = ""
+        flightDeckLearningArgument = null
+        if (operation === "button") dialog.openButtonLearning()
+        else if (operation === "quick-buttons") dialog.openQuickButtons()
+        else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
+        else if (operation === "quick-axes") dialog.openQuickAxes()
+        else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+    }
+    function openFlightDeckButtonLearning() { requestFlightDeckLearning("button", null) }
+    function openFlightDeckQuickMap() { requestFlightDeckLearning("quick-buttons", null) }
+    function openFlightDeckAxisLearning(target) { requestFlightDeckLearning("axis", target) }
+    function openFlightDeckQuickAxisMap() { requestFlightDeckLearning("quick-axes", null) }
+    function openFlightDeckPovLearning(virtualButton) { requestFlightDeckLearning("pov", virtualButton) }
+    onFlightDeckLearningDialogChanged: dispatchFlightDeckLearning()
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -1037,6 +1083,10 @@ Page {
     }
 
     background: Rectangle {
+        // Flight Deck supplies the surrounding card surface. Keeping the
+        // standalone Standard background visible in its embedded host leaves
+        // an unnecessary full-surface item in the native pointer stack.
+        visible: !root.embedded
         color: theme.background
         gradient: Gradient { GradientStop { position: 0.0
  color: theme.shellGradientTop }
@@ -1066,7 +1116,8 @@ Page {
 
     header: Rectangle {
         id: headerBar
-        height: theme.topGun ? 92 : 58
+        visible: !root.embedded
+        height: visible ? (theme.topGun ? 92 : 58) : 0
         color: theme.header
         border.color: theme.border
         border.width: 1
@@ -1315,7 +1366,7 @@ Page {
     }
 
     footer: Rectangle {
-        visible: theme.topGun
+        visible: theme.topGun && !root.embedded
         height: visible ? 78 : 0
         color: "#0a1519"
         border.color: theme.border
@@ -1333,7 +1384,7 @@ Page {
 
     MouseArea { anchors.fill: parent
  z: 40
- visible: root.menuOpen
+ visible: root.menuOpen && !root.embedded
  onClicked: root.menuOpen = false }
     Panel {
         id: navigationOverlay
@@ -1344,7 +1395,7 @@ Page {
         height: 487
         opacity: root.menuOpen ? 1 : 0
         scale: root.menuOpen ? 1 : 0.97
-        visible: root.menuOpen
+        visible: root.menuOpen && !root.embedded
         color: theme.tooltip
         border.color: theme.borderStrong
         Behavior on opacity { NumberAnimation { duration: 130
@@ -1441,25 +1492,48 @@ Page {
     Item {
         id: pageHost
         anchors.fill: parent
- anchors.margins: 24
+ anchors.margins: root.embedded ? 0 : 24
         // Only the selected page owns a QML object tree. Editor and import
         // drafts are copied into lightweight root-owned state before unload.
         Loader {
             id: overviewPageLoader
             anchors.fill: parent
             active: root.currentPage === 8
-            sourceComponent: Component {
-                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
-                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+            sourceComponent: root.flightDeckMode ? flightDeckOverviewComponent : standardOverviewComponent
+        }
+        Component {
+            id: standardOverviewComponent
+            OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
+                onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+        }
+        Component {
+            id: flightDeckOverviewComponent
+            FlightDeckOverview {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: root.currentPage = page
+                onNavigateToDevices: function(context) {
+                    root.flightDeckDevicesContext = context
+                    root.currentPage = 2
+                }
             }
         }
         Loader {
             id: settingsPageLoader
             anchors.fill: parent
             active: root.currentPage === 4
-            sourceComponent: Component {
-                SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false
-                    onManageDevicesRequested: root.currentPage = 10 }
+            sourceComponent: root.flightDeckMode ? flightDeckSettingsComponent : standardSettingsComponent
+        }
+        Component {
+            id: standardSettingsComponent
+            SettingsPage { anchors.fill: parent; visible: root.currentPage === 4; legacy: false
+                onManageDevicesRequested: root.currentPage = 10 }
+        }
+        Component {
+            id: flightDeckSettingsComponent
+            FlightDeckSettings {
+                anchors.fill: parent
+                onNavigateToPage: function(page) { root.currentPage = page }
             }
         }
         Loader {
@@ -1495,18 +1569,53 @@ Page {
             id: profileLibraryLoader
             anchors.fill: parent
             active: root.currentPage === 5
-            sourceComponent: Component {
-                ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
-                    presentationState: root.profileLibraryPresentationState
-                    onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
-                    onNavigateToPage: function(page) { root.currentPage = page } }
+            sourceComponent: root.flightDeckMode ? flightDeckProfilesComponent : standardProfileLibraryComponent
+        }
+        Component {
+            id: standardProfileLibraryComponent
+            ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
+                presentationState: root.profileLibraryPresentationState
+                onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
+                onNavigateToPage: function(page) { root.currentPage = page }
+                Component.onCompleted: {
+                    if (root.flightDeckProfileContext.length > 0) {
+                        openProfile(root.flightDeckProfileContext)
+                        root.flightDeckProfileContext = ""
+                    }
+                } }
+        }
+        Component {
+            id: flightDeckProfilesComponent
+            FlightDeckProfiles {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                presentationState: root.flightDeckProfilesPresentationState
+                onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToAutomation: function(automationId) {
+                    root.flightDeckAutomationContext = automationId
+                    root.currentPage = 7
+                }
+                onNavigateToAdaptiveProfile: function(profileId) {
+                    root.flightDeckAdaptiveProfileContext = profileId
+                    root.currentPage = 9
+                }
+                Component.onCompleted: {
+                    if (root.flightDeckProfileContext.length > 0) {
+                        openProfile(root.flightDeckProfileContext)
+                        root.flightDeckProfileContext = ""
+                    }
+                }
             }
         }
         Loader {
             id: axesPageLoader
             anchors.fill: parent
             active: root.currentPage === 0
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckAxesComponent : standardAxesComponent
+        }
+        Component {
+            id: standardAxesComponent
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1746,13 +1855,44 @@ Page {
                 }
             }
         }
+        }
+        Component {
+            id: flightDeckAxesComponent
+            FlightDeckAxes {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onRequestAxisLearning: function(target) { root.openFlightDeckAxisLearning(target) }
+                onRequestQuickMap: root.openFlightDeckQuickAxisMap()
+            }
+        }
+        Component {
+            id: flightDeckButtonsComponent
+            FlightDeckButtons {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToProfile: function(profileId) {
+                    root.flightDeckProfileContext = profileId
+                    root.currentPage = 5
+                }
+                onNavigateToAutomation: function(automationId) {
+                    root.flightDeckAutomationContext = automationId
+                    root.currentPage = 7
+                }
+                onRequestButtonLearning: root.openFlightDeckButtonLearning()
+                onRequestQuickMap: root.openFlightDeckQuickMap()
+                onRequestPovLearning: function(virtualButton) { root.openFlightDeckPovLearning(virtualButton) }
             }
         }
         Loader {
             id: buttonsPageLoader
             anchors.fill: parent
             active: root.currentPage === 1
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckButtonsComponent : standardButtonsComponent
+        }
+        Component {
+            id: standardButtonsComponent
         Flickable {
             id: buttonsPage
             anchors.fill: parent
@@ -1836,13 +1976,24 @@ Page {
             }
         }
             }
-        }
         Loader {
             id: calibrationPageLoader
             anchors.fill: parent
             active: root.currentPage === 2
-            sourceComponent: Component {
-        Flickable {
+            sourceComponent: root.flightDeckMode ? flightDeckDevicesComponent : calibrationPageComponent
+        }
+        Component {
+            id: flightDeckDevicesComponent
+            FlightDeckDevices {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                requestedContext: root.flightDeckDevicesContext
+                onNavigateToPage: function(page) { root.currentPage = page }
+            }
+        }
+        Component {
+            id: calibrationPageComponent
+            Flickable {
             id: calibrationPage
             anchors.fill: parent
  visible: root.currentPage === 2
@@ -1952,14 +2103,16 @@ Page {
                     }
                 }
             }
-        }
             }
         }
         Loader {
             id: diagnosticsPageLoader
             anchors.fill: parent
             active: root.currentPage === 3
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckDiagnosticsComponent : standardDiagnosticsComponent
+        }
+        Component {
+            id: standardDiagnosticsComponent
         Flickable {
             id: diagnosticsPage
             anchors.fill: parent
@@ -2238,6 +2391,17 @@ Page {
                 }
             }
         }
+        }
+        Component {
+            id: flightDeckDiagnosticsComponent
+            FlightDeckDiagnostics {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToDevices: function(context) {
+                    root.flightDeckDevicesContext = context
+                    root.currentPage = 2
+                }
             }
         }
         Loader {
@@ -2257,15 +2421,54 @@ Page {
             sourceComponent: Component {
                 AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun
                     presentationState: root.automationPresentationState
-                    onPresentationStateCaptured: function(state) { root.automationPresentationState = state } }
+                    onPresentationStateCaptured: function(state) { root.automationPresentationState = state }
+                    Component.onCompleted: {
+                        if (root.flightDeckAutomationContext.length > 0) {
+                            openRuleById(root.flightDeckAutomationContext)
+                            root.flightDeckAutomationContext = ""
+                        }
+                    } }
             }
         }
         Loader {
             id: adaptiveResponsePageLoader
             anchors.fill: parent
             active: root.currentPage === 9
-            sourceComponent: Component {
-                AdaptiveResponsePage { anchors.fill: parent; visible: root.currentPage === 9; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
+            sourceComponent: root.flightDeckMode ? flightDeckAdaptiveResponseComponent : standardAdaptiveResponseComponent
+        }
+        Component {
+            id: flightDeckAdaptiveResponseComponent
+            FlightDeckAdaptiveResponse {
+                anchors.fill: parent
+                visible: root.currentPage === 9
+                backendObject: backend
+                profileContext: root.flightDeckAdaptiveProfileContext
+                Component.onCompleted: {
+                    if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                        editScope = "profile"
+                        targetId = root.flightDeckAdaptiveProfileContext
+                        setPreview()
+                        root.flightDeckAdaptiveProfileContext = ""
+                    }
+                }
+            }
+        }
+        Component {
+            id: standardAdaptiveResponseComponent
+            AdaptiveResponsePage {
+                anchors.fill: parent
+                visible: root.currentPage === 9
+                backendObject: backend
+                themeTokens: root.themeTokens
+                topGun: theme.topGun
+                Component.onCompleted: {
+                    if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                        editScope = "profile"
+                        targetId = root.flightDeckAdaptiveProfileContext
+                        setPreview()
+                        root.flightDeckAdaptiveProfileContext = ""
+                    }
+                }
             }
         }
     }
@@ -2437,6 +2640,8 @@ Page {
     Connections {
         target: backend
         function onInputLearningChanged() {
+            if (root.flightDeckMode)
+                return
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
             if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
             if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()

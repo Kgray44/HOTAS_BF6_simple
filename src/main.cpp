@@ -53,9 +53,15 @@ int main(int argc, char *argv[])
     if (const std::optional<int> repairExit = hotas::runElevatedRepairTransaction(argc, argv)) {
         return *repairExit;
     }
+    const bool flightDeckPreviewIsolated = hasArgument(argc, argv, "--flight-deck-preview-isolated");
     const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
-    if (isolatedStartupSmoke) {
+    // Phase 1 keeps the incomplete alternate shell out of the normal
+    // Appearance UI. This explicit development switch is the only route that
+    // enables its persisted presentation selection.
+    const bool flightDeckPreview = hasArgument(argc, argv, "--flight-deck-preview")
+        || flightDeckPreviewIsolated;
+    if (isolatedStartupSmoke || flightDeckPreviewIsolated) {
         // Keep a local package smoke run away from the user's established
         // QSettings location. CI upgrade acceptance intentionally uses the
         // ordinary smoke argument so it can verify the seeded migration.
@@ -101,7 +107,8 @@ int main(int argc, char *argv[])
     }
 
     hotas::AppBackend backend;
-    hotas::ThemeManager themeManager;
+    hotas::ThemeManager themeManager({}, flightDeckPreview);
+    if (flightDeckPreview) themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
