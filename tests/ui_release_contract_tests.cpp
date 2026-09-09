@@ -250,12 +250,12 @@ void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString context = sourceFile(QStringLiteral("qml/DeviceContextSelector.qml"));
 
-    // Devices owns ten transactional dialogs plus the batch-review dialog.
+    // Devices owns eleven transactional dialogs plus the batch-review dialog.
     // They must all use the shared header; otherwise Day Ops can silently
     // inherit a generic white Qt title bar even if its dialog body is themed.
     QVERIFY(devices.contains(QStringLiteral("component DeviceDialog: Dialog")));
     QVERIFY(devices.contains(QStringLiteral("header: ThemedDialogHeader")));
-    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 11);
+    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 12);
     QCOMPARE(devices.count(QStringLiteral("\n    Dialog {")), 0);
     QVERIFY(header.contains(QStringLiteral("property bool legacy")));
     QVERIFY(header.contains(QStringLiteral("theme.panelRaised")));
@@ -602,14 +602,32 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(devices.contains(QStringLiteral("5000")));
     QVERIFY(health.contains(QStringLiteral("x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))")));
     QVERIFY(health.contains(QStringLiteral("y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))")));
+    QVERIFY(health.contains(QStringLiteral("border.width: 2")));
+    QVERIFY(health.contains(QStringLiteral("implicitWidth: 32")));
     QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
     QVERIFY(assistant.contains(QStringLiteral("START LIVE TEST")));
-    QVERIFY(assistant.contains(QStringLiteral("summary.visibleSteps")));
+    QVERIFY(assistant.contains(QStringLiteral("VIEW ALL SETUP STEPS")));
+    QVERIFY(assistant.contains(QStringLiteral("guidedStepState")));
+    QVERIFY(assistant.contains(QStringLiteral("COPY DIAGNOSTICS")));
+    QVERIFY(assistant.contains(QStringLiteral("ThemedDialogHeader")));
+    QVERIFY(!assistant.contains(QStringLiteral("setupAssistantRelevantStep")));
     QVERIFY(assistant.contains(QStringLiteral("VIEW TECHNICAL DETAILS")));
     QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
     QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
     QVERIFY(devices.contains(QStringLiteral("CREATE OUTPUT")));
     QVERIFY(devices.contains(QStringLiteral("Copy ")));
+    QVERIFY(devices.contains(QStringLiteral("firstDeviceInputsPanel")));
+    QVERIFY(devices.contains(QStringLiteral("PHYSICAL INPUTS")));
+    QVERIFY(devices.contains(QStringLiteral("virtualInputsPanel")));
+    QVERIFY(devices.contains(QStringLiteral("Routing loop not allowed")));
+    QVERIFY(devices.contains(QStringLiteral("virtualOutputsInventoryPanel")));
+    QVERIFY(devices.contains(QStringLiteral("openStandaloneOutputCreator")));
+    QVERIFY(devices.contains(QStringLiteral("openStandaloneCreateOutputFromEmptyButton")));
+    QVERIFY(devices.contains(QStringLiteral("returnToOutputInventory")));
+    QVERIFY(devices.contains(QStringLiteral("BUTTON CAPACITY")));
+    QVERIFY(devices.contains(QStringLiteral("customButtonCapacityStepper")));
+    QVERIFY(devices.contains(QStringLiteral("customContinuousPovsStepper")));
+    QVERIFY(devices.contains(QStringLiteral("customDiscretePovsStepper")));
     QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
     QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("function focusIssueTarget(target)")));

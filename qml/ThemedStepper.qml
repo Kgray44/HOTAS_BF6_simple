@@ -20,8 +20,8 @@ Item {
         border.color: legacy ? "#435c66" : theme.border
     }
     RowLayout { anchors.fill: parent; anchors.margins: 2; spacing: 2
-        ThemedButton { theme: control.theme; text: "−"; compact: true; tone: "secondary"; commandEnabled: control.value > control.from; onTriggered: control.setClamped(control.value - control.stepSize) }
-        Text { Layout.fillWidth: true; text: control.value; horizontalAlignment: Text.AlignHCenter; color: legacy ? "#e3eeee" : theme.text; font.bold: true; font.pixelSize: 11; font.family: theme.telemetryFont }
-        ThemedButton { theme: control.theme; text: "+"; compact: true; tone: "secondary"; commandEnabled: control.value < control.to; onTriggered: control.setClamped(control.value + control.stepSize) }
+        ThemedButton { theme: control.theme; text: "−"; compact: true; tone: "secondary"; Layout.minimumWidth: 30; Layout.preferredWidth: 30; Layout.maximumWidth: 30; Layout.preferredHeight: control.implicitHeight - 4; commandEnabled: control.value > control.from; onTriggered: control.setClamped(control.value - control.stepSize) }
+        Text { Layout.fillWidth: true; Layout.minimumWidth: 32; text: control.value; horizontalAlignment: Text.AlignHCenter; color: legacy ? "#e3eeee" : theme.text; font.bold: true; font.pixelSize: 11; font.family: theme.telemetryFont }
+        ThemedButton { theme: control.theme; text: "+"; compact: true; tone: "secondary"; Layout.minimumWidth: 30; Layout.preferredWidth: 30; Layout.maximumWidth: 30; Layout.preferredHeight: control.implicitHeight - 4; commandEnabled: control.value < control.to; onTriggered: control.setClamped(control.value + control.stepSize) }
     }
 }

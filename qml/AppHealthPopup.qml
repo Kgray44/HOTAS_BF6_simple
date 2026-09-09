@@ -12,7 +12,7 @@ Popup {
 
     readonly property color panelColor: legacy ? "#182126" : (theme ? theme.panel : "#1a1d23")
     readonly property color insetColor: legacy ? "#10191d" : (theme ? theme.panelInset : "#10171b")
-    readonly property color borderColor: legacy ? "#49616b" : (theme ? theme.border : "#435660")
+    readonly property color borderColor: legacy ? "#6b909a" : (theme ? theme.borderStrong : "#6a8590")
     readonly property color textColor: legacy ? "#eef5f5" : (theme ? theme.text : "#e8eeee")
     readonly property color mutedColor: legacy ? "#9fb1b5" : (theme ? theme.textMuted : "#9dafb4")
     readonly property color readyColor: legacy ? "#9fcbbf" : (theme ? theme.ready : "#8fd5c9")
@@ -27,7 +27,7 @@ Popup {
     x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))
     y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: root.legacy ? 4 : (root.theme ? root.theme.panelRadius : 5) }
+    background: Rectangle { color: root.panelColor; border.color: root.borderColor; border.width: 2; radius: root.legacy ? 4 : (root.theme ? root.theme.panelRadius : 5) }
 
     function tone(issue) {
         if (!issue || issue.severity === "note" || issue.severity === "info") return mutedColor
@@ -51,7 +51,10 @@ Popup {
                 Text { text: "APP HEALTH"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
                 Text { text: root.health.ready ? "Everything important is ready" : root.health.label || "Needs attention"; color: root.health.ready ? root.readyColor : root.warningColor; font.pixelSize: 16; font.bold: true }
             }
-            Button { text: "×"; onClicked: root.close(); background: Rectangle { color: "transparent" } contentItem: Text { text: parent.text; color: root.mutedColor; font.pixelSize: 18; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } }
+            Button { text: "×"; Layout.alignment: Qt.AlignTop; implicitWidth: 32; implicitHeight: 32; padding: 0; onClicked: root.close()
+                background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: parent.hovered ? root.borderColor : "transparent"; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
+                contentItem: Text { text: parent.text; color: root.mutedColor; font.pixelSize: 20; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+            }
         }
         Text { visible: root.health.ready && root.health.noteCount > 0; Layout.fillWidth: true; text: root.health.noteCount + " non-blocking note" + (root.health.noteCount === 1 ? "" : "s") + " remain available below."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
         Repeater {

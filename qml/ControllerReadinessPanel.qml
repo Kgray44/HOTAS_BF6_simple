@@ -13,6 +13,8 @@ Item {
     property bool detailsExpanded: false
     property bool technicalDetailsExpanded: false
     property int liveTick: 0
+    property int selectedGuidedStep: -1
+    property string lastPrimaryIssueCode: ""
     property var actionResult: ({})
     readonly property var summary: backendObject ? backendObject.setupAssistantSummary : ({})
     readonly property var issues: backendObject ? backendObject.setupAssistantIssues : []
@@ -42,6 +44,32 @@ Item {
         return warningColor
     }
     function firstIssue() { return primaryIssue }
+    function guidedStepIndex(category) {
+        if (category === "PhysicalInput" || category === "Device") return 0
+        if (category === "VirtualOutput" || category === "Driver") return 1
+        if (category === "Visibility") return 2
+        return 3
+    }
+    function issueForGuidedStep(index) {
+        const categories = [["PhysicalInput", "Device"], ["VirtualOutput", "Driver"], ["Visibility"], ["LiveInput", "LiveOutput", "Calibration"]]
+        const wanted = categories[index] || []
+        for (let i = 0; i < issues.length; ++i) if (wanted.indexOf(issues[i].category) >= 0) return issues[i]
+        return ({})
+    }
+    function activeGuidedStep() {
+        return selectedGuidedStep >= 0 ? selectedGuidedStep : guidedStepIndex(primaryIssue.category || "")
+    }
+    function guidedStepState(index) {
+        const current = guidedStepIndex(primaryIssue.category || "")
+        const issue = issueForGuidedStep(index)
+        if (index === current && summary.state !== "READY") return "CURRENT"
+        if (!issue || summary.state === "READY") return "COMPLETE"
+        return index > current ? "BLOCKED" : "NEEDS ATTENTION"
+    }
+    function focusGuidedStep(index) {
+        selectedGuidedStep = Math.max(0, Math.min(3, index))
+        detailsExpanded = true
+    }
     function showActionResult(result) {
         actionResult = result || ({ success: false, title: "Action did not complete", message: "Try checking setup again." })
     }
@@ -75,6 +103,14 @@ Item {
         const steps = liveTest.steps || []
         for (let i = 0; i < steps.length; ++i) if (steps[i].state === "waiting") return steps[i].message
         return liveTest.complete ? "Live routes verified." : "Start the control test when you are ready."
+    }
+
+    onSummaryChanged: {
+        const nextCode = primaryIssue.code || ""
+        if (nextCode !== lastPrimaryIssueCode) {
+            lastPrimaryIssueCode = nextCode
+            selectedGuidedStep = guidedStepIndex(primaryIssue.category || "")
+        }
     }
 
     Timer {
@@ -116,45 +152,18 @@ Item {
         }
 
         ColumnLayout {
-            Layout.fillWidth: true; spacing: 8; visible: root.summary.state !== "READY"
-            Text { Layout.fillWidth: true; text: root.primaryIssue.title || "What needs attention"; color: root.textColor; font.pixelSize: 15; font.bold: true; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: root.primaryIssue.explanation || "HOTAS BF6 will guide you through the next step."; color: root.mutedColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; visible: root.primaryIssue.recommendedAction === "hide-from-games"; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap
-                text: "HOTAS BF6 will keep reading your controller, change only the selected game-visibility settings, and leave unrelated devices alone." }
-        }
-
-        ColumnLayout {
             Layout.fillWidth: true; spacing: 7; visible: root.summary.state === "READY"
             Text { Layout.fillWidth: true; text: "✓ Physical controller detected\n✓ Virtual controller ready\n✓ Game visibility checked\n✓ Controls ready to test"; color: root.textColor; font.pixelSize: 11; lineHeight: 1.4 }
             Text { Layout.fillWidth: true; visible: !!root.summary.secondaryMessage; text: root.summary.secondaryMessage || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-        }
-
-        // The backend chooses these from the structured setup issue.  Keep the
-        // first view focused on the relevant next task rather than making a
-        // new HOTAS owner decode a fixed diagnostics checklist.
-        Repeater {
-            model: root.summary.visibleSteps || []
-            delegate: Rectangle {
-                required property var modelData
-                objectName: "setupAssistantRelevantStep"
-                Layout.fillWidth: true
-                Layout.preferredHeight: relevantStepContents.implicitHeight + 20
-                color: root.panelColor; border.color: root.borderColor; radius: root.radius
-                ColumnLayout {
-                    id: relevantStepContents
-                    anchors.fill: parent; anchors.margins: 10; spacing: 4
-                    Text { text: "NEXT STEP  ·  " + (modelData.category || "SETUP").toUpperCase(); color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                    Text { Layout.fillWidth: true; text: modelData.title || "Continue setup"; color: root.textColor; font.pixelSize: 12; font.bold: true; wrapMode: Text.WordWrap }
-                    Text { Layout.fillWidth: true; text: modelData.message || "HOTAS BF6 will guide you through this step."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                }
-            }
         }
 
         RowLayout {
             Layout.fillWidth: true; spacing: 8
             ThemedButton { theme: root.themeTokens; text: root.summary.primaryActionLabel || "CHECK SETUP"; emphasis: "ready"
                 commandEnabled: root.backendObject && !root.backendObject.controllerSetupInProgress; onTriggered: root.performPrimaryAction() }
-            ThemedButton { theme: root.themeTokens; text: root.detailsExpanded ? "HIDE ALL SETUP DETAILS" : "VIEW ALL SETUP DETAILS"; tone: "secondary"; onTriggered: root.detailsExpanded = !root.detailsExpanded }
+            ThemedButton { theme: root.themeTokens; text: root.detailsExpanded ? "HIDE ALL SETUP STEPS" : "VIEW ALL SETUP STEPS"; tone: "secondary"; onTriggered: root.detailsExpanded = !root.detailsExpanded }
+            ThemedButton { visible: root.detailsExpanded; theme: root.themeTokens; text: "BACK"; compact: true; tone: "secondary"; commandEnabled: root.activeGuidedStep() > 0; onTriggered: root.focusGuidedStep(root.activeGuidedStep() - 1) }
+            ThemedButton { visible: root.detailsExpanded; theme: root.themeTokens; text: "NEXT"; compact: true; tone: "secondary"; commandEnabled: root.activeGuidedStep() < 3; onTriggered: root.focusGuidedStep(root.activeGuidedStep() + 1) }
             Item { Layout.fillWidth: true }
             ThemedButton { theme: root.themeTokens; text: root.summary.state === "READY" ? "DONE" : "CLOSE"; tone: "secondary"; onTriggered: root.closeRequested() }
         }
@@ -163,9 +172,16 @@ Item {
             objectName: "setupAssistantGuidedSteps"
             visible: root.detailsExpanded
             Layout.fillWidth: true; spacing: 12
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: physicalSteps.implicitHeight + 22; color: root.panelColor; border.color: root.borderColor; radius: root.radius
+            Rectangle { Layout.fillWidth: true; visible: root.activeGuidedStep() !== root.guidedStepIndex(root.primaryIssue.category || "") && root.summary.state !== "READY"; Layout.preferredHeight: visible ? focusedStepMessage.implicitHeight + 18 : 0; color: root.insetColor; border.color: root.warningColor; radius: root.radius
+                Text { id: focusedStepMessage; anchors.fill: parent; anchors.margins: 9; text: "This step is focused for review. Complete “" + (root.primaryIssue.title || "the current setup task") + "” first; HOTAS BF6 will advance here automatically when it succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: physicalSteps.implicitHeight + 22; color: root.panelColor; border.color: root.activeGuidedStep() === 0 ? root.warningColor : root.borderColor; radius: root.radius
                 ColumnLayout { id: physicalSteps; anchors.fill: parent; anchors.margins: 11; spacing: 5
-                    Text { text: "STEP 1  ·  PHYSICAL CONTROLLERS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "STEP 1  ·  PHYSICAL CONTROLLERS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: root.guidedStepState(0); onTriggered: root.focusGuidedStep(0) }
+                    }
                     Repeater { model: root.liveTest.steps || []
                         delegate: RowLayout { required property var modelData; visible: modelData.kind === "input"; Layout.fillWidth: true; spacing: 7
                             Rectangle { width: 7; height: 7; radius: 4; color: root.stateColor(modelData.state) }
@@ -177,9 +193,13 @@ Item {
                     Text { Layout.fillWidth: true; text: "A physical controller is the stick, throttle, pedals, or gamepad you connect to Windows."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 }
             }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: outputSteps.implicitHeight + 22; color: root.panelColor; border.color: root.borderColor; radius: root.radius
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: outputSteps.implicitHeight + 22; color: root.panelColor; border.color: root.activeGuidedStep() === 1 ? root.warningColor : root.borderColor; radius: root.radius
                 ColumnLayout { id: outputSteps; anchors.fill: parent; anchors.margins: 11; spacing: 5
-                    Text { text: "STEP 2  ·  VIRTUAL CONTROLLER"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "STEP 2  ·  VIRTUAL CONTROLLER"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: root.guidedStepState(1); onTriggered: root.focusGuidedStep(1) }
+                    }
                     Repeater { model: root.liveTest.steps || []
                         delegate: RowLayout { required property var modelData; visible: modelData.kind === "output"; Layout.fillWidth: true; spacing: 7
                             Rectangle { width: 7; height: 7; radius: 4; color: root.stateColor(modelData.state) }
@@ -190,16 +210,24 @@ Item {
                     Text { Layout.fillWidth: true; text: "Your game should use this virtual controller instead of each physical controller separately."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 }
             }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: visibilityStep.implicitHeight + 22; color: root.panelColor; border.color: root.borderColor; radius: root.radius
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: visibilityStep.implicitHeight + 22; color: root.panelColor; border.color: root.activeGuidedStep() === 2 ? root.warningColor : root.borderColor; radius: root.radius
                 ColumnLayout { id: visibilityStep; anchors.fill: parent; anchors.margins: 11; spacing: 6
-                    Text { text: "STEP 3  ·  GAME VISIBILITY"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "STEP 3  ·  GAME VISIBILITY"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: root.guidedStepState(2); onTriggered: root.focusGuidedStep(2) }
+                    }
                     Text { Layout.fillWidth: true; text: root.issues.filter(function(issue) { return issue.category === "Visibility" }).length > 0 ? "A physical controller is visible to games. This can cause duplicate controls." : "Physical controllers are checked so games can use the clean virtual controller."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
                     ThemedButton { theme: root.themeTokens; visible: root.primaryIssue.code === "PhysicalInputVisible"; text: "HIDE FROM GAMES"; emphasis: "ready"; commandEnabled: root.backendObject && root.primaryIssue.automaticallyFixable; onTriggered: fixConfirmation.open() }
                 }
             }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: liveSteps.implicitHeight + 22; color: root.panelColor; border.color: root.borderColor; radius: root.radius
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: liveSteps.implicitHeight + 22; color: root.panelColor; border.color: root.activeGuidedStep() === 3 ? root.warningColor : root.borderColor; radius: root.radius
                 ColumnLayout { id: liveSteps; anchors.fill: parent; anchors.margins: 11; spacing: 6
-                    Text { text: "STEP 4  ·  TEST CONTROLS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                    RowLayout { Layout.fillWidth: true
+                        Text { text: "STEP 4  ·  TEST CONTROLS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: root.guidedStepState(3); onTriggered: root.focusGuidedStep(3) }
+                    }
                     Text { Layout.fillWidth: true; text: root.liveTest.active ? root.nextLivePrompt() : "Start a live test, then move each physical controller and a mapped control."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
                     Repeater { model: root.liveTest.steps || []
                         delegate: RowLayout { required property var modelData; Layout.fillWidth: true; spacing: 7
@@ -225,10 +253,19 @@ Item {
         Rectangle { visible: root.technicalDetailsExpanded; Layout.fillWidth: true; Layout.preferredHeight: visible ? technicalColumn.implicitHeight + 22 : 0; color: root.insetColor; border.color: root.borderColor; radius: root.radius
             ColumnLayout { id: technicalColumn; anchors.fill: parent; anchors.margins: 11; spacing: 5
                 Text { text: "TECHNICAL DETAILS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                Text { Layout.fillWidth: true; text: "ISSUE  ·  " + (root.primaryIssue.code || "None"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "TARGET  ·  " + (root.summary.scope || "HOTAS BF6"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "CURRENT STATE  ·  " + (root.backendObject ? root.backendObject.controllerReadinessStatus : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "LAST CHECK  ·  " + (root.backendObject ? root.backendObject.controllerReadinessLastChecked : "Not recorded"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
                 Text { Layout.fillWidth: true; text: "Virtual controller: " + (root.backendObject ? root.backendObject.activeOutputLayoutDescriptor : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Repeater { model: root.backendObject ? root.backendObject.controllerReadinessChecks : []
+                    delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.name + "  ·  " + modelData.state + "\n" + modelData.message; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                }
                 Repeater { model: root.issues
                     delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.technicalDetails; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
                 }
+                ThemedButton { theme: root.themeTokens; text: "COPY DIAGNOSTICS"; tone: "secondary"; Layout.alignment: Qt.AlignLeft
+                    onTriggered: { const copied = root.backendObject && root.backendObject.copyControllerDiagnostics(); root.showActionResult({ success: copied, title: copied ? "Diagnostics copied" : "Diagnostics could not be copied", message: copied ? "The current setup evidence is ready to paste into a support request." : "Check the current setup state, then try copying diagnostics again." }) } }
             }
         }
     }
@@ -245,7 +282,7 @@ Item {
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: root.radius }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
-            Text { Layout.fillWidth: true; text: "Fix setup?"; color: root.textColor; font.pixelSize: 17; font.bold: true }
+            ThemedDialogHeader { Layout.fillWidth: true; theme: root.themeTokens; legacy: root.legacy; heading: "Fix setup?"; detail: "Review the managed change before it runs"; dialog: fixConfirmation }
             Text { Layout.fillWidth: true; text: "HOTAS BF6 will keep reading your physical controller, apply the recommended game-visibility change, and leave unrelated devices alone."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: root.themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: fixConfirmation.close() }

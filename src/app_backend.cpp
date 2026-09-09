@@ -5042,12 +5042,18 @@ QVariantList AppBackend::virtualOutputLayouts() const
         for (const ControllerProfile &profile : m_configuration.profiles) {
             profileCount += profile.outputLayoutId == layout.id ? 1 : 0;
         }
+        const bool active = currentProfile().outputLayoutId == layout.id;
+        const bool ready = active && !m_configuration.activeDeviceRigId.isEmpty();
+        const QString status = active
+            ? u"Active profile output — verify it from its Device Rig."_qs
+            : u"Saved layout — add it to a Device Rig to verify its live output."_qs;
         result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
             {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
             {u"buttons"_qs, layout.requirements.buttons},
             {u"continuousPovs"_qs, layout.requirements.continuousPovs},
             {u"discretePovs"_qs, layout.requirements.discretePovs},
-            {u"profileCount"_qs, profileCount}, {u"active"_qs, currentProfile().outputLayoutId == layout.id},
+            {u"profileCount"_qs, profileCount}, {u"active"_qs, active}, {u"ready"_qs, ready},
+            {u"status"_qs, status},
             {u"managedVisibility"_qs, layout.hidhideManaged},
             {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});
     }
@@ -8016,14 +8022,30 @@ QVariantMap AppBackend::startSetupAssistantCheckForScope(const QString &scopeTyp
 QVariantMap AppBackend::applySetupAssistantFix()
 {
     if (!m_readiness.plan().canApplyAutomatically) {
-        return actionResult(false, u"HOTAS BF6 cannot fix this automatically"_qs,
-                            u"Review the next step or open Technical Details for the exact requirement."_qs,
-                            u"application"_qs, {}, u"details"_qs);
+        const QVariantMap primary = setupAssistantSummary().value(u"primaryIssue"_qs).toMap();
+        const QString title = primary.value(u"title"_qs,
+            u"This setup step needs manual attention"_qs).toString();
+        const QString explanation = primary.value(u"explanation"_qs,
+            u"HOTAS BF6 cannot safely apply this change automatically. Review Technical Details for the exact requirement."_qs).toString();
+        const QString technical = primary.value(u"technicalDetails"_qs).toString();
+        return actionResult(false, title, explanation,
+                            primary.value(u"affectedObjectType"_qs, u"application"_qs).toString(),
+                            primary.value(u"affectedObjectId"_qs).toString(), u"details"_qs,
+                            u"VIEW TECHNICAL DETAILS"_qs,
+                            technical.isEmpty()
+                                ? QString(u"ISSUE: %1\nCURRENT STATE: %2"_qs)
+                                      .arg(primary.value(u"code"_qs, u"Unknown"_qs).toString(),
+                                           m_readiness.plan().status)
+                                : technical);
     }
     if (!applyControllerReadiness()) {
         return actionResult(false, u"HOTAS BF6 could not start the fix"_qs,
-                            u"No changes were applied. Check the setup status and try again."_qs,
-                            u"application"_qs, {}, u"check"_qs);
+                            m_readiness.plan().status.isEmpty()
+                                ? u"No changes were applied. Check the setup status and try again."_qs
+                                : m_readiness.plan().status,
+                            u"application"_qs, {}, u"check"_qs, u"CHECK AGAIN"_qs,
+                            QString(u"ATTEMPTED ACTION: automatic setup repair\nRESULT: %1"_qs)
+                                .arg(m_readiness.plan().status));
     }
     return actionResult(true, u"Fix started"_qs,
                         u"HOTAS BF6 is applying the recommended setup change and will check the result."_qs,

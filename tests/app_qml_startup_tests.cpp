@@ -1144,11 +1144,22 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     QObject *addMemberDialog = devices->findChild<QObject *>(QStringLiteral("addMemberDialog"));
     QObject *addOutputDialog = devices->findChild<QObject *>(QStringLiteral("addOutputDialog"));
     QObject *createOutputDialog = devices->findChild<QObject *>(QStringLiteral("createOutputDialog"));
+    QObject *virtualInputDialog = devices->findChild<QObject *>(QStringLiteral("addVirtualInputDialog"));
     QObject *visibilityDialog = devices->findChild<QObject *>(QStringLiteral("visibilityConfirmationDialog"));
     QObject *setupDialog = surface->findChild<QObject *>(QStringLiteral("controllerSetupDialog"));
-    if (!addMemberDialog || !addOutputDialog || !createOutputDialog || !visibilityDialog || !setupDialog) {
+    if (!addMemberDialog || !addOutputDialog || !createOutputDialog || !virtualInputDialog || !visibilityDialog || !setupDialog) {
         return failPresentationLifecycleTest(QStringLiteral("Devices action dialogs were not available"));
     }
+    if (!triggerDevicesControl(QStringLiteral("openAddVirtualInputButton"), QStringLiteral("Add Virtual Input"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("addVirtualInputDialog"), QStringLiteral("Add Virtual Input"))) return false;
+    QMetaObject::invokeMethod(virtualInputDialog, "close");
+
+    if (!triggerDevicesControl(QStringLiteral("openStandaloneCreateOutputButton"), QStringLiteral("Add Virtual Output"))) return false;
+    settlePresentation();
+    if (!requireVisibleDialog(QStringLiteral("createOutputDialog"), QStringLiteral("Add Virtual Output"))) return false;
+    QMetaObject::invokeMethod(createOutputDialog, "close");
+
     if (!triggerDevicesControl(QStringLiteral("addInputToRigButton"), QStringLiteral("Add Input"))) return false;
     settlePresentation();
     if (!requireVisibleDialog(QStringLiteral("addMemberDialog"), QStringLiteral("Add Input"))) return false;
@@ -1499,7 +1510,8 @@ bool verifyDevicesResponsiveLayout(QObject *surface, QWindow *shell, const QStri
     const QList<QSize> sizes{{640, 650}, {900, 650}, {1280, 720}, {1440, 900}, {1920, 1080}};
     const QStringList panels{QStringLiteral("activeRigPanel"), QStringLiteral("deviceRigListPanel"),
         QStringLiteral("rigDetailsPanel"), QStringLiteral("automaticBehaviorPanel"),
-        QStringLiteral("knownDevicesPanel")};
+        QStringLiteral("knownDevicesPanel"), QStringLiteral("virtualInputsPanel"),
+        QStringLiteral("virtualOutputsInventoryPanel")};
     for (const QSize &size : sizes) {
         shell->resize(size);
         settlePresentation();
