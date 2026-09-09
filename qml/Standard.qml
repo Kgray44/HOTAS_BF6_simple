@@ -1530,7 +1530,10 @@ Page {
             id: axesPageLoader
             anchors.fill: parent
             active: root.currentPage === 0
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckAxesComponent : standardAxesComponent
+        }
+        Component {
+            id: standardAxesComponent
         Flickable {
             id: axesPage
             anchors.fill: parent
@@ -1770,6 +1773,13 @@ Page {
                 }
             }
         }
+        }
+        Component {
+            id: flightDeckAxesComponent
+            FlightDeckAxes {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
             }
         }
         Loader {

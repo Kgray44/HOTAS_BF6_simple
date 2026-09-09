@@ -134,10 +134,12 @@ QQuickItem *findVisualItemByObjectName(QQuickItem *item, const QString &objectNa
     return nullptr;
 }
 
-bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *combo, int row)
+bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *combo, int row,
+                           bool requireSelectedRow = true)
 {
     auto *comboItem = qobject_cast<QQuickItem *>(combo);
     auto *scroll = surface->findChild<QQuickItem *>(QStringLiteral("adaptiveResponseScroll"));
+    if (!scroll) scroll = qobject_cast<QQuickItem *>(surface);
     if (!comboItem || !scroll) return failPresentationLifecycleTest(QStringLiteral("ResponseCombo did not expose a clickable item and scroll viewport"));
     // A real pointer sequence is deliberately used here. A retry covers the
     // transient frame where the popup is promoted into QQuickOverlay between
@@ -169,7 +171,8 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         QTest::qWait(8);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         settlePresentation();
-        if (!popup->property("visible").toBool() && combo->property("currentIndex").toInt() == row) return true;
+        if (!popup->property("visible").toBool()
+            && (!requireSelectedRow || combo->property("currentIndex").toInt() == row)) return true;
         QTest::keyClick(window, Qt::Key_Escape);
         settlePresentation();
     }
@@ -2382,11 +2385,13 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             nav->height() * 0.5)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
         settlePresentation();
+        QObject *loaded = pageItem(surface, page);
         if (surface->property("currentPage").toInt() != page
-            || !nav->property("selected").toBool()
-            || !pageItem(surface, page)) {
+            || !nav->property("selected").toBool() || !loaded) {
             return failPresentationLifecycleTest(QStringLiteral(
-                "Flight Deck route %1 did not update selected state and page host").arg(page));
+                "Flight Deck route %1 did not update selected state and page host (current=%2 selected=%3 loaded=%4)")
+                .arg(page).arg(surface->property("currentPage").toInt())
+                .arg(nav->property("selected").toBool()).arg(loaded != nullptr));
         }
     }
     if (!surface->setProperty("currentPage", 8)) {
@@ -2421,6 +2426,167 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     };
     if (!captureShell(QStringLiteral("normal"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at normal size")
+            .arg(appearance));
+    }
+
+    // Axis arrangements are presentation-only QML data. They cover the new
+    // native page without touching device discovery, persisted mappings, or
+    // mapper input state.
+    const auto axisFixture = [](int index, const QString &label, const QString &device,
+                                const QString &target, double input, double output,
+                                bool unipolar = false, bool disabled = false,
+                                bool unavailable = false) {
+        return QVariant::fromValue(QVariantMap{
+            {QStringLiteral("index"), index}, {QStringLiteral("key"), QStringLiteral("axis-%1").arg(index)},
+            {QStringLiteral("label"), label}, {QStringLiteral("hardwareLabel"), QStringLiteral("Axis %1").arg(index)},
+            {QStringLiteral("detail"), QStringLiteral("DirectInput axis %1").arg(index)},
+            {QStringLiteral("deviceName"), device}, {QStringLiteral("available"), true},
+            {QStringLiteral("fixed"), false}, {QStringLiteral("activity"), QStringLiteral("active")},
+            {QStringLiteral("calibrated"), input}, {QStringLiteral("transformed"), output},
+            {QStringLiteral("virtualValue"), output}, {QStringLiteral("target"), disabled ? QStringLiteral("Disabled") : target},
+            {QStringLiteral("virtualRouted"), !disabled && !unavailable},
+            {QStringLiteral("virtualValid"), !disabled && !unavailable},
+            {QStringLiteral("targetAvailable"), !unavailable}, {QStringLiteral("outputAlias"), QString{}},
+            {QStringLiteral("rangeMode"), unipolar ? QStringLiteral("oneSided") : QStringLiteral("centered")},
+            {QStringLiteral("rangeModeLabel"), unipolar ? QStringLiteral("One-Sided (0 to 100)") : QStringLiteral("Centered (-100 to +100)")},
+            {QStringLiteral("unipolar"), unipolar}, {QStringLiteral("inverted"), index == 1},
+            {QStringLiteral("deadzone"), index == 1 ? 0.08 : 0.02},
+            {QStringLiteral("hysteresis"), 0.0}, {QStringLiteral("outputMinimum"), unipolar ? 0.0 : -1.0},
+            {QStringLiteral("outputMaximum"), 1.0}, {QStringLiteral("curveSummary"), index == 2 ? QStringLiteral("S-Curve · 50%") : QStringLiteral("Linear · 0%")},
+            {QStringLiteral("customName"), QString{}},
+        });
+    };
+    const QVariantList fourAxisFixture{
+        axisFixture(0, QStringLiteral("Roll"), QStringLiteral("VKB Gunfighter IV"), QStringLiteral("X"), -0.43, -0.39),
+        axisFixture(1, QStringLiteral("Pitch Control With A Long Friendly Name"), QStringLiteral("VKB Gunfighter IV"), QStringLiteral("Y"), 0.24, -0.18),
+        axisFixture(2, QStringLiteral("Throttle"), QStringLiteral("VKB STECS Throttle"), QStringLiteral("Z"), 0.72, 0.68, true),
+        axisFixture(5, QStringLiteral("Yaw"), QStringLiteral("MFG Crosswind Pedals"), QStringLiteral("Rz"), 0.08, 0.08),
+    };
+    QVariantList eightAxisFixture = fourAxisFixture;
+    eightAxisFixture.append(axisFixture(3, QStringLiteral("Brake Axis With A Deliberately Long Friendly Name"),
+        QStringLiteral("VKB STECS Throttle · Long Device Identity"), QStringLiteral("Rx"), -0.12, -0.12));
+    eightAxisFixture.append(axisFixture(4, QStringLiteral("Trim"), QStringLiteral("VKB Gunfighter IV"),
+        QStringLiteral("Ry"), 0.31, 0.30));
+    eightAxisFixture.append(axisFixture(6, QStringLiteral("Left Brake"), QStringLiteral("MFG Crosswind Pedals"),
+        QStringLiteral("Slider 0"), 0.56, 0.56, true));
+    eightAxisFixture.append(axisFixture(7, QStringLiteral("Right Brake"), QStringLiteral("MFG Crosswind Pedals"),
+        QStringLiteral("Slider 1"), 0.48, 0.0, true, false, true));
+
+    if (!selectPage(surface, 0)) return false;
+    QObject *axes = pageItem(surface, 0);
+    if (!axes || axes->objectName() != QStringLiteral("flightDeckAxes")
+        || !axes->setProperty("axisPresentationOverride", fourAxisFixture)
+        || !axes->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native Axes page did not accept its test-only fixture")
+            .arg(appearance));
+    }
+    settlePresentation();
+    const QStringList expectedAxisChoices{QStringLiteral("Disabled"), QStringLiteral("X"),
+        QStringLiteral("Y"), QStringLiteral("Z"), QStringLiteral("Rx"),
+        QStringLiteral("Ry"), QStringLiteral("Rz"), QStringLiteral("Slider 0"),
+        QStringLiteral("Slider 1")};
+    const QStringList nativeAxisChoices = axes->property("outputChoices").toStringList();
+    auto *axesItem = qobject_cast<QQuickItem *>(axes);
+    const bool hasRollCard = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckAxisCard_0"));
+    const bool hasYawCard = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckAxisCard_5"));
+    if (nativeAxisChoices != expectedAxisChoices || !hasRollCard || !hasYawCard) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes selector/cards incomplete: choices=%2 expected=%3 visible=%4 roll=%5 yaw=%6")
+            .arg(appearance).arg(nativeAxisChoices.join(u"/"_qs)).arg(expectedAxisChoices.join(u"/"_qs))
+            .arg(axes->property("hasVisibleAxes").toBool()).arg(hasRollCard).arg(hasYawCard));
+    }
+    if (!backend.setAdaptiveResponsePreset(QStringLiteral("profile"), 0, QStringLiteral("fast"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes fixture could not apply the existing Fast Adaptive Response preset")
+            .arg(appearance));
+    }
+    if (!captureShell(QStringLiteral("axes-four-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 collapsed four-axis fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression configureAxis(qmlContext(axes), axes, QStringLiteral("configureAxis(0)"));
+    configureAxis.evaluate();
+    settlePresentation();
+    if (configureAxis.hasError() || backend.selectedAxisIndex() != 0
+        || axes->property("expandedAxisIndex").toInt() != 0
+        || !findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckMappingSelector_0"))
+        || !findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckResponsePreview_0"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview")
+            .arg(appearance));
+    }
+    // Exercise the actual native mapping selector, then its command path with
+    // three independent rows. Both must survive immediate model refresh.
+    if (!backend.setMapping(0, QStringLiteral("X"), true)
+        || !backend.setMapping(1, QStringLiteral("Y"), true)
+        || !backend.setMapping(2, QStringLiteral("Rz"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native mapping fixture could not establish independent routes")
+            .arg(appearance));
+    }
+    QObject *mappingSelector = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckMappingSelector_0"));
+    const int sliderChoice = expectedAxisChoices.indexOf(QStringLiteral("Slider 0"));
+    const bool selectorClicked = mappingSelector && sliderChoice >= 0
+        && clickResponseComboRow(window, axes, mappingSelector, sliderChoice, false);
+    const QString selectedRoute = targetForAxis(backend.axes(), 0);
+    if (!mappingSelector || sliderChoice < 0 || !selectorClicked
+        || selectedRoute != QStringLiteral("Slider 0")
+        || !backend.setMapping(0, QStringLiteral("X"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native mapping selector did not complete a pointer-selected route: selector=%2 choice=%3 clicked=%4 index=%5 route=%6")
+            .arg(appearance).arg(mappingSelector != nullptr).arg(sliderChoice).arg(selectorClicked)
+            .arg(mappingSelector ? mappingSelector->property("currentIndex").toInt() : -1).arg(selectedRoute));
+    }
+    QQmlExpression mapAxisB(qmlContext(axes), axes, QStringLiteral("requestMapping(1, 'Z', false)"));
+    const bool mapAxisBResult = mapAxisB.evaluate().toBool();
+    const QVariantList nativeMappedAxes = backend.axes();
+    if (mapAxisB.hasError() || !mapAxisBResult
+        || targetForAxis(nativeMappedAxes, 0) != QStringLiteral("X")
+        || targetForAxis(nativeMappedAxes, 1) != QStringLiteral("Z")
+        || targetForAxis(nativeMappedAxes, 2) != QStringLiteral("Rz")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 native mapping selector changed an unrelated route or did not persist Axis B -> Z")
+            .arg(appearance));
+    }
+    const QVariantMap beforeSettingsIsolation = targetForAxis(backend.axes(), 1).isEmpty()
+        ? QVariantMap{} : backend.axes().at(1).toMap();
+    backend.setAxisInverted(0, true);
+    backend.setAxisDeadzone(0, 0.11);
+    backend.setAxisOutputLimits(0, -0.72, 0.76);
+    backend.setSelectedAxis(0);
+    backend.setCurveFamily(QStringLiteral("S-Curve"));
+    const QVariantMap afterSettingsIsolation = backend.axes().at(1).toMap();
+    if (beforeSettingsIsolation.value(QStringLiteral("inverted")) != afterSettingsIsolation.value(QStringLiteral("inverted"))
+        || beforeSettingsIsolation.value(QStringLiteral("deadzone")) != afterSettingsIsolation.value(QStringLiteral("deadzone"))
+        || beforeSettingsIsolation.value(QStringLiteral("outputMinimum")) != afterSettingsIsolation.value(QStringLiteral("outputMinimum"))
+        || beforeSettingsIsolation.value(QStringLiteral("outputMaximum")) != afterSettingsIsolation.value(QStringLiteral("outputMaximum"))
+        || beforeSettingsIsolation.value(QStringLiteral("curveSummary")) != afterSettingsIsolation.value(QStringLiteral("curveSummary"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 axis response controls mutated a neighbouring axis")
+            .arg(appearance));
+    }
+    if (!captureShell(QStringLiteral("axes-expanded-response"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded response fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression closeAxis(qmlContext(axes), axes, QStringLiteral("configureAxis(0)"));
+    closeAxis.evaluate();
+    if (closeAxis.hasError()) return false;
+    if (!axes->setProperty("axisPresentationOverride", eightAxisFixture)) return false;
+    settlePresentation();
+    if (!findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckAxisCard_7"))
+        || !captureShell(QStringLiteral("axes-eight-multidevice-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 eight-axis multi-device fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression configureUnavailable(qmlContext(axes), axes, QStringLiteral("configureAxis(7)"));
+    configureUnavailable.evaluate();
+    axes->setProperty("contentY", std::max<qreal>(0.0,
+        axes->property("contentHeight").toReal() - axes->property("height").toReal()));
+    settlePresentation();
+    if (configureUnavailable.hasError() || !captureShell(QStringLiteral("axes-unavailable-output"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 unavailable-output fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression adaptiveDeepLink(qmlContext(axes), axes, QStringLiteral("openAdaptiveForAxis(0)"));
+    adaptiveDeepLink.evaluate();
+    settlePresentation();
+    if (adaptiveDeepLink.hasError() || surface->property("currentPage").toInt() != 9
+        || backend.selectedAxisIndex() != 0) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes Adaptive Response deep link did not preserve axis context")
             .arg(appearance));
     }
     if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-normal"))) {
@@ -2628,6 +2794,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at minimum size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 0)) return false;
+    QObject *minimumAxes = pageItem(surface, 0);
+    if (!minimumAxes || !minimumAxes->setProperty("axisPresentationOverride", eightAxisFixture)
+        || !minimumAxes->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"))
+        || !captureShell(QStringLiteral("axes-eight-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 constrained eight-axis fixture did not render")
+            .arg(appearance));
+    }
     devices = showDevicesFixture(readyVisualState, multiControllerFixture);
     if (!devices || !captureShell(QStringLiteral("devices-multi-minimum"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices multi-controller minimum state did not render")
@@ -2661,12 +2835,42 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at expanded size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 0)) return false;
+    QObject *expandedAxes = pageItem(surface, 0);
+    if (!expandedAxes || !expandedAxes->setProperty("axisPresentationOverride", eightAxisFixture)
+        || !expandedAxes->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"))) return false;
+    QQmlExpression expandWideAxis(qmlContext(expandedAxes), expandedAxes, QStringLiteral("configureAxis(0)"));
+    expandWideAxis.evaluate();
+    if (expandWideAxis.hasError() || !captureShell(QStringLiteral("axes-eight-expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded eight-axis fixture did not render")
+            .arg(appearance));
+    }
     devices = showDevicesFixture(readyVisualState, multiControllerFixture);
     if (!devices || !captureShell(QStringLiteral("devices-multi-expanded"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices multi-controller expanded state did not render")
             .arg(appearance));
     }
     if (!selectPage(surface, 8)) return false;
+    return true;
+}
+
+bool verifyFlightDeckAxesQmlLoad(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    QQmlComponent component(&engine);
+    component.loadFromModule(u"HOTASMapperStartupTest"_qs, u"FlightDeckAxes"_qs);
+    if (component.status() != QQmlComponent::Ready) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Axes component did not load: %1")
+            .arg(component.errorString()));
+    }
+    QObject *axes = component.create();
+    if (!axes) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Axes component did not create: %1")
+            .arg(component.errorString()));
+    }
+    delete axes;
     return true;
 }
 
@@ -2876,6 +3080,7 @@ int main(int argc, char *argv[])
     }
 
     for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
+        if (!verifyFlightDeckAxesQmlLoad(backend, themeManager)) return 1;
         if (!verifyFlightDeckShell(backend, themeManager, appearance)) return 1;
     }
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
