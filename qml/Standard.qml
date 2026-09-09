@@ -30,6 +30,10 @@ Page {
     property bool flightDeckMode: false
     property var flightDeckReadiness: null
     property string flightDeckDevicesContext: ""
+    // Flight Deck deep links carry only presentation selection. They never
+    // activate a profile, execute Automation, or change mapper configuration.
+    property string flightDeckProfileContext: ""
+    property string flightDeckAutomationContext: ""
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
@@ -95,6 +99,8 @@ Page {
             if (devices && devices.focusIssueTarget) devices.focusIssueTarget(target)
         })
     }
+    function openFlightDeckButtonLearning() { learnButtonDialog.open() }
+    function openFlightDeckQuickMap() { quickMapButtonDialog.open() }
 
     function axisAt(index) { return allAxes[index] }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
@@ -1523,7 +1529,13 @@ Page {
                 ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
                     presentationState: root.profileLibraryPresentationState
                     onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
-                    onNavigateToPage: function(page) { root.currentPage = page } }
+                    onNavigateToPage: function(page) { root.currentPage = page }
+                    Component.onCompleted: {
+                        if (root.flightDeckProfileContext.length > 0) {
+                            openProfile(root.flightDeckProfileContext)
+                            root.flightDeckProfileContext = ""
+                        }
+                    } }
             }
         }
         Loader {
@@ -1782,11 +1794,32 @@ Page {
                 onNavigateToPage: function(page) { root.currentPage = page }
             }
         }
+        Component {
+            id: flightDeckButtonsComponent
+            FlightDeckButtons {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToProfile: function(profileId) {
+                    root.flightDeckProfileContext = profileId
+                    root.currentPage = 5
+                }
+                onNavigateToAutomation: function(automationId) {
+                    root.flightDeckAutomationContext = automationId
+                    root.currentPage = 7
+                }
+                onRequestButtonLearning: root.openFlightDeckButtonLearning()
+                onRequestQuickMap: root.openFlightDeckQuickMap()
+            }
+        }
         Loader {
             id: buttonsPageLoader
             anchors.fill: parent
             active: root.currentPage === 1
-            sourceComponent: Component {
+            sourceComponent: root.flightDeckMode ? flightDeckButtonsComponent : standardButtonsComponent
+        }
+        Component {
+            id: standardButtonsComponent
         Flickable {
             id: buttonsPage
             anchors.fill: parent
@@ -1870,7 +1903,6 @@ Page {
             }
         }
             }
-        }
         Loader {
             id: calibrationPageLoader
             anchors.fill: parent
@@ -2302,7 +2334,13 @@ Page {
             sourceComponent: Component {
                 AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun
                     presentationState: root.automationPresentationState
-                    onPresentationStateCaptured: function(state) { root.automationPresentationState = state } }
+                    onPresentationStateCaptured: function(state) { root.automationPresentationState = state }
+                    Component.onCompleted: {
+                        if (root.flightDeckAutomationContext.length > 0) {
+                            openRuleById(root.flightDeckAutomationContext)
+                            root.flightDeckAutomationContext = ""
+                        }
+                    } }
             }
         }
         Loader {

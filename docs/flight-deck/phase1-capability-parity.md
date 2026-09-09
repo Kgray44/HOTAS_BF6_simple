@@ -21,7 +21,7 @@ of the established theme family.
 | Axis routing and processing | Axes workspace; shared mapping/configuration commands | Native Flight Deck Axes scan view with expanded routing, response, limits, advanced, and Adaptive Response handoff | Primary; unavailable/fixed inputs, route conflict, disabled/unsupported output, live/calibrated/output state, learn/quick-map |
 | Axis calibration | Calibration workspace and controller-scoped calibration state | Devices & setup with a contextual calibration entry point | Primary/contextual; range/center stages, success/failure, history, selected/offline controller |
 | Response curves | Curve editor; shared curve state and compiled LUT configuration | Axes deep link / advanced Curve editor | Advanced; preset/custom/point editing, undo/redo, comparison, live graph, validation and profile scope |
-| Button and POV routing | Buttons workspace; shared route and native-POV commands | Buttons; physical-control-to-output overview | Primary; press/live output, disabled, destination conflict, learn/quick-map, hat directions/native continuous or discrete routes |
+| Button and POV routing | Buttons workspace; shared route and native-POV commands | Native Flight Deck Buttons scan view with expanded physical-button and hat-direction configuration | Primary; press/live output, disabled, destination conflict, learn/quick-map, profile hold/toggle controls, mapping controls, Automation relationships, hat directions/native continuous or discrete routes |
 | Profiles and categories | Profile Library, `ProfileModel`, trigger runtime | Profiles; activation, automatic source, and category context primary | Primary; create/clone/rename/delete/move/duplicate, enabled/default/last active category, hold/toggle override, controller/layout compatibility |
 | Import and export | Profile Library portability flows and `ProfilePortability` | Profiles > Import/export, with preview before apply | Advanced/contextual; `.hbf6profile`/`.hbf6pack` validation, dependency preview, conflict handling, calibration opt-in |
 | Game association / detection | Profile Library and low-frequency trigger runtime | Profiles > Automatic activation | Automatic; automatic detection enabled/disabled, executable match transitions, manual base profile and runtime hold/toggle precedence |
@@ -62,3 +62,30 @@ of the established theme family.
   controller. Flight Deck presents that scope honestly and directs users to
   Devices & setup to select another connected controller; it does not invent
   simultaneous multi-controller routing.
+
+## Phase 5 button and POV presentation coverage
+
+- Flight Deck Buttons reads the existing bounded `AppBackend.buttons`,
+  `povs`, and `povInputs` presentation snapshots plus authoritative vJoy,
+  profile-trigger, mapping-control, native-POV, and Automation models. It
+  does not retain a second binding or action model.
+- Assigned physical buttons use compact, expandable cards with live
+  pressed/released state, a physical source label, configured output/profile/
+  mapping-control/Automation summary, and the existing immediate-apply
+  configuration commands. Unassigned physical buttons remain compact chips
+  that open the same focused editor.
+- The editor preserves the current custom button name, vJoy route and conflict
+  choices, profile target with Hold/Toggle behavior, mapping-control action,
+  and clear/unassign paths. It intentionally does not invent a generalized
+  action type or new press/release semantics.
+- Profile and Automation entries are relationships to the existing systems.
+  Their deep links carry presentation selection only; they do not activate a
+  profile, execute an Automation rule, or simulate a button press.
+- Hats stay explicit as existing discrete POV directions, including diagonals
+  when the authoritative `povInputs` model exposes them. Their selected
+  direction can use the existing vJoy route/profile trigger controls; optional
+  native continuous or discrete vJoy POV output remains a separate existing
+  configuration path.
+- Like Axes, the current Button/POV model is the selected-controller scope.
+  Flight Deck directs controller selection and recovery to Devices & setup
+  rather than claiming simultaneous multi-controller mapping.

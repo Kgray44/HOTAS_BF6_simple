@@ -1447,6 +1447,31 @@ void AppBackend::setSetupAssistantFactsForTest(const QVariantMap &facts)
     }
     emit stateChanged();
 }
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
+                                           int physicalPovCount, int continuousPovCapacity)
+{
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    const int buttonCount = std::clamp(physicalButtonCount, 0, kMaximumPhysicalButtons);
+    runtime.physicalConnected = buttonCount > 0 || physicalPovCount > 0;
+    runtime.buttonCount = buttonCount;
+    runtime.vjoyButtonCount = std::clamp(vjoyButtonCapacity, 0, kMaximumVirtualButtons);
+    runtime.povCount = std::clamp(physicalPovCount, 0, kMaximumPhysicalPovs);
+    runtime.vjoyContinuousPovCount = std::max(0, continuousPovCapacity);
+    runtime.vjoyDiscretePovCount = 0;
+    for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+        runtime.buttonAvailable[static_cast<size_t>(index)] = index < buttonCount;
+        runtime.physicalButtonPressed[static_cast<size_t>(index)] = false;
+        runtime.virtualButtonPressed[static_cast<size_t>(index)] = false;
+    }
+    for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+        runtime.povValues[static_cast<size_t>(index)] = -1;
+    }
+    rebuildButtonUiModel();
+    emit inputTelemetryChanged();
+    emit stateChanged();
+}
+#endif
 
 QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
                                                      int physicalAxis) const

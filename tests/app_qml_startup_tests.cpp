@@ -403,6 +403,29 @@ QString targetForAxis(const QVariantList &axes, int physicalAxis)
     return {};
 }
 
+int targetForButton(const QVariantList &buttons, int physicalButton)
+{
+    for (const QVariant &entry : buttons) {
+        const QVariantMap button = entry.toMap();
+        if (button.value(QStringLiteral("index")).toInt() == physicalButton) {
+            return button.value(QStringLiteral("target")).toInt();
+        }
+    }
+    return -1;
+}
+
+int targetForPovDirection(const QVariantList &povInputs, int hat, int direction)
+{
+    for (const QVariant &entry : povInputs) {
+        const QVariantMap input = entry.toMap();
+        if (input.value(QStringLiteral("hat")).toInt() == hat
+            && input.value(QStringLiteral("direction")).toInt() == direction) {
+            return input.value(QStringLiteral("target")).toInt();
+        }
+    }
+    return -1;
+}
+
 bool verifyAxisRouteTransactionAndPresentation(hotas::AppBackend &backend, QObject *surface)
 {
     // The first theme starts in the legacy profile context. Later themes
@@ -2589,6 +2612,257 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes Adaptive Response deep link did not preserve axis context")
             .arg(appearance));
     }
+
+    // This test-only fixture publishes the same bounded UI-facing button/POV
+    // snapshot a connected controller would provide. It does not enumerate a
+    // device, issue a report, or start virtual output; the selectors below
+    // still invoke the real AppBackend configuration commands.
+    backend.setButtonUiFixtureForTest(32, 32, 1, 1);
+    if (!backend.setButtonMapping(1, 1, true)
+        || !backend.setButtonMapping(2, 2, true)
+        || !backend.setButtonMapping(3, 3, true)
+        || !backend.setMappingControl(4, QStringLiteral("Toggle Mapping"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons fixture could not establish independent authoritative routes")
+            .arg(appearance));
+    }
+    const QVariantList profileChoices = backend.profileTriggerChoices();
+    const QString profileTargetId = profileChoices.size() > 1
+        ? profileChoices.at(1).toMap().value(QStringLiteral("id")).toString() : QString{};
+    if (!profileTargetId.isEmpty()
+        && !backend.setProfileTrigger(3, profileTargetId, QStringLiteral("Toggle"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons fixture could not configure the existing profile control")
+            .arg(appearance));
+    }
+    // An incomplete, disabled Automation draft is enough to exercise the
+    // presentation-only relationship and deep-link path. It cannot enter the
+    // runtime set or execute an output action.
+    const QString automationTargetId = backend.createAutomation();
+    if (automationTargetId.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons fixture could not create an Automation navigation target")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 1)) return false;
+    QObject *buttons = pageItem(surface, 1);
+    auto *buttonsItem = qobject_cast<QQuickItem *>(buttons);
+    const auto interactiveButton = [](int index, int target) {
+        return QVariant::fromValue(QVariantMap{
+            {QStringLiteral("index"), index}, {QStringLiteral("label"),
+                index == 1 ? QStringLiteral("Trigger") : QStringLiteral("Button %1").arg(index)},
+            {QStringLiteral("hardwareLabel"), QStringLiteral("Button %1").arg(index)},
+            {QStringLiteral("customName"), index == 1 ? QStringLiteral("Trigger") : QString{}},
+            {QStringLiteral("pressed"), false}, {QStringLiteral("target"), target},
+            {QStringLiteral("targetLabel"), QStringLiteral("vJoy Button %1").arg(target)},
+            {QStringLiteral("virtualPressed"), false}, {QStringLiteral("profileControlEnabled"), false},
+            {QStringLiteral("profileControlTargetId"), QString{}}, {QStringLiteral("profileControlTargetName"), QString{}},
+            {QStringLiteral("profileControlTargetAvailable"), false}, {QStringLiteral("profileControlMode"), QString{}},
+            {QStringLiteral("profileControlActive"), false}, {QStringLiteral("mappingControl"), QStringLiteral("None")},
+            {QStringLiteral("mappingControlKey"), QStringLiteral("none")},
+        });
+    };
+    const QVariantList interactiveButtons{interactiveButton(1, 1), interactiveButton(2, 2),
+        interactiveButton(3, 3), interactiveButton(4, 4)};
+    if (!buttons || !buttons->setProperty("buttonPresentationOverride", interactiveButtons)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons interactive presentation fixture could not be installed")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!buttons || buttons->objectName() != QStringLiteral("flightDeckButtons") || !buttonsItem
+        || !findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_1"))
+        || !findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_3"))) {
+        QQmlExpression visibleCount(qmlContext(buttons), buttons, QStringLiteral("visibleButtonCount()"));
+        const int count = visibleCount.evaluate().toInt();
+        QQmlExpression assignedCount(qmlContext(buttons), buttons, QStringLiteral("assignedButtonCount()"));
+        const int assigned = assignedCount.evaluate().toInt();
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not load native scan-first Buttons cards (fixture=%2 visible=%3 assigned=%4 cards=%5/%6)")
+            .arg(appearance).arg(buttons->property("buttonItems").toList().size()).arg(count)
+            .arg(assigned).arg(findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_1")) != nullptr)
+            .arg(findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_3")) != nullptr));
+    }
+    QQmlExpression configureButton(qmlContext(buttons), buttons, QStringLiteral("setExpandedButton(2)"));
+    configureButton.evaluate();
+    settlePresentation();
+    // Re-arm the bounded test snapshot immediately before the pointer action.
+    // The normal worker is allowed to continue publishing an empty physical
+    // state on this no-device host, so the test does not retain a fake device.
+    backend.setButtonUiFixtureForTest(32, 32, 1, 1);
+    if (!backend.setButtonMapping(1, 1, true)
+        || !backend.setButtonMapping(2, 2, true)
+        || !backend.setButtonMapping(3, 3, true)) return false;
+    settlePresentation();
+    QObject *buttonSelector = findVisualItemByObjectName(buttonsItem,
+        QStringLiteral("flightDeckButtonMappingSelector_2"));
+    const bool buttonSelectorClicked = buttonSelector
+        && clickResponseComboRow(window, buttons, buttonSelector, 7, false);
+    if (configureButton.hasError() || !buttonSelector || !buttonSelectorClicked
+        || targetForButton(backend.buttons(), 1) != 1
+        || targetForButton(backend.buttons(), 2) != 7
+        || targetForButton(backend.buttons(), 3) != 3) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 pointer-selected Button 2 -> vJoy 7 did not persist in isolation")
+            .arg(appearance));
+    }
+    QQmlExpression clearButton(qmlContext(buttons), buttons, QStringLiteral("requestButtonMapping(2, 0, false)"));
+    if (!clearButton.evaluate().toBool() || clearButton.hasError() || targetForButton(backend.buttons(), 2) != 0
+        || targetForButton(backend.buttons(), 1) != 1 || targetForButton(backend.buttons(), 3) != 3) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 clear assignment changed an unrelated button route")
+            .arg(appearance));
+    }
+    if (!profileTargetId.isEmpty()) {
+        QQmlExpression openProfile(qmlContext(buttons), buttons,
+            QStringLiteral("navigateToProfile('%1')").arg(profileTargetId));
+        openProfile.evaluate();
+        settlePresentation();
+        QObject *profiles = pageItem(surface, 5);
+        if (openProfile.hasError() || !profiles
+            || profiles->property("selectedProfileId").toString() != profileTargetId) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 profile deep link did not select its referenced profile")
+                .arg(appearance));
+        }
+        if (!selectPage(surface, 1)) return false;
+        buttons = pageItem(surface, 1);
+        buttonsItem = qobject_cast<QQuickItem *>(buttons);
+        if (!buttons || !buttonsItem) return false;
+    }
+    const auto buttonFixture = [](int index, const QString &label, int target, bool pressed,
+                                  bool profileControl = false, const QString &profileName = QString{},
+                                  const QString &mappingControl = QStringLiteral("None")) {
+        const QString hardwareLabel = QStringLiteral("Button %1").arg(index);
+        return QVariant::fromValue(QVariantMap{
+            {QStringLiteral("index"), index}, {QStringLiteral("label"), label},
+            {QStringLiteral("hardwareLabel"), hardwareLabel},
+            {QStringLiteral("customName"), label == hardwareLabel ? QString{} : label},
+            {QStringLiteral("pressed"), pressed}, {QStringLiteral("target"), target},
+            {QStringLiteral("targetLabel"), target > 0 ? QStringLiteral("vJoy Button %1").arg(target) : QStringLiteral("Disabled")},
+            {QStringLiteral("virtualPressed"), pressed && target > 0},
+            {QStringLiteral("profileControlEnabled"), profileControl},
+            {QStringLiteral("profileControlTargetId"), QStringLiteral("fixture-profile")},
+            {QStringLiteral("profileControlTargetName"), profileName},
+            {QStringLiteral("profileControlTargetAvailable"), profileControl},
+            {QStringLiteral("profileControlMode"), QStringLiteral("Toggle")},
+            {QStringLiteral("profileControlActive"), false},
+            {QStringLiteral("mappingControl"), mappingControl},
+            {QStringLiteral("mappingControlKey"), mappingControl == QStringLiteral("None") ? QStringLiteral("none") : QStringLiteral("toggleMapping")},
+        });
+    };
+    QVariantList mixedButtons{
+        buttonFixture(1, QStringLiteral("Trigger"), 1, true),
+        buttonFixture(2, QStringLiteral("Precision"), 2, false, true, QStringLiteral("BF6 / Helicopter Precision")),
+        buttonFixture(3, QStringLiteral("Button 3"), 0, false),
+        buttonFixture(4, QStringLiteral("Mapping switch"), 0, false, false, QString{}, QStringLiteral("Toggle Mapping")),
+        buttonFixture(5, QStringLiteral("A deliberately long physical control label for a throttle panel"), 9, false),
+        buttonFixture(6, QStringLiteral("Button 6"), 0, false),
+    };
+    QVariantList largeButtons = mixedButtons;
+    for (int index = 7; index <= 32; ++index) {
+        largeButtons.append(buttonFixture(index, QStringLiteral("Button %1").arg(index),
+            index <= 12 ? index : 0, false));
+    }
+    const QVariantList automationFixture{
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), automationTargetId},
+            {QStringLiteral("name"), QStringLiteral("Precision Mode Toggle")},
+            {QStringLiteral("conditionSummary"), QStringLiteral("Button 2 is pressed")},
+            {QStringLiteral("conditions"), QVariantList{QVariant::fromValue(QVariantMap{
+                {QStringLiteral("type"), 11}, {QStringLiteral("button"), 2}})}}}),
+    };
+    const auto povFixture = []() {
+        return QVariant::fromValue(QVariantMap{{QStringLiteral("index"), 1},
+            {QStringLiteral("centered"), false}, {QStringLiteral("direction"), QStringLiteral("Up")},
+            {QStringLiteral("angle"), 0}, {QStringLiteral("nativeEnabled"), false},
+            {QStringLiteral("nativeTargetKey"), QString{}}, {QStringLiteral("nativeTargetLabel"), QStringLiteral("Off")},
+            {QStringLiteral("nativeAvailable"), true}, {QStringLiteral("nativeStatus"), QStringLiteral("OFF")}});
+    };
+    const QStringList directionNames{QStringLiteral("Up"), QStringLiteral("Up-Right"),
+        QStringLiteral("Right"), QStringLiteral("Down-Right"), QStringLiteral("Down"),
+        QStringLiteral("Down-Left"), QStringLiteral("Left"), QStringLiteral("Up-Left")};
+    QVariantList povInputFixture;
+    for (int direction = 0; direction < directionNames.size(); ++direction) {
+        povInputFixture.append(QVariant::fromValue(QVariantMap{{QStringLiteral("hat"), 1},
+            {QStringLiteral("direction"), direction}, {QStringLiteral("label"), directionNames.at(direction)},
+            {QStringLiteral("active"), direction == 0}, {QStringLiteral("target"), direction == 0 ? 10 : 0},
+            {QStringLiteral("targetLabel"), direction == 0 ? QStringLiteral("vJoy Button 10") : QStringLiteral("Disabled")},
+            {QStringLiteral("virtualPressed"), direction == 0}, {QStringLiteral("profileControlEnabled"), false},
+            {QStringLiteral("profileControlTargetId"), QString{}}, {QStringLiteral("profileControlTargetName"), QString{}},
+            {QStringLiteral("profileControlTargetAvailable"), false}, {QStringLiteral("profileControlMode"), QString{}},
+            {QStringLiteral("profileControlActive"), false}}));
+    }
+    if (!buttons->setProperty("buttonPresentationOverride", mixedButtons)
+        || !buttons->setProperty("povPresentationOverride", QVariantList{povFixture()})
+        || !buttons->setProperty("povInputsPresentationOverride", povInputFixture)
+        || !buttons->setProperty("automationPresentationOverride", automationFixture)
+        || !buttons->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV · Long Device Name"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons visual fixture could not be installed")
+            .arg(appearance));
+    }
+    settlePresentation();
+    auto *automationButton = findVisualItemByObjectName(buttonsItem,
+        QStringLiteral("flightDeckButtonCard_2"));
+    if (!automationButton || automationButton->property("automations").toList().size() != 1) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons page did not expose its existing Automation relationship")
+            .arg(appearance));
+    }
+    QQmlExpression openAutomation(qmlContext(buttons), buttons,
+        QStringLiteral("navigateToAutomation('%1')").arg(automationTargetId));
+    openAutomation.evaluate();
+    settlePresentation();
+    QObject *automation = pageItem(surface, 7);
+    if (openAutomation.hasError() || !automation
+        || automation->property("editingId").toString() != automationTargetId) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation deep link did not select its referenced rule")
+            .arg(appearance));
+    }
+    if (!backend.deleteAutomation(automationTargetId) || !selectPage(surface, 1)) return false;
+    buttons = pageItem(surface, 1);
+    buttonsItem = qobject_cast<QQuickItem *>(buttons);
+    if (!buttons || !buttonsItem
+        || !buttons->setProperty("buttonPresentationOverride", mixedButtons)
+        || !buttons->setProperty("povPresentationOverride", QVariantList{povFixture()})
+        || !buttons->setProperty("povInputsPresentationOverride", povInputFixture)
+        || !buttons->setProperty("automationPresentationOverride", automationFixture)
+        || !buttons->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV · Long Device Name"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Buttons fixture could not be restored after Automation navigation")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_1"))
+        || !findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckHatCard_1"))
+        || !captureShell(QStringLiteral("buttons-mixed-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 mixed Buttons/Hat fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression configureHat(qmlContext(buttons), buttons, QStringLiteral("setExpandedPov(1, 0)"));
+    configureHat.evaluate();
+    settlePresentation();
+    backend.setButtonUiFixtureForTest(32, 32, 1, 1);
+    if (!backend.setPovMapping(1, 0, 10, true)
+        || !backend.setPovMapping(1, 1, 11, true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Hat fixture could not establish independent direction routes")
+            .arg(appearance));
+    }
+    buttons->setProperty("contentY", std::max<qreal>(0.0,
+        buttons->property("contentHeight").toReal() - buttons->property("height").toReal()));
+    settlePresentation();
+    QObject *povSelector = findVisualItemByObjectName(buttonsItem,
+        QStringLiteral("flightDeckPovMappingSelector_1_0"));
+    const bool povSelectorClicked = povSelector
+        && clickResponseComboRow(window, buttons, povSelector, 5, false);
+    if (configureHat.hasError() || !povSelector || !povSelectorClicked
+        || targetForPovDirection(backend.povInputs(), 1, 0) != 5
+        || targetForPovDirection(backend.povInputs(), 1, 1) != 11
+        || !captureShell(QStringLiteral("buttons-hat-expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Hat direction selector did not preserve adjacent direction routes (selector=%2 up=%3 upRight=%4)")
+            .arg(appearance).arg(povSelectorClicked)
+            .arg(targetForPovDirection(backend.povInputs(), 1, 0))
+            .arg(targetForPovDirection(backend.povInputs(), 1, 1)));
+    }
+    if (!buttons->setProperty("buttonPresentationOverride", largeButtons)
+        || !captureShell(QStringLiteral("buttons-large-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 large button fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression filterUnassigned(qmlContext(buttons), buttons, QStringLiteral("filterMode = 'unassigned'; visibleButtonCount()"));
+    if (filterUnassigned.evaluate().toInt() <= 0 || filterUnassigned.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 presentation-only button filtering did not retain unassigned controls")
+            .arg(appearance));
+    }
     if (!selectPage(surface, 2) || !captureShell(QStringLiteral("devices-empty-normal"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Devices empty state did not render")
             .arg(appearance));
@@ -2794,6 +3068,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not render at minimum size")
             .arg(appearance));
     }
+    if (!selectPage(surface, 1)) return false;
+    buttons = pageItem(surface, 1);
+    buttonsItem = qobject_cast<QQuickItem *>(buttons);
+    if (!buttons || !buttonsItem
+        || !buttons->setProperty("buttonPresentationOverride", largeButtons)
+        || !buttons->setProperty("povPresentationOverride", QVariantList{povFixture()})
+        || !buttons->setProperty("povInputsPresentationOverride", povInputFixture)
+        || !buttons->setProperty("automationPresentationOverride", automationFixture)
+        || !buttons->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"))
+        || !buttons->setProperty("filterMode", QStringLiteral("all"))
+        || !buttons->setProperty("expandedButtonIndex", -1)
+        || !buttons->setProperty("expandedHatIndex", -1)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 minimum Buttons fixture could not be installed")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonCard_1"))
+        || !captureShell(QStringLiteral("buttons-large-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 minimum Buttons fixture did not render")
+            .arg(appearance));
+    }
     if (!selectPage(surface, 0)) return false;
     QObject *minimumAxes = pageItem(surface, 0);
     if (!minimumAxes || !minimumAxes->setProperty("axisPresentationOverride", eightAxisFixture)
@@ -2843,6 +3138,28 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     expandWideAxis.evaluate();
     if (expandWideAxis.hasError() || !captureShell(QStringLiteral("axes-eight-expanded"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded eight-axis fixture did not render")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 1)) return false;
+    buttons = pageItem(surface, 1);
+    buttonsItem = qobject_cast<QQuickItem *>(buttons);
+    if (!buttons || !buttonsItem
+        || !buttons->setProperty("buttonPresentationOverride", mixedButtons)
+        || !buttons->setProperty("povPresentationOverride", QVariantList{povFixture()})
+        || !buttons->setProperty("povInputsPresentationOverride", povInputFixture)
+        || !buttons->setProperty("automationPresentationOverride", automationFixture)
+        || !buttons->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"))
+        || !buttons->setProperty("filterMode", QStringLiteral("all"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded Buttons fixture could not be installed")
+            .arg(appearance));
+    }
+    QQmlExpression expandWideButton(qmlContext(buttons), buttons, QStringLiteral("setExpandedButton(1)"));
+    expandWideButton.evaluate();
+    settlePresentation();
+    if (expandWideButton.hasError()
+        || !findVisualItemByObjectName(buttonsItem, QStringLiteral("flightDeckButtonMappingSelector_1"))
+        || !captureShell(QStringLiteral("buttons-expanded"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded Buttons fixture did not render")
             .arg(appearance));
     }
     devices = showDevicesFixture(readyVisualState, multiControllerFixture);

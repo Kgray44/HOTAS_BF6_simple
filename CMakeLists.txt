@@ -116,6 +116,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckAxisValueMeter.qml
         qml/FlightDeckResponsePreview.qml
         qml/FlightDeckAxes.qml
+        qml/FlightDeckButtons.qml
         qml/FlightDeckOverview.qml
         qml/FlightDeckDevices.qml
         qml/Theme.qml
@@ -492,6 +493,7 @@ if (BUILD_TESTING)
             qml/FlightDeckAxisValueMeter.qml
             qml/FlightDeckResponsePreview.qml
             qml/FlightDeckAxes.qml
+            qml/FlightDeckButtons.qml
             qml/FlightDeckOverview.qml
             qml/FlightDeckDevices.qml
             qml/Theme.qml
@@ -543,6 +545,7 @@ if (BUILD_TESTING)
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES

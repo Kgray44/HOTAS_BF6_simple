@@ -205,6 +205,11 @@ public:
     void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
+#ifdef HOTAS_STARTUP_TESTING
+    // Startup-test-only mutation of the bounded published UI snapshot. The
+    // production worker exposes only the const observer above.
+    AtomicRuntimeState &runtimeForTest() { return m_runtime; }
+#endif
     // Deterministic test seam for the UI-side live-input contract. It writes
     // the same fixed latest-snapshot atomics DirectInput normally publishes;
     // it never enters the mapper report path or opens vJoy.
