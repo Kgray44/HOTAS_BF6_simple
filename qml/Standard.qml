@@ -34,10 +34,13 @@ Page {
     // activate a profile, execute Automation, or change mapper configuration.
     property string flightDeckProfileContext: ""
     property string flightDeckAutomationContext: ""
+    property string flightDeckAdaptiveProfileContext: ""
+    property bool flightDeckUseClassicProfileTransfer: false
     property bool menuOpen: false
     // These small value objects survive a Loader unload; the page object
     // trees, Canvas buffers, delegates, and Connections do not.
     property var profileLibraryPresentationState: ({})
+    property var flightDeckProfilesPresentationState: ({})
     property var automationPresentationState: ({})
     property var curveEditorPresentationState: ({})
     // Keep telemetry-shaped QVariant lists out of pages that cannot render
@@ -48,6 +51,9 @@ Page {
     property var allPovInputs: (currentPage === 1 || currentPage === 3) ? backend.povInputs : []
     property int conflictingAxis: -1
     property string conflictingTarget: "Disabled"
+    onCurrentPageChanged: {
+        if (currentPage !== 5) flightDeckUseClassicProfileTransfer = false
+    }
     property int conflictingButton: -1
     property int conflictingVirtualButton: 0
     property int conflictingPovHat: 0
@@ -1525,17 +1531,55 @@ Page {
             id: profileLibraryLoader
             anchors.fill: parent
             active: root.currentPage === 5
-            sourceComponent: Component {
-                ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
-                    presentationState: root.profileLibraryPresentationState
-                    onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
-                    onNavigateToPage: function(page) { root.currentPage = page }
-                    Component.onCompleted: {
-                        if (root.flightDeckProfileContext.length > 0) {
-                            openProfile(root.flightDeckProfileContext)
-                            root.flightDeckProfileContext = ""
-                        }
-                    } }
+            sourceComponent: root.flightDeckMode && !root.flightDeckUseClassicProfileTransfer
+                ? flightDeckProfilesComponent : standardProfileLibraryComponent
+        }
+        Component {
+            id: standardProfileLibraryComponent
+            ProfileLibrary { anchors.fill: parent; visible: root.currentPage === 5; backendObject: backend; legacy: false
+                presentationState: root.profileLibraryPresentationState
+                onPresentationStateCaptured: function(state) { root.profileLibraryPresentationState = state }
+                onNavigateToPage: function(page) { root.currentPage = page }
+                Component.onCompleted: {
+                    if (root.flightDeckProfileContext.length > 0) {
+                        openProfile(root.flightDeckProfileContext)
+                        root.flightDeckProfileContext = ""
+                    }
+                } }
+        }
+        Component {
+            id: flightDeckProfilesComponent
+            FlightDeckProfiles {
+                anchors.fill: parent
+                readinessModel: root.flightDeckReadiness
+                presentationState: root.flightDeckProfilesPresentationState
+                onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
+                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToAutomation: function(automationId) {
+                    root.flightDeckAutomationContext = automationId
+                    root.currentPage = 7
+                }
+                onNavigateToAdaptiveProfile: function(profileId) {
+                    root.flightDeckAdaptiveProfileContext = profileId
+                    root.currentPage = 9
+                }
+                onRequestClassicTransfer: {
+                    root.profileLibraryPresentationState = {
+                        view: "library", transferMode: "import", transferKind: "profile",
+                        transferFile: "", transferProfileId: "", transferCategoryId: "",
+                        selectedPackCategoryIds: [], selectedPackProfileIds: [],
+                        categoryConflictMode: "merge", adaptivePresetConflictMode: "copy",
+                        applyImportedCalibration: false, replaceCategoryConfirmed: false,
+                        replaceProfilesConfirmed: false, contentY: 0, transferDialogOpen: true
+                    }
+                    root.flightDeckUseClassicProfileTransfer = true
+                }
+                Component.onCompleted: {
+                    if (root.flightDeckProfileContext.length > 0) {
+                        openProfile(root.flightDeckProfileContext)
+                        root.flightDeckProfileContext = ""
+                    }
+                }
             }
         }
         Loader {
@@ -2348,7 +2392,16 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 9
             sourceComponent: Component {
-                AdaptiveResponsePage { anchors.fill: parent; visible: root.currentPage === 9; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun }
+                AdaptiveResponsePage { anchors.fill: parent; visible: root.currentPage === 9; backendObject: backend; themeTokens: root.themeTokens; topGun: theme.topGun
+                    Component.onCompleted: {
+                        if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                            editScope = "profile"
+                            targetId = root.flightDeckAdaptiveProfileContext
+                            setPreview()
+                            root.flightDeckAdaptiveProfileContext = ""
+                        }
+                    }
+                }
             }
         }
     }

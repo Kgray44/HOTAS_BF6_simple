@@ -110,6 +110,14 @@ QString friendlyApplicationName(const QString &executable)
     return spaced.isEmpty() ? executable : spaced;
 }
 
+int adaptiveOverrideAxisCount(const AdaptiveResponseLayer &layer)
+{
+    return static_cast<int>(std::count_if(layer.axes.cbegin(), layer.axes.cend(),
+        [](const AdaptiveResponseAxisOverride &entry) {
+            return entry.properties != 0 || !entry.presetId.isEmpty();
+        }));
+}
+
 bool isUsefulRunningApplication(const QString &executable)
 {
     static const QSet<QString> excluded = {
@@ -2706,6 +2714,15 @@ QVariantList AppBackend::profiles() const
         item.insert(u"mappedPovs"_qs, mappedPovs);
         item.insert(u"customCurves"_qs, customCurves);
         item.insert(u"automationCount"_qs, automationCount);
+        const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile.adaptiveResponse);
+        const int categoryAdaptiveOverrides = category
+            ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+        item.insert(u"adaptiveOverrideAxes"_qs, profileAdaptiveOverrides);
+        item.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+            ? u"Custom profile response"_qs
+            : categoryAdaptiveOverrides > 0 ? u"Category response defaults"_qs
+                                        : u"Global response defaults"_qs);
+        item.insert(u"curveTransitionInherited"_qs, !profile.curveTransitionSmoothingOverride);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
         item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
         item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
@@ -2733,6 +2750,7 @@ QVariantList AppBackend::profileCategories() const
         item.insert(u"enabled"_qs, category.enabled);
         item.insert(u"restoreLastProfile"_qs, category.restoreLastProfile);
         item.insert(u"executableRules"_qs, category.executableRules);
+        item.insert(u"adaptiveOverrideAxes"_qs, adaptiveOverrideAxisCount(category.adaptiveResponse));
         result.append(item);
     }
     return result;
@@ -7052,6 +7070,7 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
+    detail.insert(u"protected"_qs, profile->id == normalProfileId());
     const CurveTransitionSmoothingSettings transitionSettings = sanitizedCurveTransitionSmoothing(
         profile->curveTransitionSmoothingOverride ? profile->curveTransitionSmoothing
                                                   : m_configuration.curveTransitionSmoothing);
@@ -7063,6 +7082,18 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
                   curveTransitionSmoothingEnabled());
     detail.insert(u"globalCurveTransitionDurationMs"_qs,
                   curveTransitionDurationMs());
+    const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile->adaptiveResponse);
+    const int categoryAdaptiveOverrides = category
+        ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+    const int globalAdaptiveOverrides = adaptiveOverrideAxisCount(m_configuration.adaptiveResponseGlobal);
+    detail.insert(u"adaptiveProfileOverrideAxes"_qs, profileAdaptiveOverrides);
+    detail.insert(u"adaptiveCategoryOverrideAxes"_qs, categoryAdaptiveOverrides);
+    detail.insert(u"adaptiveGlobalOverrideAxes"_qs, globalAdaptiveOverrides);
+    detail.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+        ? u"Custom response overrides in this profile"_qs
+        : categoryAdaptiveOverrides > 0 ? u"Inherited from this category"_qs
+        : globalAdaptiveOverrides > 0 ? u"Inherited from global defaults"_qs
+                                    : u"Built-in response defaults"_qs);
     QVariantList axes;
     QVariantList curves;
     int mappedAxes = 0;

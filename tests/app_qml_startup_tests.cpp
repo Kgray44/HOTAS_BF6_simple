@@ -2452,6 +2452,299 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance));
     }
 
+    // Profiles visual fixtures are presentation-only. They prove hierarchy,
+    // selection treatment, empty/long-name resilience, and responsive layout
+    // without creating profiles, running game detection, or activating a
+    // runtime profile merely by rendering the page.
+    if (!selectPage(surface, 5)) return false;
+    QObject *profilesPage = pageItem(surface, 5);
+    auto *profilesItem = qobject_cast<QQuickItem *>(profilesPage);
+    if (!profilesPage || profilesPage->objectName() != QStringLiteral("flightDeckProfiles") || !profilesItem) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not load native Profiles")
+            .arg(appearance));
+    }
+    // A route into Profiles may carry a real deep-link selection. Fixtures
+    // intentionally render the library state, so they must not inherit that
+    // selection from an earlier navigation assertion.
+    QQmlExpression prepareProfilesFixture(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("returnToLibrary(); profileFilter = 'all'; searchText = ''"));
+    prepareProfilesFixture.evaluate();
+    if (prepareProfilesFixture.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles fixture could not reset its view")
+            .arg(appearance));
+    }
+    const QVariantList profileVisualFixture{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-helicopter")},
+            {QStringLiteral("name"), QStringLiteral("Helicopter")},
+            {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("categoryName"), QStringLiteral("Battlefield")},
+            {QStringLiteral("displayName"), QStringLiteral("Battlefield / Helicopter")},
+            {QStringLiteral("active"), true}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("mappedAxes"), 4}, {QStringLiteral("mappedButtons"), 9},
+            {QStringLiteral("mappedPovs"), 2}, {QStringLiteral("automationCount"), 2},
+            {QStringLiteral("adaptiveOverrideAxes"), 3}, {QStringLiteral("adaptiveSource"), QStringLiteral("Custom profile response")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-aircraft")},
+            {QStringLiteral("name"), QStringLiteral("Aircraft Precision With A Deliberately Long Profile Name")},
+            {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("categoryName"), QStringLiteral("Battlefield")},
+            {QStringLiteral("displayName"), QStringLiteral("Battlefield / Aircraft Precision With A Deliberately Long Profile Name")},
+            {QStringLiteral("active"), false}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("mappedAxes"), 5}, {QStringLiteral("mappedButtons"), 12},
+            {QStringLiteral("mappedPovs"), 0}, {QStringLiteral("automationCount"), 1},
+            {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Category response defaults")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-infantry")},
+            {QStringLiteral("name"), QStringLiteral("Infantry")},
+            {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("categoryName"), QStringLiteral("Battlefield")},
+            {QStringLiteral("displayName"), QStringLiteral("Battlefield / Infantry")},
+            {QStringLiteral("active"), false}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("mappedAxes"), 1}, {QStringLiteral("mappedButtons"), 4},
+            {QStringLiteral("mappedPovs"), 0}, {QStringLiteral("automationCount"), 0},
+            {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Global response defaults")}},
+    };
+    const QVariantList categoryVisualFixture{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("name"), QStringLiteral("Battlefield")}, {QStringLiteral("profileCount"), 3},
+            {QStringLiteral("defaultProfileId"), QStringLiteral("fixture-helicopter")},
+            {QStringLiteral("defaultProfileName"), QStringLiteral("Battlefield / Helicopter")},
+            {QStringLiteral("lastActiveProfileId"), QStringLiteral("fixture-helicopter")},
+            {QStringLiteral("lastActiveProfileName"), QStringLiteral("Battlefield / Helicopter")},
+            {QStringLiteral("active"), true}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("restoreLastProfile"), true}, {QStringLiteral("adaptiveOverrideAxes"), 2},
+            {QStringLiteral("executableRules"), QStringList{QStringLiteral("bf6.exe")}}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-empty")},
+            {QStringLiteral("name"), QStringLiteral("Long Category Name For A Future Simulator Collection")},
+            {QStringLiteral("profileCount"), 0}, {QStringLiteral("defaultProfileId"), QString{}},
+            {QStringLiteral("defaultProfileName"), QString{}}, {QStringLiteral("lastActiveProfileId"), QString{}},
+            {QStringLiteral("lastActiveProfileName"), QString{}}, {QStringLiteral("active"), false},
+            {QStringLiteral("enabled"), true}, {QStringLiteral("restoreLastProfile"), false},
+            {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("executableRules"), QStringList{}}},
+    };
+    QVariantMap fixtureDetails;
+    fixtureDetails.insert(QStringLiteral("fixture-aircraft"), QVariantMap{
+        {QStringLiteral("id"), QStringLiteral("fixture-aircraft")},
+        {QStringLiteral("name"), QStringLiteral("Aircraft Precision With A Deliberately Long Profile Name")},
+        {QStringLiteral("displayName"), QStringLiteral("Battlefield / Aircraft Precision With A Deliberately Long Profile Name")},
+        {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")}, {QStringLiteral("category"), QStringLiteral("Battlefield")},
+        {QStringLiteral("categoryGames"), QStringList{QStringLiteral("bf6.exe")}},
+        {QStringLiteral("categoryActivationBehavior"), QStringLiteral("Restore the last-used profile")},
+        {QStringLiteral("active"), false}, {QStringLiteral("enabled"), true},
+        {QStringLiteral("mappedAxes"), 5}, {QStringLiteral("mappedButtons"), 12}, {QStringLiteral("mappedPovs"), 0},
+        {QStringLiteral("automationCount"), 1}, {QStringLiteral("adaptiveProfileOverrideAxes"), 0},
+        {QStringLiteral("adaptiveSource"), QStringLiteral("Inherited from this category")},
+        {QStringLiteral("curveTransitionSmoothingOverride"), false},
+        {QStringLiteral("automations"), QVariantList{QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-rule")}, {QStringLiteral("name"), QStringLiteral("Precision Mode Toggle")}}}},
+        {QStringLiteral("relationships"), QVariantMap{{QStringLiteral("referencedBy"), QVariantList{QVariantMap{{QStringLiteral("profile"), QStringLiteral("Button 3")}, {QStringLiteral("via"), QStringLiteral("Toggle profile")}}}}, {QStringLiteral("references"), QVariantList{}}}}
+    });
+    if (!profilesPage->setProperty("profilesPresentationOverride", profileVisualFixture)
+        || !profilesPage->setProperty("categoriesPresentationOverride", categoryVisualFixture)
+        || !profilesPage->setProperty("runningApplicationsPresentationOverride", QVariantList{
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("Battlefield 6")}, {QStringLiteral("executable"), QStringLiteral("bf6.exe")}}})
+        || !profilesPage->setProperty("profileDetailPresentationOverride", fixtureDetails)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles fixture could not be installed")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckActiveProfileHero"))
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryCard_fixture-battlefield"))
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileCard_fixture-aircraft"))
+        || !captureShell(QStringLiteral("profiles-main"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles main fixture was incomplete")
+            .arg(appearance));
+    }
+    QQmlExpression openFixtureCategory(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openCategory('fixture-battlefield')"));
+    openFixtureCategory.evaluate();
+    settlePresentation();
+    if (openFixtureCategory.hasError() || profilesPage->property("view").toString() != QStringLiteral("category")
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryBehaviorSelector"))
+        || !captureShell(QStringLiteral("profiles-category"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Category fixture did not render")
+            .arg(appearance));
+    }
+    QQmlExpression openFixtureProfile(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('fixture-aircraft')"));
+    openFixtureProfile.evaluate();
+    settlePresentation();
+    if (openFixtureProfile.hasError() || profilesPage->property("view").toString() != QStringLiteral("profile")
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckConfigureAdaptive"))
+        || !captureShell(QStringLiteral("profiles-detail-selected-not-active"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile fixture did not distinguish selected state")
+            .arg(appearance));
+    }
+    const QSize profilesOriginalSize = window->size();
+    window->resize(900, 650);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("profiles-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles minimum layout did not render")
+            .arg(appearance));
+    }
+    window->resize(1600, 980);
+    settlePresentation();
+    if (!captureShell(QStringLiteral("profiles-wide"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles wide layout did not render")
+            .arg(appearance));
+    }
+    window->resize(profilesOriginalSize);
+    profilesPage->setProperty("profilesPresentationOverride", QVariant{});
+    profilesPage->setProperty("categoriesPresentationOverride", QVariant{});
+    profilesPage->setProperty("runningApplicationsPresentationOverride", QVariant{});
+    profilesPage->setProperty("profileDetailPresentationOverride", QVariant{});
+    QQmlExpression returnToNativeLibrary(qmlContext(profilesPage), profilesPage, QStringLiteral("returnToLibrary()"));
+    returnToNativeLibrary.evaluate();
+    settlePresentation();
+
+    // Functional coverage deliberately uses the authoritative Profile model.
+    // It proves that selecting a profile for inspection is separate from the
+    // existing activation command, and that category/game mutations stay
+    // isolated to their intended records.
+    const QString originalActiveProfileId = backend.activeProfileId();
+    const QString testCategoryName = QStringLiteral("Flight Deck Profiles %1").arg(appearance);
+    if (!backend.createProfileCategory(testCategoryName)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not create an isolated Profile category")
+            .arg(appearance));
+    }
+    const auto categoryWithName = [&backend](const QString &name) {
+        for (const QVariant &value : backend.profileCategories()) {
+            const QVariantMap category = value.toMap();
+            if (category.value(QStringLiteral("name")).toString() == name) return category;
+        }
+        return QVariantMap{};
+    };
+    const auto profileWithName = [&backend](const QString &name) {
+        for (const QVariant &value : backend.profiles()) {
+            const QVariantMap profile = value.toMap();
+            if (profile.value(QStringLiteral("name")).toString() == name) return profile;
+        }
+        return QVariantMap{};
+    };
+    const QVariantMap testCategory = categoryWithName(testCategoryName);
+    const QString testCategoryId = testCategory.value(QStringLiteral("id")).toString();
+    const QString firstName = QStringLiteral("View Only %1").arg(appearance);
+    const QString secondName = QStringLiteral("Activate Explicitly %1").arg(appearance);
+    if (testCategoryId.isEmpty()
+        || !backend.createProfileInCategory(firstName, testCategoryId, originalActiveProfileId)
+        || !backend.createProfileInCategory(secondName, testCategoryId, originalActiveProfileId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not create Profile CRUD fixtures")
+            .arg(appearance));
+    }
+    const QString firstId = profileWithName(firstName).value(QStringLiteral("id")).toString();
+    const QString secondId = profileWithName(secondName).value(QStringLiteral("id")).toString();
+    const QString duplicateName = QStringLiteral("Duplicate %1").arg(appearance);
+    const QString renamedDuplicateName = QStringLiteral("Renamed Duplicate %1").arg(appearance);
+    if (firstId.isEmpty() || secondId.isEmpty()
+        || !backend.duplicateProfileToCategory(firstId, duplicateName, testCategoryId)
+        || profileWithName(duplicateName).isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 duplicate command did not create an isolated profile")
+            .arg(appearance));
+    }
+    const QString duplicateId = profileWithName(duplicateName).value(QStringLiteral("id")).toString();
+    const QString movedCategoryName = QStringLiteral("Flight Deck Moved %1").arg(appearance);
+    if (duplicateId.isEmpty() || !backend.createProfileCategory(movedCategoryName)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not create a destination category for profile move")
+            .arg(appearance));
+    }
+    const QString movedCategoryId = categoryWithName(movedCategoryName).value(QStringLiteral("id")).toString();
+    if (movedCategoryId.isEmpty() || !backend.moveProfileToCategory(duplicateId, movedCategoryId)
+        || profileWithName(duplicateName).value(QStringLiteral("categoryId")).toString() != movedCategoryId
+        || !backend.renameProfile(duplicateId, renamedDuplicateName)
+        || profileWithName(renamedDuplicateName).value(QStringLiteral("id")).toString() != duplicateId
+        || !backend.deleteProfile(duplicateId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 duplicate, move, rename, or delete command did not retain profile isolation")
+            .arg(appearance));
+    }
+    const QString unaffectedCategoryName = backend.activeCategoryName();
+    const QVariantMap unaffectedCategoryBefore = categoryWithName(unaffectedCategoryName);
+    if (!backend.setCategoryRestoreLastProfile(testCategoryId, false)
+        || !backend.setCategoryDefaultProfile(testCategoryId, firstId)
+        || !backend.setCategoryGameDetectionRules(testCategoryId, {QStringLiteral("flight-deck-test.exe")})) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not configure its category fixture")
+            .arg(appearance));
+    }
+    QQmlExpression openForViewing(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('%1')").arg(secondId));
+    openForViewing.evaluate();
+    settlePresentation();
+    if (openForViewing.hasError() || backend.activeProfileId() != originalActiveProfileId
+        || profilesPage->property("selectedProfileId").toString() != secondId
+        || profilesPage->property("view").toString() != QStringLiteral("profile")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 viewing a profile changed active runtime state")
+            .arg(appearance));
+    }
+    auto *activateButton = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckSelectedProfileActivate"));
+    if (!activateButton) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not expose explicit profile activation")
+            .arg(appearance));
+    }
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        activateButton->mapToScene(QPointF(activateButton->width() * 0.5, activateButton->height() * 0.5)).toPoint());
+    settlePresentation();
+    if (backend.activeProfileId() != secondId) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 explicit activation did not commit through AppBackend")
+            .arg(appearance));
+    }
+    QQmlExpression openCategoryForBehavior(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openCategory('%1')").arg(testCategoryId));
+    openCategoryForBehavior.evaluate();
+    settlePresentation();
+    QObject *behaviorSelector = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckCategoryBehaviorSelector"));
+    if (openCategoryForBehavior.hasError() || !behaviorSelector
+        || !clickResponseComboRow(window, profilesPage, behaviorSelector, 0)
+        || !categoryWithName(testCategoryName).value(QStringLiteral("restoreLastProfile")).toBool()
+        || categoryWithName(unaffectedCategoryName).value(QStringLiteral("restoreLastProfile"))
+            != unaffectedCategoryBefore.value(QStringLiteral("restoreLastProfile"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 category behavior selector was not isolated")
+            .arg(appearance));
+    }
+    QQmlExpression openForDeepLinks(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('%1'); openActiveProfileEditor(0)").arg(secondId));
+    openForDeepLinks.evaluate();
+    settlePresentation();
+    if (openForDeepLinks.hasError() || surface->property("currentPage").toInt() != 0
+        || backend.activeProfileId() != secondId) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes deep link changed profile activation")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 5)) return false;
+    profilesPage = pageItem(surface, 5);
+    profilesItem = qobject_cast<QQuickItem *>(profilesPage);
+    if (!profilesPage || !profilesItem) return false;
+    QQmlExpression reopenForAdaptive(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('%1'); openAdaptiveForSelectedProfile()" ).arg(secondId));
+    reopenForAdaptive.evaluate();
+    settlePresentation();
+    QObject *adaptive = pageItem(surface, 9);
+    if (reopenForAdaptive.hasError() || !adaptive || backend.activeProfileId() != secondId
+        || adaptive->property("editScope").toString() != QStringLiteral("profile")
+        || adaptive->property("targetId").toString() != secondId) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive deep link lost profile context or activated unexpectedly")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 5)) return false;
+    profilesPage = pageItem(surface, 5);
+    QQmlExpression openAutomationLink(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("openProfile('%1'); openAutomationForSelectedProfile()").arg(secondId));
+    openAutomationLink.evaluate();
+    settlePresentation();
+    if (openAutomationLink.hasError() || surface->property("currentPage").toInt() != 7
+        || backend.activeProfileId() != secondId) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation deep link changed profile activation")
+            .arg(appearance));
+    }
+    if (backend.deleteProfile(secondId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 allowed deletion of the active profile")
+            .arg(appearance));
+    }
+    if (!backend.activateProfile(originalActiveProfileId)
+        || !backend.deleteProfile(secondId) || !backend.deleteProfile(firstId)
+        || !backend.deleteProfileCategory(testCategoryId) || !backend.deleteProfileCategory(movedCategoryId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile CRUD cleanup did not preserve authoritative deletion rules")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 8)) return false;
+
     // Axis arrangements are presentation-only QML data. They cover the new
     // native page without touching device discovery, persisted mappings, or
     // mapper input state.
