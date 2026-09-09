@@ -29,6 +29,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QThread>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWindow>
@@ -2270,7 +2271,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
-    engine.loadFromModule(u"HOTASMapperStartupTest"_qs, u"Main"_qs);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
     auto *window = engine.rootObjects().isEmpty()
         ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
     if (!window) return failPresentationLifecycleTest(QStringLiteral("Flight Deck window did not load"));
@@ -3102,6 +3103,104 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation deep link did not select its referenced rule")
             .arg(appearance));
     }
+    const QVariantList automationVisualFixture{
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-active")},
+            {QStringLiteral("name"), QStringLiteral("Precision hold")},
+            {QStringLiteral("enabled"), true}, {QStringLiteral("active"), true},
+            {QStringLiteral("health"), 0}, {QStringLiteral("priority"), 85},
+            {QStringLiteral("conditionSummary"), QStringLiteral("Button 2 is held")},
+            {QStringLiteral("actionSummary"), QStringLiteral("Hold vJoy Button 7")},
+            {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 5}, {QStringLiteral("button"), 2}}}},
+            {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 0}, {QStringLiteral("virtualButton"), 7}}}}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-disabled")},
+            {QStringLiteral("name"), QStringLiteral("Landing mode")},
+            {QStringLiteral("enabled"), false}, {QStringLiteral("active"), false},
+            {QStringLiteral("health"), 0}, {QStringLiteral("priority"), 50},
+            {QStringLiteral("conditionSummary"), QStringLiteral("Throttle is below 10%")},
+            {QStringLiteral("actionSummary"), QStringLiteral("Switch to Landing profile")},
+            {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 2}, {QStringLiteral("axis"), 2}}}},
+            {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 3}}}}}),
+        QVariant::fromValue(QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-attention")},
+            {QStringLiteral("name"), QStringLiteral("Missing profile safety")},
+            {QStringLiteral("enabled"), true}, {QStringLiteral("active"), false},
+            {QStringLiteral("health"), 2}, {QStringLiteral("healthMessage"), QStringLiteral("Referenced profile is unavailable")},
+            {QStringLiteral("priority"), 20}, {QStringLiteral("conditionSummary"), QStringLiteral("Active profile is unavailable")},
+            {QStringLiteral("actionSummary"), QStringLiteral("Use missing profile")},
+            {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 10}}}},
+             {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 2}}}}}),
+    };
+    QVariantList automationLargeVisualFixture = automationVisualFixture;
+    for (int index = 4; index <= 18; ++index) {
+        const bool longName = index == 4;
+        automationLargeVisualFixture.append(QVariant::fromValue(QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("fixture-large-%1").arg(index)},
+            {QStringLiteral("name"), longName
+                ? QStringLiteral("A deliberately long Automation rule name that must remain readable in the Flight Deck rule collection")
+                : QStringLiteral("Response helper %1").arg(index)},
+            {QStringLiteral("enabled"), index % 3 != 0}, {QStringLiteral("active"), false},
+            {QStringLiteral("health"), 0}, {QStringLiteral("priority"), 100 - index},
+            {QStringLiteral("conditionSummary"), longName
+                ? QStringLiteral("Button 3 is pressed after the throttle has crossed the configured safety threshold")
+                : QStringLiteral("Button %1 is pressed").arg(index)},
+            {QStringLiteral("actionSummary"), longName
+                ? QStringLiteral("Apply the selected Adaptive Response preset to the configured response axis")
+                : QStringLiteral("Tap vJoy Button %1").arg(index)},
+            {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 11}, {QStringLiteral("button"), index}}}},
+            {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 10}, {QStringLiteral("virtualButton"), index}}}},
+        }));
+    }
+    if (!captureShell(QStringLiteral("automation-editor-deep-link"))
+        || !evaluateEditorFunction(automation, QStringLiteral("closeEditor()"))
+        || !automation->setProperty("automationPresentationOverride", automationVisualFixture)
+        || !automation->setProperty("filterMode", QStringLiteral("all"))
+        || !automation->setProperty("searchText", QString{})) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation editor or list fixture could not be prepared")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!captureShell(QStringLiteral("automation-list-mixed"))
+        || !automation->setProperty("filterMode", QStringLiteral("enabled"))
+        || !captureShell(QStringLiteral("automation-filter-enabled"))
+        || !automation->setProperty("filterMode", QStringLiteral("disabled"))
+        || !captureShell(QStringLiteral("automation-filter-disabled"))
+        || !automation->setProperty("filterMode", QStringLiteral("all"))
+        || !automation->setProperty("searchText", QStringLiteral("missing"))
+        || !captureShell(QStringLiteral("automation-search-attention"))
+        || !automation->setProperty("searchText", QString{})
+        || !automation->setProperty("automationPresentationOverride", QVariantList{})
+        || !captureShell(QStringLiteral("automation-empty"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation visual-state matrix did not render")
+            .arg(appearance));
+    }
+    const QSize automationOriginalSize = window->size();
+    if (!automation->setProperty("automationPresentationOverride", automationLargeVisualFixture)
+        || !automation->setProperty("filterMode", QStringLiteral("all"))
+        || !automation->setProperty("searchText", QString{})) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation long-name fixture could not be installed")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (!captureShell(QStringLiteral("automation-large-long-normal"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation large collection did not render")
+            .arg(appearance));
+    }
+    window->resize(900, 650);
+    settlePresentation();
+    if (std::abs(automation->property("contentWidth").toReal() - automation->property("width").toReal()) > 0.5
+        || !captureShell(QStringLiteral("automation-large-long-minimum"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation minimum layout escaped horizontally")
+            .arg(appearance));
+    }
+    window->resize(1600, 980);
+    settlePresentation();
+    if (std::abs(automation->property("contentWidth").toReal() - automation->property("width").toReal()) > 0.5
+        || !captureShell(QStringLiteral("automation-large-long-wide"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Automation wide layout escaped horizontally")
+            .arg(appearance));
+    }
+    window->resize(automationOriginalSize);
+    settlePresentation();
+    automation->setProperty("automationPresentationOverride", QVariant{});
     if (!backend.deleteAutomation(automationTargetId) || !selectPage(surface, 1)) return false;
     buttons = pageItem(surface, 1);
     buttonsItem = qobject_cast<QQuickItem *>(buttons);
@@ -3470,7 +3569,7 @@ bool verifyFlightDeckAxesQmlLoad(hotas::AppBackend &backend, hotas::ThemeManager
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
     QQmlComponent component(&engine);
-    component.loadFromModule(u"HOTASMapperStartupTest"_qs, u"FlightDeckAxes"_qs);
+    component.loadFromModule(u"HOTASMapper"_qs, u"FlightDeckAxes"_qs);
     if (component.status() != QQmlComponent::Ready) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Axes component did not load: %1")
             .arg(component.errorString()));
@@ -3504,7 +3603,7 @@ bool verifyAutomationEditorInteraction(hotas::AppBackend &backend)
 {
     QQmlEngine engine;
     QQmlComponent component(&engine);
-    component.loadFromModule(u"HOTASMapperStartupTest"_qs, u"AutomationPage"_qs);
+    component.loadFromModule(u"HOTASMapper"_qs, u"AutomationPage"_qs);
     if (component.status() != QQmlComponent::Ready) {
         return failAutomationEditorTest(component.errorString());
     }
@@ -3625,6 +3724,285 @@ bool seedDeviceRigFixture()
     return hotas::ConfigStore::save(configuration);
 }
 
+QVariantMap flightDeckAutomationDraft(const QString &id, const QString &name, int button,
+                                      int virtualButton)
+{
+    QVariantMap condition;
+    condition.insert(QStringLiteral("type"), 5);
+    condition.insert(QStringLiteral("button"), button);
+    QVariantMap action;
+    action.insert(QStringLiteral("type"), 0);
+    action.insert(QStringLiteral("virtualButton"), virtualButton);
+    QVariantMap draft;
+    draft.insert(QStringLiteral("id"), id);
+    draft.insert(QStringLiteral("name"), name);
+    draft.insert(QStringLiteral("enabled"), false);
+    draft.insert(QStringLiteral("matchMode"), 0);
+    draft.insert(QStringLiteral("activationMode"), 0);
+    draft.insert(QStringLiteral("activeDurationMs"), 250);
+    draft.insert(QStringLiteral("priority"), 50);
+    QVariantList conditions;
+    conditions.append(condition);
+    QVariantList actions;
+    actions.append(action);
+    draft.insert(QStringLiteral("conditions"), conditions);
+    draft.insert(QStringLiteral("actions"), actions);
+    return draft;
+}
+
+QVariantMap automationById(const hotas::AppBackend &backend, const QString &id)
+{
+    const QVariantList rules = backend.automationRules();
+    for (const QVariant &entry : rules) {
+        const QVariantMap rule = entry.toMap();
+        if (rule.value(QStringLiteral("id")).toString() == id) return rule;
+    }
+    return {};
+}
+
+bool verifyFlightDeckAutomationInteraction(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    const QString firstId = backend.createAutomation();
+    const QString secondId = backend.createAutomation();
+    const QString thirdId = backend.createAutomation();
+    const bool savedFirst = !firstId.isEmpty()
+        && backend.saveAutomation(flightDeckAutomationDraft(firstId, QStringLiteral("Rule A"), 1, 1));
+    const bool savedSecond = !secondId.isEmpty()
+        && backend.saveAutomation(flightDeckAutomationDraft(secondId, QStringLiteral("Rule B"), 2, 2));
+    const bool savedThird = !thirdId.isEmpty()
+        && backend.saveAutomation(flightDeckAutomationDraft(thirdId, QStringLiteral("Rule C"), 3, 3));
+    if (!savedFirst || !savedSecond || !savedThird) {
+        return failAutomationEditorTest(QStringLiteral("could not create independent Flight Deck Automation rules"));
+    }
+
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    QQmlComponent component(&engine);
+    component.loadUrl(QUrl(u"qrc:/qt/qml/HOTASMapper/qml/FlightDeckAutomation.qml"_qs));
+    if (component.status() != QQmlComponent::Ready) {
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(component.errorString());
+    }
+    QObject *root = component.create();
+    auto *rootItem = qobject_cast<QQuickItem *>(root);
+    if (!rootItem) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("FlightDeckAutomation did not create a QQuickItem"));
+    }
+    QQuickWindow window;
+    window.resize(1280, 800);
+    rootItem->setParentItem(window.contentItem());
+    rootItem->setSize(window.size());
+    window.show();
+    settlePresentation();
+
+    const QString activeProfileBefore = backend.activeProfileId();
+    auto clickItem = [&](QQuickItem *item) {
+        if (!item) return false;
+        const QPointF relative = item->mapToScene(QPointF{}) - rootItem->mapToScene(QPointF{});
+        rootItem->setProperty("contentY", std::max<qreal>(0.0, relative.y() - 96.0));
+        settlePresentation();
+        const QPoint point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5)).toPoint();
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, point);
+        settlePresentation();
+        return true;
+    };
+
+    if (!evaluateEditorFunction(root, QStringLiteral("openRuleById('%1')").arg(secondId))) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return false;
+    }
+    auto *conditionTarget = findVisualItemByObjectName(rootItem,
+        QStringLiteral("flightDeckAutomationConditionButton_0"));
+    if (!conditionTarget || !clickResponseComboRow(&window, root, conditionTarget, 2)
+        || root->property("draft").toMap().value(QStringLiteral("conditions")).toList().at(0).toMap()
+            .value(QStringLiteral("button")).toInt() != 3) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck condition target selector did not commit the selected control"));
+    }
+    auto *actionTarget = findVisualItemByObjectName(rootItem,
+        QStringLiteral("flightDeckAutomationActionButton_0"));
+    if (!actionTarget || !clickResponseComboRow(&window, root, actionTarget, 2)
+        || root->property("draft").toMap().value(QStringLiteral("actions")).toList().at(0).toMap()
+            .value(QStringLiteral("virtualButton")).toInt() != 3) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck action target selector did not commit the selected target"));
+    }
+    rootItem->setProperty("contentY", 0.0);
+    settlePresentation();
+    auto *save = findVisualItemByObjectName(rootItem, QStringLiteral("flightDeckAutomationSave"));
+    if (!clickItem(save) || root->property("editing").toBool()) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck save control did not use the authoritative command path"));
+    }
+    const QVariantMap first = automationById(backend, firstId);
+    const QVariantMap second = automationById(backend, secondId);
+    const QVariantMap third = automationById(backend, thirdId);
+    if (first.value(QStringLiteral("conditions")).toList().at(0).toMap().value(QStringLiteral("button")).toInt() != 1
+        || second.value(QStringLiteral("conditions")).toList().at(0).toMap().value(QStringLiteral("button")).toInt() != 3
+        || second.value(QStringLiteral("actions")).toList().at(0).toMap().value(QStringLiteral("virtualButton")).toInt() != 3
+        || third.value(QStringLiteral("actions")).toList().at(0).toMap().value(QStringLiteral("virtualButton")).toInt() != 3) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck rule edit did not preserve A/B/C isolation"));
+    }
+
+    const int ruleCountBeforeDuplicate = backend.automationRuleCount();
+    auto *duplicate = findVisualItemByObjectName(rootItem,
+        QStringLiteral("flightDeckAutomationDuplicate_%1").arg(secondId));
+    if (!clickItem(duplicate) || !root->property("editing").toBool()
+        || backend.automationRuleCount() != ruleCountBeforeDuplicate + 1) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck duplicate control did not use the authoritative command path"));
+    }
+    const QString duplicateId = root->property("editingId").toString();
+    if (duplicateId.isEmpty() || duplicateId == secondId
+        || !evaluateEditorFunction(root, QStringLiteral("updateDraft('name', 'Renamed Rule B copy')"))) {
+        delete root;
+        backend.deleteAutomation(duplicateId);
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck duplicate draft was not independently editable"));
+    }
+    rootItem->setProperty("contentY", 0.0);
+    settlePresentation();
+    save = findVisualItemByObjectName(rootItem, QStringLiteral("flightDeckAutomationSave"));
+    if (!clickItem(save) || root->property("editing").toBool()
+        || automationById(backend, duplicateId).value(QStringLiteral("name")).toString()
+            != QStringLiteral("Renamed Rule B copy")) {
+        delete root;
+        backend.deleteAutomation(duplicateId);
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck rename did not save only the duplicated rule"));
+    }
+    auto *deleteRule = findVisualItemByObjectName(rootItem,
+        QStringLiteral("flightDeckAutomationDelete_%1").arg(duplicateId));
+    if (!clickItem(deleteRule)) {
+        delete root;
+        backend.deleteAutomation(duplicateId);
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck delete control did not open its confirmation"));
+    }
+    auto *deleteConfirm = findVisualItemByObjectName(window.contentItem(),
+        QStringLiteral("flightDeckAutomationDeleteConfirm"));
+    if (!clickItem(deleteConfirm) || !automationById(backend, duplicateId).isEmpty()
+        || automationById(backend, secondId).value(QStringLiteral("name")).toString() != QStringLiteral("Rule B")) {
+        delete root;
+        backend.deleteAutomation(duplicateId);
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck delete confirmation did not isolate the duplicate"));
+    }
+
+    auto *enabledToggle = findVisualItemByObjectName(rootItem,
+        QStringLiteral("flightDeckAutomationEnabled_%1").arg(secondId));
+    if (!clickItem(enabledToggle) || !automationById(backend, secondId).value(QStringLiteral("enabled")).toBool()
+        || automationById(backend, firstId).value(QStringLiteral("enabled")).toBool()
+        || automationById(backend, thirdId).value(QStringLiteral("enabled")).toBool()
+        || backend.activeProfileId() != activeProfileBefore || backend.automationActiveRuleCount() != 0) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck enable toggle was not isolated or changed runtime state without input"));
+    }
+
+    if (!evaluateEditorFunction(root, QStringLiteral("openRuleById('%1')").arg(secondId))) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return false;
+    }
+    for (int type = 0; type <= 16; ++type) {
+        if (!evaluateEditorFunction(root, QStringLiteral("setConditionType(0, %1)").arg(type))
+            || root->property("draft").toMap().value(QStringLiteral("conditions")).toList().at(0).toMap()
+                .value(QStringLiteral("type")).toInt() != type
+            || !evaluateEditorFunction(root, QStringLiteral("setActionType(0, %1)").arg(type))
+            || root->property("draft").toMap().value(QStringLiteral("actions")).toList().at(0).toMap()
+                .value(QStringLiteral("type")).toInt() != type) {
+            delete root;
+            backend.deleteAutomation(firstId);
+            backend.deleteAutomation(secondId);
+            backend.deleteAutomation(thirdId);
+            return failAutomationEditorTest(QStringLiteral("Flight Deck did not retain condition/action type %1 in its native editor").arg(type));
+        }
+    }
+    if (!evaluateEditorFunction(root, QStringLiteral("setConditionType(0, 11); addCondition(11); updateCondition(0, 'button', 1); updateCondition(1, 'button', 2); updateDraft('matchMode', 1); setActionType(0, 10); updateAction(0, 'virtualButton', 4)"))
+        || root->property("draft").toMap().value(QStringLiteral("conditions")).toList().size() != 2
+        || root->property("draft").toMap().value(QStringLiteral("matchMode")).toInt() != 1) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck multi-condition ANY editing did not retain both conditions"));
+    }
+    rootItem->setProperty("contentY", 0.0);
+    settlePresentation();
+    save = findVisualItemByObjectName(rootItem, QStringLiteral("flightDeckAutomationSave"));
+    const QVariantMap savedMultiCondition = automationById(backend, secondId);
+    if (!clickItem(save)
+        || automationById(backend, secondId).value(QStringLiteral("conditions")).toList().size() != 2
+        || automationById(backend, secondId).value(QStringLiteral("matchMode")).toInt() != 1
+        || savedMultiCondition.isEmpty()) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck multi-condition ANY save did not use the authoritative rule model"));
+    }
+    rootItem->setProperty("contentY", 0.0);
+    settlePresentation();
+    const int ruleCountBeforeCreate = backend.automationRuleCount();
+    auto *newRule = findVisualItemByObjectName(rootItem, QStringLiteral("flightDeckAutomationNewRule"));
+    if (!clickItem(newRule) || !root->property("editing").toBool()
+        || backend.automationRuleCount() != ruleCountBeforeCreate + 1
+        || backend.activeProfileId() != activeProfileBefore || backend.automationActiveRuleCount() != 0) {
+        delete root;
+        backend.deleteAutomation(firstId);
+        backend.deleteAutomation(secondId);
+        backend.deleteAutomation(thirdId);
+        return failAutomationEditorTest(QStringLiteral("Flight Deck new-rule interaction did not remain execution-safe"));
+    }
+    const QString createdId = root->property("editingId").toString();
+    root->setProperty("editing", false);
+    backend.deleteAutomation(createdId);
+    delete root;
+    backend.deleteAutomation(firstId);
+    backend.deleteAutomation(secondId);
+    backend.deleteAutomation(thirdId);
+    return true;
+}
+
 }
 
 int main(int argc, char *argv[])
@@ -3688,6 +4066,8 @@ int main(int argc, char *argv[])
         failPresentationLifecycleTest(QStringLiteral("fixture Device Rig context was not safely cleared"));
         return 1;
     }
+
+    if (!verifyFlightDeckAutomationInteraction(backend, themeManager)) return 1;
 
     for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
         if (!verifyFlightDeckAxesQmlLoad(backend, themeManager)) return 1;

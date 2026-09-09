@@ -141,6 +141,14 @@ qt_add_qml_module(HOTASMapper
         qml/AppHealthPopup.qml
 )
 
+set_source_files_properties(qml/FlightDeckAutomation.qml PROPERTIES
+    QT_RESOURCE_ALIAS "FlightDeckAutomation.qml"
+)
+qt_add_resources(HOTASMapper flight_deck_automation_resources
+    PREFIX "/qt/qml/HOTASMapper/qml"
+    FILES
+        qml/FlightDeckAutomation.qml
+)
 qt_add_resources(HOTASMapper hotas_icon_resources
     PREFIX "/"
     FILES
@@ -473,8 +481,9 @@ if (BUILD_TESTING)
         ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}
     )
     qt_add_qml_module(app_qml_startup_tests
-        URI HOTASMapperStartupTest
+        URI HOTASMapper
         VERSION 1.0
+        OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/app_qml_startup_tests_qml"
         QML_FILES
             qml/AviationPanel.qml
             qml/AdaptiveResponsePage.qml
@@ -545,6 +554,11 @@ if (BUILD_TESTING)
         PREFIX "/"
         FILES
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+    )
+    qt_add_resources(app_qml_startup_tests flight_deck_automation_qml_test_resources
+        PREFIX "/qt/qml/HOTASMapper/qml"
+        FILES
+            qml/FlightDeckAutomation.qml
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
