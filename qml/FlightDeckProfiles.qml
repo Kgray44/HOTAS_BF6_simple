@@ -356,6 +356,7 @@ Flickable {
         font.pixelSize: 10
         leftPadding: deck.space12
         rightPadding: deck.space12
+        onAccepted: focus = false
         background: Rectangle {
             radius: deck.radiusControl
             color: deck.primarySurface
@@ -938,6 +939,17 @@ Flickable {
                             DeckButton { text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
                             Item { Layout.fillWidth: true }
                             DeckButton { text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                        }
+                        RowLayout {
+                            visible: !root.selectedProfileId.length && root.selectedCategoryId.length
+                            Layout.fillWidth: true
+                            DeckButton {
+                                objectName: "flightDeckCategoryOpenDetails"
+                                text: "OPEN DETAILS"
+                                subdued: true
+                                onClicked: root.openCategory(root.selectedCategoryId)
+                            }
+                            Item { Layout.fillWidth: true }
                         }
                         Text { visible: !root.selectedProfileId.length && root.selectedCategoryId.length; text: String((root.selectedCategory || {}).profileCount || 0) + " profiles · " + root.categoryBehavior(root.selectedCategory); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
@@ -2391,10 +2403,20 @@ Flickable {
 
     DeckDialog {
         id: addGameDialog
+        objectName: "flightDeckAddGameDialog"
         property string categoryId: ""
         property string mode: "running"
         property string browsePath: ""
         property string errorMessage: ""
+        property string runningSearchText: ""
+        readonly property var filteredRunningApplications: root.runningApplications.filter(function(application) {
+            const query = addGameDialog.runningSearchText.trim().toLowerCase();
+            if (query.length === 0)
+                return true;
+            const displayName = String(application.name || root.friendlyGameName(application.executable)).toLowerCase();
+            const executable = String(application.executable || "").toLowerCase();
+            return displayName.indexOf(query) >= 0 || executable.indexOf(query) >= 0;
+        })
         heading: "Add game association"
         contentItem: ColumnLayout {
             width: addGameDialog.availableWidth
@@ -2420,16 +2442,38 @@ Flickable {
                 }
             }
             ScrollView {
+                id: runningGameScroll
                 visible: addGameDialog.mode === "running"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 188
+                Layout.preferredHeight: 222
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: parent.width
                     spacing: deck.space8
+                    RowLayout {
+                        Layout.fillWidth: true
+                        DeckField {
+                            id: runningGameSearch
+                            objectName: "flightDeckRunningGameSearch"
+                            Layout.fillWidth: true
+                            placeholderText: "Search running games or executables"
+                            text: addGameDialog.runningSearchText
+                            onTextEdited: addGameDialog.runningSearchText = text
+                        }
+                        DeckButton {
+                            objectName: "flightDeckRunningGameSearchClear"
+                            text: "CLEAR"
+                            subdued: true
+                            visible: addGameDialog.runningSearchText.length > 0
+                            onClicked: {
+                                addGameDialog.runningSearchText = "";
+                                runningGameSearch.text = "";
+                            }
+                        }
+                    }
                     Repeater {
-                        model: root.runningApplications
+                        model: addGameDialog.filteredRunningApplications
                         delegate: Rectangle {
                             required property var modelData
                             Layout.fillWidth: true
@@ -2460,6 +2504,15 @@ Flickable {
                     Text {
                         visible: root.runningApplications.length === 0
                         text: "No suitable running applications were found. You can still choose an executable or enter a name."
+                        color: deck.textMuted
+                        font.pixelSize: 10
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        objectName: "flightDeckRunningGameNoMatch"
+                        visible: root.runningApplications.length > 0 && addGameDialog.filteredRunningApplications.length === 0
+                        text: "No running game or executable matches \"" + addGameDialog.runningSearchText + "\". Clear the search to see all running applications."
                         color: deck.textMuted
                         font.pixelSize: 10
                         Layout.fillWidth: true
@@ -2529,6 +2582,8 @@ Flickable {
             addGameDialog.mode = "running";
             addGameDialog.browsePath = "";
             addGameDialog.errorMessage = "";
+            addGameDialog.runningSearchText = "";
+            runningGameSearch.text = "";
             gameExecutable.text = "";
             root.refreshRunningApplications();
         }

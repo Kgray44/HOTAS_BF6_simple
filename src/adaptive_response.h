@@ -25,10 +25,23 @@ struct AdaptiveResponseTelemetry {
     float velocity = 0.0F;
     float acceleration = 0.0F;
     float activeHorizonSeconds = 0.0F;
+    // The emitted lead is deliberately decomposed for Flight Deck review:
+    // requested is the estimator's pre-cap proposal, capped is after the
+    // global/turning safety limit, and endpointTaper is the final headroom
+    // attenuation.  They are scalar diagnostics only.
+    float requestedLead = 0.0F;
+    float cappedLead = 0.0F;
+    float endpointTaper = 1.0F;
     float lead = 0.0F;
     float confidence = 0.0F;
     float motionIntensity = 0.0F;
     float velocityAuthority = 0.0F;
+    // V2.5.2 makes the normal and rapid components separately inspectable.
+    // They are bounded scalar diagnostics, not a second output path.
+    float deliberateMotionEvidence = 0.0F;
+    float normalMotionAuthority = 0.0F;
+    float rapidMotionAuthority = 0.0F;
+    float rapidMotionBlend = 0.0F;
     // Bounded decomposition of predictive authority. These fixed scalars are
     // published for preview/diagnostics only; they do not allocate or notify.
     float accelerationIntent = 0.0F;

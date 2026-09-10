@@ -756,6 +756,15 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         configuration.accelerationResponse = preset == QStringLiteral("extreme") ? 0.95F
             : preset == QStringLiteral("aggressive") ? 0.82F
             : preset == QStringLiteral("fast") ? 0.68F : 0.58F;
+        configuration.normalMovementResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.82F
+            : preset == QStringLiteral("fast") ? 0.66F : 0.48F;
+        configuration.rapidMovementResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.98F
+            : preset == QStringLiteral("fast") ? 0.93F : 0.85F;
+        configuration.engagementSensitivity = preset == QStringLiteral("extreme") ? 0.94F
+            : preset == QStringLiteral("aggressive") ? 0.80F
+            : preset == QStringLiteral("fast") ? 0.66F : 0.50F;
         configuration.motionSensitivity = 0.035F;
         configuration.noiseRejection = 0.012F;
         configuration.reversalDetection = 0.075F;
@@ -826,6 +835,10 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
                 || !equal(direct[index].telemetry.onsetAuthority, sample, QStringLiteral("onsetAuthority"))
                 || !equal(direct[index].telemetry.sustainedEvidence, sample, QStringLiteral("sustainedEvidence"))
                 || !equal(direct[index].telemetry.sustainedAuthority, sample, QStringLiteral("sustainedAuthority"))
+                || !equal(direct[index].telemetry.deliberateMotionEvidence, sample, QStringLiteral("deliberateMotionEvidence"))
+                || !equal(direct[index].telemetry.normalMotionAuthority, sample, QStringLiteral("normalMotionAuthority"))
+                || !equal(direct[index].telemetry.rapidMotionAuthority, sample, QStringLiteral("rapidMotionAuthority"))
+                || !equal(direct[index].telemetry.rapidMotionBlend, sample, QStringLiteral("rapidMotionBlend"))
                 || !equal(direct[index].telemetry.motionUrgency, sample, QStringLiteral("motionUrgency"))
                 || !equal(direct[index].telemetry.horizonExtensionEligibility, sample, QStringLiteral("horizonExtensionEligibility"))
                 || !equal(direct[index].telemetry.normalMaximumHorizonSeconds * 1000.0F, sample, QStringLiteral("normalMaximumHorizonMs"))
@@ -854,7 +867,10 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
          QStringLiteral("Micro Adjustments"), QStringLiteral("Sudden Stop"),
          QStringLiteral("Center Fighting"), QStringLiteral("Fast Sweep"),
          QStringLiteral("Slow Coherent Waggle"), QStringLiteral("Slow One-Way Sweep"),
-         QStringLiteral("Small Slow Correction"), QStringLiteral("Extreme Turning-Point Torture")}) {
+         QStringLiteral("Small Slow Correction"), QStringLiteral("Gentle Hover Corrections"),
+         QStringLiteral("Smooth Cyclic Sweep"), QStringLiteral("Normal Bank and Recover"),
+         QStringLiteral("Sustained Moderate Turn"), QStringLiteral("Approach Corrections"),
+         QStringLiteral("Normal Direction Change"), QStringLiteral("Extreme Turning-Point Torture")}) {
         const QVariantList samples = backend.adaptiveResponsePreviewAtContext(
             scenario, QStringLiteral("profile"), profileId, axis);
         const QVariantMap metrics = backend.adaptiveResponseTestLabAtContext(
@@ -2909,6 +2925,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || appearancePill->property("value").toString() != alternateAppearance.toUpper()) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Appearance pill did not toggle the authoritative appearance"));
     }
+    if (appearancePill->property("activeFocus").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Appearance mouse click left a persistent keyboard-focus highlight"));
+    }
     themeManager.setFlightDeckAppearance(appearance);
     QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
         controllerPill->mapToScene(QPointF(controllerPill->width() * 0.5,
@@ -2916,6 +2935,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     settlePresentation();
     if (surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller pill did not route to Devices and setup"));
+    }
+    if (controllerPill->property("activeFocus").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller mouse click left a persistent keyboard-focus highlight"));
     }
     if (!surface->setProperty("currentPage", 8)) return false;
     settlePresentation();
@@ -3053,7 +3075,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
 
-    for (const int page : {8, 0, 5, 9}) {
+    for (const int page : {8, 0, 5, 6, 9}) {
         auto *nav = findVisualItemByObjectName(window->contentItem(),
             QStringLiteral("flightDeckNav_%1").arg(page));
         if (!nav) return failPresentationLifecycleTest(QStringLiteral("Flight Deck route %1 has no nav item")
@@ -3069,6 +3091,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
                 "Flight Deck route %1 did not update selected state and page host (current=%2 selected=%3 loaded=%4)")
                 .arg(page).arg(surface->property("currentPage").toInt())
                 .arg(nav->property("selected").toBool()).arg(loaded != nullptr));
+        }
+        if (page == 6 && loaded->objectName() != QStringLiteral("flightDeckCurveEditor")) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck Curve Editor route loaded the legacy composition"));
         }
     }
     if (!surface->setProperty("currentPage", 8)) {
@@ -3280,11 +3306,70 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!profilesPage->setProperty("profilesPresentationOverride", profileVisualFixture)
         || !profilesPage->setProperty("categoriesPresentationOverride", categoryVisualFixture)
         || !profilesPage->setProperty("runningApplicationsPresentationOverride", QVariantList{
-            QVariantMap{{QStringLiteral("name"), QStringLiteral("Battlefield 6")}, {QStringLiteral("executable"), QStringLiteral("bf6.exe")}}})
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("Battlefield 6")}, {QStringLiteral("executable"), QStringLiteral("bf6.exe")}},
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("Orbital Racer")}, {QStringLiteral("executable"), QStringLiteral("orbital-racer.exe")}},
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("X-Plane 12")}, {QStringLiteral("executable"), QStringLiteral("xplane12.exe")}}})
         || !profilesPage->setProperty("profileDetailPresentationOverride", fixtureDetails)) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles fixture could not be installed")
             .arg(appearance));
     }
+    settlePresentation();
+    // Searching the Running list is presentation-only until the user presses
+    // an existing ADD action. Exercise the actual text field so case-folded
+    // display-name and executable matching cannot silently regress.
+    const QVariantList categoriesBeforeRunningSearch = backend.profileCategories();
+    QObject *addGameDialog = profilesPage->findChild<QObject *>(QStringLiteral("flightDeckAddGameDialog"));
+    auto *runningGameSearch = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRunningGameSearch"));
+    if (!addGameDialog || !QMetaObject::invokeMethod(addGameDialog, "open")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Add Game dialog could not open for search review")
+            .arg(appearance));
+    }
+    settlePresentation();
+    runningGameSearch = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRunningGameSearch"));
+    const auto filteredRunningCount = [&]() {
+        QQmlExpression filtered(qmlContext(addGameDialog), addGameDialog,
+            QStringLiteral("filteredRunningApplications.length"));
+        const QVariant value = filtered.evaluate();
+        return !filtered.hasError() ? value.toInt() : -1;
+    };
+    if (!runningGameSearch || !clickFlightDeckSettingsItem(window, window->contentItem(), runningGameSearch)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search was not pointer reachable")
+            .arg(appearance));
+    }
+    addGameDialog->setProperty("runningSearchText", QStringLiteral("BF6"));
+    settlePresentation();
+    if (filteredRunningCount() != 1 || backend.profileCategories() != categoriesBeforeRunningSearch) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search did not filter a display name without mutating configuration")
+            .arg(appearance));
+    }
+    addGameDialog->setProperty("runningSearchText", QStringLiteral("ORBITAL-RACER.EXE"));
+    settlePresentation();
+    if (filteredRunningCount() != 1 || backend.profileCategories() != categoriesBeforeRunningSearch) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search did not case-fold executable matching")
+            .arg(appearance));
+    }
+    addGameDialog->setProperty("runningSearchText", QStringLiteral("no matching process"));
+    settlePresentation();
+    QObject *noRunningMatch = window->findChild<QObject *>(QStringLiteral("flightDeckRunningGameNoMatch"));
+    if (filteredRunningCount() != 0 || !noRunningMatch || !noRunningMatch->property("visible").toBool()
+        || backend.profileCategories() != categoriesBeforeRunningSearch) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search did not keep no-match and configuration states distinct")
+            .arg(appearance));
+    }
+    auto *clearRunningSearch = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRunningGameSearchClear"));
+    if (!clearRunningSearch || !clickFlightDeckSettingsItem(window, window->contentItem(), clearRunningSearch)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search clear was not pointer reachable")
+            .arg(appearance));
+    }
+    settlePresentation();
+    if (filteredRunningCount() != 3 || backend.profileCategories() != categoriesBeforeRunningSearch) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search clear did not restore the unmutated list")
+            .arg(appearance));
+    }
+    QMetaObject::invokeMethod(addGameDialog, "close");
     settlePresentation();
     if (!findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileLibrary"))
         || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileDetailPane"))
@@ -5227,6 +5312,38 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
             .arg(sliderClick.x()).arg(sliderClick.y())
             .arg(adaptive->property("contentY").toReal()));
     }
+    const auto verifyPrimaryResponseSlider = [&](const QString &objectName, const QString &property) {
+        auto *slider = findItem(objectName);
+        if (!slider || !scrollTo(slider)) {
+            return fail(QStringLiteral("%1 was not pointer reachable").arg(property));
+        }
+        const QVariantMap beforeState = backend.adaptiveResponseContextState(
+            QStringLiteral("profile"), profileId, 0);
+        const double before = beforeState.value(QStringLiteral("effective")).toMap().value(property).toDouble();
+        const QVariantList previewBefore = adaptive->property("previewSamples").toList();
+        const QPoint click = viewportPoint(slider, adaptiveItem,
+            QPointF(slider->width() * 0.28, slider->height() * 0.5));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, click);
+        settlePresentation();
+        const double after = backend.adaptiveResponseContextState(
+            QStringLiteral("profile"), profileId, 0).value(QStringLiteral("effective")).toMap()
+            .value(property).toDouble();
+        if (std::abs(after - before) < 0.015
+            || adaptive->property("previewSamples").toList() == previewBefore
+            || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore) {
+            return fail(QStringLiteral("%1 pointer action did not update authoritative response state and preview")
+                .arg(property));
+        }
+        return true;
+    };
+    if (!verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_normalMovementResponse"),
+                                     QStringLiteral("normalMovementResponse"))
+        || !verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_rapidMovementResponse"),
+                                        QStringLiteral("rapidMovementResponse"))
+        || !verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_engagementSensitivity"),
+                                        QStringLiteral("engagementSensitivity"))) {
+        return false;
+    }
     const QVariantMap configurationBeforeComparison = backend.adaptiveResponseContextState(
         QStringLiteral("profile"), profileId, 0);
     auto *comparisonSelector = adaptive->findChild<QObject *>(QStringLiteral("adaptiveComparisonSelector"));
@@ -5244,6 +5361,9 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
         || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
             != configurationBeforeComparison) {
         return fail(QStringLiteral("static trace selection changed configuration"));
+    }
+    if (staticBaseline->property("activeFocus").toBool()) {
+        return fail(QStringLiteral("pointer-toggled trace retained a keyboard-focus highlight"));
     }
     const QVariantMap configurationBeforePresentation = backend.adaptiveResponseContextState(
         QStringLiteral("profile"), profileId, 0);

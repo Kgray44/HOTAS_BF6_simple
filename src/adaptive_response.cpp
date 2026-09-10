@@ -61,6 +61,9 @@ void applyProperties(AdaptiveResponseSettings &target, const AdaptiveResponseSet
     const auto horizonExtensionCap = static_cast<std::uint32_t>(AdaptiveResponseHorizonExtensionCap);
     const auto turningPointProtection = static_cast<std::uint32_t>(AdaptiveResponseTurningPointProtection);
     const auto turningPointMargin = static_cast<std::uint32_t>(AdaptiveResponseTurningPointMargin);
+    const auto normalMovementResponse = static_cast<std::uint32_t>(AdaptiveResponseNormalMovementResponse);
+    const auto rapidMovementResponse = static_cast<std::uint32_t>(AdaptiveResponseRapidMovementResponse);
+    const auto engagementSensitivity = static_cast<std::uint32_t>(AdaptiveResponseEngagementSensitivity);
     if (properties & enabled) target.enabled = source.enabled;
     if (properties & model) target.model = source.model;
     if (properties & horizon) target.maximumHorizonMs = source.maximumHorizonMs;
@@ -82,6 +85,9 @@ void applyProperties(AdaptiveResponseSettings &target, const AdaptiveResponseSet
     if (properties & horizonExtensionCap) target.horizonExtensionCapMs = source.horizonExtensionCapMs;
     if (properties & turningPointProtection) target.turningPointProtection = source.turningPointProtection;
     if (properties & turningPointMargin) target.turningPointMargin = source.turningPointMargin;
+    if (properties & normalMovementResponse) target.normalMovementResponse = source.normalMovementResponse;
+    if (properties & rapidMovementResponse) target.rapidMovementResponse = source.rapidMovementResponse;
+    if (properties & engagementSensitivity) target.engagementSensitivity = source.engagementSensitivity;
 }
 
 AdaptiveResponseAxisOverride completeOverride(const AdaptiveResponseSettings &settings)
@@ -192,6 +198,9 @@ AdaptiveResponseSettings sanitizedAdaptiveResponseSettings(AdaptiveResponseSetti
     settings.horizonExtensionCapMs = clampFinite(settings.horizonExtensionCapMs, 0.0F, 30.0F, 0.0F);
     settings.turningPointProtection = clampFinite(settings.turningPointProtection, 0.0F, 1.0F, 0.0F);
     settings.turningPointMargin = clampFinite(settings.turningPointMargin, 0.0F, 0.30F, 0.0F);
+    settings.normalMovementResponse = clampFinite(settings.normalMovementResponse, 0.0F, 1.0F, 0.48F);
+    settings.rapidMovementResponse = clampFinite(settings.rapidMovementResponse, 0.0F, 1.0F, 0.85F);
+    settings.engagementSensitivity = clampFinite(settings.engagementSensitivity, 0.0F, 1.0F, 0.50F);
     return settings;
 }
 
@@ -214,12 +223,16 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         light.sustainedAssist = 0.12F; light.sustainedCap = 0.06F;
         light.horizonExtension = 0.10F; light.horizonExtensionCapMs = 4.0F;
         light.turningPointProtection = 0.75F; light.turningPointMargin = 0.15F;
+        light.normalMovementResponse = 0.24F; light.rapidMovementResponse = 0.58F;
+        light.engagementSensitivity = 0.30F;
         AdaptiveResponseSettings balanced;
         balanced.enabled = true; balanced.maximumHorizonMs = 8.0F; balanced.maximumLead = 0.12F;
         balanced.onsetAssist = 0.18F; balanced.onsetCap = 0.10F;
         balanced.sustainedAssist = 0.22F; balanced.sustainedCap = 0.10F;
         balanced.horizonExtension = 0.22F; balanced.horizonExtensionCapMs = 8.0F;
         balanced.turningPointProtection = 0.82F; balanced.turningPointMargin = 0.14F;
+        balanced.normalMovementResponse = 0.48F; balanced.rapidMovementResponse = 0.85F;
+        balanced.engagementSensitivity = 0.50F;
         AdaptiveResponseSettings fast = balanced;
         fast.maximumHorizonMs = 12.0F; fast.maximumLead = 0.18F;
         fast.velocityResponse = 0.80F; fast.accelerationResponse = 0.68F;
@@ -227,6 +240,8 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         fast.sustainedAssist = 0.32F; fast.sustainedCap = 0.15F;
         fast.horizonExtension = 0.35F; fast.horizonExtensionCapMs = 12.0F;
         fast.turningPointProtection = 0.88F; fast.turningPointMargin = 0.12F;
+        fast.normalMovementResponse = 0.66F; fast.rapidMovementResponse = 0.93F;
+        fast.engagementSensitivity = 0.66F;
         AdaptiveResponseSettings aggressive = fast;
         aggressive.maximumHorizonMs = 18.0F; aggressive.maximumLead = 0.27F;
         aggressive.velocityResponse = 0.91F; aggressive.accelerationResponse = 0.82F;
@@ -234,6 +249,8 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         aggressive.sustainedAssist = 0.42F; aggressive.sustainedCap = 0.20F;
         aggressive.horizonExtension = 0.48F; aggressive.horizonExtensionCapMs = 18.0F;
         aggressive.turningPointProtection = 0.94F; aggressive.turningPointMargin = 0.10F;
+        aggressive.normalMovementResponse = 0.82F; aggressive.rapidMovementResponse = 0.98F;
+        aggressive.engagementSensitivity = 0.80F;
         AdaptiveResponseSettings extreme = aggressive;
         extreme.maximumHorizonMs = 30.0F; extreme.maximumLead = 0.40F;
         extreme.velocityResponse = 1.0F; extreme.accelerationResponse = 0.95F;
@@ -241,14 +258,16 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         extreme.sustainedAssist = 0.55F; extreme.sustainedCap = 0.28F;
         extreme.horizonExtension = 0.65F; extreme.horizonExtensionCapMs = 24.0F;
         extreme.turningPointProtection = 1.0F; extreme.turningPointMargin = 0.08F;
+        extreme.normalMovementResponse = 1.0F; extreme.rapidMovementResponse = 1.0F;
+        extreme.engagementSensitivity = 0.94F;
         return std::array<AdaptiveResponsePreset, 6>{
             makeBuiltInPreset(u"off"_qs, u"Off"_qs, u"Direct physical response with no prediction."_qs, off),
-            makeBuiltInPreset(u"light"_qs, u"Light"_qs, u"Subtle, low-lead movement anticipation."_qs, light),
-            makeBuiltInPreset(u"balanced"_qs, u"Balanced"_qs, u"Responsive default for general flight."_qs, balanced),
-            makeBuiltInPreset(u"fast"_qs, u"Fast"_qs, u"More immediate lead for decisive movement."_qs, fast),
-            makeBuiltInPreset(u"aggressive"_qs, u"Aggressive"_qs, u"High-response tuning for evasive control."_qs, aggressive),
+            makeBuiltInPreset(u"light"_qs, u"Light"_qs, u"Subtle help during credible everyday movement."_qs, light),
+            makeBuiltInPreset(u"balanced"_qs, u"Balanced"_qs, u"Useful everyday response with smooth maneuver headroom."_qs, balanced),
+            makeBuiltInPreset(u"fast"_qs, u"Fast"_qs, u"Earlier normal engagement and strong maneuver response."_qs, fast),
+            makeBuiltInPreset(u"aggressive"_qs, u"Aggressive"_qs, u"Pronounced response throughout deliberate flying."_qs, aggressive),
             makeBuiltInPreset(u"extreme"_qs, u"Extreme"_qs,
-                              u"Experimental — up to 30 ms adaptive prediction for advanced tuning."_qs, extreme),
+                              u"Very obvious deliberate-flight response with maximum protected maneuver authority."_qs, extreme),
         };
     }();
     return presets;
@@ -299,6 +318,9 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
     runtime.turningPointProtection = settings.turningPointProtection;
     runtime.turningPointMargin = settings.turningPointMargin;
+    runtime.normalMovementResponse = settings.normalMovementResponse;
+    runtime.rapidMovementResponse = settings.rapidMovementResponse;
+    runtime.engagementSensitivity = settings.engagementSensitivity;
     const AxisMapping &mapping = profile.axes[static_cast<size_t>(std::clamp(axis, 0, kPhysicalAxisCount - 1))];
     runtime.domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
     runtime.domainMaximum = 1.0F;
@@ -339,6 +361,9 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
     runtime.turningPointProtection = settings.turningPointProtection;
     runtime.turningPointMargin = settings.turningPointMargin;
+    runtime.normalMovementResponse = settings.normalMovementResponse;
+    runtime.rapidMovementResponse = settings.rapidMovementResponse;
+    runtime.engagementSensitivity = settings.engagementSensitivity;
     const AxisMapping &mapping = deviceMapping.axes[static_cast<size_t>(std::clamp(axis, 0, kPhysicalAxisCount - 1))];
     runtime.domainMinimum = mapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
     runtime.domainMaximum = 1.0F;
@@ -371,6 +396,9 @@ RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     settings.horizonExtensionCapMs = base.horizonExtensionCapSeconds * 1000.0F;
     settings.turningPointProtection = base.turningPointProtection;
     settings.turningPointMargin = base.turningPointMargin;
+    settings.normalMovementResponse = base.normalMovementResponse;
+    settings.rapidMovementResponse = base.rapidMovementResponse;
+    settings.engagementSensitivity = base.engagementSensitivity;
     applyProperties(settings, override.settings, override.properties);
     settings = sanitizedAdaptiveResponseSettings(settings);
     base.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
@@ -394,6 +422,9 @@ RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     base.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
     base.turningPointProtection = settings.turningPointProtection;
     base.turningPointMargin = settings.turningPointMargin;
+    base.normalMovementResponse = settings.normalMovementResponse;
+    base.rapidMovementResponse = settings.rapidMovementResponse;
+    base.engagementSensitivity = settings.engagementSensitivity;
     return base;
 }
 
@@ -804,6 +835,10 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         && speed < std::abs(priorVelocity) * 0.88F;
     const float microCutoff = std::max(configuration.noiseRejection * 0.25F,
                                        configuration.motionSensitivity * 0.50F);
+    // Retain this broad speed normalization for estimator adaptation and
+    // legacy diagnostics.  It used to be the primary authority gate: with
+    // the default sensitivity its 0--1 span is 0.63 normalized units/s,
+    // which is why smooth, intentional helicopter control felt inert.
     const float intensity = std::clamp((speed - microCutoff) / (configuration.motionSensitivity * 18.0F),
                                        0.0F, 1.0F);
     const bool settling = !reversal && (decelerating || confirmedQuiet
@@ -839,10 +874,9 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const bool braking = decelerating
         || m_brakingReductionTarget > 0.0001F || m_brakingReductionFactor > 0.0001F
         ;
-    // The authority pipeline has three bounded inputs. Velocity owns normal
-    // fast motion; onset helps only while a coherent motion is gaining speed;
-    // sustained evidence can fill what remains for deliberate slow/moderate
-    // motion. None of these are output smoothing or extra axis gain.
+    // The authority pipeline has three bounded inputs.  Onset and sustained
+    // evidence establish that lower-speed movement is intentional; they do
+    // not directly amplify an axis or bypass the safety layer below.
     // Normalize acceleration evidence to the configured deliberate-motion
     // scale. The band is deliberately low enough for a small fast correction,
     // while coherence and direction gates still reject derivative noise.
@@ -1006,9 +1040,62 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         * configuration.sustainedAssist * configuration.sustainedCap
         * m_reacquisitionAuthority * sustainedBrakeSuppression;
     const float velocityAuthority = intensity;
-    const float motionUrgency = std::clamp(1.0F - (1.0F - velocityAuthority)
-        * (1.0F - std::clamp(onsetAuthority, 0.0F, 1.0F))
-        * (1.0F - std::clamp(sustainedAuthority, 0.0F, 1.0F)), 0.0F, 1.0F);
+    // Separate credible human intent from rate. Coherence, persistent
+    // same-sign source updates, displacement, and the onset envelope decide
+    // whether the movement may request prediction at all. Speed then moves
+    // that qualified motion through the normal and rapid lanes. This avoids
+    // the old failure mode where deliberate normal motion had to pass several
+    // speed-derived multipliers before it could use a meaningful horizon.
+    // Engagement Sensitivity shifts continuous bands; it never acts as a
+    // binary eligibility threshold.
+    const float engagement = configuration.engagementSensitivity;
+    const float normalSpeedLow = microCutoff + configuration.motionSensitivity
+        * (0.35F - 0.20F * engagement);
+    const float normalSpeedHigh = std::max(normalSpeedLow + 0.002F,
+        configuration.motionSensitivity * (3.80F - 2.20F * engagement));
+    const float rapidSpeedLow = std::max(normalSpeedHigh + 0.014F,
+        configuration.motionSensitivity * (7.50F - 3.00F * engagement));
+    const float rapidSpeedHigh = std::max(rapidSpeedLow + 0.010F,
+        configuration.motionSensitivity * (15.00F - 3.00F * engagement));
+    const float normalSpeedAuthority = smootherstep(normalSpeedLow, normalSpeedHigh, speed);
+    const float rapidMotionBlend = smootherstep(rapidSpeedLow, rapidSpeedHigh, speed);
+    const float onsetEvidence = smootherstep(0.002F, 0.015F, onsetAuthority);
+    const float rawDeliberateMotionEvidence = std::max(m_sustainedEvidence, onsetEvidence);
+    // The estimator must remain finite even while a malformed, test-only
+    // configuration is being normalized elsewhere. Never feed an out-of-band
+    // diagnostic envelope to the fractional easing exponent below.
+    const float deliberateMotionEvidence = std::isfinite(rawDeliberateMotionEvidence)
+        ? std::clamp(rawDeliberateMotionEvidence, 0.0F, 1.0F) : 0.0F;
+    // Normal and rapid response are deliberately stacked rather than two
+    // labels for the same top-speed path. The normal lane reserves a bounded
+    // amount of horizon for ordinary intentional control; the rapid lane can
+    // add the remaining headroom only after its higher-speed blend opens.
+    // A credible normal movement is therefore visible in Extreme without
+    // making tremor, sample-and-hold, braking, or an ambiguous reversal
+    // predictive: those paths have already cleared deliberateMotionEvidence
+    // or are cancelled below before a horizon is emitted.
+    constexpr float kNormalAuthorityLane = 0.86F;
+    // A duration-qualified input should not have to reach rapid speed merely
+    // to become noticeable. Ease the *qualified* normal-progress value (not
+    // raw speed) into its reserved lane. With no coherent persistence this is
+    // still exactly zero; with strong ordinary intent it earns useful normal
+    // authority while retaining a small rapid-only headroom above it.
+    const float normalIntentProgress = std::clamp(normalSpeedAuthority * deliberateMotionEvidence,
+                                                   0.0F, 1.0F);
+    const float normalMotionAuthority = kNormalAuthorityLane
+        * configuration.normalMovementResponse
+        * (1.0F - std::pow(1.0F - normalIntentProgress, 2.5F));
+    // The rapid lane retains the established immediate, confidence-gated
+    // high-energy authority. Requiring the slower sustained/onset envelope
+    // here delayed a confirmed reversal and collapsed braking continuity.
+    // Its user control remains effective while entering rapid motion, then
+    // deliberately converges at fully saturated maneuver speed.
+    const float rapidMotionAuthority = confidence
+        * (configuration.rapidMovementResponse
+           + (1.0F - configuration.rapidMovementResponse) * intensity);
+    const float motionUrgency = std::clamp(normalMotionAuthority
+        + (1.0F - normalMotionAuthority) * rapidMotionBlend * rapidMotionAuthority,
+        0.0F, 1.0F);
 
     // Horizon extension is intentionally a separate eligibility from motion
     // authority. It cannot grow from repeated sample-and-hold values: only
@@ -1056,6 +1143,8 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float reacquisitionAlpha = dt / (std::max(0.008F, reacquisitionTau) + dt);
     m_reacquisitionAuthority += (1.0F - m_reacquisitionAuthority) * reacquisitionAlpha;
     m_reacquisitionAuthority = std::clamp(m_reacquisitionAuthority, 0.0F, 1.0F);
+    // Confidence is intentionally applied once, here. It is a trust gate on
+    // the emitted horizon, not a second copy of the intent magnitude above.
     float horizon = allowedMaximumHorizon * motionUrgency * confidence
         * m_reacquisitionAuthority;
     if (reversal) horizon *= 0.35F + configuration.reversalResponse * 0.65F;
@@ -1196,6 +1285,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
             * (1.0F - staleAccelerationSuppression);
         lead += 0.5F * m_acceleration * horizon * horizon * accelerationLeadAuthority;
     }
+    const float requestedLead = lead;
     const float maximumLead = configuration.maximumLead * std::max(0.10F, confidence);
     if (turningPointLeadLimit > 0.0F) {
         const float credibleLeadLimit = std::min(maximumLead, turningPointLeadLimit);
@@ -1204,6 +1294,7 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     }
     const float unclampedLead = lead;
     lead = std::clamp(lead, -maximumLead, maximumLead);
+    const float cappedLead = lead;
     const float headroom = lead >= 0.0F ? configuration.domainMaximum - physical
                                         : physical - configuration.domainMinimum;
     const float taper = std::clamp(headroom / configuration.endpointTaper, 0.0F, 1.0F);
@@ -1218,10 +1309,17 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.velocity = m_velocity;
     result.acceleration = m_acceleration;
     result.activeHorizonSeconds = horizon;
+    result.requestedLead = requestedLead;
+    result.cappedLead = cappedLead;
+    result.endpointTaper = taper;
     result.lead = bounded - physical;
     result.confidence = confidence;
     result.motionIntensity = intensity;
     result.velocityAuthority = velocityAuthority;
+    result.deliberateMotionEvidence = deliberateMotionEvidence;
+    result.normalMotionAuthority = normalMotionAuthority;
+    result.rapidMotionAuthority = rapidMotionAuthority;
+    result.rapidMotionBlend = rapidMotionBlend;
     result.accelerationIntent = accelerationIntent;
 #if defined(HOTAS_ADAPTIVE_TEST_DIAGNOSTICS)
     result.launchIntent = launchIntent;
@@ -1365,6 +1463,52 @@ std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenar
             const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.120F) / 0.340F);
             value = minimum + span * (elapsed < 0.120F ? 0.50F
                 : elapsed < 0.460F ? 0.50F + 0.026F * progress : 0.526F);
+        } else if (mode == u"gentle hover correction"_qs || mode == u"gentle hover corrections"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float cycle = std::max(0.0F, elapsed - 0.080F) / 0.180F;
+            const int segment = static_cast<int>(cycle);
+            const float local = cycle - static_cast<float>(segment);
+            const float sign = segment % 2 == 0 ? 1.0F : -1.0F;
+            value = minimum + span * (elapsed < 0.080F ? 0.50F
+                : 0.50F + sign * 0.018F * smootherstep(0.0F, 1.0F, local));
+        } else if (mode == u"smooth cyclic sweep"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            value = elapsed < 0.100F ? minimum + span * 0.50F
+                : elapsed < 0.440F ? minimum + span * (0.50F + 0.22F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.100F) / 0.340F))
+                : elapsed < 0.760F ? minimum + span * (0.72F - 0.22F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.440F) / 0.320F))
+                : minimum + span * 0.50F;
+        } else if (mode == u"normal bank"_qs || mode == u"normal bank and recover"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            value = elapsed < 0.080F ? minimum + span * 0.50F
+                : elapsed < 0.390F ? minimum + span * (0.50F + 0.28F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.310F))
+                : elapsed < 0.720F ? minimum + span * (0.78F - 0.28F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.390F) / 0.330F))
+                : minimum + span * 0.50F;
+        } else if (mode == u"sustained moderate turn"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            value = elapsed < 0.080F ? minimum + span * 0.46F
+                : elapsed < 0.400F ? minimum + span * (0.46F + 0.32F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.080F) / 0.320F))
+                : elapsed < 0.620F ? minimum + span * 0.78F
+                : minimum + span * (0.78F - 0.16F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.620F) / 0.220F));
+        } else if (mode == u"approach corrections"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float first = smootherstep(0.0F, 1.0F, (elapsed - 0.100F) / 0.220F);
+            const float second = smootherstep(0.0F, 1.0F, (elapsed - 0.380F) / 0.240F);
+            const float third = smootherstep(0.0F, 1.0F, (elapsed - 0.660F) / 0.160F);
+            value = minimum + span * (0.50F + 0.045F * first - 0.070F * second + 0.030F * third);
+        } else if (mode == u"normal recover"_qs || mode == u"normal direction change"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            value = elapsed < 0.100F ? minimum + span * 0.50F
+                : elapsed < 0.390F ? minimum + span * (0.50F + 0.20F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.100F) / 0.290F))
+                : elapsed < 0.700F ? minimum + span * (0.70F - 0.30F
+                    * smootherstep(0.0F, 1.0F, (elapsed - 0.390F) / 0.310F))
+                : minimum + span * 0.40F;
         } else if (mode == u"positive-side reversal"_qs) value = t < 0.46F
             ? minimum + span * (0.50F + 0.44F * (t / 0.46F))
             : minimum + span * (0.94F - 0.36F * ((t - 0.46F) / 0.54F));
@@ -1399,6 +1543,23 @@ std::vector<float> adaptiveResponseScenarioPhysicalSamples(const QString &scenar
             const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.120F) / 0.360F);
             value = minimum + span * (elapsed < 0.120F ? 0.50F
                 : elapsed < 0.480F ? 0.50F + 0.018F * progress : 0.518F);
+        } else if (mode == u"rapid maneuver"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const float progress = smootherstep(0.0F, 1.0F, (elapsed - 0.050F) / 0.145F);
+            value = minimum + span * (elapsed < 0.050F ? 0.16F
+                : elapsed < 0.195F ? 0.16F + 0.70F * progress : 0.86F);
+        } else if (mode == u"hard reversal"_qs) {
+            const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
+            const auto smootherStep = [](float progress) {
+                const float u = std::clamp(progress, 0.0F, 1.0F);
+                return u * u * u * (u * (u * 6.0F - 15.0F) + 10.0F);
+            };
+            if (elapsed < 0.080F) value = minimum + span * 0.20F;
+            else if (elapsed < 0.340F) value = minimum + span * (0.20F + 0.66F
+                * smootherStep((elapsed - 0.080F) / 0.260F));
+            else if (elapsed < 0.600F) value = minimum + span * (0.86F - 0.56F
+                * smootherStep((elapsed - 0.340F) / 0.260F));
+            else value = minimum + span * 0.30F;
         } else if (mode == u"extreme turning-point torture"_qs) {
             const float elapsed = static_cast<float>(index) * kSamplePeriodSeconds;
             if (elapsed < 0.060F) value = minimum + span * 0.12F;

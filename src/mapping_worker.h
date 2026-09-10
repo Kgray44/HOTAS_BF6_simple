@@ -44,10 +44,19 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAcceleration{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonSeconds{};
+    // Fixed scalar diagnostics for the Flight Deck's lead pipeline. Like the
+    // adjacent telemetry, these are published without allocating or waking QML.
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRequestedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveCappedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEndpointTaper{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveLead{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveConfidence{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMotionIntensity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocityAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveDeliberateMotionEvidence{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveNormalMotionAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRapidMotionAuthority{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRapidMotionBlend{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAccelerationIntent{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveOnsetAuthority{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveSustainedEvidence{};
@@ -94,6 +103,9 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeHorizonExtensionCapSeconds{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeTurningPointProtection{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeTurningPointMargin{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeNormalMovementResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeRapidMovementResponse{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeEngagementSensitivity{};
     std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveAutomationOverlayActive{};
     std::array<std::atomic_uint32_t, kPhysicalAxisCount> adaptiveAutomationOverlayProperties{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};

@@ -70,7 +70,12 @@ Item {
         const masks = { enabled: 1, model: 2, maximumhorizonms: 4, maximumlead: 8,
             velocityresponse: 16, accelerationresponse: 32, motionsensitivity: 64,
             noiserejection: 128, reversaldetection: 256, reversalresponse: 512,
-            decelerationresponse: 1024, settlingresponse: 2048, endpointtaper: 4096 }
+            decelerationresponse: 1024, settlingresponse: 2048, endpointtaper: 4096,
+            onsetassist: 8192, onsetcap: 16384, sustainedassist: 32768,
+            sustainedcap: 65536, horizonextension: 131072, horizonextensioncapms: 262144,
+            turningpointprotection: 524288, turningpointmargin: 1048576,
+            normalmovementresponse: 2097152, rapidmovementresponse: 4194304,
+            engagementsensitivity: 8388608 }
         return masks[String(key).toLowerCase()] || 0
     }
     function inheritedHere(key) { return (Number(scopeInfo().properties || 0) & propertyMask(key)) === 0 }
@@ -397,6 +402,7 @@ Item {
         selectedTextColor: root.themeTokens.textStrong
         leftPadding: 11
         rightPadding: 11
+        onAccepted: focus = false
         font.pixelSize: 11
         background: Rectangle {
             radius: root.themeTokens.controlRadius
@@ -1199,6 +1205,11 @@ Item {
                         TuneGroup { title: "ONSET / MOTION ACQUISITION"; detail: "Acceleration may fill unused predictive authority only while coherent motion is gaining speed. Maximum Horizon and Maximum Lead remain hard limits."
                             TuneRow { label: "Onset Assist"; detail: "Uses coherent acceleration to build predictive response sooner while motion is still gaining speed."; from: 0; to: 1; step: 0.01; unit: "%"; propertyKey: "onsetAssist"; value: root.numericOr(effective().onsetAssist, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "onsetAssist", value); root.setPreview() } }
                             TuneRow { label: "Onset Cap"; detail: "Limits how much acceleration may add to predictive authority. Maximum Horizon and Maximum Lead remain absolute limits."; from: 0; to: 0.40; step: 0.01; unit: "%"; propertyKey: "onsetCap"; value: root.numericOr(effective().onsetCap, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "onsetCap", value); root.setPreview() } }
+                        }
+                        TuneGroup { title: "FLIGHT RESPONSE"; detail: "Controls ordinary deliberate movement separately from extra rapid-maneuver authority. Safety cancellation, braking, turning, and endpoint protections remain active."
+                            TuneRow { label: "Normal Movement Response"; detail: "How strongly Adaptive Response helps during smooth everyday control movement."; from: 0; to: 1; step: 0.01; unit: "%"; propertyKey: "normalMovementResponse"; value: root.numericOr(effective().normalMovementResponse, 0.48); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "normalMovementResponse", value); root.setPreview() } }
+                            TuneRow { label: "Rapid Movement Response"; detail: "Additional response available during fast maneuvers."; from: 0; to: 1; step: 0.01; unit: "%"; propertyKey: "rapidMovementResponse"; value: root.numericOr(effective().rapidMovementResponse, 0.85); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "rapidMovementResponse", value); root.setPreview() } }
+                            TuneRow { label: "Engagement Sensitivity"; detail: "How easily deliberate gentle movement begins receiving assistance."; from: 0; to: 1; step: 0.01; unit: "%"; propertyKey: "engagementSensitivity"; value: root.numericOr(effective().engagementSensitivity, 0.50); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "engagementSensitivity", value); root.setPreview() } }
                         }
                         TuneGroup { title: "SUSTAINED MOTION"; detail: "Continuous coherent movement may fill unused authority and temporarily extend time prediction. Both remain unavailable during noise, braking, reversal, or settling."
                             TuneRow { label: "Sustained Assist"; detail: "Builds additional predictive response during continuous, predictable movement, including slower sustained control inputs."; from: 0; to: 1; step: 0.01; unit: "%"; propertyKey: "sustainedAssist"; value: root.numericOr(effective().sustainedAssist, 0); onChanged: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "sustainedAssist", value); root.setPreview() } }

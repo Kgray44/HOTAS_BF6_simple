@@ -63,7 +63,7 @@ function Build-Readme {
     Add-Line $lines
     Add-Line $lines ("# {0}" -f $p.name)
     Add-Line $lines
-    Add-Line $lines ("**Current release: v{0}**" -f $Version)
+    Add-Line $lines ("**Current version: v{0}**" -f $Version)
     Add-Line $lines '[Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)'
     Add-Line $lines
     Add-Line $lines ([string]$p.tagline)
@@ -216,7 +216,7 @@ function Build-Features {
     Add-Line $lines
     Add-Line $lines '# HOTAS BF6 Simple — Features'
     Add-Line $lines
-    Add-Line $lines ("**Current release: v{0}**" -f $Version)
+    Add-Line $lines ("**Current version: v{0}**" -f $Version)
     Add-Line $lines
     Add-Line $lines 'This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).'
     Add-Line $lines
@@ -258,9 +258,9 @@ function Build-VersionOverview {
     Add-Line $lines
     Add-Line $lines '# HOTAS BF6 Simple — Version Overview'
     Add-Line $lines
-    Add-Line $lines ("**Current release: v{0}**" -f $Version)
+    Add-Line $lines ("**Current version: v{0}**" -f $Version)
     Add-Line $lines
-    Add-Line $lines 'This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.'
+    Add-Line $lines 'This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.'
     Add-Line $lines
     Add-Line $lines 'Versions are shown newest first.'
     Add-Line $lines
@@ -294,7 +294,7 @@ function Build-HardwareCompatibility {
     Add-Line $lines
     Add-Line $lines '# HOTAS BF6 Simple — Hardware Compatibility'
     Add-Line $lines
-    Add-Line $lines ("**Current release: v{0}**" -f $Version)
+    Add-Line $lines ("**Current version: v{0}**" -f $Version)
     Add-Line $lines
     Add-Line $lines 'This matrix records only supported states and evidence boundaries. “Expected / Unverified” is not a tested or endorsed claim.'
     Add-Line $lines
@@ -335,7 +335,7 @@ function Build-Bf6Compatibility {
     Add-Line $lines
     Add-Line $lines '# HOTAS BF6 Simple — Battlefield 6 Compatibility'
     Add-Line $lines
-    Add-Line $lines ("**Current release: v{0}**" -f $Version)
+    Add-Line $lines ("**Current version: v{0}**" -f $Version)
     Add-Line $lines
     Add-Line $lines '## Official / anticheat boundary'
     Add-Line $lines

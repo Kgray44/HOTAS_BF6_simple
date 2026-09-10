@@ -97,6 +97,9 @@ bool sameAdaptiveResponseSettings(const AdaptiveResponseSettings &left,
         && left.settlingResponse == right.settlingResponse && left.endpointTaper == right.endpointTaper
         && left.onsetAssist == right.onsetAssist && left.onsetCap == right.onsetCap
         && left.sustainedAssist == right.sustainedAssist && left.sustainedCap == right.sustainedCap
+        && left.normalMovementResponse == right.normalMovementResponse
+        && left.rapidMovementResponse == right.rapidMovementResponse
+        && left.engagementSensitivity == right.engagementSensitivity
         && left.horizonExtension == right.horizonExtension
         && left.horizonExtensionCapMs == right.horizonExtensionCapMs
         && left.turningPointProtection == right.turningPointProtection

@@ -11,6 +11,10 @@ Page {
     // Presentation state only: ThemeManager never reaches AppBackend or the
     // DirectInput-to-vJoy worker.
     Theme { id: theme }
+    // The Curve Editor has a native Flight Deck composition when this host is
+    // embedded in that shell. It shares only presentation tokens; the backend
+    // command path and compiled curve math remain the established ones.
+    FlightDeckTheme { id: flightDeckTokens }
     // Expose the token object through a real root property. Child components
     // cannot reliably use `root.theme`: `theme` is an internal QML id, not a
     // Page property. Keeping this explicit makes the shared Curve Editor use
@@ -338,6 +342,7 @@ Page {
         placeholderTextColor: theme.textFaint
         verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
+        onAccepted: focus = false
         font.pixelSize: 11
         font.family: theme.topGun ? theme.displayFont : root.font.family
         background: Rectangle {
@@ -2414,10 +2419,28 @@ Page {
             id: curveEditorLoader
             anchors.fill: parent
             active: root.currentPage === 6
-            sourceComponent: Component {
-                CurveEditor { anchors.fill: parent; visible: root.currentPage === 6; backendObject: backend; theme: root.themeTokens
-                    presentationState: root.curveEditorPresentationState
-                    onPresentationStateCaptured: function(state) { root.curveEditorPresentationState = state } }
+            sourceComponent: root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent
+        }
+        Component {
+            id: flightDeckCurveEditorComponent
+            FlightDeckCurveEditor {
+                anchors.fill: parent
+                visible: root.currentPage === 6
+                backendObject: backend
+                tokens: flightDeckTokens
+                presentationState: root.curveEditorPresentationState
+                onPresentationStateCaptured: function(state) { root.curveEditorPresentationState = state }
+            }
+        }
+        Component {
+            id: legacyCurveEditorComponent
+            CurveEditor {
+                anchors.fill: parent
+                visible: root.currentPage === 6
+                backendObject: backend
+                theme: root.themeTokens
+                presentationState: root.curveEditorPresentationState
+                onPresentationStateCaptured: function(state) { root.curveEditorPresentationState = state }
             }
         }
         Loader {

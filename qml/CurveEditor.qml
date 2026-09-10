@@ -119,6 +119,7 @@ Item {
         selectedTextColor: theme.textStrong
         leftPadding: 11
         rightPadding: 11
+        onAccepted: focus = false
         background: Rectangle {
             radius: theme.controlRadius
             color: theme.control
@@ -339,7 +340,7 @@ Item {
 
         AviationPanel {
             Layout.fillWidth: true
-            Layout.preferredHeight: editor.width >= 1080 ? 198 : 270
+            Layout.preferredHeight: editor.width >= 1080 ? 222 : 294
             color: editor.flightDeck ? theme.elevatedSurface : theme.curvePanelSurface
             border.color: editor.flightDeck ? theme.border : (theme.topGun ? theme.borderStrong : theme.border)
             ColumnLayout {
@@ -350,6 +351,14 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
+                        Text {
+                            visible: editor.flightDeck
+                            text: "CURVE EDITOR"
+                            color: theme.textPrimary
+                            font.family: theme.displayFont
+                            font.pixelSize: 20
+                            font.bold: true
+                        }
                         Text {
                             text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
@@ -473,6 +482,18 @@ Item {
                 Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: theme.textMuted; font.pixelSize: 12 }
                 Item { Layout.preferredWidth: 16 }
                 AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: { showEffective = checked; graph.requestPaint() } ToolTip.text: "Overlay the effective axis response after the full signal path." }
+                AviationButton {
+                    visible: editor.flightDeck
+                    text: characteristicsVisible ? "HIDE ANALYSIS" : "CURVE ANALYSIS"
+                    onClicked: characteristicsVisible = !characteristicsVisible
+                    ToolTip.text: "Show or hide secondary curve characteristics."
+                }
+                AviationButton {
+                    visible: editor.flightDeck
+                    text: signalPathVisible ? "HIDE SIGNAL PATH" : "SIGNAL PATH"
+                    onClicked: signalPathVisible = !signalPathVisible
+                    ToolTip.text: "Show or hide the live signal-path detail."
+                }
                 Item { Layout.fillWidth: true }
                 Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: theme.textMuted; font.pixelSize: 12; font.family: theme.telemetryFont; font.bold: true }
             }
@@ -701,6 +722,28 @@ Item {
             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; color: theme.graphBackground; border.color: theme.graphFrame; width: 230; height: 30; radius: 3; visible: !!editorState.previewLabel
                 Text { anchors.centerIn: parent; text: "PREVIEW ACTIVE  ·  " + editorState.previewLabel; color: theme.graphPreview; font.pixelSize: 11; font.bold: true }
             }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 5
+                text: "PHYSICAL INPUT  ·  %"
+                color: theme.graphLabel
+                font.family: theme.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 5
+                anchors.verticalCenter: parent.verticalCenter
+                rotation: -90
+                transformOrigin: Item.Center
+                text: responseView ? "MAPPED OUTPUT  ·  %" : "LOCAL GAIN  ·  ×"
+                color: theme.graphLabel
+                font.family: theme.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
         }
 
         AviationPanel {
@@ -731,12 +774,14 @@ Item {
         }
 
         GridLayout {
+            visible: !editor.flightDeck || characteristicsVisible || signalPathVisible
             Layout.fillWidth: true
             columns: editor.width >= 1400 ? 3 : editor.width >= 880 ? 2 : 1
             columnSpacing: 14
             rowSpacing: 14
 
             AviationPanel {
+                visible: !editor.flightDeck || characteristicsVisible
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 Layout.preferredHeight: editorState.pointEditing ? 326 : 152
@@ -787,6 +832,7 @@ Item {
             }
 
             AviationPanel {
+                visible: !editor.flightDeck || signalPathVisible
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 Layout.preferredHeight: 300

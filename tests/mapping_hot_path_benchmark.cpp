@@ -92,6 +92,10 @@ struct RuntimePublication {
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveConfidence{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveMotionIntensity{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveVelocityAuthority{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveDeliberateMotionEvidence{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveNormalMotionAuthority{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRapidMotionAuthority{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRapidMotionBlend{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveAccelerationIntent{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveOnsetAuthority{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveSustainedEvidence{};
@@ -124,6 +128,9 @@ struct RuntimePublication {
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeHorizonExtensionCapSeconds{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeTurningPointProtection{};
     std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeTurningPointMargin{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeNormalMovementResponse{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeRapidMovementResponse{};
+    std::array<std::atomic<float>, hotas::kPhysicalAxisCount> adaptiveRuntimeEngagementSensitivity{};
     std::array<std::atomic<bool>, hotas::kMaximumPhysicalButtons> physicalButtons{};
     std::array<std::atomic<bool>, hotas::kMaximumPhysicalButtons> virtualButtons{};
 };
@@ -287,6 +294,10 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
         state.publication.adaptiveConfidence[static_cast<size_t>(index)].store(adaptive.confidence, std::memory_order_relaxed);
         state.publication.adaptiveMotionIntensity[static_cast<size_t>(index)].store(adaptive.motionIntensity, std::memory_order_relaxed);
         state.publication.adaptiveVelocityAuthority[static_cast<size_t>(index)].store(adaptive.velocityAuthority, std::memory_order_relaxed);
+        state.publication.adaptiveDeliberateMotionEvidence[static_cast<size_t>(index)].store(adaptive.deliberateMotionEvidence, std::memory_order_relaxed);
+        state.publication.adaptiveNormalMotionAuthority[static_cast<size_t>(index)].store(adaptive.normalMotionAuthority, std::memory_order_relaxed);
+        state.publication.adaptiveRapidMotionAuthority[static_cast<size_t>(index)].store(adaptive.rapidMotionAuthority, std::memory_order_relaxed);
+        state.publication.adaptiveRapidMotionBlend[static_cast<size_t>(index)].store(adaptive.rapidMotionBlend, std::memory_order_relaxed);
         state.publication.adaptiveAccelerationIntent[static_cast<size_t>(index)].store(adaptive.accelerationIntent, std::memory_order_relaxed);
         state.publication.adaptiveOnsetAuthority[static_cast<size_t>(index)].store(adaptive.onsetAuthority, std::memory_order_relaxed);
         state.publication.adaptiveSustainedEvidence[static_cast<size_t>(index)].store(adaptive.sustainedEvidence, std::memory_order_relaxed);
@@ -319,6 +330,9 @@ void processReport(const SyntheticReport &report, const hotas::RuntimeMappingCon
         state.publication.adaptiveRuntimeHorizonExtensionCapSeconds[static_cast<size_t>(index)].store(axis.adaptiveResponse.horizonExtensionCapSeconds, std::memory_order_relaxed);
         state.publication.adaptiveRuntimeTurningPointProtection[static_cast<size_t>(index)].store(axis.adaptiveResponse.turningPointProtection, std::memory_order_relaxed);
         state.publication.adaptiveRuntimeTurningPointMargin[static_cast<size_t>(index)].store(axis.adaptiveResponse.turningPointMargin, std::memory_order_relaxed);
+        state.publication.adaptiveRuntimeNormalMovementResponse[static_cast<size_t>(index)].store(axis.adaptiveResponse.normalMovementResponse, std::memory_order_relaxed);
+        state.publication.adaptiveRuntimeRapidMovementResponse[static_cast<size_t>(index)].store(axis.adaptiveResponse.rapidMovementResponse, std::memory_order_relaxed);
+        state.publication.adaptiveRuntimeEngagementSensitivity[static_cast<size_t>(index)].store(axis.adaptiveResponse.engagementSensitivity, std::memory_order_relaxed);
         const int target = static_cast<int>(axis.profile.target);
         if (target > 0 && target < static_cast<int>(output.size()) && !targetUsed[static_cast<size_t>(target)]) {
             output[static_cast<size_t>(target)] = mapped.adaptiveOutput;
