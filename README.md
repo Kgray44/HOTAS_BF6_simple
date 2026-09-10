@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple
 
-**Current release: v2.4.0**
+**Current release: v2.4.1**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.

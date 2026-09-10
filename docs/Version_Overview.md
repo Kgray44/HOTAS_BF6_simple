@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.4.0**
+**Current release: v2.4.1**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.4.1 — Device setup reliability
+
+Makes saved-controller setup deterministic and diagnosable when a known HOTAS is present but DirectInput acquisition cannot complete.
+
+- Guided setup now requests acquisition of the exact saved controller before it begins verification, rather than treating device discovery alone as a completed connection.
+- If acquisition fails, the Setup Assistant preserves the specific failure, clears pending verification safely, and presents an explicit retry action instead of silently returning to the same setup screen.
+- Controller-readiness reporting separates saved identity, discovery, acquisition, verification, virtual-output, visibility, and live-route conditions so the Devices workspace identifies the actionable blocker.
+- The Device Rigs workspace keeps its constrained full-page layout, per-object visibility actions, transient feedback lifecycle, and setup-state transitions covered by focused QML and backend contract tests.
+- The mapping worker and DirectInput-to-vJoy report path are unchanged; the synthetic benchmark continues to report zero hot-path allocations.
 
 ## v2.4.0 — Device Rigs, simultaneous inputs, and Day Ops
 
