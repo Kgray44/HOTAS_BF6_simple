@@ -8315,30 +8315,36 @@ QVariantMap AppBackend::completeSetupAssistantDevice(const QString &recordId)
             u"Refresh Devices, select the saved controller again, then retry setup."_qs,
             u"physicalDevice"_qs, targetId, u"open-devices"_qs, u"OPEN DEVICES"_qs);
     }
-    const PhysicalControllerCapabilities current = currentPhysicalCapabilities();
-    PhysicalControllerCapabilities expected;
-    expected.directInputId = saved->lastDirectInputId;
-    expected.hidInstanceId = saved->hidInstanceId;
-    expected.hidContainerId = saved->hidContainerId;
-    if (!current.connected || !ControllerReadinessService::samePhysicalController(expected, current)) {
+    const auto discovered = std::find_if(m_discoveredControllers.cbegin(),
+        m_discoveredControllers.cend(), [this, &targetId](const DiscoveredController &controller) {
+            if (!controller.connected || controller.virtualDevice || controller.directInputId.trimmed().isEmpty()) {
+                return false;
+            }
+            const ControllerMatch match = ControllerManager::match(controller,
+                m_configuration.savedControllers);
+            return !match.ambiguous && match.recordId == targetId;
+        });
+    if (discovered == m_discoveredControllers.cend()) {
         return actionResult(false, u"Connect the selected controller"_qs,
             u"HOTAS BF6 will verify only the saved controller you selected. Connect that exact controller, then choose Set Up Device again."_qs,
             u"physicalDevice"_qs, targetId, u"check-again"_qs, u"CHECK AGAIN"_qs);
     }
-    if (m_verificationInProgress) {
+    if (m_verificationInProgress || m_controllerSelectionInProgress) {
         return actionResult(false, u"Setup check is already running"_qs,
             u"HOTAS BF6 is still verifying the selected controller."_qs,
             u"physicalDevice"_qs, targetId, u"wait"_qs, {}, {}, true);
     }
     m_setupAssistantScopeType = u"device"_qs;
     m_setupAssistantScopeId = targetId;
-    // Completion is committed only after the full verifier returns with the
-    // same physical identity. HidHide/route follow-up may still be needed,
-    // but they must not turn physical verification into a circular check.
+    // The discovery match establishes the saved target. Acquire that exact
+    // DirectInput device before verification, rather than requiring an
+    // already-active worker snapshot that setup itself is meant to create.
+    // Completion is still committed only after the full verifier returns with
+    // the same physical identity.
     m_pendingSetupVerificationRecordId = targetId;
-    verifyHotasSetup();
-    return actionResult(true, u"Setting up selected controller"_qs,
-        u"HOTAS BF6 is verifying this controller's exact identity and will save that verification before advancing to the next setup step."_qs,
+    startExplicitNewControllerVerification(discovered->directInputId, discovered->name);
+    return actionResult(true, u"Acquiring selected controller"_qs,
+        u"HOTAS BF6 found this exact saved controller and is acquiring it before verification."_qs,
         u"physicalDevice"_qs, targetId, u"wait"_qs, {}, {}, true);
 }
 
@@ -9354,11 +9360,11 @@ void AppBackend::startExplicitNewControllerVerification(const QString &directInp
         QMetaObject::invokeMethod(this, [this, selected, displayName] {
             m_controllerSelectionInProgress = false;
             if (selected) {
-                appendEvent(QString(u"New controller acquired for setup: %1; starting explicit verification"_qs)
+                appendEvent(QString(u"Selected controller acquired for setup: %1; starting explicit verification"_qs)
                     .arg(displayName));
                 verifyHotasSetup();
             } else {
-                appendEvent(QString(u"Could not acquire %1 for setup; connect it and try Set Up again"_qs)
+                appendEvent(QString(u"Could not acquire %1 for setup; close any other HOTAS BF6 session using it, then try Set Up again"_qs)
                     .arg(displayName));
             }
             emit stateChanged();

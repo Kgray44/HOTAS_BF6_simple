@@ -585,6 +585,22 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backendHeader.contains(QStringLiteral("setSetupAssistantFactsForTest")));
     QVERIFY(backendHeader.contains(QStringLiteral("createDeviceRigResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("createVirtualOutputLayoutResult")));
+    const int completeSetupStart = backend.indexOf(
+        QStringLiteral("QVariantMap AppBackend::completeSetupAssistantDevice"));
+    const int completeSetupEnd = backend.indexOf(
+        QStringLiteral("QVariantMap AppBackend::applyPhysicalDeviceGameVisibility"), completeSetupStart);
+    QVERIFY(completeSetupStart >= 0);
+    QVERIFY(completeSetupEnd > completeSetupStart);
+    const QString completeSetup = backend.mid(completeSetupStart,
+        completeSetupEnd - completeSetupStart);
+    // A saved controller that discovery has already matched must be acquired
+    // before verification. Requiring an active worker snapshot here would
+    // make the Set Up action reject the very controller it needs to acquire.
+    QVERIFY(completeSetup.contains(QStringLiteral("ControllerManager::match(controller")));
+    QVERIFY(completeSetup.contains(QStringLiteral("!match.ambiguous && match.recordId == targetId")));
+    QVERIFY(completeSetup.contains(QStringLiteral(
+        "startExplicitNewControllerVerification(discovered->directInputId, discovered->name)")));
+    QVERIFY(!completeSetup.contains(QStringLiteral("currentPhysicalCapabilities()")));
     QVERIFY(backend.contains(QStringLiteral("Connect a controller to create your first Device Rig.")));
     QVERIFY(backend.contains(QStringLiteral("match-physical")));
     QVERIFY(backend.contains(QStringLiteral("copy-output")));
