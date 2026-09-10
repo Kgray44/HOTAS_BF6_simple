@@ -103,7 +103,7 @@ try {
     Start-Sleep -Seconds 3
     if ($mapper.HasExited) { throw 'The updated mapper exited during its initial stability interval.' }
 
-    & $fixture --assert-v23
+    & $fixture --assert-v24
     if ($LASTEXITCODE -ne 0) { throw 'The published updater did not preserve and migrate the v1.9.3 fixture.' }
 
     $updaterLog = Join-Path $env:LOCALAPPDATA 'HOTAS BF6\logs\updater.log'
@@ -152,7 +152,7 @@ try {
     }
     Start-Sleep -Seconds 3
     if ($priorMapper.HasExited) { throw 'The published v2.5.0 updater candidate exited during its stability interval.' }
-    & $fixture --assert-v23
+    & $fixture --assert-v24
     if ($LASTEXITCODE -ne 0) { throw 'The published v2.5.0 updater did not preserve and migrate its fixture.' }
     Write-Host "Published updater acceptance passed: v1.9.3 and v2.5.0 -> v$ExpectedVersion."
 } finally {
