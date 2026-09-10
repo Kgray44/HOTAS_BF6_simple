@@ -859,6 +859,8 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     const QString adaptive = sourceFile(QStringLiteral("qml/FlightDeckAdaptiveResponse.qml"));
     const QString profiles = sourceFile(QStringLiteral("qml/FlightDeckProfiles.qml"));
     const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
+    const QString flightDeckCurve = sourceFile(QStringLiteral("qml/FlightDeckCurveEditor.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
 
     QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckSharedPageTitle\"")));
@@ -872,7 +874,9 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     const qsizetype buttons = flightDeck.indexOf(QStringLiteral("{ label: \"Buttons\", page: 1 }"));
     QVERIFY(axes >= 0 && buttons > axes && curveNavigation > buttons);
     QVERIFY(headerPill.contains(QStringLiteral("Accessible.role: Accessible.Button")));
-    QVERIFY(headerPill.contains(QStringLiteral("onPressed: control.forceActiveFocus()")));
+    QVERIFY(headerPill.contains(QStringLiteral("focusPolicy: Qt.TabFocus")));
+    QVERIFY(headerPill.contains(QStringLiteral("control.visualFocus")));
+    QVERIFY(!headerPill.contains(QStringLiteral("forceActiveFocus()")));
     QVERIFY(selector.contains(QStringLiteral("SELECTED DEVICE")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.selectedDevices")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.setSelectedDeviceContext")));
@@ -886,7 +890,15 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(adaptive.contains(QStringLiteral("Engagement Sensitivity")));
     QVERIFY(adaptive.contains(QStringLiteral("NORMAL MOVEMENT")));
     QVERIFY(adaptive.contains(QStringLiteral("RAPID MOVEMENT")));
-    QVERIFY(adaptive.contains(QStringLiteral("onPressed: control.forceActiveFocus()")));
+    QVERIFY(adaptive.contains(QStringLiteral("MAPPED PHYSICAL")));
+    QVERIFY(adaptive.contains(QStringLiteral("PREDICTOR OUTPUT")));
+    QVERIFY(adaptive.contains(QStringLiteral("PRE-CAP REQUEST")));
+    QVERIFY(adaptive.contains(QStringLiteral("POST-CAP LEAD")));
+    QVERIFY(adaptive.contains(QStringLiteral("ENDPOINT TAPER")));
+    QVERIFY(adaptive.contains(QStringLiteral("component TraceLegend: Button")));
+    QVERIFY(adaptive.contains(QStringLiteral("focusPolicy: Qt.TabFocus")));
+    QVERIFY(adaptive.contains(QStringLiteral("control.visualFocus")));
+    QVERIFY(!adaptive.contains(QStringLiteral("onPressed: control.forceActiveFocus()")));
     QVERIFY(adaptive.contains(QStringLiteral("Awaiting controller input")));
     QVERIFY(adaptive.indexOf(QStringLiteral("objectName: \"adaptiveSelectedDeviceContext\""))
             < adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextTarget\"")));
@@ -896,6 +908,22 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckProfileDetailPane\"")));
     QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckCategoryOpenDetails\"")));
     QVERIFY(profiles.contains(QStringLiteral("root.openCategory(root.selectedCategoryId)")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckRunningGameSearch\"")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckAddGameDialog\"")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckRunningGameNoMatch\"")));
+    QVERIFY(profiles.contains(QStringLiteral("filteredRunningApplications")));
+    QVERIFY(profiles.contains(QStringLiteral("displayName.indexOf(query)")));
+    QVERIFY(profiles.contains(QStringLiteral("executable.indexOf(query)")));
+    QVERIFY(profiles.contains(QStringLiteral("Clear the search to see all running applications")));
+    QVERIFY(standard.contains(QStringLiteral("root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("objectName: \"flightDeckCurveEditor\"")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("ACTIVE CURVE CONTEXT")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("RESPONSE SURFACE")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("OVERLAY & WORKSPACE TOOLS")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurveFamily")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurveStrength")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurvePoint")));
+    QVERIFY(!flightDeckCurve.contains(QStringLiteral("AviationPanel")));
     QVERIFY(curve.contains(QStringLiteral("readonly property bool flightDeck")));
     QVERIFY(curve.contains(QStringLiteral("flightDeck ? theme.primarySurface")));
     QVERIFY(curve.contains(QStringLiteral("PHYSICAL INPUT  ·  %")));

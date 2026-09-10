@@ -44,6 +44,11 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveVelocity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveAcceleration{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveHorizonSeconds{};
+    // Fixed scalar diagnostics for the Flight Deck's lead pipeline. Like the
+    // adjacent telemetry, these are published without allocating or waking QML.
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRequestedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveCappedLead{};
+    std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveEndpointTaper{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveLead{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveConfidence{};
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveMotionIntensity{};

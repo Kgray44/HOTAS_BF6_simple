@@ -122,6 +122,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckAxisValueMeter.qml
         qml/FlightDeckResponsePreview.qml
         qml/FlightDeckAdaptiveResponse.qml
+        qml/FlightDeckCurveEditor.qml
         qml/FlightDeckDiagnostics.qml
         qml/FlightDeckAxes.qml
         qml/FlightDeckButtons.qml
@@ -533,6 +534,7 @@ if (BUILD_TESTING)
             qml/FlightDeckAxisValueMeter.qml
             qml/FlightDeckResponsePreview.qml
             qml/FlightDeckAdaptiveResponse.qml
+            qml/FlightDeckCurveEditor.qml
             qml/FlightDeckDiagnostics.qml
             qml/FlightDeckAxes.qml
             qml/FlightDeckButtons.qml

@@ -1284,6 +1284,9 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
             {u"velocity"_qs, load(runtime.adaptiveVelocity)}, {u"acceleration"_qs, load(runtime.adaptiveAcceleration)},
             {u"activeHorizonMs"_qs, load(runtime.adaptiveHorizonSeconds) * 1000.0F},
             {u"maximumHorizonMs"_qs, maximumHorizonSeconds * 1000.0F},
+            {u"requestedLead"_qs, load(runtime.adaptiveRequestedLead)},
+            {u"cappedLead"_qs, load(runtime.adaptiveCappedLead)},
+            {u"endpointTaper"_qs, load(runtime.adaptiveEndpointTaper)},
             {u"lead"_qs, load(runtime.adaptiveLead)}, {u"maximumLead"_qs, maximumLead},
             {u"confidence"_qs, load(runtime.adaptiveConfidence)},
             {u"motionIntensity"_qs, load(runtime.adaptiveMotionIntensity)},
@@ -1353,6 +1356,9 @@ QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
                                   {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
                                   {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
                                       ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+                                   {u"requestedLead"_qs, sample.requestedLead},
+                                   {u"cappedLead"_qs, sample.cappedLead},
+                                   {u"endpointTaper"_qs, sample.endpointTaper},
                                    {u"lead"_qs, sample.lead},
                                    {u"confidence"_qs, sample.confidence},
                                    {u"motionIntensity"_qs, sample.motionIntensity},
@@ -1416,6 +1422,9 @@ QVariantMap AppBackend::adaptiveResponseHistorySince(qint64 lastSequence, int se
             {u"maximumHorizonMs"_qs, sample.maximumHorizonSeconds * 1000.0F},
             {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+            {u"requestedLead"_qs, sample.requestedLead},
+            {u"cappedLead"_qs, sample.cappedLead},
+            {u"endpointTaper"_qs, sample.endpointTaper},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
             {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
@@ -2284,6 +2293,9 @@ void AppBackend::advanceAdaptiveResponseSimulator(float manualInput, const QStri
         sample.activeHorizonSeconds = telemetry.activeHorizonSeconds;
         sample.maximumHorizonSeconds = configuration.maximumHorizonSeconds;
         sample.maximumLead = configuration.maximumLead;
+        sample.requestedLead = telemetry.requestedLead;
+        sample.cappedLead = telemetry.cappedLead;
+        sample.endpointTaper = telemetry.endpointTaper;
         sample.lead = telemetry.lead;
         sample.confidence = telemetry.confidence;
         sample.motionIntensity = telemetry.motionIntensity;
@@ -2363,6 +2375,9 @@ QVariantList AppBackend::adaptiveResponseSimulatorHistory() const
             {u"maximumLead"_qs, sample.maximumLead},
             {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+            {u"requestedLead"_qs, sample.requestedLead},
+            {u"cappedLead"_qs, sample.cappedLead},
+            {u"endpointTaper"_qs, sample.endpointTaper},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
             {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
@@ -2425,6 +2440,9 @@ QVariantMap AppBackend::adaptiveResponseSimulatorHistorySince(qint64 lastSequenc
             {u"maximumLead"_qs, sample.maximumLead},
             {u"horizonRatio"_qs, sample.maximumHorizonSeconds > 0.0001F
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
+            {u"requestedLead"_qs, sample.requestedLead},
+            {u"cappedLead"_qs, sample.cappedLead},
+            {u"endpointTaper"_qs, sample.endpointTaper},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
             {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
@@ -10187,6 +10205,9 @@ void AppBackend::sampleAdaptiveResponseHistory()
     sample.acceleration = runtime.adaptiveAcceleration[index].load();
     sample.activeHorizonSeconds = runtime.adaptiveHorizonSeconds[index].load();
     sample.maximumHorizonSeconds = runtime.adaptiveRuntimeMaximumHorizonSeconds[index].load();
+    sample.requestedLead = runtime.adaptiveRequestedLead[index].load();
+    sample.cappedLead = runtime.adaptiveCappedLead[index].load();
+    sample.endpointTaper = runtime.adaptiveEndpointTaper[index].load();
     sample.lead = runtime.adaptiveLead[index].load();
     sample.confidence = runtime.adaptiveConfidence[index].load();
     sample.motionIntensity = runtime.adaptiveMotionIntensity[index].load();

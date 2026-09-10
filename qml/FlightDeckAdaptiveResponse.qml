@@ -1250,10 +1250,11 @@ Flickable {
         checkable: true
         implicitHeight: 26
         implicitWidth: legendRow.implicitWidth + deck.space16
-        focusPolicy: Qt.StrongFocus
-        // Ensure a pointer-toggled trace has the same clear focus affordance
-        // as its keyboard counterpart until another control receives focus.
-        onPressed: control.forceActiveFocus()
+        // Keep the trace controls keyboard reachable without turning a mouse
+        // click into a persistent focus outline. `visualFocus` is used only
+        // for keyboard navigation, while hover/down are transient pointer
+        // feedback and checked remains an independent multi-select state.
+        focusPolicy: Qt.TabFocus
         contentItem: Row {
             id: legendRow
             anchors.centerIn: parent
@@ -1275,9 +1276,12 @@ Flickable {
         }
         background: Rectangle {
             radius: deck.radiusPill
-            color: control.checked ? deck.selected : deck.secondarySurface
-            border.color: control.activeFocus ? deck.focus : control.checked ? control.tone : deck.border
-            border.width: control.activeFocus ? 2 : 1
+            color: control.down ? deck.accentMuted
+                : control.hovered ? (control.checked ? deck.selected : deck.elevatedSurface)
+                : control.checked ? deck.selected : deck.secondarySurface
+            border.color: control.visualFocus ? deck.focus
+                : control.checked ? control.tone : control.hovered ? deck.textMuted : deck.border
+            border.width: control.visualFocus ? 2 : 1
         }
         Accessible.name: (checked ? "Hide " : "Show ") + text + " trace"
     }
@@ -2963,15 +2967,15 @@ Flickable {
                     Component.onCompleted: forceLayout()
                     onWidthChanged: forceLayout()
                     MetricTile {
-                        caption: "PHYSICAL"
-                        value: root.liveInputAvailable() ? root.percent(root.telemetry.physical) : "—"
-                        detail: "Controller input"
+                        caption: "MAPPED PHYSICAL"
+                        value: root.liveInputAvailable() ? root.percent(root.telemetry.baselineOutput) : "—"
+                        detail: "Physical through curve"
                         tone: deck.textPrimary
                     }
                     MetricTile {
-                        caption: "PREDICTED"
-                        value: root.liveInputAvailable() && root.effective().enabled ? root.percent(root.telemetry.predicted) : "—"
-                        detail: "Estimator position"
+                        caption: "PREDICTOR OUTPUT"
+                        value: root.liveInputAvailable() && root.effective().enabled ? root.percent(root.telemetry.predictedMappedOutput) : "—"
+                        detail: "Predicted through curve"
                         tone: deck.attention
                     }
                     MetricTile {
@@ -2991,6 +2995,24 @@ Flickable {
                         value: root.effective().enabled ? root.numericOr(root.telemetry.acceleration, 0).toFixed(1) + " /s²" : "—"
                         detail: "Axis units"
                         tone: deck.attention
+                    }
+                    MetricTile {
+                        caption: "PRE-CAP REQUEST"
+                        value: root.effective().enabled ? root.percent(root.telemetry.requestedLead) : "—"
+                        detail: "Estimator lead request"
+                        tone: deck.attention
+                    }
+                    MetricTile {
+                        caption: "POST-CAP LEAD"
+                        value: root.effective().enabled ? root.percent(root.telemetry.cappedLead) : "—"
+                        detail: "After safety cap"
+                        tone: deck.healthy
+                    }
+                    MetricTile {
+                        caption: "ENDPOINT TAPER"
+                        value: root.effective().enabled ? Math.round(root.numericOr(root.telemetry.endpointTaper, 1) * 100) + "%" : "—"
+                        detail: "Output headroom"
+                        tone: deck.textPrimary
                     }
                     MetricTile {
                         caption: "SAFETY"
@@ -3878,7 +3900,7 @@ Flickable {
                         DeckCombo {
                             objectName: "flightDeckTestLabScenario"
                             Layout.preferredWidth: 240
-                            model: ["Gentle Hover Corrections", "Smooth Cyclic Sweep", "Normal Bank and Recover", "Sustained Moderate Turn", "Approach Corrections", "Normal Direction Change", "Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]
+                            model: ["Gentle Hover Correction", "Smooth Cyclic Sweep", "Normal Bank", "Sustained Moderate Turn", "Normal Recover", "Rapid Maneuver", "Hard Reversal", "Approach Corrections", "Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]
                             currentIndex: Math.max(0, model.indexOf(root.scenario))
                             onChoiceActivated: function (index, value) {
                                 root.scenario = String(value);

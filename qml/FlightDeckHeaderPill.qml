@@ -13,11 +13,12 @@ Button {
     objectName: "flightDeckHeaderPill_" + text.toLowerCase()
     implicitHeight: 38
     implicitWidth: pillContent.implicitWidth + tokens.space24
-    focusPolicy: Qt.StrongFocus
+    // Header actions are in the keyboard tab order, but a pointer activation
+    // must return to its resting treatment after the click. `visualFocus`
+    // below is the shared keyboard-only focus affordance supplied by
+    // Qt Quick Controls; it is deliberately not inferred from mouse hover.
+    focusPolicy: Qt.TabFocus
     hoverEnabled: true
-    // Mouse activation must use the same persistent focus treatment as a
-    // keyboard activation. The next focusable control owns focus normally.
-    onPressed: control.forceActiveFocus()
     Accessible.name: text + (value.length > 0 ? ": " + value : "")
     Accessible.role: Accessible.Button
 
@@ -45,8 +46,8 @@ Button {
         color: !control.enabled ? tokens.secondarySurface
             : control.down ? tokens.accentMuted
             : control.hovered ? tokens.selected : tokens.secondarySurface
-        border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? tokens.focus
+        border.width: control.visualFocus ? 2 : 1
+        border.color: control.visualFocus ? tokens.focus
             : control.hovered ? tokens.statusColor(control.tone) : tokens.border
     }
 }

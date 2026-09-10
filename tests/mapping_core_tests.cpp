@@ -780,6 +780,7 @@ private slots:
     void adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet();
     void adaptiveResponseSustainedHorizonAndTurningProtection();
     void adaptiveResponseSeparatesNormalAndRapidMovementAuthority();
+    void adaptiveResponseOwnerTrajectoryReview();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -3196,6 +3197,182 @@ void MappingCoreTests::adaptiveResponseSeparatesNormalAndRapidMovementAuthority(
         QVERIFY(sample.telemetry.normalMotionAuthority < 0.00001F);
         QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
     }
+}
+
+void MappingCoreTests::adaptiveResponseOwnerTrajectoryReview()
+{
+    // This is an offline qualification microscope for the V2.5.2 owner
+    // correction.  It intentionally runs the exact runtime estimator—not a
+    // QML approximation—and prints a compact trace for comparison with the
+    // rejected candidate before the authority model changes.
+    struct TraceSummary {
+        float peakLead = 0.0F;
+        float averageLead = 0.0F;
+        float peakNormalAuthority = 0.0F;
+        float peakRapidAuthority = 0.0F;
+        float peakBlendedAuthority = 0.0F;
+        float peakAllowedHorizonMs = 0.0F;
+        float peakActiveHorizonMs = 0.0F;
+        float peakBrakingReduction = 0.0F;
+        float peakTurnConfidence = 0.0F;
+        int safetyCancellations = 0;
+    };
+    const auto summarize = [](const AdaptiveResponseSimulation &simulation) {
+        TraceSummary summary;
+        for (const AdaptiveResponseSimulationSample &sample : simulation) {
+            const AdaptiveResponseTelemetry &telemetry = sample.telemetry;
+            summary.peakLead = std::max(summary.peakLead, std::abs(telemetry.lead));
+            summary.averageLead += std::abs(telemetry.lead);
+            summary.peakNormalAuthority = std::max(summary.peakNormalAuthority,
+                                                    telemetry.normalMotionAuthority);
+            summary.peakRapidAuthority = std::max(summary.peakRapidAuthority,
+                                                   telemetry.rapidMotionAuthority);
+            summary.peakBlendedAuthority = std::max(summary.peakBlendedAuthority,
+                                                     telemetry.motionUrgency);
+            summary.peakAllowedHorizonMs = std::max(summary.peakAllowedHorizonMs,
+                telemetry.allowedMaximumHorizonSeconds * 1000.0F);
+            summary.peakActiveHorizonMs = std::max(summary.peakActiveHorizonMs,
+                telemetry.activeHorizonSeconds * 1000.0F);
+            summary.peakBrakingReduction = std::max(summary.peakBrakingReduction,
+                                                     telemetry.brakingReductionFactor);
+            summary.peakTurnConfidence = std::max(summary.peakTurnConfidence,
+                                                   telemetry.turningPointConfidence);
+            if (telemetry.safetyCancelled) ++summary.safetyCancellations;
+        }
+        if (!simulation.empty())
+            summary.averageLead /= static_cast<float>(simulation.size());
+        return summary;
+    };
+    const auto traceAtSpeed = [&](RuntimeAdaptiveResponseConfig configuration, float speed) {
+        std::vector<float> physical;
+        physical.reserve(220);
+        for (int index = 0; index < 220; ++index) {
+            const float elapsed = static_cast<float>(index) * 0.004F;
+            physical.push_back(-0.82F + speed * elapsed);
+        }
+        const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration, physical, 0.004F);
+        TraceSummary summary;
+        int samples = 0;
+        for (size_t index = 140; index < simulation.size(); ++index) {
+            const AdaptiveResponseTelemetry &telemetry = simulation[index].telemetry;
+            summary.averageLead += std::abs(telemetry.lead);
+            summary.peakNormalAuthority = std::max(summary.peakNormalAuthority,
+                                                    telemetry.normalMotionAuthority);
+            summary.peakRapidAuthority = std::max(summary.peakRapidAuthority,
+                                                   telemetry.rapidMotionAuthority);
+            summary.peakBlendedAuthority = std::max(summary.peakBlendedAuthority,
+                                                     telemetry.motionUrgency);
+            summary.peakAllowedHorizonMs = std::max(summary.peakAllowedHorizonMs,
+                telemetry.allowedMaximumHorizonSeconds * 1000.0F);
+            summary.peakActiveHorizonMs = std::max(summary.peakActiveHorizonMs,
+                telemetry.activeHorizonSeconds * 1000.0F);
+            ++samples;
+        }
+        if (samples > 0) summary.averageLead /= static_cast<float>(samples);
+        return summary;
+    };
+
+    const std::array<std::pair<const char *, const char *>, 7> scenarios{{
+        {"Gentle Hover Correction", "Gentle Hover Correction"},
+        {"Smooth Cyclic Sweep", "Smooth Cyclic Sweep"},
+        {"Normal Bank", "Normal Bank"},
+        {"Sustained Moderate Turn", "Sustained Moderate Turn"},
+        {"Normal Recover", "Normal Recover"},
+        {"Rapid Maneuver", "Rapid Maneuver"},
+        {"Hard Reversal", "Hard Reversal"},
+    }};
+    for (const AdaptiveResponsePreset &preset : builtInAdaptiveResponsePresets()) {
+        const AdaptiveResponseSettings &settings = preset.axes[0].settings;
+        if (!settings.enabled) continue;
+        const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(settings);
+        for (const auto &[label, sourceScenario] : scenarios) {
+            const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration,
+                adaptiveResponseScenarioPhysicalSamples(QString::fromLatin1(sourceScenario), -1.0F, 1.0F),
+                0.004F);
+            const TraceSummary summary = summarize(simulation);
+            qInfo().nospace() << "OWNER_TRAJECTORY preset=" << preset.id << " scenario=" << label
+                              << " peak_lead=" << summary.peakLead
+                              << " average_lead=" << summary.averageLead
+                              << " normal=" << summary.peakNormalAuthority
+                              << " rapid=" << summary.peakRapidAuthority
+                              << " blended=" << summary.peakBlendedAuthority
+                              << " allowed_ms=" << summary.peakAllowedHorizonMs
+                              << " active_ms=" << summary.peakActiveHorizonMs
+                              << " brake=" << summary.peakBrakingReduction
+                              << " turn=" << summary.peakTurnConfidence
+                              << " cancels=" << summary.safetyCancellations;
+            QVERIFY(std::isfinite(summary.peakLead));
+            QVERIFY(summary.peakLead <= configuration.maximumLead + 0.0001F);
+        }
+    }
+
+    const AdaptiveResponsePreset &extreme = builtInAdaptiveResponsePresets().back();
+    RuntimeAdaptiveResponseConfig sweep = runtimeForAdaptiveSettings(extreme.axes[0].settings);
+    TraceSummary extremeSlow;
+    TraceSummary extremeNormal;
+    for (const AdaptiveResponsePreset &preset : builtInAdaptiveResponsePresets()) {
+        if (!preset.axes[0].settings.enabled) continue;
+        const RuntimeAdaptiveResponseConfig curve = runtimeForAdaptiveSettings(preset.axes[0].settings);
+        for (const float speed : std::array<float, 6>{0.08F, 0.16F, 0.28F, 0.45F, 0.75F, 1.10F}) {
+            const TraceSummary summary = traceAtSpeed(curve, speed);
+            qInfo().nospace() << "OWNER_SPEED_CURVE preset=" << preset.id << " speed=" << speed
+                              << " average_lead=" << summary.averageLead
+                              << " normal=" << summary.peakNormalAuthority
+                              << " rapid=" << summary.peakRapidAuthority
+                              << " blended=" << summary.peakBlendedAuthority
+                              << " allowed_ms=" << summary.peakAllowedHorizonMs
+                              << " active_ms=" << summary.peakActiveHorizonMs;
+            QVERIFY(std::isfinite(summary.averageLead));
+            if (preset.id == extreme.id && std::abs(speed - 0.08F) < 0.0001F) extremeSlow = summary;
+            if (preset.id == extreme.id && std::abs(speed - 0.28F) < 0.0001F) extremeNormal = summary;
+        }
+    }
+    // The rejected candidate made Extreme's intentional normal motion nearly
+    // indistinguishable from passive baseline. These guardrails preserve the
+    // reviewed authority correction while leaving caps and safety tests above
+    // as the source of truth for what may be emitted.
+    QVERIFY(extremeSlow.averageLead > 0.0014F);
+    QVERIFY(extremeSlow.peakActiveHorizonMs > 20.0F);
+    QVERIFY(extremeNormal.averageLead > 0.0095F);
+    std::array<float, 3> normalControlLead{};
+    for (const float value : std::array<float, 3>{0.0F, 0.50F, 1.0F}) {
+        RuntimeAdaptiveResponseConfig varied = sweep;
+        varied.normalMovementResponse = value;
+        const TraceSummary summary = traceAtSpeed(varied, 0.28F);
+        qInfo().nospace() << "OWNER_CONTROL_SWEEP control=normal value=" << value
+                          << " average_lead=" << summary.averageLead
+                          << " normal=" << summary.peakNormalAuthority
+                          << " rapid=" << summary.peakRapidAuthority
+                          << " blended=" << summary.peakBlendedAuthority;
+        normalControlLead[static_cast<size_t>(std::lround(value * 2.0F))] = summary.averageLead;
+    }
+    QVERIFY(normalControlLead[2] > normalControlLead[0] + 0.001F);
+    std::array<float, 3> rapidControlLead{};
+    for (const float value : std::array<float, 3>{0.0F, 0.50F, 1.0F}) {
+        RuntimeAdaptiveResponseConfig varied = sweep;
+        varied.rapidMovementResponse = value;
+        const TraceSummary summary = traceAtSpeed(varied, 0.45F);
+        qInfo().nospace() << "OWNER_CONTROL_SWEEP control=rapid value=" << value
+                          << " average_lead=" << summary.averageLead
+                          << " normal=" << summary.peakNormalAuthority
+                          << " rapid=" << summary.peakRapidAuthority
+                          << " blended=" << summary.peakBlendedAuthority;
+        rapidControlLead[static_cast<size_t>(std::lround(value * 2.0F))] = summary.averageLead;
+    }
+    QVERIFY(rapidControlLead[2] > rapidControlLead[0] + 0.0007F);
+    std::array<float, 3> engagementLead{};
+    for (const float value : std::array<float, 3>{0.0F, 0.50F, 1.0F}) {
+        RuntimeAdaptiveResponseConfig varied = sweep;
+        varied.engagementSensitivity = value;
+        const TraceSummary summary = traceAtSpeed(varied, 0.28F);
+        qInfo().nospace() << "OWNER_CONTROL_SWEEP control=engagement value=" << value
+                          << " average_lead=" << summary.averageLead
+                          << " normal=" << summary.peakNormalAuthority
+                          << " rapid=" << summary.peakRapidAuthority
+                          << " blended=" << summary.peakBlendedAuthority;
+        engagementLead[static_cast<size_t>(std::lround(value * 2.0F))] = summary.averageLead;
+    }
+    QVERIFY(engagementLead[2] > engagementLead[0] + 0.0005F);
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()

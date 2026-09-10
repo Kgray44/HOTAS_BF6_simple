@@ -779,6 +779,9 @@ private:
         float acceleration = 0.0F;
         float activeHorizonSeconds = 0.0F;
         float maximumHorizonSeconds = 0.0F;
+        float requestedLead = 0.0F;
+        float cappedLead = 0.0F;
+        float endpointTaper = 1.0F;
         float lead = 0.0F;
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
@@ -825,6 +828,9 @@ private:
         float activeHorizonSeconds = 0.0F;
         float maximumHorizonSeconds = 0.0F;
         float maximumLead = 0.0F;
+        float requestedLead = 0.0F;
+        float cappedLead = 0.0F;
+        float endpointTaper = 1.0F;
         float lead = 0.0F;
         float confidence = 0.0F;
         float motionIntensity = 0.0F;

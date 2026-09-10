@@ -690,6 +690,9 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.adaptiveVelocity[index] = 0.0F;
         m_runtime.adaptiveAcceleration[index] = 0.0F;
         m_runtime.adaptiveHorizonSeconds[index] = 0.0F;
+        m_runtime.adaptiveRequestedLead[index] = 0.0F;
+        m_runtime.adaptiveCappedLead[index] = 0.0F;
+        m_runtime.adaptiveEndpointTaper[index] = 1.0F;
         m_runtime.adaptiveLead[index] = 0.0F;
         m_runtime.adaptiveConfidence[index] = 0.0F;
         m_runtime.adaptiveMotionIntensity[index] = 0.0F;
@@ -1812,6 +1815,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.adaptiveVelocity[index] = adaptive.velocity;
             m_runtime.adaptiveAcceleration[index] = adaptive.acceleration;
             m_runtime.adaptiveHorizonSeconds[index] = adaptive.activeHorizonSeconds;
+            m_runtime.adaptiveRequestedLead[index] = adaptive.requestedLead;
+            m_runtime.adaptiveCappedLead[index] = adaptive.cappedLead;
+            m_runtime.adaptiveEndpointTaper[index] = adaptive.endpointTaper;
             m_runtime.adaptiveLead[index] = adaptive.lead;
             m_runtime.adaptiveConfidence[index] = adaptive.confidence;
             m_runtime.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
