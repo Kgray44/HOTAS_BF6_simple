@@ -134,7 +134,7 @@ try {
     Invoke-Installer $candidate $cleanInstall
     Assert-InstalledPackage $cleanInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $cleanInstall
-    & $fixture --assert-fresh-v23
+    & $fixture --assert-fresh-v24
     if ($LASTEXITCODE -ne 0) { throw 'Clean installation did not create the Battlefield 6 / Helicopter starter.' }
 
     # This is a real v1.9.3 installation with a populated schema-14 profile,
@@ -148,7 +148,7 @@ try {
     Invoke-Installer $candidate $upgradeInstall
     Assert-InstalledPackage $upgradeInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $upgradeInstall
-    & $fixture --assert-v23
+    & $fixture --assert-v24
     if ($LASTEXITCODE -ne 0) { throw 'v1.9.3 upgrade did not preserve and migrate the acceptance fixture.' }
 
     # A v2.0.0 tray crash can leave the exact same program location with a
@@ -162,7 +162,7 @@ try {
     Invoke-Installer $candidate $recoveryInstall
     Assert-InstalledPackage $recoveryInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $recoveryInstall
-    & $fixture --assert-v23
+    & $fixture --assert-v24
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
     # Release-quality N-1 coverage: use the actual public v2.5.0 package and
@@ -179,7 +179,7 @@ try {
     Invoke-Installer $candidate $priorStableInstall
     Assert-InstalledPackage $priorStableInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $priorStableInstall
-    & $fixture --assert-v23
+    & $fixture --assert-v24
     if ($LASTEXITCODE -ne 0) { throw 'v2.5.0 -> candidate did not preserve the acceptance fixture.' }
 
     # The default local-app-data installation path and both shortcuts are
