@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.5.0**
+**Current release: v2.5.1**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.1 — Flight Deck hardening and runtime bundle repair
+
+Refines Flight Deck's shared navigation and device context while correcting the Windows package runtime needed to initialize the Qt platform plugin outside a developer shell.
+
+- Flight Deck now owns one shared page title and shared Controller and Appearance controls on every primary page. Controller routes to Devices & setup; Appearance toggles the existing Light/Dark appearance authority.
+- Selected Device is a persistent canonical viewing and editing context across device-aware Flight Deck pages. It distinguishes the inspected device from global Controller readiness and does not activate a rig merely by selection.
+- Curve Editor is positioned beside Axes and uses the Flight Deck surface hierarchy while retaining the existing graph and curve configuration behavior. Profiles use a compact category-and-profile library with a detail pane rather than a large category-card stack.
+- Adaptive Response identifies Selected Device, profile, and axis in that order; keeps independent multi-select trace controls with the graph; and separates configured preset limits from awaiting-input live telemetry. Predictor mathematics and curve mathematics are unchanged.
+- Release staging now verifies and includes the x64 Microsoft C++ runtime DLLs required by the Qt 6.8.3 Windows platform plugin, preventing developer-environment PATH from masking a missing package dependency.
 
 ## v2.5.0 — Flight Deck
 

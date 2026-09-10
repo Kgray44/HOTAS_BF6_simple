@@ -60,11 +60,11 @@ jobs:
           Control, or other security features may warn about or block an unsigned build.
           '@
 
-      - name: Install Qt 6.5.3
+      - name: Install qualified Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'
-          arch: 'win64_msvc2019_64'
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
 
       - name: Locate Qt deployment tools
         shell: pwsh

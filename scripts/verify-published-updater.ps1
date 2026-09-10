@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory)] [string] $FixtureTool,
     [Parameter(Mandatory)] [string] $ExpectedVersion,
-    [string] $LegacyInstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v1.9.3/HOTAS-BF6-Setup-v1.9.3.exe'
+    [string] $LegacyInstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v1.9.3/HOTAS-BF6-Setup-v1.9.3.exe',
+    [string] $PriorStableInstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v2.5.0/HOTAS-BF6-Setup-v2.5.0.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,8 +57,10 @@ $priorPlatform = $env:QT_QPA_PLATFORM
 try {
     New-Item -ItemType Directory -Path $work | Out-Null
     $legacyInstaller = Join-Path $work 'HOTAS-BF6-Setup-v1.9.3.exe'
+    $priorStableInstaller = Join-Path $work 'HOTAS-BF6-Setup-v2.5.0.exe'
     $install = Join-Path $work 'installed'
     Invoke-WebRequest -Uri $LegacyInstallerUrl -OutFile $legacyInstaller
+    Invoke-WebRequest -Uri $PriorStableInstallerUrl -OutFile $priorStableInstaller
     & $fixture --clear
     if ($LASTEXITCODE -ne 0) { throw 'Could not clear the isolated updater acceptance configuration.' }
     Invoke-Installer $legacyInstaller $install
@@ -116,12 +119,52 @@ try {
     )) {
         if ($log -notmatch [regex]::Escape($event)) { throw "Updater log is missing required event: $event" }
     }
-    Write-Host "Published updater acceptance passed: v1.9.3 -> v$ExpectedVersion."
+    if (-not $mapper.HasExited) { Stop-Process -Id $mapper.Id -ErrorAction Stop; $mapper.WaitForExit() }
+
+    # Exercise the exact immediate predecessor's shipped automatic-updater
+    # path as well as the historical v1.9.3 compatibility chain. The candidate
+    # installer must no longer begin by erasing the old package when its
+    # inherited v2.5.0 helper starts the silent replacement.
+    & $fixture --clear
+    if ($LASTEXITCODE -ne 0) { throw 'Could not clear the v2.5.0 updater acceptance configuration.' }
+    $priorStableInstall = Join-Path $work 'v250-installed'
+    Invoke-Installer $priorStableInstaller $priorStableInstall
+    & $fixture --seed-v15
+    if ($LASTEXITCODE -ne 0) { throw 'Could not seed the v2.5.0 updater acceptance data.' }
+    $priorLauncher = Join-Path $priorStableInstall 'HOTAS BF6 Launcher.exe'
+    $priorVersionFile = Join-Path $priorStableInstall 'VERSION'
+    $priorMapperPath = Join-Path $priorStableInstall 'HOTAS BF6.exe'
+    [void](Start-Process -FilePath $priorLauncher -PassThru)
+    $deadline = [DateTime]::UtcNow.AddMinutes(8)
+    $priorMapper = $null
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $versionMatches = (Test-Path -LiteralPath $priorVersionFile) -and
+            ((Get-Content -LiteralPath $priorVersionFile -Raw).Trim() -eq $ExpectedVersion)
+        if ($versionMatches) {
+            $priorMapper = Get-Process -Name 'HOTAS BF6' -ErrorAction SilentlyContinue |
+                Where-Object { $_.Path -eq $priorMapperPath } | Select-Object -First 1
+            if ($priorMapper) { break }
+        }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $priorMapper -or $priorMapper.HasExited) {
+        throw 'The published v2.5.0 updater did not leave the candidate mapper running.'
+    }
+    Start-Sleep -Seconds 3
+    if ($priorMapper.HasExited) { throw 'The published v2.5.0 updater candidate exited during its stability interval.' }
+    & $fixture --assert-v23
+    if ($LASTEXITCODE -ne 0) { throw 'The published v2.5.0 updater did not preserve and migrate its fixture.' }
+    Write-Host "Published updater acceptance passed: v1.9.3 and v2.5.0 -> v$ExpectedVersion."
 } finally {
     $env:QT_QPA_PLATFORM = $priorPlatform
     $running = Get-Process -Name 'HOTAS BF6' -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq (Join-Path $work 'installed\HOTAS BF6.exe') }
     foreach ($process in $running) {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+    }
+    $priorRunning = Get-Process -Name 'HOTAS BF6' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq (Join-Path $work 'v250-installed\HOTAS BF6.exe') }
+    foreach ($process in $priorRunning) {
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
     }
     & $fixture --clear 2>$null

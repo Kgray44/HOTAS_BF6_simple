@@ -373,13 +373,6 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space4
                 Text {
-                    text: "Diagnostics"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: root.medium ? 30 : 25
-                    font.bold: true
-                }
-                Text {
                     text: "System health, signal routing, live technical state, and recovery navigation."
                     color: deck.textSecondary
                     font.pixelSize: 12

@@ -5,6 +5,7 @@
 #include "theme_manager.h"
 
 #include <QApplication>
+#include <QFont>
 #include <QIcon>
 #include <QMessageBox>
 #include <QPushButton>
@@ -65,6 +66,10 @@ int main(int argc, char *argv[])
     // class, so the shipped application must use QApplication rather than
     // QGuiApplication whenever tray support is available.
     QApplication application(argc, argv);
+    // Flight Deck also contains regular Qt Quick Text items, which resolve
+    // from QApplication's default rather than a Controls font inheritance
+    // chain.  Pin the supported Windows UI face before any QML loads.
+    application.setFont(QFont(QStringLiteral("Segoe UI")));
     // The executable resource covers shell identity; this runtime icon covers
     // the Qt title bar, taskbar, Alt+Tab, and task-switching surfaces.
     application.setWindowIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs));

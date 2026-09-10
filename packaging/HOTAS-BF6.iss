@@ -51,8 +51,9 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 
 ; Settings are stored under the established QSettings identity in AppData, not
 ; in {app}; replacing program files therefore preserves profiles and curves.
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\*"
+; Never erase the live directory before package files have been copied. Inno
+; overwrites the files in [Files] normally, which leaves a runnable prior
+; package available if a silent automatic update fails before replacement.
 
 [Icons]
 Name: "{group}\HOTAS BF6"; Filename: "{app}\HOTAS BF6 Launcher.exe"; IconFilename: "{app}\HOTAS BF6 Launcher.exe"

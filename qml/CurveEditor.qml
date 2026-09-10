@@ -6,6 +6,7 @@ Item {
     id: editor
     property var backendObject
     property var theme
+    readonly property bool flightDeck: theme && theme.primarySurface !== undefined
     property var editorState: backendObject ? backendObject.curveEditorState : ({})
     property var liveTelemetry: backendObject ? backendObject.curveEditorTelemetry : ({})
     property var analysis: backendObject ? backendObject.curveAnalysis : ({})
@@ -317,7 +318,9 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: theme.background
+        // Flight Deck owns the page surface.  The chart remains deliberately
+        // dark, but it is no longer surrounded by the legacy black canvas.
+        color: editor.flightDeck ? theme.primarySurface : theme.background
     }
     Flickable {
         id: editorScroll
@@ -329,7 +332,7 @@ Item {
 
         ColumnLayout {
             id: curveContent
-            width: editorScroll.width - 10
+            width: editorScroll.width - (editor.flightDeck ? 0 : 10)
             height: implicitHeight
             x: 1
             spacing: 14
@@ -337,8 +340,8 @@ Item {
         AviationPanel {
             Layout.fillWidth: true
             Layout.preferredHeight: editor.width >= 1080 ? 198 : 270
-            color: theme.curvePanelSurface
-            border.color: theme.topGun ? theme.borderStrong : theme.border
+            color: editor.flightDeck ? theme.elevatedSurface : theme.curvePanelSurface
+            border.color: editor.flightDeck ? theme.border : (theme.topGun ? theme.borderStrong : theme.border)
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
@@ -347,7 +350,6 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: "CURVE EDITOR"; color: theme.topGun ? theme.ivory : theme.textStrong; font.pixelSize: 23; font.bold: true; font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable" }
                         Text {
                             text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
@@ -480,14 +482,14 @@ Item {
             id: graphPanel
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(350, Math.min(480, editor.height * 0.58))
-            color: theme.graphBackground
-            border.color: theme.graphFrame
+            color: editor.flightDeck ? "#0c1922" : theme.graphBackground
+            border.color: editor.flightDeck ? theme.border : theme.graphFrame
             gradient: Gradient {
-                GradientStop { position: 0; color: theme.graphPanelGradientTop }
-                GradientStop { position: 0.08; color: theme.graphPanelGradientMiddle }
-                GradientStop { position: 1; color: theme.graphPanelGradientBottom }
+                GradientStop { position: 0; color: editor.flightDeck ? "#0c1922" : theme.graphPanelGradientTop }
+                GradientStop { position: 0.08; color: editor.flightDeck ? "#0c1922" : theme.graphPanelGradientMiddle }
+                GradientStop { position: 1; color: editor.flightDeck ? "#0c1922" : theme.graphPanelGradientBottom }
             }
-            Rectangle { anchors.fill: parent; anchors.margins: 8; radius: theme.controlRadius; color: theme.graphBackground; border.color: theme.graphFrame }
+            Rectangle { anchors.fill: parent; anchors.margins: 8; radius: theme.controlRadius; color: editor.flightDeck ? "#0a141c" : theme.graphBackground; border.color: editor.flightDeck ? Qt.rgba(theme.border.r, theme.border.g, theme.border.b, 0.72) : theme.graphFrame }
 
             Canvas {
                 id: graph

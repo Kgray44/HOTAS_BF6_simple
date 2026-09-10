@@ -1,6 +1,7 @@
 #include "hotas_build_version.h"
 #include "crash_reporter.h"
 #include "launcher_core.h"
+#include "update_transaction.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -32,6 +33,7 @@ constexpr wchar_t kLauncherName[] = L"HOTAS BF6 Launcher.exe";
 constexpr wchar_t kUpdateMutexName[] = L"Local\\HOTAS-BF6-Update-Mutex";
 constexpr DWORD kNetworkTimeoutMs = 2500;
 constexpr size_t kMaximumManifestBytes = 64 * 1024;
+constexpr DWORD kLauncherStartupHealthTimeoutMs = 10 * 1000;
 constexpr unsigned long long kMaximumLogBytes = 256 * 1024;
 
 std::wstring utf8ToWide(std::string_view text)
@@ -186,11 +188,22 @@ bool launchMapper()
 
 bool launchInstalledLauncherWithoutUpdate(const std::filesystem::path &launcher)
 {
-    if (!startProcess(launcher, {L"--skip-update"}, false)) {
+    HANDLE launcherProcess = nullptr;
+    if (!startProcess(launcher, {L"--skip-update"}, false, &launcherProcess)) {
         logEvent(L"fallback launcher start failed");
         return false;
     }
-    logEvent(L"launching installed launcher without a second update check");
+    const DWORD waited = WaitForSingleObject(launcherProcess, kLauncherStartupHealthTimeoutMs);
+    DWORD exitCode = 1;
+    if (waited == WAIT_OBJECT_0) GetExitCodeProcess(launcherProcess, &exitCode);
+    CloseHandle(launcherProcess);
+    if (waited != WAIT_OBJECT_0 || exitCode != 0) {
+        logEvent(waited == WAIT_OBJECT_0
+            ? L"launcher or mapper startup health failed with code " + std::to_wstring(exitCode)
+            : L"launcher did not report mapper startup health before timeout");
+        return false;
+    }
+    logEvent(L"launcher and mapper passed initial startup health without a second update check");
     return true;
 }
 
@@ -371,8 +384,15 @@ std::optional<std::filesystem::path> downloadAndVerifyInstaller(const UpdateMani
 bool startUpdateHelper(const std::filesystem::path &installer, const UpdateManifest &manifest)
 {
     const auto installedLauncher = modulePath();
+    std::string existingVersion;
+    std::string packageError;
+    if (installedLauncher.empty() || !hotas::launcher::verifyInstalledPackage(installedLauncher.parent_path(), {},
+            &existingVersion, &packageError)) {
+        logEvent(L"update preflight rejected the installed package: " + utf8ToWide(packageError));
+        return false;
+    }
     const auto helper = installer.parent_path() / L"HOTAS BF6 Update Helper.exe";
-    if (installedLauncher.empty() || !CopyFileW(installedLauncher.c_str(), helper.c_str(), FALSE)) {
+    if (!CopyFileW(installedLauncher.c_str(), helper.c_str(), FALSE)) {
         logEvent(L"could not create temporary update helper");
         return false;
     }
@@ -381,6 +401,7 @@ bool startUpdateHelper(const std::filesystem::path &installer, const UpdateManif
         L"--apply-update", L"--parent-pid", std::to_wstring(GetCurrentProcessId()),
         L"--installer", installer.wstring(), L"--sha256", utf8ToWide(manifest.sha256),
         L"--launcher", targetLauncher.wstring(),
+        L"--candidate-version", utf8ToWide(manifest.versionText),
     };
     if (!startProcess(helper, arguments, true)) {
         logEvent(L"could not start temporary update helper");
@@ -413,7 +434,8 @@ int applyUpdate(const std::vector<std::wstring> &arguments)
     const auto installerText = argumentValue(arguments, L"--installer");
     const auto hash = argumentValue(arguments, L"--sha256");
     const auto launcherText = argumentValue(arguments, L"--launcher");
-    if (!parentText || !installerText || !hash || !launcherText) {
+    const auto candidateVersion = argumentValue(arguments, L"--candidate-version");
+    if (!parentText || !installerText || !hash || !launcherText || !candidateVersion) {
         logEvent(L"temporary update helper received invalid arguments");
         return 1;
     }
@@ -426,6 +448,12 @@ int applyUpdate(const std::vector<std::wstring> &arguments)
     }
     const std::filesystem::path installer(*installerText);
     const std::filesystem::path launcher(*launcherText);
+    SemanticVersion parsedCandidateVersion{};
+    std::string versionError;
+    if (!hotas::launcher::parseSemanticVersion(wideToUtf8(*candidateVersion), parsedCandidateVersion, &versionError)) {
+        logEvent(L"temporary update helper rejected an invalid candidate version");
+        return 1;
+    }
     if (installer.filename().wstring().rfind(L"HOTAS-BF6-Setup-v", 0) != 0
         || installer.extension() != L".exe" || !hotas::launcher::verifyFileSha256(installer.wstring(),
             wideToUtf8(*hash))) {
@@ -437,27 +465,43 @@ int applyUpdate(const std::vector<std::wstring> &arguments)
         logEvent(L"temporary update helper timed out waiting for launcher exit");
         return 1;
     }
-    HANDLE installerProcess = nullptr;
-    const std::vector<std::wstring> installerArguments{
-        L"/VERYSILENT", L"/SUPPRESSMSGBOXES", L"/NORESTART", L"/SP-",
-        L"/DIR=" + launcher.parent_path().wstring(),
+    const auto backup = installer.parent_path() / (L"previous-install-" + std::to_wstring(GetCurrentProcessId()));
+    hotas::launcher::UpdateTransactionCallbacks callbacks;
+    callbacks.runInstaller = [&] {
+        HANDLE installerProcess = nullptr;
+        const std::vector<std::wstring> installerArguments{
+            L"/VERYSILENT", L"/SUPPRESSMSGBOXES", L"/NORESTART", L"/SP-",
+            L"/DIR=" + launcher.parent_path().wstring(),
+        };
+        if (!startProcess(installer, installerArguments, true, &installerProcess)) {
+            logEvent(L"temporary update helper could not start installer");
+            return false;
+        }
+        const DWORD waited = WaitForSingleObject(installerProcess, 10 * 60 * 1000);
+        DWORD exitCode = 1;
+        if (waited == WAIT_OBJECT_0) GetExitCodeProcess(installerProcess, &exitCode);
+        CloseHandle(installerProcess);
+        if (waited != WAIT_OBJECT_0 || exitCode != 0) {
+            logEvent(waited == WAIT_OBJECT_0
+                ? L"installer failed with code " + std::to_wstring(exitCode)
+                : L"installer timed out");
+            return false;
+        }
+        return true;
     };
-    if (!startProcess(installer, installerArguments, true, &installerProcess)) {
-        logEvent(L"temporary update helper could not start installer");
-        launchInstalledLauncherWithoutUpdate(launcher);
+    callbacks.startCandidate = [&] { return launchInstalledLauncherWithoutUpdate(launcher); };
+    callbacks.startPrevious = [&] { return launchInstalledLauncherWithoutUpdate(launcher); };
+    const auto transaction = hotas::launcher::runUpdateTransaction(launcher.parent_path(), backup,
+        wideToUtf8(*candidateVersion), callbacks);
+    logEvent(utf8ToWide(transaction.detail));
+    if (!transaction.committed) {
+        logEvent(transaction.rollbackRestored && transaction.previousStartupHealthy
+            ? L"automatic update failed; the prior runnable installation was restored"
+            : L"automatic update failed; rollback did not prove a runnable prior installation");
         return 1;
     }
-    const DWORD waited = WaitForSingleObject(installerProcess, 10 * 60 * 1000);
-    DWORD exitCode = 1;
-    if (waited == WAIT_OBJECT_0) GetExitCodeProcess(installerProcess, &exitCode);
-    CloseHandle(installerProcess);
-    if (waited != WAIT_OBJECT_0 || exitCode != 0) {
-        logEvent(L"installer failed or timed out; preserving installed version");
-        if (waited == WAIT_OBJECT_0) launchInstalledLauncherWithoutUpdate(launcher);
-        return 1;
-    }
-    logEvent(L"installer completed successfully; starting updated launcher");
-    return launchInstalledLauncherWithoutUpdate(launcher) ? 0 : 1;
+    logEvent(L"installer completed successfully; candidate package and startup health committed");
+    return 0;
 }
 
 std::vector<std::wstring> commandLineArguments()

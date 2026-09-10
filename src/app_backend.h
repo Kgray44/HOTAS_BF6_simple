@@ -91,6 +91,13 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString editingDeviceRigName READ editingDeviceRigName NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString editingScopeLabel READ editingScopeLabel NOTIFY deviceRigsChanged)
     Q_PROPERTY(QVariantList editingDevices READ editingDevices NOTIFY deviceRigsChanged)
+    // Flight Deck calls this persistent viewing and editing context the
+    // Selected Device.  The older editing* names remain for serialized
+    // configuration compatibility and existing non-Flight-Deck surfaces.
+    Q_PROPERTY(QString selectedDeviceRigId READ selectedDeviceRigId NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString selectedDeviceRigName READ selectedDeviceRigName NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QString selectedDeviceLabel READ selectedDeviceLabel NOTIFY deviceRigsChanged)
+    Q_PROPERTY(QVariantList selectedDevices READ selectedDevices NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString deviceRigMigrationWarning READ deviceRigMigrationWarning NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString deviceRigDetectionMessage READ deviceRigDetectionMessage NOTIFY deviceRigsChanged)
     Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
@@ -285,6 +292,10 @@ public:
     QString editingDeviceRigName() const;
     QString editingScopeLabel() const;
     QVariantList editingDevices() const;
+    QString selectedDeviceRigId() const;
+    QString selectedDeviceRigName() const;
+    QString selectedDeviceLabel() const;
+    QVariantList selectedDevices() const;
     QString deviceRigMigrationWarning() const;
     QString deviceRigDetectionMessage() const;
     Q_INVOKABLE QVariantMap physicalDeviceDetail(const QString &recordId) const;
@@ -661,6 +672,8 @@ public:
     Q_INVOKABLE void verifyDeviceRig(const QString &rigId = {});
     Q_INVOKABLE bool setEditingDeviceContext(const QString &rigId,
                                              const QStringList &controllerRecordIds = {});
+    Q_INVOKABLE bool setSelectedDeviceContext(const QString &rigId,
+                                              const QStringList &controllerRecordIds = {});
     // App Health actions enter a persistent editing context before navigating
     // to an owning page. This is intentionally a control-plane operation;
     // input reports never call it.

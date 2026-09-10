@@ -28,7 +28,10 @@ ApplicationWindow {
     }
     Theme { id: shellTheme }
     color: themeManager.currentExperience === "Flight Deck" ? "#0b1219" : shellTheme.background
-    font.family: shellTheme.displayFont
+    // Raw Text items and Qt Quick Controls inherit independently in some Qt
+    // paths.  Select the same verified display family at the application
+    // window boundary whenever Flight Deck is active.
+    font.family: themeManager.currentExperience === "Flight Deck" ? "Segoe UI" : shellTheme.displayFont
     Component.onCompleted: {
         backend.setTrayTheme(themeManager.currentTheme)
         syncFlightDeckLearningDialog()

@@ -1518,7 +1518,8 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     }
     settlePresentation();
     const QVariantList editScope = backend.editingDevices();
-    if (backend.editingDeviceRigId() != rigId || backend.editingScopeLabel() != secondName
+    if (backend.editingDeviceRigId() != rigId || backend.selectedDeviceRigId() != rigId
+        || backend.selectedDeviceLabel() != secondName || backend.editingScopeLabel() != secondName
         || editScope.size() != 2 || !editScope.at(1).toMap().value(QStringLiteral("selected")).toBool()
         || editScope.at(0).toMap().value(QStringLiteral("selected")).toBool()
         || backend.activeDeviceRigId() != activeRigBeforeEdit
@@ -1588,7 +1589,7 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     QMetaObject::invokeMethod(outputDialog, "open");
     QMetaObject::invokeMethod(createDialog, "open");
     settlePresentation();
-    if (!backend.setEditingDeviceContext(rigId, {firstMember})
+    if (!backend.setSelectedDeviceContext(rigId, {firstMember})
         || !backend.removeDeviceRigMember(rigId, secondMember)
         || !backend.addDeviceRigMember(rigId, secondMember, false)) {
         return failPresentationLifecycleTest(QStringLiteral("Devices interaction fixture could not replace member model"));
@@ -2884,6 +2885,41 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(tokensLightExpression.hasError() ? tokensLightExpression.error().toString() : QStringLiteral("none")));
     }
 
+    // Shared shell controls must be present on Overview too, use the one
+    // authoritative appearance service, and route Controller to setup.
+    auto *controllerPill = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckControllerPill"));
+    auto *appearancePill = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckAppearancePill"));
+    auto *sharedTitle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSharedPageTitle"));
+    auto *navigationContent = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckNavigationContent"));
+    if (!controllerPill || !appearancePill || !sharedTitle || !navigationContent
+        || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
+    }
+    const QString alternateAppearance = appearance == QStringLiteral("Dark")
+        ? QStringLiteral("Light") : QStringLiteral("Dark");
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        appearancePill->mapToScene(QPointF(appearancePill->width() * 0.5,
+            appearancePill->height() * 0.5)).toPoint());
+    settlePresentation();
+    if (themeManager.flightDeckAppearance() != alternateAppearance
+        || appearancePill->property("value").toString() != alternateAppearance.toUpper()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Appearance pill did not toggle the authoritative appearance"));
+    }
+    themeManager.setFlightDeckAppearance(appearance);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        controllerPill->mapToScene(QPointF(controllerPill->width() * 0.5,
+            controllerPill->height() * 0.5)).toPoint());
+    settlePresentation();
+    if (surface->property("currentPage").toInt() != 2) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller pill did not route to Devices and setup"));
+    }
+    if (!surface->setProperty("currentPage", 8)) return false;
+    settlePresentation();
+
     QObject *readinessModel = surface->findChild<QObject *>(QStringLiteral("flightDeckReadinessModel"));
     QObject *overview = pageItem(surface, 8);
     if (!readinessModel || !overview || overview->objectName() != QStringLiteral("flightDeckOverview")) {
@@ -3250,7 +3286,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance));
     }
     settlePresentation();
-    if (!findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckActiveProfileHero"))
+    if (!findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileLibrary"))
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileDetailPane"))
         || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryCard_fixture-battlefield"))
         || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckProfileCard_fixture-aircraft"))
         || !captureShell(QStringLiteral("profiles-main"))) {
@@ -4587,11 +4624,15 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     const auto *contextCategory = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetricCategory"));
     const auto *contextProfile = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetricProfile"));
+    const auto *contextDevice = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveSelectedDeviceContext"));
     const auto *contextLevel = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextLevel"));
     const auto *contextTarget = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextTarget"));
-    if (!contextCategory || !contextProfile || !contextLevel || !contextTarget
+    const auto *contextAxis = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextAxis"));
+    if (!contextCategory || !contextProfile || !contextDevice || !contextLevel || !contextTarget || !contextAxis
         || contextProfile->y() != contextCategory->y() || contextProfile->x() <= contextCategory->x()
-        || contextTarget->y() != contextLevel->y() || contextTarget->x() <= contextLevel->x()) {
+        || contextTarget->y() != contextDevice->y() || contextTarget->x() <= contextDevice->x()
+        || contextAxis->y() != contextTarget->y() || contextAxis->x() <= contextTarget->x()
+        || contextLevel->y() != contextAxis->y() || contextLevel->x() <= contextAxis->x()) {
         const auto *metricFlow = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextMetrics"));
         const auto *selectorFlow = adaptiveVisual->findChild<QQuickItem *>(QStringLiteral("adaptiveContextSelectors"));
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive Flow layout did not arrange context horizontally (metricFlow=%2 width=%3 selectorFlow=%4 width=%5 category=%6,%7 %8x%9 profile=%10,%11 %12x%13 level=%14,%15 %16x%17 target=%18,%19 %20x%21)")

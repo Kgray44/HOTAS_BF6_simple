@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.5.0 adds Flight Deck as a persisted fifth presentation experience with native workspaces for Overview, Devices, Axes, Buttons, Profiles, Automation, Adaptive Response, Diagnostics, and Settings. It retains v2.4.0 Device Rigs, simultaneous multi-device and multi-output routing, and all existing Legacy, Standard, Top Gun, and Day Ops selections. Device topology, verification, themes, and Flight Deck presentation remain outside the allocation-free DirectInput-to-vJoy report path.",
+  "summary": "HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. v2.5.1 hardens Flight Deck navigation, persistent selected-device context, response-page hierarchy, profile organization, shared appearance controls, and the Windows runtime bundle while retaining v2.5.0 Flight Deck, v2.4.0 Device Rigs, simultaneous multi-device and multi-output routing, and all existing Legacy, Standard, Top Gun, and Day Ops selections. Device topology, verification, themes, and Flight Deck presentation remain outside the allocation-free DirectInput-to-vJoy report path.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {

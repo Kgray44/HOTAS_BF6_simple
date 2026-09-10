@@ -32,6 +32,8 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void installerUpgradeAcceptanceTracksSchema23();
+    void flightDeckTypographyContract();
+    void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
@@ -812,7 +814,68 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema23()
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v23")));
     QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v23")));
+    QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
+    QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
+    QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
     QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v23")));
+    QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
+}
+
+void UiReleaseContractTests::flightDeckTypographyContract()
+{
+    const QString tokens = sourceFile(QStringLiteral("qml/FlightDeckTheme.qml"));
+    const QString shell = sourceFile(QStringLiteral("qml/Main.qml"));
+    const QString startup = sourceFile(QStringLiteral("src/main.cpp"));
+    const QString workflow = sourceFile(QStringLiteral(".github/workflows/release.yml"));
+
+    QVERIFY(tokens.contains(QStringLiteral("readonly property string displayFont: \"Segoe UI\"")));
+    QVERIFY(tokens.contains(QStringLiteral("readonly property string bodyFont: displayFont")));
+    QVERIFY(tokens.contains(QStringLiteral("readonly property string telemetryFont: \"Consolas\"")));
+    QVERIFY(shell.contains(QStringLiteral("themeManager.currentExperience === \"Flight Deck\" ? \"Segoe UI\"")));
+    QVERIFY(startup.contains(QStringLiteral("application.setFont(QFont(QStringLiteral(\"Segoe UI\")))")));
+    QVERIFY(workflow.contains(QStringLiteral("Install qualified Qt 6.8.3")));
+    QVERIFY(workflow.contains(QStringLiteral("version: '6.8.3'")));
+    QVERIFY(workflow.contains(QStringLiteral("arch: 'win64_msvc2022_64'")));
+}
+
+void UiReleaseContractTests::flightDeckInformationArchitectureContract()
+{
+    const QString flightDeck = sourceFile(QStringLiteral("qml/FlightDeck.qml"));
+    const QString headerPill = sourceFile(QStringLiteral("qml/FlightDeckHeaderPill.qml"));
+    const QString selector = sourceFile(QStringLiteral("qml/FlightDeckSelectedDeviceSelector.qml"));
+    const QString adaptive = sourceFile(QStringLiteral("qml/FlightDeckAdaptiveResponse.qml"));
+    const QString profiles = sourceFile(QStringLiteral("qml/FlightDeckProfiles.qml"));
+    const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
+    const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
+
+    QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckSharedPageTitle\"")));
+    QVERIFY(!flightDeck.contains(QStringLiteral("visible: root.currentPage !== 8")));
+    QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckControllerPill\"")));
+    QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckAppearancePill\"")));
+    QVERIFY(flightDeck.contains(QStringLiteral("onClicked: root.navigateTo(2)")));
+    QVERIFY(flightDeck.contains(QStringLiteral("themeManager.setFlightDeckAppearance")));
+    const qsizetype axes = flightDeck.indexOf(QStringLiteral("{ label: \"Axes\", page: 0 }"));
+    const qsizetype curveNavigation = flightDeck.indexOf(QStringLiteral("{ label: \"Curve editor\", page: 6 }"));
+    const qsizetype buttons = flightDeck.indexOf(QStringLiteral("{ label: \"Buttons\", page: 1 }"));
+    QVERIFY(axes >= 0 && curveNavigation > axes && buttons > curveNavigation);
+    QVERIFY(headerPill.contains(QStringLiteral("Accessible.role: Accessible.Button")));
+    QVERIFY(selector.contains(QStringLiteral("SELECTED DEVICE")));
+    QVERIFY(selector.contains(QStringLiteral("backendObject.selectedDevices")));
+    QVERIFY(selector.contains(QStringLiteral("backendObject.setSelectedDeviceContext")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QString selectedDeviceRigId")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool setSelectedDeviceContext")));
+    QVERIFY(adaptive.contains(QStringLiteral("BASIC RESPONSE · CONFIGURED LIMITS")));
+    QVERIFY(adaptive.contains(QStringLiteral("root.effective().maximumHorizonMs")));
+    QVERIFY(adaptive.contains(QStringLiteral("VISIBLE TRACES")));
+    QVERIFY(adaptive.contains(QStringLiteral("Awaiting controller input")));
+    QVERIFY(adaptive.indexOf(QStringLiteral("objectName: \"adaptiveSelectedDeviceContext\""))
+            < adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextTarget\"")));
+    QVERIFY(adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextTarget\""))
+            < adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextAxis\"")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckProfileLibrary\"")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckProfileDetailPane\"")));
+    QVERIFY(curve.contains(QStringLiteral("readonly property bool flightDeck")));
+    QVERIFY(curve.contains(QStringLiteral("flightDeck ? theme.primarySurface")));
 }
 
 void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
@@ -821,6 +884,10 @@ void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
     const QString staging = sourceFile(QStringLiteral("scripts/stage-package.ps1"));
     QVERIFY(cmake.contains(QStringLiteral("--qmldir \"${CMAKE_CURRENT_SOURCE_DIR}/qml\"")));
     QVERIFY(staging.contains(QStringLiteral("--qmldir (Join-Path $repoRoot 'qml')")));
+    QVERIFY(staging.contains(QStringLiteral("Find-MsvcRuntimeDirectory")));
+    QVERIFY(staging.contains(QStringLiteral("msvcp140.dll")));
+    QVERIFY(staging.contains(QStringLiteral("vcruntime140.dll")));
+    QVERIFY(staging.contains(QStringLiteral("vcruntime140_1.dll")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()

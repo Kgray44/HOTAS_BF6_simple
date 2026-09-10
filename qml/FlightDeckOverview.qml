@@ -62,13 +62,6 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space4
                 Text {
-                    text: "Overview"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: root.wide ? 30 : 25
-                    font.bold: true
-                }
-                Text {
                     text: root.overviewMessage()
                     color: deck.textSecondary
                     font.pixelSize: 12

@@ -179,6 +179,7 @@ Item {
 
                     ColumnLayout {
                         id: navigationContent
+                        objectName: "flightDeckNavigationContent"
                         width: navigationViewport.width
                         spacing: deck.controlGap
 
@@ -187,13 +188,13 @@ Item {
                                 { label: "Overview", page: 8 },
                                 { label: "Devices & setup", page: 2 },
                                 { label: "Axes", page: 0 },
+                                { label: "Curve editor", page: 6 },
                                 { label: "Buttons", page: 1 },
                                 { label: "Profiles", page: 5 },
                                 { label: "Adaptive Response", page: 9 },
                                 { label: "Automation", page: 7 },
                                 { label: "Diagnostics", page: 3 },
-                                { label: "Settings", page: 4 },
-                                { label: "Curve editor", page: 6 }
+                                { label: "Settings", page: 4 }
                             ]
                             delegate: FlightDeckNavItem {
                                 objectName: "flightDeckNav_" + modelData.page
@@ -294,9 +295,9 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? 42 : 0
-                    visible: root.currentPage !== 8
+                    Layout.preferredHeight: 42
                     Text {
+                        objectName: "flightDeckSharedPageTitle"
                         text: root.pageTitle(root.currentPage)
                         color: deck.textPrimary
                         font.family: deck.displayFont
@@ -305,19 +306,29 @@ Item {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
-                    FlightDeckStatusChip {
+                    FlightDeckSelectedDeviceSelector {
+                        visible: [0, 1, 3, 5, 6, 9].indexOf(root.currentPage) >= 0
+                        compact: root.width < 1180
+                        backendObject: backend
                         tokens: deck
-                        label: backend.physicalConnected ? "CONTROLLER" : "CONTROLLER"
+                        onManageDevices: root.navigateTo(2)
+                    }
+                    FlightDeckHeaderPill {
+                        objectName: "flightDeckControllerPill"
+                        tokens: deck
+                        text: "CONTROLLER"
                         value: backend.physicalConnected ? "CONNECTED" : "WAITING"
                         tone: backend.physicalConnected ? "healthy" : "attention"
-                        visible: root.width >= 1110
+                        onClicked: root.navigateTo(2)
                     }
-                    FlightDeckStatusChip {
+                    FlightDeckHeaderPill {
+                        objectName: "flightDeckAppearancePill"
                         tokens: deck
-                        label: "APPEARANCE"
+                        text: "APPEARANCE"
                         value: themeManager.flightDeckAppearance.toUpperCase()
                         tone: "informational"
-                        visible: root.width >= 1260
+                        onClicked: themeManager.setFlightDeckAppearance(
+                            themeManager.flightDeckAppearance === "Light" ? "Dark" : "Light")
                     }
                 }
 

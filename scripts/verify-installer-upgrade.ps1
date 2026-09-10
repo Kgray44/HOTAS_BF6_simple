@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)] [string] $FixtureTool,
     [Parameter(Mandatory)] [string] $ExpectedVersion,
     [string] $LegacyInstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v1.9.3/HOTAS-BF6-Setup-v1.9.3.exe',
-    [string] $FailedV200InstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v2.0.0/HOTAS-BF6-Setup-v2.0.0.exe'
+    [string] $FailedV200InstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v2.0.0/HOTAS-BF6-Setup-v2.0.0.exe',
+    [string] $PriorStableInstallerUrl = 'https://github.com/Kgray44/HOTAS_BF6_simple/releases/download/v2.5.0/HOTAS-BF6-Setup-v2.5.0.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,7 @@ $candidate = (Resolve-Path -LiteralPath $CandidateInstaller).Path
 $fixture = (Resolve-Path -LiteralPath $FixtureTool).Path
 $runnerTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $work = Join-Path $runnerTemp "hotas-installer-upgrade-$PID"
+$defaultInstall = $null
 if (-not ([System.IO.Path]::GetFullPath($work).StartsWith($runnerTemp, [System.StringComparison]::OrdinalIgnoreCase))) {
     throw 'Refusing to create acceptance artifacts outside RUNNER_TEMP.'
 }
@@ -26,11 +28,32 @@ function Invoke-Installer([string] $installer, [string] $target) {
     if ($result.ExitCode -ne 0) { throw "Installer failed with exit code $($result.ExitCode): $installer" }
 }
 
-function Assert-InstalledVersion([string] $target) {
+function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion) {
+    foreach ($file in @(
+        'HOTAS BF6 Launcher.exe', 'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll',
+        'Qt6Qml.dll', 'Qt6Quick.dll', 'Qt6QuickControls2.dll'
+    )) {
+        if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
+            throw "Installed package is missing $file."
+        }
+    }
+    $qml = Join-Path $target 'qml'
+    if (-not (Test-Path -LiteralPath $qml -PathType Container)
+        -or -not (Get-ChildItem -LiteralPath $qml -Force | Select-Object -First 1)) {
+        throw 'Installed package is missing the required QML runtime.'
+    }
     $versionFile = Join-Path $target 'VERSION'
-    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) { throw "Missing installed VERSION: $versionFile" }
-    if ((Get-Content -LiteralPath $versionFile -Raw).Trim() -ne $ExpectedVersion) {
-        throw "Installed VERSION does not match $ExpectedVersion."
+    if ((Get-Content -LiteralPath $versionFile -Raw).Trim() -ne $expectedInstalledVersion) {
+        throw "Installed VERSION does not match $expectedInstalledVersion."
+    }
+}
+
+function Assert-ShortcutTarget([string] $shortcut, [string] $expectedTarget) {
+    if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw "Missing shortcut: $shortcut" }
+    $shell = New-Object -ComObject WScript.Shell
+    $target = $shell.CreateShortcut($shortcut).TargetPath
+    if ($target -ne $expectedTarget -or -not (Test-Path -LiteralPath $target -PathType Leaf)) {
+        throw "Shortcut target is not runnable: $shortcut -> $target"
     }
 }
 
@@ -64,17 +87,20 @@ try {
     New-Item -ItemType Directory -Path $work | Out-Null
     $legacyInstaller = Join-Path $work 'HOTAS-BF6-Setup-v1.9.3.exe'
     $failedV200Installer = Join-Path $work 'HOTAS-BF6-Setup-v2.0.0.exe'
+    $priorStableInstaller = Join-Path $work 'HOTAS-BF6-Setup-v2.5.0.exe'
     Invoke-WebRequest -Uri $LegacyInstallerUrl -OutFile $legacyInstaller
     Invoke-WebRequest -Uri $FailedV200InstallerUrl -OutFile $failedV200Installer
+    Invoke-WebRequest -Uri $PriorStableInstallerUrl -OutFile $priorStableInstaller
 
     & $fixture --clear
     if ($LASTEXITCODE -ne 0) { throw 'Could not clear the isolated acceptance configuration.' }
 
-    # A clean v2.0.1 install must create its QML root and remain alive through
-    # initialization; an installer success code by itself is not acceptance.
+    # A clean candidate install must create every launch-critical package file
+    # and remain alive through initialization; an installer success code by
+    # itself is not acceptance.
     $cleanInstall = Join-Path $work 'clean-install'
     Invoke-Installer $candidate $cleanInstall
-    Assert-InstalledVersion $cleanInstall
+    Assert-InstalledPackage $cleanInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $cleanInstall
     & $fixture --assert-fresh-v23
     if ($LASTEXITCODE -ne 0) { throw 'Clean installation did not create the Battlefield 6 / Helicopter starter.' }
@@ -87,7 +113,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed v1.9.3 schema-14 acceptance data.' }
     Assert-LegacyMapperStarts $upgradeInstall
     Invoke-Installer $candidate $upgradeInstall
-    Assert-InstalledVersion $upgradeInstall
+    Assert-InstalledPackage $upgradeInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $upgradeInstall
     & $fixture --assert-v23
     if ($LASTEXITCODE -ne 0) { throw 'v1.9.3 upgrade did not preserve and migrate the acceptance fixture.' }
@@ -100,13 +126,47 @@ try {
     & $fixture --seed-v15
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed the affected schema-15 acceptance data.' }
     Invoke-Installer $candidate $recoveryInstall
-    Assert-InstalledVersion $recoveryInstall
+    Assert-InstalledPackage $recoveryInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $recoveryInstall
     & $fixture --assert-v23
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
-    Write-Host "Installer acceptance passed: clean install, v1.9.3 -> v$ExpectedVersion, and v2.0.0 recovery."
+    # Release-quality N-1 coverage: use the actual public v2.5.0 package and
+    # upgrade it to the candidate in place, preserving the established user
+    # configuration fixture while checking the complete staged package.
+    $priorStableInstall = Join-Path $work 'v250-upgrade'
+    Invoke-Installer $priorStableInstaller $priorStableInstall
+    Assert-InstalledPackage $priorStableInstall '2.5.0'
+    & $fixture --seed-v15
+    if ($LASTEXITCODE -ne 0) { throw 'Could not seed the v2.5.0 upgrade fixture.' }
+    Invoke-Installer $candidate $priorStableInstall
+    Assert-InstalledPackage $priorStableInstall $ExpectedVersion
+    Invoke-MapperStartupSmoke $priorStableInstall
+    & $fixture --assert-v23
+    if ($LASTEXITCODE -ne 0) { throw 'v2.5.0 -> candidate did not preserve the acceptance fixture.' }
+
+    # The default local-app-data installation path and both shortcuts are
+    # checked only on the ephemeral GitHub runner. No redirected /DIR is used
+    # for this acceptance case.
+    $defaultInstall = Join-Path $env:LOCALAPPDATA 'Programs\HOTAS BF6'
+    if (Test-Path -LiteralPath $defaultInstall) { throw "Default acceptance path already exists: $defaultInstall" }
+    $defaultResult = Start-Process -FilePath $candidate -ArgumentList @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/TASKS="desktopicon"') -Wait -PassThru
+    if ($defaultResult.ExitCode -ne 0) { throw "Default-path installer failed with exit code $($defaultResult.ExitCode)." }
+    Assert-InstalledPackage $defaultInstall $ExpectedVersion
+    Invoke-MapperStartupSmoke $defaultInstall
+    $launcher = Join-Path $defaultInstall 'HOTAS BF6 Launcher.exe'
+    Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath('Programs')) 'HOTAS BF6\HOTAS BF6.lnk') $launcher
+    Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath('Desktop')) 'HOTAS BF6.lnk') $launcher
+
+    Write-Host "Installer acceptance passed: clean install, v1.9.3 migration, v2.0.0 recovery, v2.5.0 -> v$ExpectedVersion, and default-path shortcuts."
 } finally {
+    if ($defaultInstall -and (Test-Path -LiteralPath $defaultInstall -PathType Container)) {
+        $uninstaller = Join-Path $defaultInstall 'unins000.exe'
+        if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+            [void](Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru)
+        }
+    }
     & $fixture --clear 2>$null
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
 }
