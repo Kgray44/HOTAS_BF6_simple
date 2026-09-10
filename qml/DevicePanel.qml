@@ -20,9 +20,9 @@ Rectangle {
     // Its generous corner treatment and opaque hierarchy keep it visibly
     // separate from Legacy's inset, layered cockpit panel without changing
     // any Devices content geometry.
-    radius: legacy ? 6 : theme.topGun ? theme.panelRadius : theme.dayOps ? theme.panelRadius : 9
-    color: legacy ? "#e9161d23" : theme.devicePanelSurface
-    border.color: legacy ? "#41546770" : theme.devicePanelBorder
+    radius: legacy ? 6 : theme && theme.topGun ? theme.panelRadius : theme && theme.dayOps ? theme.panelRadius : 9
+    color: legacy ? "#e9161d23" : theme && theme.devicePanelSurface ? theme.devicePanelSurface : "#26343a"
+    border.color: legacy ? "#41546770" : theme && theme.devicePanelBorder ? theme.devicePanelBorder : "#5d7b87"
     border.width: 1
     // A panel's content may have an intrinsically wide title or action row,
     // but the page, not that content, owns the viewport width.  Opt out of
@@ -49,9 +49,9 @@ Rectangle {
     // Standard receives a restrained technical inset rail rather than
     // Legacy's edge highlight. It is paint-only: geometry and data hierarchy
     // stay identical across themes.
-    Rectangle { visible: !legacy && !theme.topGun && !theme.dayOps; anchors.left: parent.left; anchors.leftMargin: 1; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 12; anchors.bottomMargin: 12; width: 3; radius: 2; color: theme.devicePanelAccent; opacity: 0.72 }
+    Rectangle { visible: !legacy && theme && !theme.topGun && !theme.dayOps; anchors.left: parent.left; anchors.leftMargin: 1; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 12; anchors.bottomMargin: 12; width: 3; radius: 2; color: theme && theme.devicePanelAccent ? theme.devicePanelAccent : "#76b4c2"; opacity: 0.72 }
     // Fasteners are an instrument-panel detail, never a Standard or Legacy
     // decoration. Naming the group makes this exclusion assertable in the
     // rendered Devices fixture as well as visually obvious in Legacy.
-    Repeater { objectName: "topGunCornerFasteners"; visible: !legacy && theme.topGun; model: 4; delegate: Rectangle { width: 4; height: 4; radius: 2; color: "#604a2b"; border.color: "#a27e46"; x: index < 2 ? 6 : parent.width - 10; y: index % 2 === 0 ? 6 : parent.height - 10 } }
+    Repeater { objectName: "topGunCornerFasteners"; visible: !legacy && theme && theme.topGun; model: 4; delegate: Rectangle { width: 4; height: 4; radius: 2; color: "#604a2b"; border.color: "#a27e46"; x: index < 2 ? 6 : parent.width - 10; y: index % 2 === 0 ? 6 : parent.height - 10 } }
 }

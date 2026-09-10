@@ -1276,7 +1276,7 @@ Page {
                     onTriggered: { root.requestVerification(root.selectedRigId, "", root.selectedOutputId); outputDetailDialog.close() } }
                 ThemedButton {
                     theme: themeTokens; tone: "secondary"
-                    visible: outputDetailDialog.detail.managedVisibility && root.selectedRig
+                    visible: Boolean(outputDetailDialog.detail.managedVisibility && root.selectedRig)
                     text: outputDetailDialog.detail.hiddenFromGames ? "SHOW TO GAMES" : "HIDE FROM GAMES"
                     commandEnabled: outputDetailDialog.detail.hiddenFromGames || !root.selectedRig || !root.hasOutput(root.selectedRig, root.selectedOutputId)
                                     || !root.selectedRig.active

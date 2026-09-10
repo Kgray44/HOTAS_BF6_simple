@@ -43,7 +43,7 @@ Rectangle {
             color: header.legacy ? "#eef6f5" : header.theme.topGun ? header.theme.orangeBright : header.theme.textStrong
             font.pixelSize: header.theme.topGun ? 16 : 14
             font.bold: true
-            font.family: header.theme.topGun ? header.theme.displayFont : undefined
+            font.family: header.theme.topGun ? header.theme.displayFont : ""
             elide: Text.ElideRight
         }
         Text {

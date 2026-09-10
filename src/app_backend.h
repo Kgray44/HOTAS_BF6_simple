@@ -253,6 +253,12 @@ public:
     // snapshots; tests use this seam to cover each user-visible diagnosis
     // without requiring real controllers or driver installation state.
     void setSetupAssistantFactsForTest(const QVariantMap &facts);
+#ifdef HOTAS_STARTUP_TESTING
+    // Bounded startup-test presentation fixture. It neither enumerates
+    // hardware nor reaches the DirectInput-to-vJoy report path.
+    void setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
+                                   int physicalPovCount, int continuousPovCapacity = 0);
+#endif
     QVariantList buttons() const;
     QVariantList povs() const;
     QVariantList povInputs() const;

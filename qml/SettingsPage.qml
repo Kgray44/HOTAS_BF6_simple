@@ -19,6 +19,7 @@ Flickable {
     readonly property color borderColor: legacy ? "#49616b" : theme.border
     readonly property color textColor: legacy ? "#eef5f5" : theme.textStrong
     readonly property color mutedColor: legacy ? "#9fb1b5" : theme.textMuted
+    readonly property color faintColor: legacy ? "#77919a" : theme.textFaint
     readonly property color readyColor: legacy ? "#9fcbbf" : theme.ready
     readonly property color warningColor: legacy ? "#d6bd78" : theme.warning
     readonly property color dangerColor: legacy ? "#c98e97" : theme.danger
@@ -40,7 +41,7 @@ Flickable {
         property string label: "SECTION"
         Layout.fillWidth: true; spacing: 8
         Rectangle { width: theme.topGun ? 13 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: root.accentColor }
-        Text { text: parent.label; color: root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+        Text { text: parent.label; color: root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
     }
     component Card: Rectangle {
@@ -54,7 +55,7 @@ Flickable {
         // Keep Settings visually coupled to Axes, Buttons, Curves, and Diagnostics.
         LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
         ColumnLayout { id: body; anchors.fill: parent; anchors.margins: 15; spacing: 9
-            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
             Text { visible: parent.parent.detail.length > 0; text: parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }
@@ -69,7 +70,7 @@ Flickable {
         color: !actionEnabled ? theme.controlDisabled : actionMouse.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (destructive ? theme.destructive : subdued ? theme.buttonSecondary : theme.buttonSurface)
         border.color: !actionEnabled ? root.borderColor : destructive ? root.dangerColor : subdued ? root.borderColor : root.accentColor
         opacity: actionEnabled ? 1.0 : 0.5
-        Text { id: actionLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+        Text { id: actionLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         MouseArea { id: actionMouse; anchors.fill: parent; enabled: parent.actionEnabled; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
     component Toggle: Rectangle {
@@ -90,7 +91,7 @@ Flickable {
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         GridLayout { id: row; anchors.fill: parent; anchors.margins: 10; columns: root.narrow ? 1 : 2; columnSpacing: 14; rowSpacing: 8
             ColumnLayout { Layout.fillWidth: true; Layout.minimumWidth: root.narrow ? 0 : 180; spacing: 2
-                Text { Layout.fillWidth: true; Layout.minimumWidth: 120; text: parent.parent.parent.title; color: root.textColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                Text { Layout.fillWidth: true; Layout.minimumWidth: 120; text: parent.parent.parent.title; color: root.textColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap; font.family: theme.topGun ? theme.telemetryFont : "" }
                 Text { Layout.fillWidth: true; visible: parent.parent.parent.detail.length > 0; text: parent.parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
             }
             RowLayout { id: controls; Layout.alignment: root.narrow ? Qt.AlignLeft : Qt.AlignRight; Layout.fillWidth: root.narrow; spacing: 7 }
@@ -101,14 +102,14 @@ Flickable {
         property color tone: root.readyColor
         implicitWidth: statusText.implicitWidth + 16; implicitHeight: 22; radius: theme.topGun ? 1 : 11
         color: Qt.rgba(tone.r, tone.g, tone.b, 0.14); border.color: tone
-        Text { id: statusText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+        Text { id: statusText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
 
     ColumnLayout {
         id: settings
         x: 1; width: root.width - 14; spacing: 13
         ColumnLayout { Layout.fillWidth: true; spacing: 3
-            Text { text: theme.topGun ? "SYSTEM CONFIGURATION" : "Settings"; color: root.textColor; font.pixelSize: theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { text: theme.topGun ? "SYSTEM CONFIGURATION" : "Settings"; color: root.textColor; font.pixelSize: theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
             Text { text: "Application preferences, mapping defaults, updates, and maintenance."; color: root.mutedColor; font.pixelSize: 11 }
         }
 
@@ -237,16 +238,25 @@ Flickable {
             SettingRow { Layout.fillWidth: true; title: "KEEP RUNNING IN SYSTEM TRAY"; detail: backend.trayAvailable ? "Closing the window keeps mapping and monitoring running." : "System tray is unavailable in this Windows session."
                 Toggle { checked: backend.keepRunningInTray; onToggled: backend.setKeepRunningInTray(checked) }
             }
-            SettingRow { Layout.fillWidth: true; title: "APPEARANCE"; detail: themeManager.currentTheme === "Day Ops" ? "Day Ops — a bright naval aviation theme inspired by daytime carrier flight-deck equipment." : "Legacy, Standard, Top Gun, and Day Ops each use their own visual language."
-                ComboBox { id: appearance; implicitWidth: 138; model: themeManager.themeChoices; currentIndex: Math.max(0, model.indexOf(themeManager.currentTheme)); onActivated: themeManager.setCurrentTheme(currentText)
+            SettingRow { Layout.fillWidth: true; title: "EXPERIENCE & APPEARANCE"; detail: "Choose Legacy, Standard, Top Gun, Day Ops, or Flight Deck. Your controller configuration stays the same."
+                ComboBox { id: appearance; objectName: "experienceAppearanceSelector"; implicitWidth: 168; model: themeManager.presentationChoices; textRole: "label"; valueRole: "id"
+                    currentIndex: {
+                        for (let index = 0; index < model.length; ++index)
+                            if (model[index].id === themeManager.currentPresentationId) return index
+                        return 0
+                    }
+                    onActivated: {
+                        const presentationId = currentValue
+                        Qt.callLater(function() { themeManager.selectPresentation(presentationId) })
+                    }
                     contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                     indicator: Text { x: appearance.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 12; font.bold: true }
-                    delegate: ItemDelegate { id: appearanceDelegate; width: appearance.width; highlighted: appearance.highlightedIndex === index
-                        contentItem: Text { text: modelData; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
+                    delegate: ItemDelegate { id: appearanceDelegate; objectName: appearance.objectName + "Choice_" + index; width: appearance.width; highlighted: appearance.highlightedIndex === index
+                        contentItem: Text { text: modelData.label; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
                         background: Rectangle { color: appearanceDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
                     }
-                    popup: Popup { y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
+                    popup: Popup { objectName: appearance.objectName + "Popup"; y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
                         contentItem: ListView { clip: true; implicitHeight: contentHeight; model: appearance.popup.visible ? appearance.delegateModel : null; currentIndex: appearance.highlightedIndex }
                         background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                     }
@@ -321,7 +331,7 @@ Flickable {
         onOpened: selectFirstTarget()
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
-            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
             Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Use Together creates one unverified Device Rig so its inputs can be configured and verified as a coherent flight setup. Set Up Separately keeps the existing one-device flow." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
@@ -358,7 +368,7 @@ Flickable {
             if (!detectedControllerDialog.opened) detectedControllerDialog.open()
         }
     }
-    Dialog { id: actionDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; property string action: ""; title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget saved controllers?" : "Reset active-controller calibration?"; standardButtons: Dialog.NoButton; padding: 18
+    Dialog { id: actionDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 436; property string action: ""; title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget saved controllers?" : "Reset active-controller calibration?"; standardButtons: Dialog.NoButton; padding: 18
         background: Rectangle { color: root.panelColor; border.color: actionDialog.action === "uninstall" ? root.dangerColor : root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: 400; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11; text: actionDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, automation, and saved data remain by default." : actionDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles, curves, automation, and other settings stay intact." : "This removes calibration only for the active controller. Profiles, curves, and mappings stay intact." }
@@ -368,7 +378,7 @@ Flickable {
             }
         }
     }
-    Dialog { id: resetDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; title: "Reset application configuration?"; standardButtons: Dialog.NoButton; padding: 18
+    Dialog { id: resetDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 436; title: "Reset application configuration?"; standardButtons: Dialog.NoButton; padding: 18
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: 400; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11; text: "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and automation are reset as part of the application configuration." }

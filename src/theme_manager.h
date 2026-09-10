@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 namespace hotas {
 
@@ -14,6 +15,15 @@ class ThemeManager final : public QObject {
     Q_PROPERTY(bool topGun READ isTopGun NOTIFY themeChanged)
     Q_PROPERTY(bool dayOps READ isDayOps NOTIFY themeChanged)
     Q_PROPERTY(QStringList themeChoices READ themeChoices CONSTANT)
+    // An experience owns shell composition; a theme continues to own only
+    // visual tokens for the established presentations.
+    Q_PROPERTY(QString currentExperience READ currentExperience WRITE setCurrentExperience NOTIFY experienceChanged)
+    Q_PROPERTY(QString flightDeckAppearance READ flightDeckAppearance WRITE setFlightDeckAppearance NOTIFY flightDeckAppearanceChanged)
+    Q_PROPERTY(QStringList experienceChoices READ experienceChoices CONSTANT)
+    // The existing theme family and the alternate Flight Deck shell are
+    // combined here only for presentation selection, never mapper state.
+    Q_PROPERTY(QString currentPresentationId READ currentPresentationId NOTIFY presentationChanged)
+    Q_PROPERTY(QVariantList presentationChoices READ presentationChoices CONSTANT)
 
 public:
     explicit ThemeManager(const QString &settingsFilePath = {}, QObject *parent = nullptr);
@@ -22,16 +32,32 @@ public:
     bool isTopGun() const;
     bool isDayOps() const;
     QStringList themeChoices() const;
+    QString currentExperience() const { return m_currentExperience; }
+    QString flightDeckAppearance() const { return m_flightDeckAppearance; }
+    QStringList experienceChoices() const;
+    QString currentPresentationId() const;
+    QVariantList presentationChoices() const;
 
     Q_INVOKABLE void setCurrentTheme(const QString &theme);
+    Q_INVOKABLE void setCurrentExperience(const QString &experience);
+    Q_INVOKABLE void setFlightDeckAppearance(const QString &appearance);
+    Q_INVOKABLE void selectPresentation(const QString &presentationId);
     static QString normalizedTheme(const QString &theme);
 
 signals:
     void themeChanged();
+    void experienceChanged();
+    void flightDeckAppearanceChanged();
+    void presentationChanged();
 
 private:
+    QString normalizedExperience(const QString &experience) const;
+    static QString normalizedFlightDeckAppearance(const QString &appearance);
+
     QString m_settingsFilePath;
     QString m_currentTheme;
+    QString m_currentExperience;
+    QString m_flightDeckAppearance;
 };
 
 } // namespace hotas

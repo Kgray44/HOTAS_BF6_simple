@@ -49,10 +49,10 @@ Flickable {
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 Rectangle { width: theme.topGun ? 12 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: parent.parent.parent.accent }
-                Text { text: parent.parent.parent.eyebrow; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                Text { text: parent.parent.parent.eyebrow; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                 Item { Layout.fillWidth: true }
             }
-            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: theme.topGun ? 18 : 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: theme.topGun ? 18 : 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         }
     }
 
@@ -61,7 +61,7 @@ Flickable {
         property color tone: root.readyColor
         implicitWidth: badgeLabel.implicitWidth + 18; implicitHeight: 24
         radius: theme.topGun ? 1 : 12; color: Qt.rgba(tone.r, tone.g, tone.b, theme.topGun ? 0.16 : 0.12); border.color: tone
-        Text { id: badgeLabel; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+        Text { id: badgeLabel; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
 
     component DashboardButton: Rectangle {
@@ -72,7 +72,7 @@ Flickable {
         radius: theme.topGun ? 1 : theme.controlRadius
         color: !enabledAction ? theme.controlDisabled : buttonMouse.containsMouse ? theme.buttonHover : theme.buttonSurface
         border.color: !enabledAction ? root.borderColor : theme.topGun ? theme.orange : root.primaryColor; opacity: enabledAction ? 1.0 : 0.5
-        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         Rectangle { visible: theme.topGun && parent.enabledAction; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 3; width: 25; height: 2; color: theme.orangeBright }
         MouseArea { id: buttonMouse; anchors.fill: parent; enabled: parent.enabledAction; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
@@ -115,7 +115,7 @@ Flickable {
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         Column { anchors.centerIn: parent; spacing: 2
             Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.value; color: root.textColor; font.pixelSize: 18; font.bold: true; font.family: theme.telemetryFont }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         }
     }
 
@@ -127,7 +127,7 @@ Flickable {
         Layout.fillWidth: true; implicitHeight: 92
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         Column { anchors.fill: parent; anchors.margins: 11; spacing: 6
-            Text { text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+            Text { text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
             Text { text: parent.parent.value; color: root.textColor; font.pixelSize: 18; font.bold: true; font.family: theme.telemetryFont }
             Rectangle { width: parent.width; height: theme.topGun ? 5 : 6; radius: theme.topGun ? 0 : 3; color: root.panelColor
                 Rectangle { width: Math.max(2, parent.width * Math.min(1.0, Math.max(0.0, parent.parent.parent.fill))); height: parent.height; radius: parent.radius; color: parent.parent.parent.tone }
@@ -142,8 +142,8 @@ Flickable {
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout { spacing: 3
-                Text { text: theme.topGun ? "MISSION OVERVIEW" : "Overview"; color: root.textColor; font.pixelSize: root.legacy ? 27 : theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
-                Text { text: theme.topGun ? "FLIGHT CONTROL SIGNAL PATH · LIVE SYSTEM STATUS" : "Controller signal path, output readiness, and human-readable mapper telemetry."; color: root.mutedColor; font.pixelSize: 11; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                Text { text: theme.topGun ? "MISSION OVERVIEW" : "Overview"; color: root.textColor; font.pixelSize: root.legacy ? 27 : theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                Text { text: theme.topGun ? "FLIGHT CONTROL SIGNAL PATH · LIVE SYSTEM STATUS" : "Controller signal path, output readiness, and human-readable mapper telemetry."; color: root.mutedColor; font.pixelSize: 11; font.family: theme.topGun ? theme.telemetryFont : "" }
             }
             Item { Layout.fillWidth: true }
             StatusBadge { label: root.statusLabel(); tone: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor }
@@ -158,9 +158,9 @@ Flickable {
             }
             ColumnLayout { anchors.fill: parent; anchors.margins: root.narrow ? 16 : 20; spacing: 10
                 RowLayout { Layout.fillWidth: true
-                    Text { text: theme.topGun ? "CONTROL CHAIN" : "Control Signal"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                    Text { text: theme.topGun ? "CONTROL CHAIN" : "Control Signal"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                     Item { Layout.fillWidth: true }
-                    Text { text: backend.mappingStatus; color: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+                    Text { text: backend.mappingStatus; color: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                 }
                 GridLayout { Layout.fillWidth: true; Layout.fillHeight: true; columns: root.narrow ? 1 : 5; columnSpacing: root.narrow ? 5 : 10; rowSpacing: 5
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
@@ -176,7 +176,7 @@ Flickable {
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: theme.topGun ? "#18251f" : theme.panelRaised; border.color: backend.mappingActive ? root.readyColor : root.primaryColor
                         Column { anchors.centerIn: parent; spacing: 3
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "HOTAS BF6"; color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "HOTAS BF6"; color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.mappingActive ? "PROCESSING" : "STANDBY"; color: backend.mappingActive ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
                         }
                     }

@@ -71,6 +71,13 @@ constexpr int kVisibleGameDetectionIntervalMs = 2500;
 constexpr int kMinimizedGameDetectionIntervalMs = 5000;
 constexpr int kTrayHiddenGameDetectionIntervalMs = 7500;
 
+bool startupSmokeRequested()
+{
+    const QStringList arguments = QCoreApplication::arguments();
+    return arguments.contains(u"--startup-smoke"_qs)
+        || arguments.contains(u"--startup-smoke-isolated"_qs);
+}
+
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
 {
@@ -108,6 +115,14 @@ QString friendlyApplicationName(const QString &executable)
     spaced.replace(QRegularExpression(u"([a-z])([A-Z])"_qs), u"\\1 \\2"_qs);
     spaced.replace(QRegularExpression(u"[_-]+"_qs), u" "_qs);
     return spaced.isEmpty() ? executable : spaced;
+}
+
+int adaptiveOverrideAxisCount(const AdaptiveResponseLayer &layer)
+{
+    return static_cast<int>(std::count_if(layer.axes.cbegin(), layer.axes.cend(),
+        [](const AdaptiveResponseAxisOverride &entry) {
+            return entry.properties != 0 || !entry.presetId.isEmpty();
+        }));
 }
 
 bool isUsefulRunningApplication(const QString &executable)
@@ -429,6 +444,12 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
 {
+    // Package/installer startup acceptance needs the real QML shell, backend
+    // models, and tray construction, but it must not acquire DirectInput,
+    // vJoy, or foreground-game state from a machine that may be in use. The
+    // flags are explicit automation entry points handled by main.cpp; normal
+    // launches retain the unchanged hardware startup path below.
+    const bool startupSmoke = startupSmokeRequested();
     m_adaptiveResponseHistoryClock.start();
     m_adaptiveResponseSimulatorClock.start();
     m_adaptiveResponseSimulatorHistory.resize(1800);
@@ -495,12 +516,12 @@ AppBackend::AppBackend(QObject *parent)
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
-    m_controllerDiscoveryTimer.start();
+    if (!startupSmoke) m_controllerDiscoveryTimer.start();
     // Foreground-process sampling is low-frequency control-plane work. It is
     // intentionally independent from the presentation snapshot and
     // the DirectInput worker's report loop.
     m_gameDetectionTimer.setInterval(kVisibleGameDetectionIntervalMs);
-    if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
+    if (!startupSmoke && m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -541,22 +562,26 @@ AppBackend::AppBackend(QObject *parent)
     // rebuilding editor data. HighPriority is intentionally below
     // TimeCriticalPriority: it favors real input responsiveness without
     // starving normal system or rendering work on a constrained CPU.
-    m_worker.start(QThread::HighPriority);
-    m_mappingDesired = m_configuration.startMappingOnLaunch;
-    if (m_mappingDesired) {
-        m_worker.setMappingEnabled(true);
+    if (!startupSmoke) {
+        m_worker.start(QThread::HighPriority);
+        m_mappingDesired = m_configuration.startMappingOnLaunch;
+        if (m_mappingDesired) {
+            m_worker.setMappingEnabled(true);
+        }
     }
     // Startup verification is passive and runs on its own short-lived worker.
     // It never stops mapping, releases either device, or opens a modal.
-    QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
-    QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
-    if (m_configuration.automaticGameDetection) {
-        QTimer::singleShot(kVisibleGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+    if (!startupSmoke) {
+        QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
+        QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
+        if (m_configuration.automaticGameDetection) {
+            QTimer::singleShot(kVisibleGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+        }
     }
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
-    QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+    if (!startupSmoke) QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
 }
 
 AppBackend::~AppBackend()
@@ -1447,6 +1472,31 @@ void AppBackend::setSetupAssistantFactsForTest(const QVariantMap &facts)
     }
     emit stateChanged();
 }
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
+                                           int physicalPovCount, int continuousPovCapacity)
+{
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    const int buttonCount = std::clamp(physicalButtonCount, 0, kMaximumPhysicalButtons);
+    runtime.physicalConnected = buttonCount > 0 || physicalPovCount > 0;
+    runtime.buttonCount = buttonCount;
+    runtime.vjoyButtonCount = std::clamp(vjoyButtonCapacity, 0, kMaximumVirtualButtons);
+    runtime.povCount = std::clamp(physicalPovCount, 0, kMaximumPhysicalPovs);
+    runtime.vjoyContinuousPovCount = std::max(0, continuousPovCapacity);
+    runtime.vjoyDiscretePovCount = 0;
+    for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+        runtime.buttonAvailable[static_cast<size_t>(index)] = index < buttonCount;
+        runtime.physicalButtonPressed[static_cast<size_t>(index)] = false;
+        runtime.virtualButtonPressed[static_cast<size_t>(index)] = false;
+    }
+    for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+        runtime.povValues[static_cast<size_t>(index)] = -1;
+    }
+    rebuildButtonUiModel();
+    emit inputTelemetryChanged();
+    emit stateChanged();
+}
+#endif
 
 QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const QString &targetId,
                                                      int physicalAxis) const
@@ -2681,6 +2731,15 @@ QVariantList AppBackend::profiles() const
         item.insert(u"mappedPovs"_qs, mappedPovs);
         item.insert(u"customCurves"_qs, customCurves);
         item.insert(u"automationCount"_qs, automationCount);
+        const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile.adaptiveResponse);
+        const int categoryAdaptiveOverrides = category
+            ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+        item.insert(u"adaptiveOverrideAxes"_qs, profileAdaptiveOverrides);
+        item.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+            ? u"Custom profile response"_qs
+            : categoryAdaptiveOverrides > 0 ? u"Category response defaults"_qs
+                                        : u"Global response defaults"_qs);
+        item.insert(u"curveTransitionInherited"_qs, !profile.curveTransitionSmoothingOverride);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
         item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
         item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
@@ -2708,6 +2767,7 @@ QVariantList AppBackend::profileCategories() const
         item.insert(u"enabled"_qs, category.enabled);
         item.insert(u"restoreLastProfile"_qs, category.restoreLastProfile);
         item.insert(u"executableRules"_qs, category.executableRules);
+        item.insert(u"adaptiveOverrideAxes"_qs, adaptiveOverrideAxisCount(category.adaptiveResponse));
         result.append(item);
     }
     return result;
@@ -7027,6 +7087,7 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
+    detail.insert(u"protected"_qs, profile->id == normalProfileId());
     const CurveTransitionSmoothingSettings transitionSettings = sanitizedCurveTransitionSmoothing(
         profile->curveTransitionSmoothingOverride ? profile->curveTransitionSmoothing
                                                   : m_configuration.curveTransitionSmoothing);
@@ -7038,6 +7099,18 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
                   curveTransitionSmoothingEnabled());
     detail.insert(u"globalCurveTransitionDurationMs"_qs,
                   curveTransitionDurationMs());
+    const int profileAdaptiveOverrides = adaptiveOverrideAxisCount(profile->adaptiveResponse);
+    const int categoryAdaptiveOverrides = category
+        ? adaptiveOverrideAxisCount(category->adaptiveResponse) : 0;
+    const int globalAdaptiveOverrides = adaptiveOverrideAxisCount(m_configuration.adaptiveResponseGlobal);
+    detail.insert(u"adaptiveProfileOverrideAxes"_qs, profileAdaptiveOverrides);
+    detail.insert(u"adaptiveCategoryOverrideAxes"_qs, categoryAdaptiveOverrides);
+    detail.insert(u"adaptiveGlobalOverrideAxes"_qs, globalAdaptiveOverrides);
+    detail.insert(u"adaptiveSource"_qs, profileAdaptiveOverrides > 0
+        ? u"Custom response overrides in this profile"_qs
+        : categoryAdaptiveOverrides > 0 ? u"Inherited from this category"_qs
+        : globalAdaptiveOverrides > 0 ? u"Inherited from global defaults"_qs
+                                    : u"Built-in response defaults"_qs);
     QVariantList axes;
     QVariantList curves;
     int mappedAxes = 0;

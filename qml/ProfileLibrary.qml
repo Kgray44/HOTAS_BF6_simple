@@ -47,10 +47,14 @@ Flickable {
     readonly property color warning: legacy ? "#d6bd78" : theme.warning
     readonly property color danger: legacy ? "#c98e97" : theme.danger
     readonly property bool narrow: width < 900
-    readonly property var categories: backendObject ? backendObject.profileCategories : []
-    readonly property var profiles: backendObject ? backendObject.profiles : []
-    readonly property var detail: backendObject && selectedProfileId.length > 0
-        ? backendObject.profileDetail(selectedProfileId) : ({})
+    readonly property var categories: (backendObject && backendObject.profileCategories) || []
+    readonly property var profiles: (backendObject && backendObject.profiles) || []
+    readonly property var detail: (backendObject && selectedProfileId.length > 0
+        ? backendObject.profileDetail(selectedProfileId) : null) || ({})
+    // The backend intentionally clears the preview between transfer attempts.
+    // QML still evaluates hidden delegates while that happens, so centralize a
+    // concrete empty map rather than allowing fields to become undefined.
+    readonly property var importPreview: (backendObject && backendObject.portableImportPreview) || ({})
     readonly property var selectedCategory: categoryById(selectedCategoryId)
 
     function categoryById(id) {
@@ -194,7 +198,7 @@ Flickable {
         selectedPackProfileIds = values
     }
     function commitPortableImport() {
-        if (backendObject.applyPortableImport(backendObject.portableImportPreview.categoryCount === 1 ? importDestinationCategory.currentValue : "", replaceImportedProfiles.checked, root.categoryConflictMode, root.applyImportedCalibration, root.adaptivePresetConflictMode)) transferDialog.close()
+        if (backendObject.applyPortableImport(root.importPreview.categoryCount === 1 ? importDestinationCategory.currentValue : "", replaceImportedProfiles.checked, root.categoryConflictMode, root.applyImportedCalibration, root.adaptivePresetConflictMode)) transferDialog.close()
     }
     function requestPortableImport() {
         if (root.categoryConflictMode === "replace" && !root.replaceCategoryConfirmed) {
@@ -222,7 +226,7 @@ Flickable {
         color: !actionEnabled ? theme.controlDisabled : hit.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (destructive ? Qt.rgba(root.danger.r, root.danger.g, root.danger.b, 0.16) : subdued ? theme.buttonSecondary : theme.buttonSurface)
         border.color: !actionEnabled ? root.border : destructive ? root.danger : subdued ? root.border : root.accent
         opacity: actionEnabled ? 1 : 0.5
-        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.danger : root.text; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.danger : root.text; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; enabled: parent.actionEnabled; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
     component SelectionToggle: Item {
@@ -250,9 +254,18 @@ Flickable {
         id: card
         default property alias content: contents.data
         property color cardAccent: root.border
+        property bool clickEnabled: false
+        signal clicked()
         implicitHeight: contents.implicitHeight + 28
         LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
         Rectangle { anchors.fill: parent; visible: !root.legacy; radius: theme.topGun ? 1 : 7; color: root.panel; border.color: card.cardAccent }
+        MouseArea {
+            anchors.fill: parent
+            z: -1
+            enabled: card.clickEnabled
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: card.clicked()
+        }
         ColumnLayout { id: contents; anchors.fill: parent; anchors.margins: 14; spacing: 8 }
     }
     component Pill: Rectangle {
@@ -260,13 +273,13 @@ Flickable {
         property color tone: root.good
         implicitWidth: pillText.implicitWidth + 15; implicitHeight: 21; radius: theme.topGun ? 1 : 11
         color: Qt.rgba(tone.r, tone.g, tone.b, 0.13); border.color: tone
-        Text { id: pillText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+        Text { id: pillText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
     component Section: RowLayout {
         property string label: "SECTION"
         Layout.fillWidth: true; spacing: 8
         Rectangle { width: theme.topGun ? 13 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: root.accent }
-        Text { text: parent.label; color: root.muted; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : undefined }
+        Text { text: parent.label; color: root.muted; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.border }
     }
     component Field: TextField {
@@ -301,7 +314,7 @@ Flickable {
                 color: root.text
                 font.pixelSize: theme.topGun ? 16 : 14
                 font.bold: true
-                font.family: theme.topGun ? theme.displayFont : undefined
+                font.family: theme.topGun ? theme.displayFont : ""
                 elide: Text.ElideRight
             }
             Rectangle { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.leftMargin: 14; width: 42; height: 2; color: root.accent }
@@ -354,7 +367,7 @@ Flickable {
         RowLayout { Layout.fillWidth: true; spacing: 10
             ActionButton { visible: root.view !== "library"; label: "← LIBRARY"; subdued: true; onTriggered: root.returnToLibrary() }
             ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { text: root.view === "library" ? (theme.topGun ? "PROFILE LIBRARY" : "Profile Library") : root.view === "category" ? root.categoryNameFor(root.selectedCategoryId) : root.detail.displayName || "Profile Detail"; color: root.text; font.pixelSize: theme.topGun ? 25 : 25; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                Text { text: root.view === "library" ? (theme.topGun ? "PROFILE LIBRARY" : "Profile Library") : root.view === "category" ? root.categoryNameFor(root.selectedCategoryId) : root.detail.displayName || "Profile Detail"; color: root.text; font.pixelSize: theme.topGun ? 25 : 25; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                 Text { text: root.view === "library" ? "Game-aware configurations, safe switching, and portable Profile and Pack files." : root.view === "category" ? "Category behavior, profile defaults, and automatic game detection." : "Configuration summary and navigation hub. Changes apply only at configuration boundaries."; color: root.muted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             ActionButton { visible: root.view === "library"; label: "IMPORT / EXPORT"; onTriggered: root.openTransfer("import", "profile", "", "") }
@@ -368,7 +381,7 @@ Flickable {
                 Card { Layout.fillWidth: true; cardAccent: root.accent
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: backendObject.activeProfileDisplayName; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                            Text { text: backendObject.activeProfileDisplayName; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                             Text { text: "ACTIVE CATEGORY / PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
                         }
                         Pill { label: backendObject.automaticGameDetection ? "GAME DETECTION ON" : "MANUAL"; tone: backendObject.automaticGameDetection ? root.good : root.warning }
@@ -390,8 +403,8 @@ Flickable {
                         delegate: Card { required property var modelData; Layout.fillWidth: true; Layout.preferredHeight: 168; cardAccent: modelData.active ? root.accent : root.border
                             RowLayout { Layout.fillWidth: true
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                    Text { text: modelData.name; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + (modelData.active ? "  ·  ACTIVE: " + backendObject.activeProfileName : ""); color: root.muted; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: Number(modelData.profileCount || 0) + " PROFILE" + (Number(modelData.profileCount || 0) === 1 ? "" : "S") + (modelData.active ? "  ·  ACTIVE: " + String(backendObject.activeProfileName || "") : ""); color: root.muted; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
@@ -406,11 +419,12 @@ Flickable {
                 GridLayout { Layout.fillWidth: true; columns: root.width >= 1140 ? 3 : (root.width >= 760 ? 2 : 1); rowSpacing: 12; columnSpacing: 12
                     Repeater { model: root.profiles
                         delegate: Card { required property var modelData; Layout.fillWidth: true; Layout.preferredHeight: 180; cardAccent: modelData.active ? root.accent : root.border
-                            MouseArea { anchors.fill: parent; z: -1; cursorShape: Qt.PointingHandCursor; onClicked: root.openProfile(modelData.id) }
+                            clickEnabled: true
+                            onClicked: root.openProfile(modelData.id)
                             RowLayout { Layout.fillWidth: true
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { text: modelData.name; color: root.text; font.pixelSize: 14; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelData.categoryName.toUpperCase(); color: root.muted; font.pixelSize: 8; font.bold: true }
+                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: 14; font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: String(modelData.categoryName || "").toUpperCase(); color: root.muted; font.pixelSize: 8; font.bold: true }
                                 }
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
@@ -514,11 +528,11 @@ Flickable {
                 Card { Layout.fillWidth: true; cardAccent: root.detail.active ? root.good : root.accent
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: root.detail.name || ""; color: root.text; font.pixelSize: 19; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                            Text { text: root.detail.name || ""; color: root.text; font.pixelSize: 19; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                             Text { text: (root.detail.category || "").toUpperCase() + "  ·  " + (root.detail.active ? "ACTIVE" : "INACTIVE") + "  ·  " + (root.detail.enabled ? "ENABLED" : "DISABLED"); color: root.muted; font.pixelSize: 9; font.bold: true }
                         }
                         ActionButton { label: "EXPORT PROFILE"; subdued: true; onTriggered: root.openTransfer("export", "profile", root.selectedProfileId, "") }
-                        ActionButton { label: root.detail.active ? "ACTIVE" : "SET ACTIVE"; actionEnabled: !root.detail.active && root.detail.enabled; onTriggered: backendObject.activateProfile(root.selectedProfileId) }
+                        ActionButton { label: root.detail.active ? "ACTIVE" : "SET ACTIVE"; actionEnabled: Boolean(!root.detail.active && root.detail.enabled); onTriggered: backendObject.activateProfile(root.selectedProfileId) }
                     }
                     RowLayout { Layout.fillWidth: true; spacing: 6
                         Pill { label: root.detail.mappedAxes + " AXES"; tone: root.accent }
@@ -565,7 +579,7 @@ Flickable {
                             Item { Layout.fillWidth: true }
                             Text { text: "TIME"; color: root.muted; font.pixelSize: 8; font.bold: true }
                             Rectangle { implicitWidth: 54; implicitHeight: 26; radius: theme.topGun ? 1 : 4; color: root.inset; border.color: root.border; opacity: root.detail.curveTransitionSmoothingEnabled ? 1.0 : 0.5
-                                TextInput { anchors.fill: parent; anchors.margins: 6; text: Number(root.detail.curveTransitionDurationMs).toFixed(0); enabled: root.detail.curveTransitionSmoothingEnabled; color: root.text; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
+                                TextInput { anchors.fill: parent; anchors.margins: 6; text: Number(root.detail.curveTransitionDurationMs).toFixed(0); enabled: Boolean(root.detail.curveTransitionSmoothingEnabled); color: root.text; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
                                     onEditingFinished: { backendObject.setProfileCurveTransitionDurationMs(root.selectedProfileId, Number(text)); text = Number(root.detail.curveTransitionDurationMs).toFixed(0) } }
                             }
                             Text { text: "ms"; color: root.muted; font.pixelSize: 9; font.bold: true }
@@ -615,14 +629,14 @@ Flickable {
         }
     }
 
-    Dialog { id: renameCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Rename Category"; standardButtons: Dialog.NoButton
+    Dialog { id: renameCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Rename Category"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Field { id: renameCategoryName; Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: renameCategoryDialog.close() } ActionButton { label: "RENAME"; actionEnabled: renameCategoryName.text.trim().length > 0; onTriggered: { if (backendObject.renameProfileCategory(renameCategoryDialog.categoryId, renameCategoryName.text)) renameCategoryDialog.close() } } }
         }
         onOpened: { renameCategoryName.text = categoryName; renameCategoryName.forceActiveFocus() }
     }
-    Dialog { id: deleteCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Delete Empty Category?"; standardButtons: Dialog.NoButton
+    Dialog { id: deleteCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 408; title: "Delete Empty Category?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 380; spacing: 12
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete the empty category \"" + deleteCategoryDialog.categoryName + "\"? Categories with profiles or the active category cannot be deleted."; color: root.text; font.pixelSize: 10 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteCategoryDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfileCategory(deleteCategoryDialog.categoryId)) { deleteCategoryDialog.close(); root.returnToLibrary() } } } }
@@ -649,21 +663,21 @@ Flickable {
         }
         onOpened: { newProfileName.text = ""; newProfileName.forceActiveFocus() }
     }
-    Dialog { id: renameProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Rename Profile"; standardButtons: Dialog.NoButton
+    Dialog { id: renameProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Rename Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Field { id: renameProfileName; Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: renameProfileDialog.close() } ActionButton { label: "RENAME"; onTriggered: { if (backendObject.renameProfile(renameProfileDialog.profileId, renameProfileName.text)) renameProfileDialog.close() } } }
         }
         onOpened: { renameProfileName.text = profileName; renameProfileName.selectAll(); renameProfileName.forceActiveFocus() }
     }
-    Dialog { id: moveProfileDialog; property string profileId: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Move Profile"; standardButtons: Dialog.NoButton
+    Dialog { id: moveProfileDialog; property string profileId: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Move Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Text { text: "DESTINATION CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
             ThemedComboBox { id: moveCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === moveProfileDialog.categoryId) return i; return 0 } }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: moveProfileDialog.close() } ActionButton { label: "MOVE"; onTriggered: { if (backendObject.moveProfileToCategory(moveProfileDialog.profileId, moveCategory.currentValue)) moveProfileDialog.close() } } }
         }
     }
-    Dialog { id: duplicateProfileDialog; property string profileId: ""; property string name: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Duplicate Profile"; standardButtons: Dialog.NoButton
+    Dialog { id: duplicateProfileDialog; property string profileId: ""; property string name: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Duplicate Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
             Field { id: duplicateName; Layout.fillWidth: true }
             ThemedComboBox { id: duplicateCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === duplicateProfileDialog.categoryId) return i; return 0 } }
@@ -671,7 +685,7 @@ Flickable {
         }
         onOpened: { duplicateName.text = name; duplicateName.forceActiveFocus() }
     }
-    Dialog { id: deleteProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Delete Profile?"; standardButtons: Dialog.NoButton
+    Dialog { id: deleteProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 408; title: "Delete Profile?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 380; spacing: 12
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete \"" + deleteProfileDialog.profileName + "\"? References from profile controls and Automation are disabled rather than silently retargeted."; color: root.text; font.pixelSize: 10 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteProfileDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfile(deleteProfileDialog.profileId)) { deleteProfileDialog.close(); root.returnToLibrary() } } } }
@@ -680,7 +694,7 @@ Flickable {
     Dialog { id: addGameDialog; property string mode: "running"; property string editingRule: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(610, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 0
         header: Rectangle { implicitHeight: 66; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
             ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
-                Text { text: addGameDialog.editingRule.length > 0 ? "EDIT GAME" : "ADD GAME"; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                Text { text: addGameDialog.editingRule.length > 0 ? "EDIT GAME" : "ADD GAME"; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                 Text { text: "Choose a running application, browse for an EXE, or enter one manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
         }
@@ -732,7 +746,7 @@ Flickable {
     Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(820, root.width - 40); title: ""; standardButtons: Dialog.NoButton; padding: 0
         header: Rectangle { implicitHeight: 68; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
             ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
-                Text { text: "IMPORT / EXPORT"; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : undefined }
+                Text { text: "IMPORT / EXPORT"; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
                 Text { text: root.transferMode === "import" ? "Select a file, review the validated preview, then confirm the import." : "Choose exactly what to export and a destination file."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
         }
@@ -796,43 +810,43 @@ Flickable {
                     }
                 }
             }
-            Card { visible: root.transferMode === "import" && backendObject.portableImportPreview && backendObject.portableImportPreview.profileCount > 0; Layout.fillWidth: true; cardAccent: root.good
-                Text { text: "IMPORT PREVIEW  ·  " + backendObject.portableImportPreview.kind + "  ·  " + backendObject.portableImportPreview.name; color: root.text; font.pixelSize: 12; font.bold: true }
-                Text { text: "Exported by " + backendObject.portableImportPreview.exporterVersion + " · " + backendObject.portableImportPreview.categoryCount + " categories · " + backendObject.portableImportPreview.profileCount + " profiles · " + backendObject.portableImportPreview.automationCount + " Automations · " + backendObject.portableImportPreview.curveCount + " curves"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { text: "SOURCE CONTROLLER: " + ((backendObject.portableImportPreview.sourceController || {}).name || "Not recorded") + "  ·  CURRENT: " + backendObject.portableImportPreview.currentControllerName; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Repeater { model: backendObject.portableImportPreview.categories || []; delegate: Text { required property var modelData; text: "CATEGORY  " + modelData.name + " · " + modelData.profileCount + " profiles · " + modelData.conflict + (modelData.rules.length ? " · detects " + modelData.rules.join(", ") : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
-                Repeater { model: backendObject.portableImportPreview.profiles || []; delegate: Text { required property var modelData; text: modelData.category + " / " + modelData.name + " · " + modelData.mappedAxes + " axes · " + modelData.mappedButtons + " buttons · " + modelData.povMappings + " POV · " + modelData.automationCount + " Automation · " + modelData.compatibility + (modelData.nameConflict ? " · NAME CONFLICT" : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
-                Repeater { model: backendObject.portableImportPreview.outputLayouts || []; delegate: Text { required property var modelData; text: "vJOY: " + modelData.name + " · Device " + modelData.vjoyDevice + " · " + modelData.axes + " axes · " + modelData.buttons + " buttons"; color: root.muted; font.pixelSize: 9 } }
-                Text { text: "RELATED: " + backendObject.portableImportPreview.profileControlCount + " profile controls · " + (backendObject.portableImportPreview.curves || []).length + " curves · " + (backendObject.portableImportPreview.automations || []).length + " Automations"; color: root.muted; font.pixelSize: 9 }
-                RowLayout { visible: backendObject.portableImportPreview.categoryCount === 1; Layout.fillWidth: true
+            Card { visible: root.transferMode === "import" && root.importPreview.profileCount > 0; Layout.fillWidth: true; cardAccent: root.good
+                Text { text: "IMPORT PREVIEW  ·  " + (root.importPreview.kind || "") + "  ·  " + (root.importPreview.name || ""); color: root.text; font.pixelSize: 12; font.bold: true }
+                Text { text: "Exported by " + (root.importPreview.exporterVersion || "") + " · " + Number(root.importPreview.categoryCount || 0) + " categories · " + Number(root.importPreview.profileCount || 0) + " profiles · " + Number(root.importPreview.automationCount || 0) + " Automations · " + Number(root.importPreview.curveCount || 0) + " curves"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "SOURCE CONTROLLER: " + ((root.importPreview.sourceController || {}).name || "Not recorded") + "  ·  CURRENT: " + (root.importPreview.currentControllerName || ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: root.importPreview.categories || []; delegate: Text { required property var modelData; text: "CATEGORY  " + (modelData.name || "") + " · " + Number(modelData.profileCount || 0) + " profiles · " + (modelData.conflict || "") + ((modelData.rules || []).length ? " · detects " + modelData.rules.join(", ") : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: root.importPreview.profiles || []; delegate: Text { required property var modelData; text: (modelData.category || "") + " / " + (modelData.name || "") + " · " + Number(modelData.mappedAxes || 0) + " axes · " + Number(modelData.mappedButtons || 0) + " buttons · " + Number(modelData.povMappings || 0) + " POV · " + Number(modelData.automationCount || 0) + " Automation · " + (modelData.compatibility || "") + (modelData.nameConflict ? " · NAME CONFLICT" : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: root.importPreview.outputLayouts || []; delegate: Text { required property var modelData; text: "vJOY: " + (modelData.name || "") + " · Device " + Number(modelData.vjoyDevice || 0) + " · " + Number(modelData.axes || 0) + " axes · " + Number(modelData.buttons || 0) + " buttons"; color: root.muted; font.pixelSize: 9 } }
+                Text { text: "RELATED: " + Number(root.importPreview.profileControlCount || 0) + " profile controls · " + (root.importPreview.curves || []).length + " curves · " + (root.importPreview.automations || []).length + " Automations"; color: root.muted; font.pixelSize: 9 }
+                RowLayout { visible: Number(root.importPreview.categoryCount || 0) === 1; Layout.fillWidth: true
                     Text { text: "PROFILE DESTINATION:"; color: root.muted; font.pixelSize: 8; font.bold: true }
                     ThemedComboBox { id: importDestinationCategory; Layout.fillWidth: true; model: [{id:"", name:"SOURCE CATEGORY (create or merge)"}].concat(root.categories); textRole: "name"; valueRole: "id" }
                 }
-                RowLayout { visible: (backendObject.portableImportPreview.categories || []).some(function(c) { return c.exists }); Layout.fillWidth: true
+                RowLayout { visible: (root.importPreview.categories || []).some(function(c) { return c.exists }); Layout.fillWidth: true
                     Text { text: "EXISTING CATEGORY:"; color: root.muted; font.pixelSize: 8; font.bold: true }
                     Repeater { model: [{label:"MERGE", value:"merge"}, {label:"IMPORT AS NEW", value:"new"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.categoryConflictMode !== modelData.value; onTriggered: { root.categoryConflictMode = modelData.value; root.replaceCategoryConfirmed = false } } }
                 }
-                ColumnLayout { visible: Number(backendObject.portableImportPreview.adaptiveResponsePresetCount || 0) > 0; Layout.fillWidth: true; spacing: 4
-                    Text { text: "ADAPTIVE RESPONSE PRESETS  ·  " + backendObject.portableImportPreview.adaptiveResponsePresetCount + " REQUIRED DEPENDENC" + (Number(backendObject.portableImportPreview.adaptiveResponsePresetCount) === 1 ? "Y" : "IES"); color: root.muted; font.pixelSize: 8; font.bold: true }
+                ColumnLayout { visible: Number(root.importPreview.adaptiveResponsePresetCount || 0) > 0; Layout.fillWidth: true; spacing: 4
+                    Text { text: "ADAPTIVE RESPONSE PRESETS  ·  " + Number(root.importPreview.adaptiveResponsePresetCount || 0) + " REQUIRED DEPENDENC" + (Number(root.importPreview.adaptiveResponsePresetCount || 0) === 1 ? "Y" : "IES"); color: root.muted; font.pixelSize: 8; font.bold: true }
                     Text { text: "When an imported Response Preset id already exists locally with different values, choose the conflict behavior before importing."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true
                         Repeater { model: [{label:"KEEP LOCAL", value:"keep"}, {label:"IMPORT AS COPY", value:"copy"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.adaptivePresetConflictMode !== modelData.value; onTriggered: root.adaptivePresetConflictMode = modelData.value } }
                     }
                 }
-                Repeater { model: backendObject.portableImportPreview.devices || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
-                    Text { text: "DEVICE: " + modelData.name + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.state; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    ThemedComboBox { visible: modelData.choices.length > 1; Layout.fillWidth: true; model: modelData.choices; textRole: "name"; valueRole: "id"; onActivated: backendObject.selectPortableImportDevice(modelData.index, currentValue) }
+                Repeater { model: root.importPreview.devices || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
+                    Text { text: "DEVICE: " + (modelData.name || "") + " · " + Number(modelData.axisCount || 0) + " axes · " + Number(modelData.buttonCount || 0) + " buttons · " + (modelData.state || ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    ThemedComboBox { visible: (modelData.choices || []).length > 1; Layout.fillWidth: true; model: modelData.choices || []; textRole: "name"; valueRole: "id"; onActivated: backendObject.selectPortableImportDevice(modelData.index, currentValue) }
                 } }
-                SelectionToggle { visible: backendObject.portableImportPreview.includesCalibration; label: "APPLY IMPORTED CALIBRATION TO THE MATCHED CONTROLLER"; checked: root.applyImportedCalibration; onToggled: root.applyImportedCalibration = checked }
-                Text { visible: backendObject.portableImportPreview.includesCalibration; text: "Default is Keep Local Calibration. Applying requires the controller match shown above; ambiguous matches require your selection."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Repeater { model: backendObject.portableImportPreview.warnings || []; delegate: Text { required property var modelData; text: "REVIEW: " + modelData; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                SelectionToggle { visible: Boolean(root.importPreview.includesCalibration); label: "APPLY IMPORTED CALIBRATION TO THE MATCHED CONTROLLER"; checked: root.applyImportedCalibration; onToggled: root.applyImportedCalibration = checked }
+                Text { visible: Boolean(root.importPreview.includesCalibration); text: "Default is Keep Local Calibration. Applying requires the controller match shown above; ambiguous matches require your selection."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: root.importPreview.warnings || []; delegate: Text { required property var modelData; text: "REVIEW: " + modelData; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
                 RowLayout { Layout.fillWidth: true
                     SelectionToggle { id: replaceImportedProfiles; label: "REPLACE MATCHING PROFILES"; checked: false; onToggled: root.replaceProfilesConfirmed = false }
                     Item { Layout.fillWidth: true }
                     ActionButton { label: "IMPORT"; onTriggered: root.requestPortableImport() }
                 }
             }
-            Text { visible: backendObject.portableImportStatus.length > 0; text: backendObject.portableImportStatus; color: root.transferMode === "import" && (!backendObject.portableImportPreview || backendObject.portableImportPreview.profileCount === 0) ? root.warning : root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { visible: String(backendObject.portableImportStatus || "").length > 0; text: String(backendObject.portableImportStatus || ""); color: root.transferMode === "import" && Number(root.importPreview.profileCount || 0) === 0 ? root.warning : root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: transferDialog.close() }
@@ -841,13 +855,13 @@ Flickable {
             }
         }
     }
-    Dialog { id: replaceCategoryConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Replace Existing Category?"; standardButtons: Dialog.NoButton
+    Dialog { id: replaceCategoryConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 418; title: "Replace Existing Category?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 390; spacing: 12
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "This replaces the matching non-active category and its profiles with the imported category. General, active, and last remaining categories are protected."; color: root.text; font.pixelSize: 10 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceCategoryConfirmation.close() } ActionButton { label: "REPLACE CATEGORY"; destructive: true; onTriggered: { root.replaceCategoryConfirmed = true; replaceCategoryConfirmation.close(); root.requestPortableImport() } } }
         }
     }
-    Dialog { id: replaceProfilesConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; title: "Replace Matching Profiles?"; standardButtons: Dialog.NoButton
+    Dialog { id: replaceProfilesConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 418; title: "Replace Matching Profiles?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 390; spacing: 12
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Matching profile names will be replaced with the imported configuration. Leave this unchecked to import safe renamed copies instead."; color: root.text; font.pixelSize: 10 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceProfilesConfirmation.close() } ActionButton { label: "REPLACE PROFILES"; destructive: true; onTriggered: { root.replaceProfilesConfirmed = true; replaceProfilesConfirmation.close(); root.requestPortableImport() } } }

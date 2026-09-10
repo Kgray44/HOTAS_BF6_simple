@@ -104,6 +104,29 @@ qt_add_qml_module(HOTASMapper
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
         qml/Legacy.qml
+        qml/FlightDeck.qml
+        qml/FlightDeckTheme.qml
+        qml/FlightDeckDialog.qml
+        qml/FlightDeckInputLearningDialog.qml
+        qml/FlightDeckTransferDialog.qml
+        qml/FlightDeckTooltip.qml
+        qml/FlightDeckSurface.qml
+        qml/FlightDeckCard.qml
+        qml/FlightDeckNavItem.qml
+        qml/FlightDeckStatusChip.qml
+        qml/FlightDeckReadiness.qml
+        qml/FlightDeckHealthCard.qml
+        qml/FlightDeckAxisMeter.qml
+        qml/FlightDeckAxisValueMeter.qml
+        qml/FlightDeckResponsePreview.qml
+        qml/FlightDeckAdaptiveResponse.qml
+        qml/FlightDeckDiagnostics.qml
+        qml/FlightDeckAxes.qml
+        qml/FlightDeckButtons.qml
+        qml/FlightDeckProfiles.qml
+        qml/FlightDeckOverview.qml
+        qml/FlightDeckDevices.qml
+        qml/FlightDeckSettings.qml
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
@@ -125,6 +148,14 @@ qt_add_qml_module(HOTASMapper
         qml/AppHealthPopup.qml
 )
 
+set_source_files_properties(qml/FlightDeckAutomation.qml PROPERTIES
+    QT_RESOURCE_ALIAS "FlightDeckAutomation.qml"
+)
+qt_add_resources(HOTASMapper flight_deck_automation_resources
+    PREFIX "/qt/qml/HOTASMapper/qml"
+    FILES
+        qml/FlightDeckAutomation.qml
+)
 qt_add_resources(HOTASMapper hotas_icon_resources
     PREFIX "/"
     FILES
@@ -457,8 +488,9 @@ if (BUILD_TESTING)
         ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}
     )
     qt_add_qml_module(app_qml_startup_tests
-        URI HOTASMapperStartupTest
+        URI HOTASMapper
         VERSION 1.0
+        OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/app_qml_startup_tests_qml"
         QML_FILES
             qml/AviationPanel.qml
             qml/AdaptiveResponsePage.qml
@@ -466,6 +498,29 @@ if (BUILD_TESTING)
             qml/LegacyAviationPanel.qml
             qml/LegacyCurveEditor.qml
             qml/Legacy.qml
+            qml/FlightDeck.qml
+            qml/FlightDeckTheme.qml
+            qml/FlightDeckDialog.qml
+            qml/FlightDeckInputLearningDialog.qml
+            qml/FlightDeckTransferDialog.qml
+            qml/FlightDeckTooltip.qml
+            qml/FlightDeckSurface.qml
+            qml/FlightDeckCard.qml
+            qml/FlightDeckNavItem.qml
+            qml/FlightDeckStatusChip.qml
+            qml/FlightDeckReadiness.qml
+            qml/FlightDeckHealthCard.qml
+            qml/FlightDeckAxisMeter.qml
+            qml/FlightDeckAxisValueMeter.qml
+            qml/FlightDeckResponsePreview.qml
+            qml/FlightDeckAdaptiveResponse.qml
+            qml/FlightDeckDiagnostics.qml
+            qml/FlightDeckAxes.qml
+            qml/FlightDeckButtons.qml
+            qml/FlightDeckProfiles.qml
+            qml/FlightDeckOverview.qml
+            qml/FlightDeckDevices.qml
+            qml/FlightDeckSettings.qml
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml
@@ -512,9 +567,19 @@ if (BUILD_TESTING)
     qt_add_resources(app_qml_startup_tests hotas_starter_profile_qml_test_resources
         PREFIX "/"
         FILES
+            assets/icons/png/hotas-bf6-256.png
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+            assets/themes/topgun/fighter-silhouette.svg
+            assets/themes/topgun/wing-badge.svg
+            assets/themes/topgun/slash-stripes.svg
+    )
+    qt_add_resources(app_qml_startup_tests flight_deck_automation_qml_test_resources
+        PREFIX "/qt/qml/HOTASMapper/qml"
+        FILES
+            qml/FlightDeckAutomation.qml
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
