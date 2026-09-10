@@ -38,8 +38,8 @@ function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVe
         }
     }
     $qml = Join-Path $target 'qml'
-    if (-not (Test-Path -LiteralPath $qml -PathType Container)
-        -or -not (Get-ChildItem -LiteralPath $qml -Force | Select-Object -First 1)) {
+    if (-not (Test-Path -LiteralPath $qml -PathType Container) -or
+        -not (Get-ChildItem -LiteralPath $qml -Force | Select-Object -First 1)) {
         throw 'Installed package is missing the required QML runtime.'
     }
     $versionFile = Join-Path $target 'VERSION'
@@ -59,13 +59,22 @@ function Assert-ShortcutTarget([string] $shortcut, [string] $expectedTarget) {
 
 function Invoke-MapperStartupSmoke([string] $target) {
     $mapper = Join-Path $target 'HOTAS BF6.exe'
-    $priorPlatform = $env:QT_QPA_PLATFORM
+    $environmentNames = @('QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QML2_IMPORT_PATH', 'QML_IMPORT_PATH')
+    $priorEnvironment = @{}
+    foreach ($name in $environmentNames) {
+        $priorEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
     try {
         $env:QT_QPA_PLATFORM = 'offscreen'
+        $env:QT_PLUGIN_PATH = $null
+        $env:QML2_IMPORT_PATH = $null
+        $env:QML_IMPORT_PATH = $null
         $result = Start-Process -FilePath $mapper -ArgumentList '--startup-smoke' -Wait -PassThru
         if ($result.ExitCode -ne 0) { throw "Packaged mapper startup smoke failed with exit code $($result.ExitCode)." }
     } finally {
-        $env:QT_QPA_PLATFORM = $priorPlatform
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $priorEnvironment[$name], 'Process')
+        }
     }
 }
 
