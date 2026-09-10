@@ -899,6 +899,7 @@ void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
     QVERIFY(staging.contains(QStringLiteral("msvcp140.dll")));
     QVERIFY(staging.contains(QStringLiteral("vcruntime140.dll")));
     QVERIFY(staging.contains(QStringLiteral("vcruntime140_1.dll")));
+    QVERIFY(staging.contains(QStringLiteral("qoffscreen.dll")));
 }
 
 void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfileControls()

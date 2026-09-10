@@ -63,6 +63,16 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'HOTAS_VERSION') -Destination (Join-
 & $deploy --release --compiler-runtime --qmldir (Join-Path $repoRoot 'qml') (Join-Path $stage 'HOTAS BF6.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE." }
 
+# CI exercises the installed mapper with Qt's offscreen platform. Deploy that
+# platform explicitly so the acceptance result cannot be satisfied by the Qt
+# installation on the build runner.
+$qtPrefix = Split-Path -Parent (Split-Path -Parent $deploy)
+$offscreenPlatform = Join-Path $qtPrefix 'plugins\platforms\qoffscreen.dll'
+if (-not (Test-Path -LiteralPath $offscreenPlatform -PathType Leaf)) {
+    throw "The configured Qt runtime does not provide qoffscreen.dll: $offscreenPlatform"
+}
+Copy-Item -LiteralPath $offscreenPlatform -Destination (Join-Path $stage 'platforms\qoffscreen.dll') -Force
+
 $runtimeFiles = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 $missingRuntime = @($runtimeFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $stage $_) -PathType Leaf) })
 if ($missingRuntime.Count -gt 0) {
@@ -90,6 +100,7 @@ $required = @(
     'vcruntime140.dll',
     'vcruntime140_1.dll',
     'platforms\qwindows.dll',
+    'platforms\qoffscreen.dll',
     'qml'
 )
 foreach ($relative in $required) {
