@@ -694,6 +694,10 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.adaptiveConfidence[index] = 0.0F;
         m_runtime.adaptiveMotionIntensity[index] = 0.0F;
         m_runtime.adaptiveVelocityAuthority[index] = 0.0F;
+        m_runtime.adaptiveDeliberateMotionEvidence[index] = 0.0F;
+        m_runtime.adaptiveNormalMotionAuthority[index] = 0.0F;
+        m_runtime.adaptiveRapidMotionAuthority[index] = 0.0F;
+        m_runtime.adaptiveRapidMotionBlend[index] = 0.0F;
         m_runtime.adaptiveAccelerationIntent[index] = 0.0F;
         m_runtime.adaptiveOnsetAuthority[index] = 0.0F;
         m_runtime.adaptiveSustainedEvidence[index] = 0.0F;
@@ -1812,6 +1816,10 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.adaptiveConfidence[index] = adaptive.confidence;
             m_runtime.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
             m_runtime.adaptiveVelocityAuthority[index].store(adaptive.velocityAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveDeliberateMotionEvidence[index].store(adaptive.deliberateMotionEvidence, std::memory_order_relaxed);
+            m_runtime.adaptiveNormalMotionAuthority[index].store(adaptive.normalMotionAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveRapidMotionAuthority[index].store(adaptive.rapidMotionAuthority, std::memory_order_relaxed);
+            m_runtime.adaptiveRapidMotionBlend[index].store(adaptive.rapidMotionBlend, std::memory_order_relaxed);
             m_runtime.adaptiveAccelerationIntent[index].store(adaptive.accelerationIntent, std::memory_order_relaxed);
             m_runtime.adaptiveOnsetAuthority[index].store(adaptive.onsetAuthority, std::memory_order_relaxed);
             m_runtime.adaptiveSustainedEvidence[index].store(adaptive.sustainedEvidence, std::memory_order_relaxed);
@@ -1855,6 +1863,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.adaptiveRuntimeHorizonExtensionCapSeconds[index].store(adaptiveConfiguration.horizonExtensionCapSeconds, std::memory_order_relaxed);
             m_runtime.adaptiveRuntimeTurningPointProtection[index].store(adaptiveConfiguration.turningPointProtection, std::memory_order_relaxed);
             m_runtime.adaptiveRuntimeTurningPointMargin[index].store(adaptiveConfiguration.turningPointMargin, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeNormalMovementResponse[index].store(adaptiveConfiguration.normalMovementResponse, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeRapidMovementResponse[index].store(adaptiveConfiguration.rapidMovementResponse, std::memory_order_relaxed);
+            m_runtime.adaptiveRuntimeEngagementSensitivity[index].store(adaptiveConfiguration.engagementSensitivity, std::memory_order_relaxed);
             const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[static_cast<size_t>(index)];
             m_runtime.adaptiveAutomationOverlayActive[index] = overlay.active;
             m_runtime.adaptiveAutomationOverlayProperties[index] = overlay.properties;

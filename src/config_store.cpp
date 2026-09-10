@@ -22,7 +22,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 23;
+constexpr int kProfileSchemaVersion = 24;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -85,7 +85,10 @@ QJsonObject adaptiveResponseSettingsToJson(const AdaptiveResponseSettings &setti
             {u"horizonExtension"_qs, clean.horizonExtension},
             {u"horizonExtensionCapMs"_qs, clean.horizonExtensionCapMs},
             {u"turningPointProtection"_qs, clean.turningPointProtection},
-            {u"turningPointMargin"_qs, clean.turningPointMargin}};
+            {u"turningPointMargin"_qs, clean.turningPointMargin},
+            {u"normalMovementResponse"_qs, clean.normalMovementResponse},
+            {u"rapidMovementResponse"_qs, clean.rapidMovementResponse},
+            {u"engagementSensitivity"_qs, clean.engagementSensitivity}};
 }
 
 bool adaptiveResponseSettingsFromJson(const QJsonObject &json, AdaptiveResponseSettings *settings)
@@ -120,6 +123,12 @@ bool adaptiveResponseSettingsFromJson(const QJsonObject &json, AdaptiveResponseS
     restored.horizonExtensionCapMs = static_cast<float>(json.value(u"horizonExtensionCapMs"_qs).toDouble(0.0));
     restored.turningPointProtection = static_cast<float>(json.value(u"turningPointProtection"_qs).toDouble(0.0));
     restored.turningPointMargin = static_cast<float>(json.value(u"turningPointMargin"_qs).toDouble(0.0));
+    // Schema-1 settings legitimately omit these V2.5.2 controls. Their
+    // defaults form the conservative Balanced inheritance layer; older
+    // explicit property masks continue to inherit rather than fail loading.
+    restored.normalMovementResponse = static_cast<float>(json.value(u"normalMovementResponse"_qs).toDouble(0.48));
+    restored.rapidMovementResponse = static_cast<float>(json.value(u"rapidMovementResponse"_qs).toDouble(0.85));
+    restored.engagementSensitivity = static_cast<float>(json.value(u"engagementSensitivity"_qs).toDouble(0.50));
     *settings = sanitizedAdaptiveResponseSettings(restored);
     return true;
 }
@@ -1636,7 +1645,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
-        && version != 21 && version != 22 && version != kProfileSchemaVersion) {
+        && version != 21 && version != 22 && version != 23 && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1645,7 +1654,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version >= 21) {
         const int adaptiveSchema = json.value(u"adaptiveResponseSchemaVersion"_qs).toInt();
         const QJsonArray presets = json.value(u"adaptiveResponsePresets"_qs).toArray();
-        if (adaptiveSchema != kAdaptiveResponseSchemaVersion || presets.size() > 64
+        if ((adaptiveSchema != 1 && adaptiveSchema != kAdaptiveResponseSchemaVersion) || presets.size() > 64
             || !adaptiveResponseLayerFromJson(json.value(u"adaptiveResponseGlobal"_qs),
                                                &configuration.adaptiveResponseGlobal)) {
             if (valid) *valid = false;
@@ -1665,7 +1674,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             presetNames.insert(preset.name.toCaseFolded());
             configuration.adaptiveResponsePresets.push_back(std::move(preset));
         }
-        configuration.adaptiveResponseSchemaVersion = adaptiveSchema;
+        // Load schema 1 using the safe defaults above, then persist schema 2
+        // on the next normal configuration write without dropping any layer.
+        configuration.adaptiveResponseSchemaVersion = kAdaptiveResponseSchemaVersion;
     }
     const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
     const QJsonArray profiles = json.value(u"profiles"_qs).toArray();

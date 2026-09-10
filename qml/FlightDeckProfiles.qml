@@ -356,6 +356,7 @@ Flickable {
         font.pixelSize: 10
         leftPadding: deck.space12
         rightPadding: deck.space12
+        onAccepted: focus = false
         background: Rectangle {
             radius: deck.radiusControl
             color: deck.primarySurface
@@ -938,6 +939,17 @@ Flickable {
                             DeckButton { text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
                             Item { Layout.fillWidth: true }
                             DeckButton { text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                        }
+                        RowLayout {
+                            visible: !root.selectedProfileId.length && root.selectedCategoryId.length
+                            Layout.fillWidth: true
+                            DeckButton {
+                                objectName: "flightDeckCategoryOpenDetails"
+                                text: "OPEN DETAILS"
+                                subdued: true
+                                onClicked: root.openCategory(root.selectedCategoryId)
+                            }
+                            Item { Layout.fillWidth: true }
                         }
                         Text { visible: !root.selectedProfileId.length && root.selectedCategoryId.length; text: String((root.selectedCategory || {}).profileCount || 0) + " profiles · " + root.categoryBehavior(root.selectedCategory); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }

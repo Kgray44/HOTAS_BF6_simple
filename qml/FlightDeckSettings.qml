@@ -49,6 +49,9 @@ Flickable {
 
     component DeckButton: Button {
         id: control
+        property string severity: "normal"
+        readonly property color severityColor: severity === "fault" ? deck.fault
+            : severity === "attention" ? deck.attention : deck.accent
         implicitHeight: deck.compactControlHeight
         leftPadding: deck.space12
         rightPadding: deck.space12
@@ -59,7 +62,7 @@ Flickable {
 
         contentItem: Text {
             text: control.text
-            color: !control.enabled ? deck.disabled : control.down ? (deck.light ? deck.primarySurface : deck.textPrimary) : deck.accent
+            color: !control.enabled ? deck.disabled : control.down ? (deck.light ? deck.primarySurface : deck.textPrimary) : control.severityColor
             font: control.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -67,9 +70,12 @@ Flickable {
         }
         background: Rectangle {
             radius: deck.radiusControl
-            color: !control.enabled ? deck.secondarySurface : control.down ? deck.accentMuted : control.hovered ? deck.secondarySurface : "transparent"
+            color: !control.enabled ? deck.secondarySurface
+                : control.down ? Qt.rgba(control.severityColor.r, control.severityColor.g, control.severityColor.b, 0.22)
+                : control.hovered ? Qt.rgba(control.severityColor.r, control.severityColor.g, control.severityColor.b, 0.12)
+                : control.severity === "normal" ? "transparent" : Qt.rgba(control.severityColor.r, control.severityColor.g, control.severityColor.b, 0.07)
             border.width: control.activeFocus ? 2 : 1
-            border.color: !control.enabled ? deck.border : control.activeFocus ? deck.focus : deck.accent
+            border.color: !control.enabled ? deck.border : control.activeFocus ? deck.focus : control.severityColor
         }
     }
 
@@ -458,18 +464,6 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: deck.space4
-            Text {
-                text: "Application preferences and presentation. Controller configuration stays in its dedicated workspaces."
-                color: deck.textSecondary
-                font.pixelSize: 11
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
-        }
-
         SectionHeading {
             title: "General"
         }
@@ -650,6 +644,7 @@ Flickable {
                         color: deck.textPrimary
                         font.family: deck.telemetryFont
                         font.pixelSize: 10
+                        onAccepted: focus = false
                         onEditingFinished: {
                             backend.setDisabledAxisValue(Number(text));
                             text = Number(backend.disabledAxisValue).toFixed(1);
@@ -699,6 +694,7 @@ Flickable {
                         color: enabled ? deck.textPrimary : deck.disabled
                         font.family: deck.telemetryFont
                         font.pixelSize: 10
+                        onAccepted: focus = false
                         onEditingFinished: {
                             backend.setCurveTransitionDurationMs(Number(text));
                             text = Number(backend.curveTransitionDurationMs).toFixed(0);
@@ -812,6 +808,8 @@ Flickable {
                             selectByMouse: true
                             color: deck.textPrimary
                             font.pixelSize: 10
+                            placeholderTextColor: deck.textSecondary
+                            onAccepted: focus = false
                             background: Rectangle {
                                 radius: deck.radiusControl
                                 color: deck.primarySurface
@@ -867,7 +865,8 @@ Flickable {
                 detail: "Removes controller memory only. Profiles and Automation remain."
                 DeckButton {
                     objectName: "flightDeckSettingsForgetControllers"
-                    text: "FORGET…"
+                    text: "FORGET CONTROLLERS…"
+                    severity: "attention"
                     onClicked: {
                         maintenanceDialog.action = "forget";
                         maintenanceDialog.open();
@@ -879,7 +878,8 @@ Flickable {
                 detail: "Clears calibration only for the active controller. Profiles, curves, and mappings remain."
                 DeckButton {
                     objectName: "flightDeckSettingsResetCalibration"
-                    text: "RESET…"
+                    text: "RESET CALIBRATION…"
+                    severity: "attention"
                     onClicked: {
                         maintenanceDialog.action = "calibration";
                         maintenanceDialog.open();
@@ -891,7 +891,8 @@ Flickable {
                 detail: "Restores application defaults and resets configuration, profiles, curves, and Automation."
                 DeckButton {
                     objectName: "flightDeckSettingsResetConfiguration"
-                    text: "RESET…"
+                    text: "RESET CONFIGURATION…"
+                    severity: "fault"
                     onClicked: {
                         maintenanceDialog.action = "configuration";
                         maintenanceDialog.open();
@@ -905,6 +906,7 @@ Flickable {
                 DeckButton {
                     objectName: "flightDeckSettingsUninstall"
                     text: "UNINSTALL…"
+                    severity: "fault"
                     onClicked: {
                         maintenanceDialog.action = "uninstall";
                         maintenanceDialog.open();

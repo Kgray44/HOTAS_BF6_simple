@@ -12,6 +12,7 @@ TextField {
     font.pixelSize: 11
     selectByMouse: true
     verticalAlignment: TextInput.AlignVCenter
+    onAccepted: focus = false
     background: Rectangle {
         radius: theme.controlRadius
         color: !control.enabled ? theme.controlDisabled

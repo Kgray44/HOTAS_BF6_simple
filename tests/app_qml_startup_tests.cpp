@@ -756,6 +756,15 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         configuration.accelerationResponse = preset == QStringLiteral("extreme") ? 0.95F
             : preset == QStringLiteral("aggressive") ? 0.82F
             : preset == QStringLiteral("fast") ? 0.68F : 0.58F;
+        configuration.normalMovementResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.82F
+            : preset == QStringLiteral("fast") ? 0.66F : 0.48F;
+        configuration.rapidMovementResponse = preset == QStringLiteral("extreme") ? 1.0F
+            : preset == QStringLiteral("aggressive") ? 0.98F
+            : preset == QStringLiteral("fast") ? 0.93F : 0.85F;
+        configuration.engagementSensitivity = preset == QStringLiteral("extreme") ? 0.94F
+            : preset == QStringLiteral("aggressive") ? 0.80F
+            : preset == QStringLiteral("fast") ? 0.66F : 0.50F;
         configuration.motionSensitivity = 0.035F;
         configuration.noiseRejection = 0.012F;
         configuration.reversalDetection = 0.075F;
@@ -826,6 +835,10 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
                 || !equal(direct[index].telemetry.onsetAuthority, sample, QStringLiteral("onsetAuthority"))
                 || !equal(direct[index].telemetry.sustainedEvidence, sample, QStringLiteral("sustainedEvidence"))
                 || !equal(direct[index].telemetry.sustainedAuthority, sample, QStringLiteral("sustainedAuthority"))
+                || !equal(direct[index].telemetry.deliberateMotionEvidence, sample, QStringLiteral("deliberateMotionEvidence"))
+                || !equal(direct[index].telemetry.normalMotionAuthority, sample, QStringLiteral("normalMotionAuthority"))
+                || !equal(direct[index].telemetry.rapidMotionAuthority, sample, QStringLiteral("rapidMotionAuthority"))
+                || !equal(direct[index].telemetry.rapidMotionBlend, sample, QStringLiteral("rapidMotionBlend"))
                 || !equal(direct[index].telemetry.motionUrgency, sample, QStringLiteral("motionUrgency"))
                 || !equal(direct[index].telemetry.horizonExtensionEligibility, sample, QStringLiteral("horizonExtensionEligibility"))
                 || !equal(direct[index].telemetry.normalMaximumHorizonSeconds * 1000.0F, sample, QStringLiteral("normalMaximumHorizonMs"))
@@ -854,7 +867,10 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
          QStringLiteral("Micro Adjustments"), QStringLiteral("Sudden Stop"),
          QStringLiteral("Center Fighting"), QStringLiteral("Fast Sweep"),
          QStringLiteral("Slow Coherent Waggle"), QStringLiteral("Slow One-Way Sweep"),
-         QStringLiteral("Small Slow Correction"), QStringLiteral("Extreme Turning-Point Torture")}) {
+         QStringLiteral("Small Slow Correction"), QStringLiteral("Gentle Hover Corrections"),
+         QStringLiteral("Smooth Cyclic Sweep"), QStringLiteral("Normal Bank and Recover"),
+         QStringLiteral("Sustained Moderate Turn"), QStringLiteral("Approach Corrections"),
+         QStringLiteral("Normal Direction Change"), QStringLiteral("Extreme Turning-Point Torture")}) {
         const QVariantList samples = backend.adaptiveResponsePreviewAtContext(
             scenario, QStringLiteral("profile"), profileId, axis);
         const QVariantMap metrics = backend.adaptiveResponseTestLabAtContext(
@@ -5226,6 +5242,38 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
             .arg(horizonSlider->property("pointerPresses").toInt())
             .arg(sliderClick.x()).arg(sliderClick.y())
             .arg(adaptive->property("contentY").toReal()));
+    }
+    const auto verifyPrimaryResponseSlider = [&](const QString &objectName, const QString &property) {
+        auto *slider = findItem(objectName);
+        if (!slider || !scrollTo(slider)) {
+            return fail(QStringLiteral("%1 was not pointer reachable").arg(property));
+        }
+        const QVariantMap beforeState = backend.adaptiveResponseContextState(
+            QStringLiteral("profile"), profileId, 0);
+        const double before = beforeState.value(QStringLiteral("effective")).toMap().value(property).toDouble();
+        const QVariantList previewBefore = adaptive->property("previewSamples").toList();
+        const QPoint click = viewportPoint(slider, adaptiveItem,
+            QPointF(slider->width() * 0.28, slider->height() * 0.5));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, click);
+        settlePresentation();
+        const double after = backend.adaptiveResponseContextState(
+            QStringLiteral("profile"), profileId, 0).value(QStringLiteral("effective")).toMap()
+            .value(property).toDouble();
+        if (std::abs(after - before) < 0.015
+            || adaptive->property("previewSamples").toList() == previewBefore
+            || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore) {
+            return fail(QStringLiteral("%1 pointer action did not update authoritative response state and preview")
+                .arg(property));
+        }
+        return true;
+    };
+    if (!verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_normalMovementResponse"),
+                                     QStringLiteral("normalMovementResponse"))
+        || !verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_rapidMovementResponse"),
+                                        QStringLiteral("rapidMovementResponse"))
+        || !verifyPrimaryResponseSlider(QStringLiteral("flightDeckAdaptiveSlider_engagementSensitivity"),
+                                        QStringLiteral("engagementSensitivity"))) {
+        return false;
     }
     const QVariantMap configurationBeforeComparison = backend.adaptiveResponseContextState(
         QStringLiteral("profile"), profileId, 0);

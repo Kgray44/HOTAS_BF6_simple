@@ -58,6 +58,9 @@ RuntimeAdaptiveResponseConfig runtimeForAdaptiveSettings(const AdaptiveResponseS
     runtime.onsetCap = settings.onsetCap;
     runtime.sustainedAssist = settings.sustainedAssist;
     runtime.sustainedCap = settings.sustainedCap;
+    runtime.normalMovementResponse = settings.normalMovementResponse;
+    runtime.rapidMovementResponse = settings.rapidMovementResponse;
+    runtime.engagementSensitivity = settings.engagementSensitivity;
     runtime.horizonExtension = settings.horizonExtension;
     runtime.horizonExtensionCapSeconds = settings.horizonExtensionCapMs / 1000.0F;
     runtime.turningPointProtection = settings.turningPointProtection;
@@ -776,6 +779,7 @@ private slots:
     void adaptiveResponseReplaysRecordedRealHotasCorpus();
     void adaptiveResponseOnsetAssistIsBoundedSymmetricAndQuiet();
     void adaptiveResponseSustainedHorizonAndTurningProtection();
+    void adaptiveResponseSeparatesNormalAndRapidMovementAuthority();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -1666,6 +1670,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     malformed.horizonExtensionCapMs = std::numeric_limits<float>::quiet_NaN();
     malformed.turningPointProtection = std::numeric_limits<float>::infinity();
     malformed.turningPointMargin = std::numeric_limits<float>::quiet_NaN();
+    malformed.normalMovementResponse = std::numeric_limits<float>::infinity();
+    malformed.rapidMovementResponse = std::numeric_limits<float>::quiet_NaN();
+    malformed.engagementSensitivity = std::numeric_limits<float>::infinity();
     const AdaptiveResponseSettings safeFallback = sanitizedAdaptiveResponseSettings(malformed);
     QCOMPARE(safeFallback.onsetAssist, 0.0F);
     QCOMPARE(safeFallback.onsetCap, 0.0F);
@@ -1675,6 +1682,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     QCOMPARE(safeFallback.horizonExtensionCapMs, 0.0F);
     QCOMPARE(safeFallback.turningPointProtection, 0.0F);
     QCOMPARE(safeFallback.turningPointMargin, 0.0F);
+    QCOMPARE(safeFallback.normalMovementResponse, 0.48F);
+    QCOMPARE(safeFallback.rapidMovementResponse, 0.85F);
+    QCOMPARE(safeFallback.engagementSensitivity, 0.50F);
     malformed.onsetAssist = 2.0F;
     malformed.onsetCap = 2.0F;
     malformed.sustainedAssist = 2.0F;
@@ -1683,6 +1693,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     malformed.horizonExtensionCapMs = 40.0F;
     malformed.turningPointProtection = 2.0F;
     malformed.turningPointMargin = 2.0F;
+    malformed.normalMovementResponse = 2.0F;
+    malformed.rapidMovementResponse = 2.0F;
+    malformed.engagementSensitivity = 2.0F;
     const AdaptiveResponseSettings clamped = sanitizedAdaptiveResponseSettings(malformed);
     QCOMPARE(clamped.onsetAssist, 1.0F);
     QCOMPARE(clamped.onsetCap, 0.40F);
@@ -1692,6 +1705,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     QCOMPARE(clamped.horizonExtensionCapMs, 30.0F);
     QCOMPARE(clamped.turningPointProtection, 1.0F);
     QCOMPARE(clamped.turningPointMargin, 0.30F);
+    QCOMPARE(clamped.normalMovementResponse, 1.0F);
+    QCOMPARE(clamped.rapidMovementResponse, 1.0F);
+    QCOMPARE(clamped.engagementSensitivity, 1.0F);
 
     MapperConfiguration configuration = defaultConfiguration();
     ControllerProfile &profile = activeProfile(configuration);
@@ -1700,7 +1716,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
         | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
         | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
         | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
-        | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin;
+        | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin
+        | AdaptiveResponseNormalMovementResponse | AdaptiveResponseRapidMovementResponse
+        | AdaptiveResponseEngagementSensitivity;
     profile.adaptiveResponse.axes[0].settings.maximumHorizonMs = 16.0F;
     profile.adaptiveResponse.axes[0].settings.onsetAssist = 0.72F;
     profile.adaptiveResponse.axes[0].settings.onsetCap = 0.31F;
@@ -1710,6 +1728,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     profile.adaptiveResponse.axes[0].settings.horizonExtensionCapMs = 21.0F;
     profile.adaptiveResponse.axes[0].settings.turningPointProtection = 0.87F;
     profile.adaptiveResponse.axes[0].settings.turningPointMargin = 0.19F;
+    profile.adaptiveResponse.axes[0].settings.normalMovementResponse = 0.63F;
+    profile.adaptiveResponse.axes[0].settings.rapidMovementResponse = 0.91F;
+    profile.adaptiveResponse.axes[0].settings.engagementSensitivity = 0.57F;
 
     AdaptiveResponsePreset custom;
     custom.id = QStringLiteral("test-response");
@@ -1730,11 +1751,14 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     QCOMPARE(effective.horizonExtensionCapSeconds, 0.021F);
     QCOMPARE(effective.turningPointProtection, 0.87F);
     QCOMPARE(effective.turningPointMargin, 0.19F);
+    QCOMPARE(effective.normalMovementResponse, 0.63F);
+    QCOMPARE(effective.rapidMovementResponse, 0.91F);
+    QCOMPARE(effective.engagementSensitivity, 0.57F);
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
-    QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 1);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 24);
+    QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
     QCOMPARE(restored.adaptiveResponsePresets.size(), size_t{1});
@@ -1750,6 +1774,9 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     QCOMPARE(restoredEffective.horizonExtensionCapSeconds, 0.021F);
     QCOMPARE(restoredEffective.turningPointProtection, 0.87F);
     QCOMPARE(restoredEffective.turningPointMargin, 0.19F);
+    QCOMPARE(restoredEffective.normalMovementResponse, 0.63F);
+    QCOMPARE(restoredEffective.rapidMovementResponse, 0.91F);
+    QCOMPARE(restoredEffective.engagementSensitivity, 0.57F);
 
     QJsonObject preOnset = json;
     QJsonObject adaptiveGlobal = preOnset.value(QStringLiteral("adaptiveResponseGlobal")).toObject();
@@ -3073,6 +3100,102 @@ void MappingCoreTests::adaptiveResponseSustainedHorizonAndTurningProtection()
     QVERIFY(maximumTurnConfidence > 0.01F);
     QVERIFY(maximumTurnLeadLimit > 0.0F);
     QVERIFY(turningOvershoot <= 0.0201F);
+}
+
+void MappingCoreTests::adaptiveResponseSeparatesNormalAndRapidMovementAuthority()
+{
+    // This corpus holds a deliberate, modest-speed pass before a faster pass.
+    // It proves the new controls own different regions rather than merely
+    // relabeling the previous speed-only authority.
+    std::vector<float> physical(240, -0.60F);
+    for (size_t index = 24; index < 96; ++index) {
+        physical[index] = physical[index - 1] + 0.00080F; // 0.20 units / second.
+    }
+    for (size_t index = 96; index < 156; ++index) {
+        physical[index] = physical[index - 1] + 0.00160F; // 0.40 units / second.
+    }
+    for (size_t index = 156; index < physical.size(); ++index) physical[index] = physical[155];
+
+    RuntimeAdaptiveResponseConfig baseline;
+    baseline.enabled = true;
+    baseline.model = AdaptiveResponseModel::Auto;
+    baseline.maximumHorizonSeconds = 0.018F;
+    baseline.maximumLead = 0.27F;
+    baseline.velocityResponse = 0.91F;
+    baseline.accelerationResponse = 0.82F;
+    baseline.motionSensitivity = 0.035F;
+    baseline.noiseRejection = 0.012F;
+    baseline.reversalDetection = 0.075F;
+    baseline.reversalResponse = 1.0F;
+    baseline.decelerationResponse = 0.85F;
+    baseline.settlingResponse = 0.92F;
+    baseline.endpointTaper = 0.16F;
+    baseline.onsetAssist = 0.38F;
+    baseline.onsetCap = 0.22F;
+    baseline.sustainedAssist = 0.42F;
+    baseline.sustainedCap = 0.20F;
+    baseline.horizonExtension = 0.48F;
+    baseline.horizonExtensionCapSeconds = 0.018F;
+    baseline.turningPointProtection = 0.94F;
+    baseline.turningPointMargin = 0.10F;
+    baseline.engagementSensitivity = 0.50F;
+    baseline.normalMovementResponse = 0.78F;
+    baseline.rapidMovementResponse = 0.50F;
+
+    RuntimeAdaptiveResponseConfig normalDisabled = baseline;
+    normalDisabled.normalMovementResponse = 0.0F;
+    RuntimeAdaptiveResponseConfig rapidRaised = baseline;
+    rapidRaised.rapidMovementResponse = 1.0F;
+    const AdaptiveResponseSimulation withNormal = simulateAdaptiveResponse(baseline, physical, 0.004F);
+    const AdaptiveResponseSimulation withoutNormal = simulateAdaptiveResponse(normalDisabled, physical, 0.004F);
+    const AdaptiveResponseSimulation withRapid = simulateAdaptiveResponse(rapidRaised, physical, 0.004F);
+
+    float normalAuthority = 0.0F;
+    float rapidBlendDuringNormal = 0.0F;
+    float normalLeadGain = 0.0F;
+    float rapidAuthority = 0.0F;
+    float rapidLeadGain = 0.0F;
+    for (size_t index = 0; index < withNormal.size(); ++index) {
+        const AdaptiveResponseTelemetry &telemetry = withNormal[index].telemetry;
+        QVERIFY(std::isfinite(telemetry.deliberateMotionEvidence));
+        QVERIFY(telemetry.deliberateMotionEvidence >= -0.00001F
+                 && telemetry.deliberateMotionEvidence <= 1.00001F);
+        QVERIFY(telemetry.normalMotionAuthority >= -0.00001F
+                 && telemetry.normalMotionAuthority <= baseline.normalMovementResponse + 0.00001F);
+        QVERIFY(telemetry.rapidMotionAuthority >= -0.00001F
+                 && telemetry.rapidMotionAuthority <= 1.00001F);
+        QVERIFY(telemetry.rapidMotionBlend >= -0.00001F && telemetry.rapidMotionBlend <= 1.00001F);
+        if (index >= 44 && index < 96) {
+            normalAuthority = std::max(normalAuthority, telemetry.normalMotionAuthority);
+            rapidBlendDuringNormal = std::max(rapidBlendDuringNormal, telemetry.rapidMotionBlend);
+            normalLeadGain = std::max(normalLeadGain, std::abs(withNormal[index].telemetry.lead)
+                - std::abs(withoutNormal[index].telemetry.lead));
+        }
+        if (index >= 112 && index < 156) {
+            rapidAuthority = std::max(rapidAuthority, telemetry.rapidMotionAuthority);
+            rapidLeadGain = std::max(rapidLeadGain, std::abs(withRapid[index].telemetry.lead)
+                - std::abs(withNormal[index].telemetry.lead));
+        }
+    }
+    qInfo().nospace() << "V2.5.2 authority normal=" << normalAuthority
+                      << " normal_rapid_blend=" << rapidBlendDuringNormal
+                      << " normal_lead_gain=" << normalLeadGain
+                      << " rapid_authority=" << rapidAuthority
+                      << " rapid_lead_gain=" << rapidLeadGain;
+    QVERIFY(normalAuthority > 0.015F);
+    QVERIFY(rapidBlendDuringNormal < 0.10F);
+    QVERIFY(normalLeadGain > 0.00005F);
+    QVERIFY(rapidAuthority > 0.40F);
+    QVERIFY(rapidLeadGain > 0.00005F);
+
+    std::vector<float> jitter(160, 0.0F);
+    for (size_t index = 1; index < jitter.size(); ++index) jitter[index] = index % 2 == 0 ? 0.0015F : -0.0015F;
+    const AdaptiveResponseSimulation noise = simulateAdaptiveResponse(baseline, jitter, 0.004F);
+    for (const AdaptiveResponseSimulationSample &sample : noise) {
+        QVERIFY(sample.telemetry.deliberateMotionEvidence < 0.00001F);
+        QVERIFY(sample.telemetry.normalMotionAuthority < 0.00001F);
+        QVERIFY(std::abs(sample.telemetry.lead) < 0.0001F);
+    }
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
@@ -5457,7 +5580,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 24);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -5700,7 +5823,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 23);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 24);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

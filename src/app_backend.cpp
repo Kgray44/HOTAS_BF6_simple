@@ -1005,6 +1005,9 @@ std::uint32_t adaptivePropertyForKey(const QString &key)
     if (normalized == u"horizonextensioncap"_qs || normalized == u"horizonextensioncapms"_qs) return AdaptiveResponseHorizonExtensionCap;
     if (normalized == u"turningpointprotection"_qs) return AdaptiveResponseTurningPointProtection;
     if (normalized == u"turningpointmargin"_qs) return AdaptiveResponseTurningPointMargin;
+    if (normalized == u"normalmovementresponse"_qs) return AdaptiveResponseNormalMovementResponse;
+    if (normalized == u"rapidmovementresponse"_qs) return AdaptiveResponseRapidMovementResponse;
+    if (normalized == u"engagementsensitivity"_qs) return AdaptiveResponseEngagementSensitivity;
     return 0;
 }
 
@@ -1032,6 +1035,9 @@ AdaptiveResponseSettings settingsFromRuntime(const RuntimeAdaptiveResponseConfig
     settings.horizonExtensionCapMs = runtime.horizonExtensionCapSeconds * 1000.0F;
     settings.turningPointProtection = runtime.turningPointProtection;
     settings.turningPointMargin = runtime.turningPointMargin;
+    settings.normalMovementResponse = runtime.normalMovementResponse;
+    settings.rapidMovementResponse = runtime.rapidMovementResponse;
+    settings.engagementSensitivity = runtime.engagementSensitivity;
     return sanitizedAdaptiveResponseSettings(settings);
 }
 
@@ -1049,7 +1055,10 @@ QVariantMap adaptiveSettingsMap(const RuntimeAdaptiveResponseConfig &runtime)
             {u"sustainedCap"_qs, runtime.sustainedCap}, {u"horizonExtension"_qs, runtime.horizonExtension},
             {u"horizonExtensionCapMs"_qs, runtime.horizonExtensionCapSeconds * 1000.0F},
             {u"turningPointProtection"_qs, runtime.turningPointProtection},
-            {u"turningPointMargin"_qs, runtime.turningPointMargin}};
+            {u"turningPointMargin"_qs, runtime.turningPointMargin},
+            {u"normalMovementResponse"_qs, runtime.normalMovementResponse},
+            {u"rapidMovementResponse"_qs, runtime.rapidMovementResponse},
+            {u"engagementSensitivity"_qs, runtime.engagementSensitivity}};
 }
 
 QVariantMap adaptiveRuntimeSettingsMap(const AtomicRuntimeState &runtime, int axis,
@@ -1080,7 +1089,10 @@ QVariantMap adaptiveRuntimeSettingsMap(const AtomicRuntimeState &runtime, int ax
             {u"horizonExtension"_qs, runtime.adaptiveRuntimeHorizonExtension[index].load()},
             {u"horizonExtensionCapMs"_qs, runtime.adaptiveRuntimeHorizonExtensionCapSeconds[index].load() * 1000.0F},
             {u"turningPointProtection"_qs, runtime.adaptiveRuntimeTurningPointProtection[index].load()},
-            {u"turningPointMargin"_qs, runtime.adaptiveRuntimeTurningPointMargin[index].load()}};
+            {u"turningPointMargin"_qs, runtime.adaptiveRuntimeTurningPointMargin[index].load()},
+            {u"normalMovementResponse"_qs, runtime.adaptiveRuntimeNormalMovementResponse[index].load()},
+            {u"rapidMovementResponse"_qs, runtime.adaptiveRuntimeRapidMovementResponse[index].load()},
+            {u"engagementSensitivity"_qs, runtime.adaptiveRuntimeEngagementSensitivity[index].load()}};
 }
 
 QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const QString &fallback)
@@ -1096,7 +1108,7 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
         AdaptiveResponseProperty property;
         QStringView label;
     };
-    static constexpr std::array<PropertyLabel, 21> labels{{
+    static constexpr std::array<PropertyLabel, 24> labels{{
         {AdaptiveResponseEnabled, u"Enabled"},
         {AdaptiveResponseModelProperty, u"Predictor"},
         {AdaptiveResponseMaximumHorizon, u"Maximum horizon"},
@@ -1118,6 +1130,9 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
         {AdaptiveResponseHorizonExtensionCap, u"Horizon Extension Cap"},
         {AdaptiveResponseTurningPointProtection, u"Turning-Point Protection"},
         {AdaptiveResponseTurningPointMargin, u"Turning-Point Margin"},
+        {AdaptiveResponseNormalMovementResponse, u"Normal Movement Response"},
+        {AdaptiveResponseRapidMovementResponse, u"Rapid Movement Response"},
+        {AdaptiveResponseEngagementSensitivity, u"Engagement Sensitivity"},
     }};
     QStringList result;
     for (const PropertyLabel &entry : labels) {
@@ -1273,6 +1288,10 @@ QVariantMap AppBackend::adaptiveResponseTelemetry() const
             {u"confidence"_qs, load(runtime.adaptiveConfidence)},
             {u"motionIntensity"_qs, load(runtime.adaptiveMotionIntensity)},
             {u"velocityAuthority"_qs, load(runtime.adaptiveVelocityAuthority)},
+            {u"deliberateMotionEvidence"_qs, load(runtime.adaptiveDeliberateMotionEvidence)},
+            {u"normalMotionAuthority"_qs, load(runtime.adaptiveNormalMotionAuthority)},
+            {u"rapidMotionAuthority"_qs, load(runtime.adaptiveRapidMotionAuthority)},
+            {u"rapidMotionBlend"_qs, load(runtime.adaptiveRapidMotionBlend)},
             {u"accelerationIntent"_qs, load(runtime.adaptiveAccelerationIntent)},
             {u"onsetAuthority"_qs, load(runtime.adaptiveOnsetAuthority)},
             {u"sustainedEvidence"_qs, load(runtime.adaptiveSustainedEvidence)},
@@ -1337,6 +1356,10 @@ QVariantList AppBackend::adaptiveResponseHistory(int seconds) const
                                    {u"lead"_qs, sample.lead},
                                    {u"confidence"_qs, sample.confidence},
                                    {u"motionIntensity"_qs, sample.motionIntensity},
+                                   {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
+                                   {u"normalMotionAuthority"_qs, sample.normalMotionAuthority},
+                                   {u"rapidMotionAuthority"_qs, sample.rapidMotionAuthority},
+                                   {u"rapidMotionBlend"_qs, sample.rapidMotionBlend},
                                    {u"accelerationIntent"_qs, sample.accelerationIntent},
                                    {u"onsetAuthority"_qs, sample.onsetAuthority},
                                    {u"sustainedEvidence"_qs, sample.sustainedEvidence},
@@ -1395,6 +1418,10 @@ QVariantMap AppBackend::adaptiveResponseHistorySince(qint64 lastSequence, int se
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
+            {u"normalMotionAuthority"_qs, sample.normalMotionAuthority},
+            {u"rapidMotionAuthority"_qs, sample.rapidMotionAuthority},
+            {u"rapidMotionBlend"_qs, sample.rapidMotionBlend},
             {u"accelerationIntent"_qs, sample.accelerationIntent},
             {u"onsetAuthority"_qs, sample.onsetAuthority},
             {u"sustainedEvidence"_qs, sample.sustainedEvidence},
@@ -1616,6 +1643,9 @@ bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, cons
     else if (key == u"horizonextensioncap"_qs || key == u"horizonextensioncapms"_qs) override.settings.horizonExtensionCapMs = static_cast<float>(value.toDouble());
     else if (key == u"turningpointprotection"_qs) override.settings.turningPointProtection = static_cast<float>(value.toDouble());
     else if (key == u"turningpointmargin"_qs) override.settings.turningPointMargin = static_cast<float>(value.toDouble());
+    else if (key == u"normalmovementresponse"_qs) override.settings.normalMovementResponse = static_cast<float>(value.toDouble());
+    else if (key == u"rapidmovementresponse"_qs) override.settings.rapidMovementResponse = static_cast<float>(value.toDouble());
+    else if (key == u"engagementsensitivity"_qs) override.settings.engagementSensitivity = static_cast<float>(value.toDouble());
     else return false;
     override.settings = sanitizedAdaptiveResponseSettings(override.settings);
     override.properties |= bit;
@@ -1808,6 +1838,10 @@ QVariantList AppBackend::adaptiveResponsePreviewAtContext(const QString &scenari
             {u"lead"_qs, mapped.physicalLead}, {u"horizonMs"_qs, telemetry.activeHorizonSeconds * 1000.0F},
             {u"confidence"_qs, telemetry.confidence}, {u"velocity"_qs, telemetry.velocity},
             {u"acceleration"_qs, telemetry.acceleration}, {u"accelerationIntent"_qs, telemetry.accelerationIntent},
+            {u"deliberateMotionEvidence"_qs, telemetry.deliberateMotionEvidence},
+            {u"normalMotionAuthority"_qs, telemetry.normalMotionAuthority},
+            {u"rapidMotionAuthority"_qs, telemetry.rapidMotionAuthority},
+            {u"rapidMotionBlend"_qs, telemetry.rapidMotionBlend},
             {u"onsetAuthority"_qs, telemetry.onsetAuthority}, {u"sustainedEvidence"_qs, telemetry.sustainedEvidence},
             {u"sustainedAuthority"_qs, telemetry.sustainedAuthority}, {u"motionUrgency"_qs, telemetry.motionUrgency},
             {u"horizonExtensionEligibility"_qs, telemetry.horizonExtensionEligibility},
@@ -2254,6 +2288,10 @@ void AppBackend::advanceAdaptiveResponseSimulator(float manualInput, const QStri
         sample.confidence = telemetry.confidence;
         sample.motionIntensity = telemetry.motionIntensity;
         sample.velocityAuthority = telemetry.velocityAuthority;
+        sample.deliberateMotionEvidence = telemetry.deliberateMotionEvidence;
+        sample.normalMotionAuthority = telemetry.normalMotionAuthority;
+        sample.rapidMotionAuthority = telemetry.rapidMotionAuthority;
+        sample.rapidMotionBlend = telemetry.rapidMotionBlend;
         sample.accelerationIntent = telemetry.accelerationIntent;
         sample.onsetAuthority = telemetry.onsetAuthority;
         sample.sustainedEvidence = telemetry.sustainedEvidence;
@@ -2327,6 +2365,10 @@ QVariantList AppBackend::adaptiveResponseSimulatorHistory() const
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
+            {u"normalMotionAuthority"_qs, sample.normalMotionAuthority},
+            {u"rapidMotionAuthority"_qs, sample.rapidMotionAuthority},
+            {u"rapidMotionBlend"_qs, sample.rapidMotionBlend},
             {u"accelerationIntent"_qs, sample.accelerationIntent},
             {u"onsetAuthority"_qs, sample.onsetAuthority},
             {u"sustainedEvidence"_qs, sample.sustainedEvidence},
@@ -2385,6 +2427,10 @@ QVariantMap AppBackend::adaptiveResponseSimulatorHistorySince(qint64 lastSequenc
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
+            {u"normalMotionAuthority"_qs, sample.normalMotionAuthority},
+            {u"rapidMotionAuthority"_qs, sample.rapidMotionAuthority},
+            {u"rapidMotionBlend"_qs, sample.rapidMotionBlend},
             {u"accelerationIntent"_qs, sample.accelerationIntent},
             {u"onsetAuthority"_qs, sample.onsetAuthority},
             {u"sustainedEvidence"_qs, sample.sustainedEvidence},
@@ -2477,6 +2523,10 @@ QVariantList AppBackend::adaptiveResponseSimulatorRecording() const
                 ? sample.activeHorizonSeconds / sample.maximumHorizonSeconds : 0.0F},
             {u"lead"_qs, sample.lead}, {u"confidence"_qs, sample.confidence},
             {u"motionIntensity"_qs, sample.motionIntensity},
+            {u"deliberateMotionEvidence"_qs, sample.deliberateMotionEvidence},
+            {u"normalMotionAuthority"_qs, sample.normalMotionAuthority},
+            {u"rapidMotionAuthority"_qs, sample.rapidMotionAuthority},
+            {u"rapidMotionBlend"_qs, sample.rapidMotionBlend},
             {u"accelerationIntent"_qs, sample.accelerationIntent},
             {u"onsetAuthority"_qs, sample.onsetAuthority},
             {u"sustainedEvidence"_qs, sample.sustainedEvidence},
@@ -10141,6 +10191,10 @@ void AppBackend::sampleAdaptiveResponseHistory()
     sample.confidence = runtime.adaptiveConfidence[index].load();
     sample.motionIntensity = runtime.adaptiveMotionIntensity[index].load();
     sample.velocityAuthority = runtime.adaptiveVelocityAuthority[index].load();
+    sample.deliberateMotionEvidence = runtime.adaptiveDeliberateMotionEvidence[index].load();
+    sample.normalMotionAuthority = runtime.adaptiveNormalMotionAuthority[index].load();
+    sample.rapidMotionAuthority = runtime.adaptiveRapidMotionAuthority[index].load();
+    sample.rapidMotionBlend = runtime.adaptiveRapidMotionBlend[index].load();
     sample.accelerationIntent = runtime.adaptiveAccelerationIntent[index].load();
     sample.onsetAuthority = runtime.adaptiveOnsetAuthority[index].load();
     sample.sustainedEvidence = runtime.adaptiveSustainedEvidence[index].load();

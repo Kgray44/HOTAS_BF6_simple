@@ -29,6 +29,12 @@ struct AdaptiveResponseTelemetry {
     float confidence = 0.0F;
     float motionIntensity = 0.0F;
     float velocityAuthority = 0.0F;
+    // V2.5.2 makes the normal and rapid components separately inspectable.
+    // They are bounded scalar diagnostics, not a second output path.
+    float deliberateMotionEvidence = 0.0F;
+    float normalMotionAuthority = 0.0F;
+    float rapidMotionAuthority = 0.0F;
+    float rapidMotionBlend = 0.0F;
     // Bounded decomposition of predictive authority. These fixed scalars are
     // published for preview/diagnostics only; they do not allocate or notify.
     float accelerationIntent = 0.0F;

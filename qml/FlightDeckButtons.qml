@@ -351,6 +351,7 @@ Flickable {
         id: control
         implicitHeight: deck.controlHeight
         selectByMouse: true
+        onAccepted: focus = false
         color: deck.textPrimary
         font.family: deck.telemetryFont
         font.pixelSize: 10

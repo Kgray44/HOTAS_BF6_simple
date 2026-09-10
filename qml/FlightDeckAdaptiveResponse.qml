@@ -172,7 +172,10 @@ Flickable {
             horizonextension: 131072,
             horizonextensioncapms: 262144,
             turningpointprotection: 524288,
-            turningpointmargin: 1048576
+            turningpointmargin: 1048576,
+            normalmovementresponse: 2097152,
+            rapidmovementresponse: 4194304,
+            engagementsensitivity: 8388608
         };
         return masks[String(key).toLowerCase()] || 0;
     }
@@ -680,6 +683,36 @@ Flickable {
 
     function parametersFor(group) {
         const rows = [
+            {
+                group: "Flight response",
+                key: "normalMovementResponse",
+                label: "Normal Movement Response",
+                detail: "How strongly Adaptive Response helps during smooth everyday control movement.",
+                from: 0,
+                to: 1,
+                step: 0.01,
+                unit: "%"
+            },
+            {
+                group: "Flight response",
+                key: "rapidMovementResponse",
+                label: "Rapid Movement Response",
+                detail: "Additional response available during fast maneuvers.",
+                from: 0,
+                to: 1,
+                step: 0.01,
+                unit: "%"
+            },
+            {
+                group: "Flight response",
+                key: "engagementSensitivity",
+                label: "Engagement Sensitivity",
+                detail: "How easily deliberate gentle movement begins receiving assistance.",
+                from: 0,
+                to: 1,
+                step: 0.01,
+                unit: "%"
+            },
             {
                 group: "Prediction",
                 key: "maximumHorizonMs",
@@ -1218,6 +1251,9 @@ Flickable {
         implicitHeight: 26
         implicitWidth: legendRow.implicitWidth + deck.space16
         focusPolicy: Qt.StrongFocus
+        // Ensure a pointer-toggled trace has the same clear focus affordance
+        // as its keyboard counterpart until another control receives focus.
+        onPressed: control.forceActiveFocus()
         contentItem: Row {
             id: legendRow
             anchors.centerIn: parent
@@ -1637,6 +1673,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: root.renamePresetDraft
                 onTextEdited: root.renamePresetDraft = text
+                onAccepted: { root.commitPresetRename(); focus = false }
                 color: deck.textPrimary
                 background: Rectangle {
                     radius: deck.radiusControl
@@ -2082,6 +2119,18 @@ Flickable {
                         value: root.effective().turningPointProtection ? "PROTECTED" : "STANDARD"
                         detail: "Preset behavior"
                         tone: root.effective().turningPointProtection ? deck.healthy : deck.textPrimary
+                    }
+                    MetricTile {
+                        caption: "NORMAL RESPONSE"
+                        value: root.percent(root.numericOr(root.effective().normalMovementResponse, 0))
+                        detail: "Everyday movement"
+                        tone: deck.healthy
+                    }
+                    MetricTile {
+                        caption: "RAPID RESPONSE"
+                        value: root.percent(root.numericOr(root.effective().rapidMovementResponse, 0))
+                        detail: "Maneuver authority"
+                        tone: deck.attention
                     }
                 }
             }
@@ -2617,7 +2666,8 @@ Flickable {
                                         placeholderText: "Preset name"
                                         text: root.presetNameDraft
                                         onTextEdited: root.presetNameDraft = text
-                                        Keys.onReturnPressed: function(event) { root.commitPresetRename(); event.accepted = true; }
+                                        onAccepted: { root.commitPresetRename(); focus = false }
+                                        Keys.onReturnPressed: function(event) { root.commitPresetRename(); focus = false; event.accepted = true; }
                                         color: deck.textPrimary
                                         background: Rectangle {
                                             radius: deck.radiusControl
@@ -2632,6 +2682,7 @@ Flickable {
                                         placeholderText: "Description (optional)"
                                         text: root.presetDescriptionDraft
                                         onTextEdited: root.presetDescriptionDraft = text
+                                        onAccepted: focus = false
                                         color: deck.textPrimary
                                         background: Rectangle {
                                             radius: deck.radiusControl
@@ -2809,6 +2860,11 @@ Flickable {
                         }
                     }
                     TuningGroup {
+                        title: "FLIGHT RESPONSE"
+                        detail: "The three everyday-flight controls are independent, inherited with the selected layer, and always remain inside the existing safety protections."
+                        rows: root.parametersFor("Flight response")
+                    }
+                    TuningGroup {
                         title: "PREDICTION"
                         detail: "Limits and output-space safety for the effective response."
                         rows: root.parametersFor("Prediction")
@@ -2976,6 +3032,20 @@ Flickable {
                         value: root.numericOr(root.telemetry.motionIntensity, 0)
                         maximum: 1
                         tone: deck.textPrimary
+                    }
+                    Gauge {
+                        caption: "NORMAL MOVEMENT"
+                        display: root.effective().enabled ? Math.round(root.numericOr(root.telemetry.normalMotionAuthority, 0) * 100) + "%" : "—"
+                        value: root.numericOr(root.telemetry.normalMotionAuthority, 0)
+                        maximum: 1
+                        tone: deck.healthy
+                    }
+                    Gauge {
+                        caption: "RAPID MOVEMENT"
+                        display: root.effective().enabled ? Math.round(root.numericOr(root.telemetry.rapidMotionAuthority, 0) * 100) + "%" : "—"
+                        value: root.numericOr(root.telemetry.rapidMotionAuthority, 0)
+                        maximum: 1
+                        tone: deck.attention
                     }
                 }
             }
@@ -3628,6 +3698,36 @@ Flickable {
                             anchors.margins: deck.space12
                             spacing: deck.space8
                             Text {
+                                text: "AUTHORITY · %"
+                                color: deck.healthy
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            InstrumentGraph {
+                                width: parent.width
+                                height: 100
+                                samples: root.responseLabSamples
+                                lowerBound: 0
+                                upperBound: 1
+                                series: [
+                                    { field: "normalMotionAuthority", color: deck.healthy, width: 2 },
+                                    { field: "rapidMotionAuthority", color: deck.attention, width: 2 }
+                                ]
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: Math.max(220, (parent.width - deck.space24) / 3)
+                        implicitHeight: 150
+                        radius: deck.radiusCard
+                        color: deck.primarySurface
+                        border.color: deck.border
+                        Column {
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            Text {
                                 text: "MAPPED LEAD · %"
                                 color: deck.healthy
                                 font.family: deck.telemetryFont
@@ -3778,7 +3878,7 @@ Flickable {
                         DeckCombo {
                             objectName: "flightDeckTestLabScenario"
                             Layout.preferredWidth: 240
-                            model: ["Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]
+                            model: ["Gentle Hover Corrections", "Smooth Cyclic Sweep", "Normal Bank and Recover", "Sustained Moderate Turn", "Approach Corrections", "Normal Direction Change", "Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]
                             currentIndex: Math.max(0, model.indexOf(root.scenario))
                             onChoiceActivated: function (index, value) {
                                 root.scenario = String(value);

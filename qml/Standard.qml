@@ -338,6 +338,7 @@ Page {
         placeholderTextColor: theme.textFaint
         verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
+        onAccepted: focus = false
         font.pixelSize: 11
         font.family: theme.topGun ? theme.displayFont : root.font.family
         background: Rectangle {

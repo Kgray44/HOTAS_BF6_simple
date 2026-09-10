@@ -870,8 +870,9 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     const qsizetype axes = flightDeck.indexOf(QStringLiteral("{ label: \"Axes\", page: 0 }"));
     const qsizetype curveNavigation = flightDeck.indexOf(QStringLiteral("{ label: \"Curve editor\", page: 6 }"));
     const qsizetype buttons = flightDeck.indexOf(QStringLiteral("{ label: \"Buttons\", page: 1 }"));
-    QVERIFY(axes >= 0 && curveNavigation > axes && buttons > curveNavigation);
+    QVERIFY(axes >= 0 && buttons > axes && curveNavigation > buttons);
     QVERIFY(headerPill.contains(QStringLiteral("Accessible.role: Accessible.Button")));
+    QVERIFY(headerPill.contains(QStringLiteral("onPressed: control.forceActiveFocus()")));
     QVERIFY(selector.contains(QStringLiteral("SELECTED DEVICE")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.selectedDevices")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.setSelectedDeviceContext")));
@@ -880,6 +881,12 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(adaptive.contains(QStringLiteral("BASIC RESPONSE · CONFIGURED LIMITS")));
     QVERIFY(adaptive.contains(QStringLiteral("root.effective().maximumHorizonMs")));
     QVERIFY(adaptive.contains(QStringLiteral("VISIBLE TRACES")));
+    QVERIFY(adaptive.contains(QStringLiteral("Normal Movement Response")));
+    QVERIFY(adaptive.contains(QStringLiteral("Rapid Movement Response")));
+    QVERIFY(adaptive.contains(QStringLiteral("Engagement Sensitivity")));
+    QVERIFY(adaptive.contains(QStringLiteral("NORMAL MOVEMENT")));
+    QVERIFY(adaptive.contains(QStringLiteral("RAPID MOVEMENT")));
+    QVERIFY(adaptive.contains(QStringLiteral("onPressed: control.forceActiveFocus()")));
     QVERIFY(adaptive.contains(QStringLiteral("Awaiting controller input")));
     QVERIFY(adaptive.indexOf(QStringLiteral("objectName: \"adaptiveSelectedDeviceContext\""))
             < adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextTarget\"")));
@@ -887,8 +894,13 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
             < adaptive.indexOf(QStringLiteral("objectName: \"adaptiveContextAxis\"")));
     QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckProfileLibrary\"")));
     QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckProfileDetailPane\"")));
+    QVERIFY(profiles.contains(QStringLiteral("objectName: \"flightDeckCategoryOpenDetails\"")));
+    QVERIFY(profiles.contains(QStringLiteral("root.openCategory(root.selectedCategoryId)")));
     QVERIFY(curve.contains(QStringLiteral("readonly property bool flightDeck")));
     QVERIFY(curve.contains(QStringLiteral("flightDeck ? theme.primarySurface")));
+    QVERIFY(curve.contains(QStringLiteral("PHYSICAL INPUT  ·  %")));
+    QVERIFY(curve.contains(QStringLiteral("MAPPED OUTPUT  ·  %")));
+    QVERIFY(curve.contains(QStringLiteral("CURVE ANALYSIS")));
 }
 
 void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()

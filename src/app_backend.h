@@ -783,6 +783,10 @@ private:
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
         float velocityAuthority = 0.0F;
+        float deliberateMotionEvidence = 0.0F;
+        float normalMotionAuthority = 0.0F;
+        float rapidMotionAuthority = 0.0F;
+        float rapidMotionBlend = 0.0F;
         float accelerationIntent = 0.0F;
         float onsetAuthority = 0.0F;
         float sustainedEvidence = 0.0F;
@@ -825,6 +829,10 @@ private:
         float confidence = 0.0F;
         float motionIntensity = 0.0F;
         float velocityAuthority = 0.0F;
+        float deliberateMotionEvidence = 0.0F;
+        float normalMotionAuthority = 0.0F;
+        float rapidMotionAuthority = 0.0F;
+        float rapidMotionBlend = 0.0F;
         float accelerationIntent = 0.0F;
         float onsetAuthority = 0.0F;
         float sustainedEvidence = 0.0F;

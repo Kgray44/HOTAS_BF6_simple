@@ -15,6 +15,9 @@ Button {
     implicitWidth: pillContent.implicitWidth + tokens.space24
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
+    // Mouse activation must use the same persistent focus treatment as a
+    // keyboard activation. The next focusable control owns focus normally.
+    onPressed: control.forceActiveFocus()
     Accessible.name: text + (value.length > 0 ? ": " + value : "")
     Accessible.role: Accessible.Button
 

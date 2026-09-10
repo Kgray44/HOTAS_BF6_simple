@@ -50,7 +50,7 @@ constexpr int kMaximumDeviceRigOutputs = 4;
 constexpr int kCurveTransitionMinimumDurationMs = 0;
 constexpr int kCurveTransitionMaximumDurationMs = 1000;
 constexpr int kDefaultCurveTransitionDurationMs = 100;
-constexpr int kAdaptiveResponseSchemaVersion = 1;
+constexpr int kAdaptiveResponseSchemaVersion = 2;
 
 enum class PhysicalAxis : int {
     X = 0,
@@ -115,6 +115,12 @@ enum AdaptiveResponseProperty : std::uint32_t {
     AdaptiveResponseHorizonExtensionCap = 1U << 18,
     AdaptiveResponseTurningPointProtection = 1U << 19,
     AdaptiveResponseTurningPointMargin = 1U << 20,
+    // V2.5.2 keeps ordinary deliberate movement distinct from the extra
+    // authority available during rapid maneuvers.  Append-only because the
+    // mask is durable configuration data.
+    AdaptiveResponseNormalMovementResponse = 1U << 21,
+    AdaptiveResponseRapidMovementResponse = 1U << 22,
+    AdaptiveResponseEngagementSensitivity = 1U << 23,
 };
 
 constexpr std::uint32_t kAdaptiveResponseAllProperties =
@@ -127,7 +133,9 @@ constexpr std::uint32_t kAdaptiveResponseAllProperties =
     | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
     | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
     | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
-    | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin;
+    | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin
+    | AdaptiveResponseNormalMovementResponse | AdaptiveResponseRapidMovementResponse
+    | AdaptiveResponseEngagementSensitivity;
 
 struct AdaptiveResponseSettings {
     bool enabled = false;
@@ -155,6 +163,12 @@ struct AdaptiveResponseSettings {
     float horizonExtensionCapMs = 0.0F;
     float turningPointProtection = 0.0F;
     float turningPointMargin = 0.0F;
+    // V2.5.2 authority controls are user-facing, durable percentages.  The
+    // defaults provide a balanced response when an older partial override
+    // inherits newly introduced fields.
+    float normalMovementResponse = 0.48F;
+    float rapidMovementResponse = 0.85F;
+    float engagementSensitivity = 0.50F;
 };
 
 // A zero mask means "inherit every property". A layer can select a reusable
@@ -202,6 +216,9 @@ struct RuntimeAdaptiveResponseConfig {
     float horizonExtensionCapSeconds = 0.0F;
     float turningPointProtection = 0.0F;
     float turningPointMargin = 0.0F;
+    float normalMovementResponse = 0.48F;
+    float rapidMovementResponse = 0.85F;
+    float engagementSensitivity = 0.50F;
     float domainMinimum = -1.0F;
     float domainMaximum = 1.0F;
 };
