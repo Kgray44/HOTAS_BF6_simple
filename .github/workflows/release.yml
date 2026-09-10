@@ -26,6 +26,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify qualified toolchain alignment
+        shell: pwsh
+        run: .\scripts\verify-toolchain-consistency.ps1
+
       - name: Verify generated documentation is synchronized
         shell: pwsh
         run: .\scripts\sync-documentation.ps1 -Check

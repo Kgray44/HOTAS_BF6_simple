@@ -100,13 +100,13 @@
     },
     {
       "category": "UI/runtime",
-      "item": "Qt 6.5.3",
-      "status": "CI build target",
+      "item": "Qt 6.8.3",
+      "status": "Qualified CI/release build target",
       "notes": "Core, Gui, Network, Qml, Quick, QuickControls2, and Test are used by the project."
     },
     {
       "category": "Toolchain",
-      "item": "MSVC x64 / Windows Server 2022 GitHub Actions",
+      "item": "MSVC 2022 x64 / Windows Server 2022 GitHub Actions",
       "status": "CI validation",
       "notes": "Release builds, headless tests, synthetic performance benchmarks, packaging, and installer smoke tests run in CI."
     },

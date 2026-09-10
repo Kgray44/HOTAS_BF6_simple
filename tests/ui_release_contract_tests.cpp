@@ -826,16 +826,27 @@ void UiReleaseContractTests::flightDeckTypographyContract()
     const QString tokens = sourceFile(QStringLiteral("qml/FlightDeckTheme.qml"));
     const QString shell = sourceFile(QStringLiteral("qml/Main.qml"));
     const QString startup = sourceFile(QStringLiteral("src/main.cpp"));
-    const QString workflow = sourceFile(QStringLiteral(".github/workflows/release.yml"));
+    const QString releaseWorkflow = sourceFile(QStringLiteral(".github/workflows/release.yml"));
+    const QString ciWorkflow = sourceFile(QStringLiteral(".github/workflows/ci.yml"));
+    const QString toolchainCheck = sourceFile(QStringLiteral("scripts/verify-toolchain-consistency.ps1"));
 
     QVERIFY(tokens.contains(QStringLiteral("readonly property string displayFont: \"Segoe UI\"")));
     QVERIFY(tokens.contains(QStringLiteral("readonly property string bodyFont: displayFont")));
     QVERIFY(tokens.contains(QStringLiteral("readonly property string telemetryFont: \"Consolas\"")));
     QVERIFY(shell.contains(QStringLiteral("themeManager.currentExperience === \"Flight Deck\" ? \"Segoe UI\"")));
     QVERIFY(startup.contains(QStringLiteral("application.setFont(QFont(QStringLiteral(\"Segoe UI\")))")));
-    QVERIFY(workflow.contains(QStringLiteral("Install qualified Qt 6.8.3")));
-    QVERIFY(workflow.contains(QStringLiteral("version: '6.8.3'")));
-    QVERIFY(workflow.contains(QStringLiteral("arch: 'win64_msvc2022_64'")));
+    for (const QString &workflow : {releaseWorkflow, ciWorkflow}) {
+        QVERIFY(workflow.contains(QStringLiteral("Install qualified Qt 6.8.3")));
+        QVERIFY(workflow.contains(QStringLiteral("version: '6.8.3'")));
+        QVERIFY(workflow.contains(QStringLiteral("arch: 'win64_msvc2022_64'")));
+        QVERIFY(workflow.contains(QStringLiteral("verify-toolchain-consistency.ps1")));
+        QVERIFY(!workflow.contains(QStringLiteral("6.5.3")));
+        QVERIFY(!workflow.contains(QStringLiteral("msvc2019")));
+    }
+    QVERIFY(ciWorkflow.contains(QStringLiteral("qmllint failed for")));
+    QVERIFY(!ciWorkflow.contains(QStringLiteral("Qt 6.5 uses")));
+    QVERIFY(toolchainCheck.contains(QStringLiteral("$qualifiedQtVersion = '6.8.3'")));
+    QVERIFY(toolchainCheck.contains(QStringLiteral("$qualifiedQtArch = 'win64_msvc2022_64'")));
 }
 
 void UiReleaseContractTests::flightDeckInformationArchitectureContract()

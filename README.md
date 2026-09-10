@@ -121,8 +121,8 @@ Use Mapping Off to neutralize output, inspect Diagnostics and HOTAS Setup & Veri
 | Game | Battlefield 6 | Primary game target | The mapper exists to present bindable vJoy inputs and safe centered/one-sided axis behavior to BF6. |
 | Input hiding | HidHide | Optional / recommended | Used to hide the physical controller from games while keeping it visible to the mapper when configured correctly. |
 | Operating system | Windows 11 | Primary development/runtime environment | Windows 10/11 are supported by the current application requirements. |
-| UI/runtime | Qt 6.5.3 | CI build target | Core, Gui, Network, Qml, Quick, QuickControls2, and Test are used by the project. |
-| Toolchain | MSVC x64 / Windows Server 2022 GitHub Actions | CI validation | Release builds, headless tests, synthetic performance benchmarks, packaging, and installer smoke tests run in CI. |
+| UI/runtime | Qt 6.8.3 | Qualified CI/release build target | Core, Gui, Network, Qml, Quick, QuickControls2, and Test are used by the project. |
+| Toolchain | MSVC 2022 x64 / Windows Server 2022 GitHub Actions | CI validation | Release builds, headless tests, synthetic performance benchmarks, packaging, and installer smoke tests run in CI. |
 | Installer | Inno Setup 6.7.1 | CI packaging target | Builds the per-user installer and participates in installer smoke validation. |
 
 ## Hardware support
@@ -148,13 +148,13 @@ Requirements:
 - Windows 10 or 11
 - CMake 3.21+
 - C++20-capable Visual Studio/MSVC environment
-- Qt 6.5+ with Core, Gui, Network, Qml, Quick, QuickControls2, and Test
+- Qt 6.8.3 with Core, Gui, Network, Qml, Quick, QuickControls2, and Test
 - vJoy for virtual output
 
 Typical local build:
 
 ```powershell
-cmake -S . -B build-release -DCMAKE_PREFIX_PATH=C:\Qt\6.5.3\msvc2019_64
+cmake -S . -B build-release -DCMAKE_PREFIX_PATH="$PWD\.toolchain\Qt\6.8.3\msvc2022_64"
 cmake --build build-release --config Release
 ctest --test-dir build-release --output-on-failure -C Release
 .\build-release\HOTAS BF6.exe

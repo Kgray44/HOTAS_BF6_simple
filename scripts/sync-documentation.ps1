@@ -166,13 +166,13 @@ function Build-Readme {
     Add-Line $lines '- Windows 10 or 11'
     Add-Line $lines '- CMake 3.21+'
     Add-Line $lines '- C++20-capable Visual Studio/MSVC environment'
-    Add-Line $lines '- Qt 6.5+ with Core, Gui, Network, Qml, Quick, QuickControls2, and Test'
+    Add-Line $lines '- Qt 6.8.3 with Core, Gui, Network, Qml, Quick, QuickControls2, and Test'
     Add-Line $lines '- vJoy for virtual output'
     Add-Line $lines
     Add-Line $lines 'Typical local build:'
     Add-Line $lines
     Add-Line $lines '```powershell'
-    Add-Line $lines 'cmake -S . -B build-release -DCMAKE_PREFIX_PATH=C:\Qt\6.5.3\msvc2019_64'
+    Add-Line $lines 'cmake -S . -B build-release -DCMAKE_PREFIX_PATH="$PWD\.toolchain\Qt\6.8.3\msvc2022_64"'
     Add-Line $lines 'cmake --build build-release --config Release'
     Add-Line $lines 'ctest --test-dir build-release --output-on-failure -C Release'
     Add-Line $lines '.\build-release\HOTAS BF6.exe'
