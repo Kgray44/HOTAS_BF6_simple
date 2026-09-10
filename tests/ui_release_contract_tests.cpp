@@ -31,7 +31,7 @@ private slots:
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
-    void installerUpgradeAcceptanceTracksSchema24();
+    void installerUpgradeAcceptanceTracksSchema25();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -808,7 +808,7 @@ void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSig
     QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema24()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema25()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
