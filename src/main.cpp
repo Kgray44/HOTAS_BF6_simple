@@ -137,9 +137,16 @@ int main(int argc, char *argv[])
     if (startupSmoke && hasArgument(argc, argv, "--require-tray") && !backend.trayAvailable()) {
         return -2;
     }
-    // This is used only by the isolated package/startup acceptance run. It
-    // reaches normal backend, QML, and tray initialization before exiting,
-    // without introducing a second startup path for installed users.
-    if (startupSmoke) QTimer::singleShot(1500, &application, &QCoreApplication::quit);
+    // This is used only by the explicit package/startup acceptance route. At
+    // this point the real backend, tray, and QML root have all initialized;
+    // return directly so a platform event-loop or an active controller cannot
+    // make a smoke check linger or take focus. Interactive launches always
+    // enter the ordinary event loop below.
+    if (startupSmoke) {
+        // `aboutToQuit` is normally responsible for this record, but this
+        // explicit route intentionally does not enter the event loop.
+        hotas::CrashDiagnostics::markCleanShutdown();
+        return 0;
+    }
     return application.exec();
 }

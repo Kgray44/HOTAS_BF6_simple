@@ -2575,7 +2575,11 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     if (!standardSettings || !selector || flightDeckChoice < 0
         || !clickPresentationChoice(window, standardSettings, selector, flightDeckChoice, choices.size())
         || themeManager.currentExperience() != QStringLiteral("Flight Deck")) {
-        return failPresentationLifecycleTest(QStringLiteral("Standard to Flight Deck pointer selection failed"));
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Standard to Flight Deck pointer selection failed "
+            "(settings=%1 selector=%2 choice=%3 choices=%4 experience=%5 presentation=%6)")
+            .arg(standardSettings != nullptr).arg(selector != nullptr).arg(flightDeckChoice)
+            .arg(choices.size()).arg(themeManager.currentExperience(), themeManager.currentPresentationId()));
     }
     settlePresentation();
     surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
@@ -3326,7 +3330,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     auto *newCategorySave = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckNewCategorySave"));
-    auto *newCategoryError = findVisualItemByObjectName(window->contentItem(),
+    // The error label intentionally starts hidden. Locate its QML object
+    // before the rejected save, then assert that validation makes it visible.
+    auto *newCategoryError = window->findChild<QQuickItem *>(
         QStringLiteral("flightDeckNewCategoryError"));
     const int categoryCountBeforeRejectedForm = backend.profileCategories().size();
     if (!newCategorySave || !newCategoryError
@@ -3604,12 +3610,37 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     QQmlExpression configureAxis(qmlContext(axes), axes, QStringLiteral("configureAxis(0)"));
     configureAxis.evaluate();
     settlePresentation();
+    const bool mappingSelectorVisible = findVisualItemByObjectName(axesItem,
+        QStringLiteral("flightDeckMappingSelector_0")) != nullptr;
+    // The expanded editor can be taller than a minimum-height Flight Deck
+    // viewport. Scroll its real Flickable range before asserting the static
+    // preview, rather than relying on it to be eagerly created offscreen.
+    QQuickItem *responsePreview = nullptr;
+    const qreal maximumContentY = std::max<qreal>(0.0,
+        axesItem->property("contentHeight").toReal() - axesItem->height());
+    for (const qreal progress : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        axesItem->setProperty("contentY", maximumContentY * progress);
+        QTest::qWait(16);
+        settlePresentation();
+        responsePreview = findVisualItemByObjectName(axesItem,
+            QStringLiteral("flightDeckResponsePreview_0"));
+        if (responsePreview) break;
+    }
+    axesItem->setProperty("contentY", 0.0);
+    settlePresentation();
     if (configureAxis.hasError() || backend.selectedAxisIndex() != 0
         || axes->property("expandedAxisIndex").toInt() != 0
-        || !findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckMappingSelector_0"))
-        || !findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckResponsePreview_0"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview")
-            .arg(appearance));
+        || !mappingSelectorVisible || !responsePreview) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview "
+            "(qmlError=%2 selected=%3 expanded=%4 mapping=%5 preview=%6 visible=%7 size=%8x%9)")
+            .arg(appearance).arg(configureAxis.hasError()).arg(backend.selectedAxisIndex())
+            .arg(axes->property("expandedAxisIndex").toInt())
+            .arg(mappingSelectorVisible)
+            .arg(responsePreview != nullptr)
+            .arg(responsePreview ? responsePreview->isVisible() : false)
+            .arg(responsePreview ? responsePreview->width() : 0.0)
+            .arg(responsePreview ? responsePreview->height() : 0.0));
     }
     const QVariantMap axisLearningBefore = flightDeckConfigurationSnapshot(backend);
     auto *axisLearningButton = findVisualItemByObjectName(axesItem,
@@ -4261,8 +4292,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     // than using its implicit width to force the card outside its grid.
     auto *longName = devices ? findVisualItemByObjectName(qobject_cast<QQuickItem *>(devices),
         QStringLiteral("flightDeckControllerName_2")) : nullptr;
-    auto *longNameCard = devices ? findVisualItemByObjectName(qobject_cast<QQuickItem *>(devices),
-        QStringLiteral("flightDeckControllerCard_panel-di")) : nullptr;
+    QQuickItem *longNameCard = nullptr;
+    for (QQuickItem *candidate = longName; candidate; candidate = candidate->parentItem()) {
+        if (candidate->objectName().startsWith(QStringLiteral("flightDeckControllerCard_"))
+            && candidate->property("contentPadding").isValid()) {
+            longNameCard = candidate;
+            break;
+        }
+    }
     const auto textFitsCardSafeArea = [](QQuickItem *text, QQuickItem *card) {
         if (!text || !card) return false;
         const QRectF textRect = text->mapRectToItem(card, QRectF(QPointF{}, text->size()));
@@ -4279,11 +4316,13 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !textFitsCardSafeArea(longName, longNameCard)
         || !multiCaptured) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Flight Deck %1 Devices multi-controller fixture was incomplete: readiness=%2 count=%3 empty=%4 repeater=%5 actions=%6/%7/%8/%9")
+            "Flight Deck %1 Devices multi-controller fixture was incomplete: readiness=%2 count=%3 empty=%4 repeater=%5 actions=%6/%7/%8/%9 safe=%10 capture=%11 longName=%12 card=%13")
             .arg(appearance).arg(devices && devices->property("readiness").toMap() == sharedReadiness)
             .arg(controllerCount).arg(emptyState ? emptyState->property("visible").toBool() : true)
             .arg(controllerRepeater ? controllerRepeater->property("count").toInt() : -1)
             .arg(firstAction).arg(secondAction).arg(thirdAction).arg(fourthAction)
+            .arg(textFitsCardSafeArea(longName, longNameCard)).arg(multiCaptured)
+            .arg(longName != nullptr).arg(longNameCard != nullptr)
             + QStringLiteral(" readiness-diff=%1").arg(devices
                 ? differingSnapshotKeys(sharedReadiness, devices->property("readiness").toMap())
                 : QStringLiteral("device-page-unavailable")));
@@ -5487,7 +5526,12 @@ bool seedDeviceRigFixture()
     // incorrectly comparing it to the unrelated base-profile test seam.
     configuration.editingDeviceRigId.clear();
     configuration.editingDeviceRecordIds.clear();
-    return hotas::ConfigStore::save(configuration);
+    if (!hotas::ConfigStore::save(configuration)) {
+        failPresentationLifecycleTest(QStringLiteral(
+            "Device Rig fixture configuration could not be persisted"));
+        return false;
+    }
+    return true;
 }
 
 QVariantMap flightDeckAutomationDraft(const QString &id, const QString &name, int button,
@@ -5496,6 +5540,10 @@ QVariantMap flightDeckAutomationDraft(const QString &id, const QString &name, in
     QVariantMap condition;
     condition.insert(QStringLiteral("type"), 5);
     condition.insert(QStringLiteral("button"), button);
+    // Physical Automation conditions are intentionally device-scoped. The
+    // fixture retains this saved controller after the Device Rig cleanup so
+    // the Flight Deck editor is exercised with a valid, non-ambiguous source.
+    condition.insert(QStringLiteral("controllerRecordId"), QStringLiteral("fixture-stick"));
     QVariantMap action;
     action.insert(QStringLiteral("type"), 0);
     action.insert(QStringLiteral("virtualButton"), virtualButton);
@@ -5538,7 +5586,13 @@ bool verifyFlightDeckAutomationInteraction(hotas::AppBackend &backend, hotas::Th
     const bool savedThird = !thirdId.isEmpty()
         && backend.saveAutomation(flightDeckAutomationDraft(thirdId, QStringLiteral("Rule C"), 3, 3));
     if (!savedFirst || !savedSecond || !savedThird) {
-        return failAutomationEditorTest(QStringLiteral("could not create independent Flight Deck Automation rules"));
+        return failAutomationEditorTest(QStringLiteral(
+            "could not create independent Flight Deck Automation rules "
+            "(ids=%1/%2/%3 saved=%4/%5/%6 count=%7 validation=%8)")
+            .arg(firstId, secondId, thirdId)
+            .arg(savedFirst).arg(savedSecond).arg(savedThird)
+            .arg(backend.automationRuleCount())
+            .arg(backend.automationValidationMessage()));
     }
 
     QQmlEngine engine;
@@ -5859,12 +5913,22 @@ int main(int argc, char *argv[])
         themeManager.setCurrentTheme(theme);
 
         QQmlApplicationEngine engine;
+        QStringList engineWarnings;
+        QObject::connect(&engine, &QQmlApplicationEngine::warnings, &application,
+            [&engineWarnings](const QList<QQmlError> &warnings) {
+                for (const QQmlError &warning : warnings) engineWarnings.push_back(warning.toString());
+            });
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
         engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
-        engine.loadFromModule(u"HOTASMapperStartupTest"_qs, u"Main"_qs);
+        engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
         auto *window = engine.rootObjects().isEmpty()
             ? nullptr : qobject_cast<QWindow *>(engine.rootObjects().constFirst());
-        if (!window) return 1;
+        if (!window) {
+            failPresentationLifecycleTest(QStringLiteral(
+                "Main.qml did not create a window for %1 (%2)")
+                .arg(theme, engineWarnings.join(u" | "_qs)));
+            return 1;
+        }
 
         settlePresentation();
         if (!verifyPageLifecycle(backend, window, theme)) return 1;
@@ -5884,7 +5948,26 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (!verifyFlightDeckAutomationInteraction(backend, themeManager)) return 1;
+    // Automation deliberately binds physical conditions to one authoritative
+    // source device. Re-establish a single-device fixture after the Devices
+    // lifecycle test cleaned up its multi-device rig, then release it before
+    // the remaining presentation suites run.
+    const QString automationFixtureRig = backend.createDeviceRig(
+        QStringLiteral("Automation Fixture"), {QStringLiteral("fixture-stick")});
+    if (automationFixtureRig.isEmpty()) {
+        failPresentationLifecycleTest(QStringLiteral(
+            "Automation fixture could not establish a single physical-device context"));
+        return 1;
+    }
+    const bool automationSafe = verifyFlightDeckAutomationInteraction(backend, themeManager);
+    const bool automationFixtureReleased = backend.deleteDeviceRig(automationFixtureRig);
+    if (!automationSafe || !automationFixtureReleased) {
+        if (!automationFixtureReleased) {
+            failPresentationLifecycleTest(QStringLiteral(
+                "Automation fixture did not release its temporary physical-device context"));
+        }
+        return 1;
+    }
 
     for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
         if (!verifyFlightDeckAxesQmlLoad(backend, themeManager)) return 1;

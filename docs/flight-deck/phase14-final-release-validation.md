@@ -2,24 +2,45 @@
 
 ## Status
 
-**In progress — no promotion, tag, or package publication has occurred.** The
-candidate source graduates Flight Deck into the normal presentation selector;
-that source change is not a published release. The Phase 14 visual-containment
-P2 gate is closed by the evidence below. Installer/CI and governance gates
-remain; this record is not a release handoff.
+**Pre-promotion qualification complete — no v2.5.0 promotion, tag, or package
+publication has occurred.** The candidate source graduates Flight Deck into the
+normal presentation selector; that source change is not a published release.
+The Phase 14 visual-containment P2 gate is closed by the evidence below.
+Installer/CI and governed-promotion gates remain; this record is not yet a
+release handoff.
 
 ## Starting provenance
 
 | Source point | SHA | Result |
 | --- | --- | --- |
-| Accepted Phase 13 candidate | `62aad057f77e71348266a1a7dbc45e4eb5d1276e` | Current Phase 14 branch base. |
-| Fetched `origin/main` | `6f7e7a2cc7b7c4a22759f182d28ba7d3f8911c5a` | Still the peeled `v2.4.0` release target. |
-| Relationship | `merge-base(Phase 13, origin/main) = 6f7e7a2` | No upstream integration is required before the current candidate work. |
+| Accepted Phase 13 candidate | `62aad057f77e71348266a1a7dbc45e4eb5d1276e` | Original Phase 14 lineage. |
+| Released v2.4.1 `origin/main` | `e46458d93ec270c86513a72389691dd04764f7b3` | Verified merged main SHA and peeled `v2.4.1` tag target. |
+| v2.4.1 predecessor release | workflow `34441875812` | Completed successfully with public installer, checksums, and updater manifest. |
+| Current candidate relationship | rebased onto `e46458d` | v2.5.0 now incorporates v2.4.1 mainline reliability work before promotion. |
 
-The existing `v2.4.0` tag is retained as the rollback reference. Flight Deck
-is a substantial new product capability after that release, so the candidate
-version is **v2.5.0**. The version/catalog/documentation update identifies a
-candidate only; it is not evidence that a release has happened.
+The existing `v2.4.1` tag is retained as the immediate rollback reference.
+Flight Deck is a substantial new product capability after that release, so the
+candidate version is **v2.5.0**. The version/catalog/documentation update
+identifies a candidate only; it is not evidence that a release has happened.
+
+## Post-v2.4.1 rebase correction
+
+The candidate was rebased after the v2.4.1 promotion. The rebase retained
+v2.4.1's device-setup reliability behavior and its physical-condition safety
+guard. Qualification fixtures now create and remove their own single-device
+automation rig rather than weakening that production guard. Two stable QML
+identities required for actual pointer proof were restored: `standardSurface`
+for the Standard settings host and `experienceAppearanceSelectorPopup` for its
+live ComboBox popup. The test opens that popup and clicks the Flight Deck row;
+it does not call the ThemeManager directly to simulate success.
+
+The explicit `--startup-smoke` and `--startup-smoke-isolated` routes now
+construct the shipped QML root, backend models, and tray while keeping the
+presentation hidden. They deliberately do not start DirectInput/vJoy capture,
+inventory/verification, game detection, or update work, then return directly
+after successful construction. This makes the package smoke deterministic and
+safe on an owner machine with an active controller session; ordinary launches
+retain the existing event loop and hardware startup behavior.
 
 ## Containment correction
 
@@ -69,20 +90,20 @@ human screenshot review.
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Release build of the updated QML containment test | Pass | `app_qml_startup_tests` rebuilt successfully with the repository Qt 6.8.3/MSVC 2022 x64 toolchain. |
-| Production release build | Pass | `HOTASMapper` rebuilt successfully; its QML resource was regenerated for `FlightDeckSettings.qml` and linked into `b14-release/HOTAS BF6.exe`. |
-| Full release suite | Pass | The final post-v2.5.0 build run of `ctest --test-dir b14-release -C Release --output-on-failure` passed 12/12, including QML startup, updater-manifest, and ThemeManager contracts. |
+| Full release suite | Pass | The final post-rebase run of `ctest --test-dir b14-release -C Release --output-on-failure` passed 12/12, including QML startup, updater-manifest, and ThemeManager contracts. |
+| Standard-to-Flight Deck selector | Pass, actual pointer route | The QML startup fixture opens the Standard Settings ComboBox, locates the live popup, and clicks the Flight Deck row; the resulting replacement shell and retained controller configuration are asserted. |
 | Adaptive choice safe area | Pass, native geometry | Focused native QQuick fixture verified title and description bounds for Off, Light, Balanced, Fast, Aggressive, and Extreme in both Dark and Light. |
 | Dialog title safe area | Pass, native geometry | Focused native QQuick fixture opened the real Devices repair dialog and verified its heading remains within the shared rounded-corner header inset in both Dark and Light. |
 | Rail/footer containment | Pass, native geometry | Focused native QQuick fixture verified the footer, its padded content, navigation viewport separation, constrained-height scroll stability, and selected-item reachability at 900x650, 1000x720, 1200x800, 1400x900, and 1600x980 in both Dark and Light. |
 | Native visual matrix | Pass | Owner-authorized native review completed: 79 Dark captures in `phase14-flight-deck-visual-revalidation-20260910-0520-native` and 79 Light captures in `phase14-flight-deck-visual-revalidation-20260910-0555-native-light`; the complete offscreen matrix also produced 158 captures. |
 | Native Settings vJoy stepper | Pass | Direct Dark and Light Settings captures show the Flight Deck field, divider, and themed plus/minus controls; the test asserts the custom controls remain contained in the selector. |
-| Scaled containment | Pass, Qt process scale | `HOTAS_QML_CONTAINMENT_GEOMETRY_ONLY=1` passed with `QT_SCALE_FACTOR=1.25` and `QT_SCALE_FACTOR=1.5`. This is process-local Qt rendering validation and did not change the owner's Windows display scaling. |
+| Scaled containment | Pass, Qt process scale | `HOTAS_QML_CONTAINMENT_GEOMETRY_ONLY=1` passed at 100%, `QT_SCALE_FACTOR=1.25`, and `QT_SCALE_FACTOR=1.5`. This is process-local Qt rendering validation and did not change the owner's Windows display scaling. |
 | Shared-surface QML lint | Pass | Repository Qt 6.8.3 `qmllint` reported no warning or error diagnostics for `FlightDeck.qml`, `FlightDeckAdaptiveResponse.qml`, `FlightDeckDialog.qml`, and `FlightDeckTheme.qml`. |
-| Documentation source consistency | Pass | `scripts/sync-documentation.ps1 -Check` reports synchronized v2.5.0 documentation. |
-| Whitespace integrity | Pass | `git diff --check` passes. |
-| Hot-path performance | Pass, synthetic | The rebuilt release `mapping_core_tests --hot-path-benchmark` completed successfully with zero hot-path allocations. The relevant all-eight-axis Adaptive path measured p99 3.3 us; profile-control p99 was at most 3.1 us; Automation p99 was at most 2.0 us. This benchmark deliberately excludes DirectInput and vJoy driver calls. |
+| Documentation source consistency | Pass | `scripts/sync-documentation.ps1 -Check` reports synchronized v2.5.0 documentation after the final record update. |
+| Whitespace integrity | Pass | `git diff --check` passes before the candidate commit. |
+| Hot-path performance | Pass, synthetic | The rebuilt release `mapping_core_tests --hot-path-benchmark` completed successfully with zero hot-path allocations. The all-eight-axis Adaptive path measured p99 2.1 us; profile-control p99 was at most 1.8 us; Automation p99 was at most 1.3 us. This benchmark deliberately excludes DirectInput and vJoy driver calls. |
 | Staged package contents | Pass | `scripts/stage-package.ps1` staged the rebuilt v2.5.0 mapper, launcher, VERSION, required Qt libraries, platform plugin, and QML runtime in `b14-release/phase14-stage-v2.5.0`. No installer was created locally. |
-| Staged package startup | Pass, isolated | The staged mapper exited 0 under the actual off-screen `--startup-smoke-isolated` route. Startup smoke now bypasses the interactive abnormal-exit recovery modal only for the explicit automation flag; ordinary launches preserve the recovery dialog. |
+| Staged package startup | Pass, isolated | The staged mapper exited 0 through the actual hidden `--startup-smoke-isolated` route. The smoke path keeps the QML root headless and skips physical I/O; it does not alter the interactive recovery dialog or normal startup behavior. |
 
 The focused fixture needs an exposed QQuick surface for its layout polish and
 therefore runs only when an owner authorizes a native UI test. It is a geometry
@@ -136,8 +157,8 @@ complete.
    to run outside an isolated GitHub Actions Windows runner. The local staged
    package smoke passed; CI must still prove clean install, v1.9.3 upgrade,
    and v2.0.0 recovery against the published installer.
-3. Wait for the active v2.4.1 mainline/release handoff to complete, then create
-   a clean v2.5.0 candidate commit, follow repository mainline governance, and
-   tag only the merged promoted SHA. Verify the terminal CI workflow, public
-   assets, and updater manifest against that peeled tag before calling this a
-   release.
+3. Run the final documentation/whitespace checks, commit and push the
+   candidate, follow repository mainline governance, and tag only the merged
+   promoted SHA. Verify the terminal CI workflow, public assets, updater
+   manifest, checksum, and signing state against that peeled tag before
+   calling this a release.

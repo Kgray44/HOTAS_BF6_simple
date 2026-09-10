@@ -256,7 +256,7 @@ Flickable {
                         contentItem: Text { text: modelData.label; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
                         background: Rectangle { color: appearanceDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
                     }
-                    popup: Popup { y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
+                    popup: Popup { objectName: appearance.objectName + "Popup"; y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
                         contentItem: ListView { clip: true; implicitHeight: contentHeight; model: appearance.popup.visible ? appearance.delegateModel : null; currentIndex: appearance.highlightedIndex }
                         background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                     }

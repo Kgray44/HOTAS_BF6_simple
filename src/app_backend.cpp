@@ -71,6 +71,13 @@ constexpr int kVisibleGameDetectionIntervalMs = 2500;
 constexpr int kMinimizedGameDetectionIntervalMs = 5000;
 constexpr int kTrayHiddenGameDetectionIntervalMs = 7500;
 
+bool startupSmokeRequested()
+{
+    const QStringList arguments = QCoreApplication::arguments();
+    return arguments.contains(u"--startup-smoke"_qs)
+        || arguments.contains(u"--startup-smoke-isolated"_qs);
+}
+
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
 {
@@ -437,6 +444,12 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 AppBackend::AppBackend(QObject *parent)
     : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
 {
+    // Package/installer startup acceptance needs the real QML shell, backend
+    // models, and tray construction, but it must not acquire DirectInput,
+    // vJoy, or foreground-game state from a machine that may be in use. The
+    // flags are explicit automation entry points handled by main.cpp; normal
+    // launches retain the unchanged hardware startup path below.
+    const bool startupSmoke = startupSmokeRequested();
     m_adaptiveResponseHistoryClock.start();
     m_adaptiveResponseSimulatorClock.start();
     m_adaptiveResponseSimulatorHistory.resize(1800);
@@ -503,12 +516,12 @@ AppBackend::AppBackend(QObject *parent)
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
-    m_controllerDiscoveryTimer.start();
+    if (!startupSmoke) m_controllerDiscoveryTimer.start();
     // Foreground-process sampling is low-frequency control-plane work. It is
     // intentionally independent from the presentation snapshot and
     // the DirectInput worker's report loop.
     m_gameDetectionTimer.setInterval(kVisibleGameDetectionIntervalMs);
-    if (m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
+    if (!startupSmoke && m_configuration.automaticGameDetection) m_gameDetectionTimer.start();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -549,22 +562,26 @@ AppBackend::AppBackend(QObject *parent)
     // rebuilding editor data. HighPriority is intentionally below
     // TimeCriticalPriority: it favors real input responsiveness without
     // starving normal system or rendering work on a constrained CPU.
-    m_worker.start(QThread::HighPriority);
-    m_mappingDesired = m_configuration.startMappingOnLaunch;
-    if (m_mappingDesired) {
-        m_worker.setMappingEnabled(true);
+    if (!startupSmoke) {
+        m_worker.start(QThread::HighPriority);
+        m_mappingDesired = m_configuration.startMappingOnLaunch;
+        if (m_mappingDesired) {
+            m_worker.setMappingEnabled(true);
+        }
     }
     // Startup verification is passive and runs on its own short-lived worker.
     // It never stops mapping, releases either device, or opens a modal.
-    QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
-    QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
-    if (m_configuration.automaticGameDetection) {
-        QTimer::singleShot(kVisibleGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+    if (!startupSmoke) {
+        QTimer::singleShot(750, this, &AppBackend::startQuickVerification);
+        QTimer::singleShot(100, this, &AppBackend::refreshControllerInventory);
+        if (m_configuration.automaticGameDetection) {
+            QTimer::singleShot(kVisibleGameDetectionIntervalMs, this, &AppBackend::evaluateGameDetection);
+        }
     }
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
-    QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+    if (!startupSmoke) QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
 }
 
 AppBackend::~AppBackend()

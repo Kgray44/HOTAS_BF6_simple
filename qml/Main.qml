@@ -15,6 +15,8 @@ ApplicationWindow {
     // is using the desktop. The explicit test argument keeps that window
     // constructed but never shown or focused; normal launches are unchanged.
     readonly property bool presentationHeadless: Qt.application.arguments.indexOf("--headless-presentation") >= 0
+        || Qt.application.arguments.indexOf("--startup-smoke") >= 0
+        || Qt.application.arguments.indexOf("--startup-smoke-isolated") >= 0
     visible: !presentationHeadless
     title: "HOTAS BF6"
     property var flightDeckLearningDialog: null

@@ -4,6 +4,7 @@ import QtQuick.Layouts 6.5
 
 Page {
     id: root
+    objectName: "standardSurface"
     anchors.fill: parent
     padding: 0
 
