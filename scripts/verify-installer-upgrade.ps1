@@ -28,13 +28,25 @@ function Invoke-Installer([string] $installer, [string] $target) {
     if ($result.ExitCode -ne 0) { throw "Installer failed with exit code $($result.ExitCode): $installer" }
 }
 
-function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion) {
-    foreach ($file in @(
-        'HOTAS BF6 Launcher.exe', 'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll',
-        'Qt6Qml.dll', 'Qt6Quick.dll', 'Qt6QuickControls2.dll'
-    )) {
+function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion, [switch] $AllowMissingLauncher) {
+    $requiredFiles = @(
+        'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Qml.dll', 'Qt6Quick.dll',
+        'Qt6QuickControls2.dll'
+    )
+    if (-not $AllowMissingLauncher) {
+        $requiredFiles = @('HOTAS BF6 Launcher.exe') + $requiredFiles
+    }
+    foreach ($file in $requiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
-            throw "Installed package is missing $file."
+            throw "Installed package is missing ${file}: $target"
+        }
+    }
+    if ($AllowMissingLauncher) {
+        $priorLauncher = Join-Path $target 'HOTAS BF6 Launcher.exe'
+        if (Test-Path -LiteralPath $priorLauncher -PathType Leaf) {
+            Write-Host 'N-1 package contains the launcher before upgrade.'
+        } else {
+            Write-Host 'N-1 package is missing its launcher before upgrade; the candidate must restore it.'
         }
     }
     $qml = Join-Path $target 'qml'
@@ -107,6 +119,7 @@ try {
     # A clean candidate install must create every launch-critical package file
     # and remain alive through initialization; an installer success code by
     # itself is not acceptance.
+    Write-Host 'Installer acceptance: clean candidate install.'
     $cleanInstall = Join-Path $work 'clean-install'
     Invoke-Installer $candidate $cleanInstall
     Assert-InstalledPackage $cleanInstall $ExpectedVersion
@@ -116,6 +129,7 @@ try {
 
     # This is a real v1.9.3 installation with a populated schema-14 profile,
     # controls, curve, POV, Automation, and application settings record.
+    Write-Host 'Installer acceptance: v1.9.3 migration.'
     $upgradeInstall = Join-Path $work 'v193-upgrade'
     Invoke-Installer $legacyInstaller $upgradeInstall
     & $fixture --seed-v14
@@ -130,6 +144,7 @@ try {
     # A v2.0.0 tray crash can leave the exact same program location with a
     # schema-15 record already persisted. Install that released binary, seed
     # the affected state, then prove v2.0.1 recovers it without AppData reset.
+    Write-Host 'Installer acceptance: v2.0.0 recovery.'
     $recoveryInstall = Join-Path $work 'v200-recovery'
     Invoke-Installer $failedV200Installer $recoveryInstall
     & $fixture --seed-v15
@@ -141,11 +156,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
     # Release-quality N-1 coverage: use the actual public v2.5.0 package and
-    # upgrade it to the candidate in place, preserving the established user
-    # configuration fixture while checking the complete staged package.
+    # upgrade it to the candidate in place. The public updater could leave a
+    # partial v2.5.0 directory without its launcher, so accept that historical
+    # input while requiring the candidate upgrade below to restore a complete
+    # runnable package and preserve the established user configuration fixture.
+    Write-Host 'Installer acceptance: v2.5.0 N-1 upgrade.'
     $priorStableInstall = Join-Path $work 'v250-upgrade'
     Invoke-Installer $priorStableInstaller $priorStableInstall
-    Assert-InstalledPackage $priorStableInstall '2.5.0'
+    Assert-InstalledPackage $priorStableInstall '2.5.0' -AllowMissingLauncher
     & $fixture --seed-v15
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed the v2.5.0 upgrade fixture.' }
     Invoke-Installer $candidate $priorStableInstall
@@ -157,6 +175,7 @@ try {
     # The default local-app-data installation path and both shortcuts are
     # checked only on the ephemeral GitHub runner. No redirected /DIR is used
     # for this acceptance case.
+    Write-Host 'Installer acceptance: default path and shortcuts.'
     $defaultInstall = Join-Path $env:LOCALAPPDATA 'Programs\HOTAS BF6'
     if (Test-Path -LiteralPath $defaultInstall) { throw "Default acceptance path already exists: $defaultInstall" }
     $defaultResult = Start-Process -FilePath $candidate -ArgumentList @(
