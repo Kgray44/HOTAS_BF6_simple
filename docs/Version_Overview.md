@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.5.1**
+**Current version: v2.5.2**
 
-This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
+This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.2 — Adaptive response authority overhaul (candidate)
+
+Improves Adaptive Response for ordinary deliberate flight-stick movement while retaining its existing safety envelopes, bounded mapper architecture, and established presentation systems.
+
+- Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity independently tune credible everyday and maneuver authority; quiet input, micro jitter, braking, reversal, turning-point, endpoint, and absolute lead/horizon protection remain authoritative.
+- Schema 24 and Adaptive Response schema 2 preserve these controls through global, category, profile, device, custom-preset, import/export, and portable-profile resolution. Existing records without the fields read with conservative Balanced values.
+- Flight Deck Response Lab surfaces the three primary controls before advanced tuning, explains normal and rapid authority in its telemetry, and preserves the existing shared backend commands and view-only profile browsing behavior.
+- Flight Deck navigation places Buttons before Curve Editor; Curve Editor adds a stronger workspace hierarchy and named graph context while retaining its established curve behavior. Settings safety actions now distinguish attention from fault states, and shared text inputs relinquish focus on Enter.
+- Candidate qualification passed the complete native CTest suite and a zero-allocation synthetic hot-path benchmark. It remains a review candidate: no protected-main merge, release tag, signing, updater publication, public package, or physical controller-to-vJoy acceptance claim is made.
 
 ## v2.5.1 — Flight Deck hardening and runtime bundle repair
 

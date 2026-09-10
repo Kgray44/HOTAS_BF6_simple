@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current release: v2.5.1**
+**Current version: v2.5.2**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -47,7 +47,7 @@ Physical DirectInput axes can be routed only to the selected profile layout's av
 - Per-profile axis routing with conflict prevention and selected-layout unsupported-target handling.
 - Completed calibration marks real controls Active and stationary advertised slots Fixed; Fixed slots are never routed.
 - Calibration and normalization before profile transforms.
-- Adaptive Response can add a bounded 0–30 ms predictive phase lead from physical normalized input before deadzone, hysteresis, inversion, response curve, and output limits; it is not smoothing or PID control.
+- Adaptive Response can add a bounded 0–30 ms predictive phase lead from physical normalized input before deadzone, hysteresis, inversion, response curve, and output limits; Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity independently govern credible everyday and maneuver authority rather than behaving as smoothing or PID control.
 - Rescaled deadzone, hysteresis, inversion, response curve, and output-limit processing.
 - Centered or One-Sided axis domain selectable per profile and per axis.
 - Direct decimal Output Min/Max entry with 0.1% step adjustment.
@@ -181,7 +181,7 @@ The application exposes physical input, transformed output, capacity, readiness,
 - Automation rule count, active count, invalid health, and evaluation timing.
 - Crash Reporter & Recovery Diagnostics writes bounded local crash metadata, recent control-plane events, and a Windows minidump where possible, then opens a separate local reporter with copy, folder, and user-initiated restart actions. Nothing is uploaded automatically.
 - A lightweight session marker distinguishes clean shutdown from a previous abnormal exit and offers local crash-report access on the next startup when a report could not be completed.
-- Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, motion state, reversal count, and safety-clamp count.
+- Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, deliberate-motion evidence, normal/rapid authority, rapid blend, motion state, reversal count, and safety-clamp count.
 - Actual parked disabled-axis output reported separately from raw physical input.
 - Configuration warnings for capability mismatch or unavailable targets.
 
@@ -195,7 +195,7 @@ The app provides four persistent visual systems without allowing presentation st
 - Day Ops is a dedicated bright naval-aviation theme: carrier-deck gray/aluminum surfaces, navy technical lettering, steel framing, safety-orange controls, and dark inset instrumentation graphs rather than generic light mode.
 - Instant theme switching with theme state stored separately from mapper configuration.
 - Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
-- Adaptive Response page with per-axis preset strip, Global/Category/Profile scope selection, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
+- Adaptive Response page and Flight Deck Response Lab with per-axis preset strip, Global/Category/Profile scope selection, three primary everyday-flight controls, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
 - Curve Transition Smoothing, Device Rigs, top-bar device context, and unified verification use the same shared themed surfaces in Legacy, Standard, Top Gun, and Day Ops.
 - Overview names the active Device Rig and effective profile; Settings is limited to application preferences and global maintenance, while physical devices and Virtual Outputs are owned by Devices.
@@ -264,6 +264,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 - Schema 21 adds safe-off Adaptive Response defaults plus global/category/profile layers, bounded custom presets, and portable preset dependencies; legacy configurations retain direct physical response.
 - Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.
 - Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.
+- Schema 24 and Adaptive Response schema 2 persist Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity across global, category, profile, device, custom-preset, and portable-profile resolution while missing fields inherit conservative Balanced values.
 - Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.
