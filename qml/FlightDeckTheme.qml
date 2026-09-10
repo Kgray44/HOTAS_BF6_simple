@@ -97,17 +97,24 @@ QtObject {
     readonly property color cyan: accent
     readonly property color danger: fault
     readonly property color destructive: fault
-    readonly property color graphBackground: "#0a141c"
-    readonly property color graphFrame: light ? "#567182" : "#315064"
-    readonly property color graphGrid: light ? "#344b59" : "#315064"
-    readonly property color graphInput: textMuted
-    readonly property color graphLabel: textSecondary
+    // The graph is a first-class Flight Deck surface. Keep the instrument
+    // treatment in Dark mode, but give Light mode its own high-contrast
+    // technical canvas instead of carrying the dark canvas across themes.
+    readonly property color graphSurface: light ? "#e7f0f6" : "#0d1b25"
+    readonly property color graphBackground: light ? "#f8fbfd" : "#0a141c"
+    readonly property color graphFrame: light ? "#7e96a7" : "#315064"
+    readonly property color graphGrid: light ? "#c2d0da" : "#315064"
+    readonly property color graphInput: light ? "#668093" : textMuted
+    readonly property color graphLabel: light ? "#466071" : textSecondary
     readonly property color graphOutput: healthy
+    readonly property color graphPoint: light ? "#2b7591" : textPrimary
+    readonly property color graphSelectedPoint: accent
+    readonly property color graphLockedPoint: light ? "#879eac" : disabled
     readonly property color graphPanelGradientTop: graphBackground
     readonly property color graphPanelGradientMiddle: graphBackground
     readonly property color graphPanelGradientBottom: graphBackground
     readonly property color graphPreview: attention
-    readonly property color graphZero: textMuted
+    readonly property color graphZero: graphInput
     readonly property color ivory: textPrimary
     readonly property color orange: accent
     readonly property color orangeBright: accent

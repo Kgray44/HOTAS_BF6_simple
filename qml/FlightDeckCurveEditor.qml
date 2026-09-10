@@ -443,8 +443,8 @@ Flickable {
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(320, Math.min(480, root.height * 0.55))
                     radius: tokens.radiusPanel
-                    color: "#0d1b25"
-                    border.color: tokens.border
+                    color: tokens.graphSurface
+                    border.color: tokens.graphFrame
                     clip: true
                     Canvas {
                         id: graph
@@ -514,9 +514,9 @@ Flickable {
                             const pw = plotWidth();
                             const ph = plotHeight();
                             context.reset();
-                            context.fillStyle = "#0a141c";
+                            context.fillStyle = tokens.graphBackground;
                             context.fillRect(0, 0, width, height);
-                            context.strokeStyle = tokens.divider;
+                            context.strokeStyle = tokens.graphGrid;
                             context.lineWidth = 1;
                             for (let line = 0; line <= 4; ++line) {
                                 const x = plotLeft + pw * line / 4;
@@ -525,25 +525,25 @@ Flickable {
                                 context.beginPath(); context.moveTo(plotLeft, y); context.lineTo(plotLeft + pw, y); context.stroke();
                             }
                             if (responseView) {
-                                context.strokeStyle = tokens.textMuted; context.setLineDash([5, 4]);
+                                context.strokeStyle = tokens.graphInput; context.setLineDash([5, 4]);
                                 context.beginPath(); context.moveTo(xFor(domainMin), yFor(domainMin)); context.lineTo(xFor(1), yFor(1)); context.stroke(); context.setLineDash([]);
                                 trace(context, responseSamples, tokens.healthy, 2.4, "output", false);
-                                trace(context, comparisonSamples, tokens.textMuted, 1.2, "output", true);
+                                trace(context, comparisonSamples, tokens.graphInput, 1.2, "output", true);
                                 trace(context, previewSamples, tokens.attention, 1.5, "output", true);
                                 if (showEffective) trace(context, effectiveSamples, tokens.accent, 1.8, "output", false);
                                 if (editorState.pointEditing) {
                                     for (let index = 0; index < points.length; ++index) {
                                         const point = points[index];
-                                        context.fillStyle = point.locked ? tokens.disabled : index === selectedPoint ? tokens.accent : tokens.textPrimary;
+                                        context.fillStyle = point.locked ? tokens.graphLockedPoint : index === selectedPoint ? tokens.graphSelectedPoint : tokens.graphPoint;
                                         context.beginPath(); context.arc(xFor(Number(point.input)), yFor(Number(point.output)), point.locked ? 5 : 4, 0, Math.PI * 2); context.fill();
                                     }
                                 }
                             } else {
                                 trace(context, gainSamples, tokens.accent, 2.3, "gain", false);
-                                context.strokeStyle = tokens.textMuted; context.setLineDash([4, 4]);
+                                context.strokeStyle = tokens.graphInput; context.setLineDash([4, 4]);
                                 context.beginPath(); context.moveTo(plotLeft, gainY(1)); context.lineTo(plotLeft + pw, gainY(1)); context.stroke(); context.setLineDash([]);
                             }
-                            context.fillStyle = tokens.textMuted; context.font = "10px " + tokens.telemetryFont;
+                            context.fillStyle = tokens.graphLabel; context.font = "10px " + tokens.telemetryFont;
                             context.fillText(responseView ? "INPUT" : "INPUT", plotLeft, height - 7);
                             context.fillText(responseView ? "RESPONSE" : "GAIN", 4, plotTop + 10);
                         }

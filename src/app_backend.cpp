@@ -9597,6 +9597,20 @@ void AppBackend::setTrayTheme(const QString &themeName)
             "QMenu::item:selected { background: #3b241c; color: #ff7b31; border: 1px solid #df6428; }"
             "QMenu::item:disabled { color: #816f55; }"
             "QMenu::separator { height: 1px; background: #765d37; margin: 5px 9px; }"));
+    } else if (normalized == u"flight deck light"_qs) {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #f9fbfd; color: #152534; border: 1px solid #cfdae5; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Segoe UI'; }"
+            "QMenu::item:selected { background: #d7eff7; color: #152534; border: 1px solid #167b9f; }"
+            "QMenu::item:disabled { color: #a9b7c2; }"
+            "QMenu::separator { height: 1px; background: #dde5ed; margin: 5px 9px; }"));
+    } else if (normalized == u"flight deck"_qs || normalized == u"flight deck dark"_qs) {
+        m_trayMenu->setStyleSheet(QStringLiteral(
+            "QMenu { background: #132331; color: #eef7fb; border: 1px solid #315064; padding: 6px; }"
+            "QMenu::item { background: transparent; padding: 9px 38px 9px 15px; min-height: 22px; font: 600 9pt 'Segoe UI'; }"
+            "QMenu::item:selected { background: #174656; color: #eef7fb; border: 1px solid #4dc5df; }"
+            "QMenu::item:disabled { color: #49626f; }"
+            "QMenu::separator { height: 1px; background: #284353; margin: 5px 9px; }"));
     } else if (normalized == u"day ops"_qs) {
         m_trayMenu->setStyleSheet(QStringLiteral(
             "QMenu { background: #d9ddda; color: #142a38; border: 1px solid #2e5268; padding: 6px; }"

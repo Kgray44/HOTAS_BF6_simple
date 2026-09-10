@@ -307,7 +307,6 @@ Item {
                         elide: Text.ElideRight
                     }
                     FlightDeckSelectedDeviceSelector {
-                        visible: [0, 1, 3, 5, 6, 9].indexOf(root.currentPage) >= 0
                         compact: root.width < 1180
                         backendObject: backend
                         tokens: deck
