@@ -2909,9 +2909,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("flightDeckAppearancePill"));
     auto *sharedTitle = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckSharedPageTitle"));
+    auto *selectedDeviceSelector = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSelectedDeviceSelector"));
     auto *navigationContent = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckNavigationContent"));
-    if (!controllerPill || !appearancePill || !sharedTitle || !navigationContent
+    if (!controllerPill || !appearancePill || !sharedTitle || !selectedDeviceSelector || !navigationContent
+        || !selectedDeviceSelector->property("visible").toBool()
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
     }
@@ -2933,8 +2936,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         controllerPill->mapToScene(QPointF(controllerPill->width() * 0.5,
             controllerPill->height() * 0.5)).toPoint());
     settlePresentation();
-    if (surface->property("currentPage").toInt() != 2) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller pill did not route to Devices and setup"));
+    if (surface->property("currentPage").toInt() != 2
+        || !selectedDeviceSelector->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller route did not retain the selected-device selector on Devices and setup"));
     }
     if (controllerPill->property("activeFocus").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Controller mouse click left a persistent keyboard-focus highlight"));
@@ -3075,7 +3079,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
 
-    for (const int page : {8, 0, 5, 6, 9}) {
+    for (const int page : {8, 2, 0, 1, 6, 5, 9, 7, 3, 4}) {
         auto *nav = findVisualItemByObjectName(window->contentItem(),
             QStringLiteral("flightDeckNav_%1").arg(page));
         if (!nav) return failPresentationLifecycleTest(QStringLiteral("Flight Deck route %1 has no nav item")
@@ -3086,7 +3090,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         settlePresentation();
         QObject *loaded = pageItem(surface, page);
         if (surface->property("currentPage").toInt() != page
-            || !nav->property("selected").toBool() || !loaded) {
+            || !nav->property("selected").toBool() || !loaded
+            || !selectedDeviceSelector->property("visible").toBool()) {
             return failPresentationLifecycleTest(QStringLiteral(
                 "Flight Deck route %1 did not update selected state and page host (current=%2 selected=%3 loaded=%4)")
                 .arg(page).arg(surface->property("currentPage").toInt())

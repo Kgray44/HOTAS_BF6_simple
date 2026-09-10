@@ -62,8 +62,13 @@ void UiReleaseContractTests::trayAndThemeRefreshRemainOnTheUiSide()
     const QString main = sourceFile(QStringLiteral("qml/Main.qml"));
     QVERIFY(backend.contains(QStringLiteral("void AppBackend::setTrayTheme")));
     QVERIFY(backend.contains(QStringLiteral("QMenu::item:selected")));
+    QVERIFY(backend.contains(QStringLiteral("normalized == u\"flight deck light\"_qs")));
+    QVERIFY(backend.contains(QStringLiteral("normalized == u\"flight deck\"_qs || normalized == u\"flight deck dark\"_qs")));
     QVERIFY(main.contains(QStringLiteral("onCurrentThemeChanged")));
     QVERIFY(main.contains(QStringLiteral("backend.setTrayTheme")));
+    QVERIFY(main.contains(QStringLiteral("function refreshTrayTheme()")));
+    QVERIFY(main.contains(QStringLiteral("onFlightDeckAppearanceChanged()")));
+    QVERIFY(main.contains(QStringLiteral("? \"Flight Deck \" + themeManager.flightDeckAppearance")));
 }
 
 void UiReleaseContractTests::newDeviceSetupExplicitlyAcquiresThenVerifies()
@@ -860,11 +865,13 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     const QString profiles = sourceFile(QStringLiteral("qml/FlightDeckProfiles.qml"));
     const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
     const QString flightDeckCurve = sourceFile(QStringLiteral("qml/FlightDeckCurveEditor.qml"));
+    const QString flightDeckTheme = sourceFile(QStringLiteral("qml/FlightDeckTheme.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
 
     QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckSharedPageTitle\"")));
     QVERIFY(!flightDeck.contains(QStringLiteral("visible: root.currentPage !== 8")));
+    QVERIFY(!flightDeck.contains(QStringLiteral("visible: [0, 1, 3, 5, 6, 9].indexOf(root.currentPage) >= 0")));
     QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckControllerPill\"")));
     QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckAppearancePill\"")));
     QVERIFY(flightDeck.contains(QStringLiteral("onClicked: root.navigateTo(2)")));
@@ -923,6 +930,11 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurveFamily")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurveStrength")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurvePoint")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("color: tokens.graphSurface")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("context.fillStyle = tokens.graphBackground")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("tokens.graphLockedPoint : index === selectedPoint ? tokens.graphSelectedPoint : tokens.graphPoint")));
+    QVERIFY(flightDeckTheme.contains(QStringLiteral("readonly property color graphSurface: light ?")));
+    QVERIFY(flightDeckTheme.contains(QStringLiteral("readonly property color graphPoint: light ?")));
     QVERIFY(!flightDeckCurve.contains(QStringLiteral("AviationPanel")));
     QVERIFY(curve.contains(QStringLiteral("readonly property bool flightDeck")));
     QVERIFY(curve.contains(QStringLiteral("flightDeck ? theme.primarySurface")));

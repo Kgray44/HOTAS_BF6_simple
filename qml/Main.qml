@@ -33,17 +33,27 @@ ApplicationWindow {
     // window boundary whenever Flight Deck is active.
     font.family: themeManager.currentExperience === "Flight Deck" ? "Segoe UI" : shellTheme.displayFont
     Component.onCompleted: {
-        backend.setTrayTheme(themeManager.currentTheme)
+        refreshTrayTheme()
         syncFlightDeckLearningDialog()
     }
     Connections {
         target: themeManager
         function onCurrentThemeChanged() {
-            backend.setTrayTheme(themeManager.currentTheme)
+            shell.refreshTrayTheme()
             const page = presentation.item && presentation.item.currentPage !== undefined ? presentation.item.currentPage : 8
             backend.recordCrashPresentationState(page, themeManager.currentTheme)
         }
-        function onCurrentExperienceChanged() { shell.syncFlightDeckLearningDialog() }
+        function onCurrentExperienceChanged() {
+            shell.refreshTrayTheme()
+            shell.syncFlightDeckLearningDialog()
+        }
+        function onFlightDeckAppearanceChanged() { shell.refreshTrayTheme() }
+    }
+
+    function refreshTrayTheme() {
+        backend.setTrayTheme(themeManager.currentExperience === "Flight Deck"
+            ? "Flight Deck " + themeManager.flightDeckAppearance
+            : themeManager.currentTheme)
     }
 
     function syncFlightDeckLearningDialog() {
