@@ -619,5 +619,16 @@
       "Flight Deck navigation places Buttons before Curve Editor; Curve Editor adds a stronger workspace hierarchy and named graph context while retaining its established curve behavior. Settings safety actions now distinguish attention from fault states, and shared text inputs relinquish focus on Enter.",
       "Candidate qualification passed the complete native CTest suite and a zero-allocation synthetic hot-path benchmark. It remains a review candidate: no protected-main merge, release tag, signing, updater publication, public package, or physical controller-to-vJoy acceptance claim is made."
     ]
+  },
+  {
+    "version": "2.5.3",
+    "title": "Flight Deck shared-surface polish",
+    "summary": "Aligns the persistent Flight Deck control surfaces across routes and appearance modes without changing mapper behavior, device identity, curve mathematics, or the DirectInput-to-vJoy hot path.",
+    "highlights": [
+      "The selected-device selector is permanently present in the shared Flight Deck top bar, including Overview, Devices & setup, Automation, Diagnostics, and Settings; choosing a device continues to use the existing authoritative device-context command.",
+      "Curve Editor graph surfaces, canvas, grid, reference traces, labels, and point-edit markers now resolve from Flight Deck Light/Dark semantic tokens. Dark mode retains its instrument treatment while Light mode receives a high-contrast technical graph surface.",
+      "The native tray menu now has dedicated Flight Deck Light and Dark palettes and refreshes when either the Flight Deck experience or its appearance changes. Legacy, Standard, Top Gun, and Day Ops tray treatments remain independent.",
+      "Hosted QML lifecycle coverage verifies selector visibility across every Flight Deck route; source contracts protect the light-aware graph tokens and tray-theme routing."
+    ]
   }
 ]

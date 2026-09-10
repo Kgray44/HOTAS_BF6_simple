@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.5.2**
+**Current version: v2.5.3**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.3 — Flight Deck shared-surface polish
+
+Aligns the persistent Flight Deck control surfaces across routes and appearance modes without changing mapper behavior, device identity, curve mathematics, or the DirectInput-to-vJoy hot path.
+
+- The selected-device selector is permanently present in the shared Flight Deck top bar, including Overview, Devices & setup, Automation, Diagnostics, and Settings; choosing a device continues to use the existing authoritative device-context command.
+- Curve Editor graph surfaces, canvas, grid, reference traces, labels, and point-edit markers now resolve from Flight Deck Light/Dark semantic tokens. Dark mode retains its instrument treatment while Light mode receives a high-contrast technical graph surface.
+- The native tray menu now has dedicated Flight Deck Light and Dark palettes and refreshes when either the Flight Deck experience or its appearance changes. Legacy, Standard, Top Gun, and Day Ops tray treatments remain independent.
+- Hosted QML lifecycle coverage verifies selector visibility across every Flight Deck route; source contracts protect the light-aware graph tokens and tray-theme routing.
 
 ## v2.5.2 — Adaptive response authority overhaul (candidate)
 
