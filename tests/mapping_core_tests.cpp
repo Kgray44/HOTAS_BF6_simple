@@ -796,6 +796,7 @@ private slots:
     void v24MigrationResolvesPreferredSavedController();
     void v24MigrationPreservesOfflineSavedController();
     void v24MigrationRefusesAmbiguousLegacyController();
+    void v24MigrationNoticeIsOneLaunchOnly();
     void deviceRigRuntimeCompilesDistinctInputsAndOutputs();
     void deviceRigRuntimeRejectsAmbiguousAxisDestination();
     void deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput();
@@ -3559,6 +3560,31 @@ void MappingCoreTests::v24MigrationRefusesAmbiguousLegacyController()
     QVERIFY(valid);
     QVERIFY(migrated.deviceRigs.empty());
     QVERIFY(!migrated.deviceRigMigrationWarning.isEmpty());
+}
+
+void MappingCoreTests::v24MigrationNoticeIsOneLaunchOnly()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord first = legacyMigrationRecord(QStringLiteral("first"),
+        QStringLiteral("{AMBIGUOUS-INSTANCE}"), false);
+    SavedControllerRecord second = legacyMigrationRecord(QStringLiteral("second"),
+        QStringLiteral("{AMBIGUOUS-INSTANCE}"), false);
+    configuration.savedControllers = {first, second};
+    configuration.preferredDeviceId = first.lastDirectInputId;
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(v23BeforeDeviceRigSchema(configuration), &valid);
+    QVERIFY(valid);
+    QVERIFY(migrated.deviceRigs.empty());
+    QVERIFY(!migrated.deviceRigMigrationWarning.isEmpty());
+    const QJsonObject persisted = ConfigStore::toJson(migrated);
+    QVERIFY(!persisted.contains(QStringLiteral("deviceRigMigrationWarning")));
+
+    const MapperConfiguration reopened = ConfigStore::fromJson(persisted, &valid);
+    QVERIFY(valid);
+    QCOMPARE(static_cast<int>(reopened.savedControllers.size()), 2);
+    QVERIFY(reopened.deviceRigs.empty());
+    QVERIFY(reopened.deviceRigMigrationWarning.isEmpty());
 }
 
 void MappingCoreTests::deviceRigRuntimeCompilesDistinctInputsAndOutputs()

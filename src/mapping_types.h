@@ -812,6 +812,9 @@ struct MapperConfiguration {
     // continuity across pages but never consulted by MappingWorker activation.
     QString editingDeviceRigId;
     QStringList editingDeviceRecordIds;
+    // One-launch migration notice. It is deliberately runtime-only: preserving
+    // legacy data is durable configuration, while explaining the migration is
+    // an event that must not reappear on every later Devices visit.
     QString deviceRigMigrationWarning;
     bool autoSwitchVerifiedController = true;
     bool keepRunningInTray = true;

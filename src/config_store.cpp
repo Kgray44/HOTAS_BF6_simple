@@ -1593,7 +1593,6 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"activeDeviceRigId"_qs, configuration.activeDeviceRigId},
         {u"editingDeviceRigId"_qs, configuration.editingDeviceRigId},
         {u"editingDeviceRecordIds"_qs, editingDeviceRecordIds},
-        {u"deviceRigMigrationWarning"_qs, configuration.deviceRigMigrationWarning},
         {u"autoSwitchVerifiedController"_qs, configuration.autoSwitchVerifiedController},
         {u"keepRunningInTray"_qs, configuration.keepRunningInTray},
         {u"vjoyDeviceId"_qs, configuration.vjoyDeviceId},
@@ -2077,8 +2076,10 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             editingIds.insert(recordId);
             configuration.editingDeviceRecordIds.append(recordId);
         }
-        configuration.deviceRigMigrationWarning = json.value(u"deviceRigMigrationWarning"_qs)
-            .toString().trimmed().left(256);
+        // Older V2.4 builds accidentally persisted this display-only migration
+        // event. Do not restore it: migration evidence remains in the saved
+        // data and event log, but an old warning is not an active condition.
+        configuration.deviceRigMigrationWarning.clear();
         for (const ControllerProfile &profile : configuration.profiles) {
             if (!profile.deviceRigId.isEmpty() && !rigIds.contains(profile.deviceRigId)) {
                 if (valid) *valid = false;

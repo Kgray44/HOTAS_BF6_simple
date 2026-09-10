@@ -56,13 +56,25 @@ Item {
         detailsExpanded = true
     }
     function showActionResult(result) {
+        actionResultDismissTimer.stop()
         actionResult = result || ({ success: false, title: "Action did not complete", message: "Try checking setup again." })
+        if (!actionResult.inProgress && !actionResult.persistent)
+            actionResultDismissTimer.restart()
+    }
+    function clearCompletedProgress() {
+        if (actionResult && actionResult.inProgress
+                && (!backendObject || !backendObject.controllerSetupInProgress))
+            actionResult = ({})
     }
     function performPrimaryAction() {
         if (!backendObject) return
         const action = summary.primaryAction || "check-again"
         if (action === "done") { closeRequested(); return }
         if (action === "hide-from-games") { fixConfirmation.open(); return }
+        if (action === "set-up-device") {
+            showActionResult(backendObject.completeSetupAssistantDevice(primaryIssue.affectedObjectId || summary.scopeId || ""))
+            return
+        }
         if (action === "start-live-test") { showActionResult(backendObject.startSetupAssistantLiveTest()); detailsExpanded = true; return }
         if (action === "start-calibration") { calibrationRequested(); return }
         if (action === "setup-vjoy" || action === "reconfigure-output") {
@@ -107,6 +119,19 @@ Item {
             }
         }
         if (steps.length > 0 && focusedStepId === "") focusedStepId = steps[0].id
+    }
+    onSummaryChanged: clearCompletedProgress()
+
+    Connections {
+        target: root.backendObject
+        function onStateChanged() { root.clearCompletedProgress() }
+    }
+
+    Timer {
+        id: actionResultDismissTimer
+        interval: 5000
+        repeat: false
+        onTriggered: root.actionResult = ({})
     }
 
     Timer {

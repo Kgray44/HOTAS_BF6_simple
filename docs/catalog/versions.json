@@ -571,5 +571,17 @@
       "Day Ops is a persisted fourth presentation system with carrier-deck gray/aluminum surfaces, dark navy technical text, steel framing, safety-orange controls, and dark instrumentation insets. It preserves geometry and never affects mapper behavior.",
       "Crash Reporter & Recovery Diagnostics keeps fatal evidence local: bounded recent control-plane context, metadata, and a Windows minidump where possible are handed to a small external reporter with copy, folder, and user-initiated restart actions. A session marker identifies abnormal exits that could not finish reporting; no data is uploaded automatically."
     ]
+  },
+  {
+    "version": "2.4.1",
+    "title": "Device setup reliability",
+    "summary": "Makes saved-controller setup deterministic and diagnosable when a known HOTAS is present but DirectInput acquisition cannot complete.",
+    "highlights": [
+      "Guided setup now requests acquisition of the exact saved controller before it begins verification, rather than treating device discovery alone as a completed connection.",
+      "If acquisition fails, the Setup Assistant preserves the specific failure, clears pending verification safely, and presents an explicit retry action instead of silently returning to the same setup screen.",
+      "Controller-readiness reporting separates saved identity, discovery, acquisition, verification, virtual-output, visibility, and live-route conditions so the Devices workspace identifies the actionable blocker.",
+      "The Device Rigs workspace keeps its constrained full-page layout, per-object visibility actions, transient feedback lifecycle, and setup-state transitions covered by focused QML and backend contract tests.",
+      "The mapping worker and DirectInput-to-vJoy report path are unchanged; the synthetic benchmark continues to report zero hot-path allocations."
+    ]
   }
 ]

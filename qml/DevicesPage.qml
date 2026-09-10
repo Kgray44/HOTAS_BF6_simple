@@ -51,6 +51,11 @@ Page {
     function showActionFeedback(result, fallbackTitle, fallbackMessage) {
         actionFeedbackDismissTimer.stop()
         actionFeedback = result && result.title ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage })
+        // Action banners are acknowledgements, not another health surface.
+        // Persistent remediation belongs in Setup Health, where it has a
+        // concrete cause and next step.
+        if (!actionFeedback.inProgress && !actionFeedback.persistent)
+            actionFeedbackDismissTimer.restart()
         return actionFeedback
     }
     function showTransientActionFeedback(result, fallbackTitle, fallbackMessage, durationMs) {
@@ -146,7 +151,9 @@ Page {
     }
     function requestVerification(rigId, deviceId, outputId) {
         if (rigDetailsActions.visible) rigDetailsActions.close()
-        showTransientActionFeedback({ success: true, inProgress: true, title: "Checking setup", message: "Opening the Setup Assistant…" }, "", "", 1200)
+        // Opening the assistant is a short transition. The assistant owns
+        // real verification progress, so this page cannot retain stale state.
+        showTransientActionFeedback({ success: true, title: "Opening Setup Assistant", message: "HOTAS BF6 will check the selected setup there." }, "", "", 1200)
         verificationRequested(rigId || selectedRigId, deviceId || "", outputId || "")
     }
     function openStandaloneOutputCreator() {
@@ -241,16 +248,35 @@ Page {
         objectName: "devicesScroll"
         anchors.fill: parent
         clip: true
-        contentWidth: root.width
+        property var contentLayout: null
+        onWidthChanged: if (rigDetailsActions.visible) rigDetailsActions.deferReposition()
+        onHeightChanged: if (rigDetailsActions.visible) rigDetailsActions.deferReposition()
+        // Track the completed ColumnLayout rather than a guessed page height.
+        // Member/output changes and resizes must extend the actual Flickable.
+        contentWidth: width
+        // Reserve a small end gutter as well as the measured layout height.
+        // ScrollView's viewport can be a few pixels shorter than its control
+        // during scrollbar/layout transitions; without this gutter the final
+        // card's controls can land just below the reachable edge.
+        contentHeight: contentLayout ? contentLayout.measuredHeight + 20 : 0
 
         ColumnLayout {
             objectName: "devicesContent"
-            // Page is the authoritative viewport. ScrollView's availableWidth
-            // can momentarily retain the old shell width while the page host
-            // applies its margins during a resize, making rig cards extend
-            // horizontally past the actual Devices page.
-            width: root.width
+            property real measuredHeight: 0
+            function refreshMeasuredHeight() {
+                measuredHeight = Math.max(implicitHeight, childrenRect.height)
+            }
+            Component.onCompleted: {
+                devicesScroll.contentLayout = this
+                refreshMeasuredHeight()
+            }
+            Component.onDestruction: if (devicesScroll.contentLayout === this) devicesScroll.contentLayout = null
+            // Use the stable viewport width; availableWidth can change while
+            // the vertical scrollbar is resolving measured content height.
+            width: devicesScroll.width
             spacing: 16
+            onChildrenRectChanged: refreshMeasuredHeight()
+            onImplicitHeightChanged: refreshMeasuredHeight()
 
             RowLayout {
                 Layout.fillWidth: true
@@ -510,7 +536,15 @@ Page {
                                 objectName: "rigDetailsOverflowButton"
                                 theme: themeTokens; tone: "secondary"; compact: true
                                 visible: selectedRig; text: "…"
-                                onTriggered: rigDetailsActions.visible ? rigDetailsActions.close() : rigDetailsActions.open()
+                                onTriggered: {
+                                    if (rigDetailsActions.visible) rigDetailsActions.close()
+                                    else {
+                                        rigDetailsActions.open()
+                                        Qt.callLater(function() {
+                                            if (rigDetailsActions.visible) rigDetailsActions.reposition()
+                                        })
+                                    }
+                                }
                             }
                         }
                         Text {
@@ -528,6 +562,7 @@ Page {
                                 objectName: "rigMemberCard"
                                 property string memberId: modelData.id
                                 property alias editControl: editThisControl
+                                property alias visibilityControl: memberVisibilityControl
                                 property bool editingTarget: !!modelData.editing
                                 theme: root.themeTokens; legacy: root.legacy
                                 Layout.fillWidth: true; implicitHeight: memberCardContent.implicitHeight + 22; radius: root.legacy ? 4 : themeTokens.controlRadius
@@ -581,6 +616,8 @@ Page {
                                             font.pixelSize: 10; font.bold: true; elide: Text.ElideRight
                                         }
                                         ThemedButton {
+                                            id: memberVisibilityControl
+                                            objectName: "memberVisibilityButton"
                                             theme: themeTokens; compact: true; tone: "secondary"
                                             text: modelData.hiddenFromGames ? "SHOW" : "HIDE"
                                             commandEnabled: !!modelData.enabled
@@ -645,31 +682,6 @@ Page {
                             visible: selectedRig !== null; Layout.fillWidth: true; spacing: 8
                             ThemedButton { objectName: "addInputToRigButton"; theme: themeTokens; text: "+ ADD INPUT DEVICE"; tone: "secondary"; onTriggered: addMemberDialog.open() }
                             Item { Layout.fillWidth: true }
-                        }
-                        DevicePanel {
-                            visible: selectedRig !== null
-                            theme: root.themeTokens; legacy: root.legacy
-                            Layout.fillWidth: true
-                            implicitHeight: visibilityActionsContent.implicitHeight + 22
-                            color: root.legacy ? "#e9161d23" : themeTokens.panelRaised
-                            ColumnLayout {
-                                id: visibilityActionsContent
-                                anchors.fill: parent; anchors.margins: 10; spacing: 8
-                                SmallLabel { text: "GAME VISIBILITY" }
-                                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
-                                    text: "Games should normally see the active virtual controller instead of each physical controller. HOTAS BF6 checks the selected devices before changing visibility." }
-                                Flow {
-                                    Layout.fillWidth: true; spacing: 8
-                                    ThemedButton { objectName: "hideAllInputsButton"; theme: themeTokens; compact: true; text: "HIDE ALL INPUTS"; tone: "secondary"
-                                        onTriggered: if (selectedRig) visibilityConfirmationDialog.openForInputs(selectedRig.id, selectedRig.members.filter(function(item) { return item.enabled }).map(function(item) { return item.id }), true) }
-                                    ThemedButton { theme: themeTokens; compact: true; text: "SHOW ALL INPUTS"; tone: "secondary"
-                                        onTriggered: if (selectedRig) visibilityConfirmationDialog.openForInputs(selectedRig.id, selectedRig.members.filter(function(item) { return item.enabled }).map(function(item) { return item.id }), false) }
-                                    ThemedButton { theme: themeTokens; compact: true; text: "SHOW ACTIVE OUTPUTS"; tone: "secondary"
-                                        onTriggered: if (selectedRig) visibilityConfirmationDialog.openForOutputs(selectedRig.id, selectedRig.outputs.filter(function(item) { return item.enabled }).map(function(item) { return item.id }), true) }
-                                    ThemedButton { theme: themeTokens; compact: true; text: "HIDE INACTIVE OUTPUTS"; tone: "secondary"
-                                        onTriggered: if (selectedRig) visibilityConfirmationDialog.openForOutputs(selectedRig.id, selectedRig.outputs.filter(function(item) { return !item.enabled }).map(function(item) { return item.id }), false) }
-                                }
-                            }
                         }
                         Text {
                             visible: selectedRig !== null; Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -825,29 +837,58 @@ Page {
         }
     }
 
+    // A menu popup is intentionally non-modal, but its dismiss layer owns an
+    // outside click.  Qt's CloseOnPressOutside runs before the ellipsis
+    // receives its press, which otherwise turns a close click into a reopen.
+    // Keeping this layer beneath the popup makes a trigger click and every
+    // other outside click close exactly once, while menu actions remain live.
+    MouseArea {
+        id: rigDetailsActionsDismissArea
+        objectName: "rigDetailsActionsDismissArea"
+        parent: root
+        anchors.fill: parent
+        visible: rigDetailsActions.visible
+        z: 100
+        onClicked: rigDetailsActions.close()
+    }
+
     Popup {
         id: rigDetailsActions
         objectName: "rigDetailsActionsPopup"
-        parent: Overlay.overlay
+        parent: root
+        z: 101
+        focus: true
         width: 210; padding: 8
-        // Popup coordinates belong to the application overlay, not the page.
-        // Map from the actual trigger so scroll position, side navigation, and
-        // a resized window can never detach this menu from its ellipsis.
-        x: {
-            if (!rigDetailsOverflowButton || !parent) return 8
-            const point = rigDetailsOverflowButton.mapToItem(parent,
-                                                               rigDetailsOverflowButton.width - width,
-                                                               rigDetailsOverflowButton.height + 6)
-            return Math.max(8, Math.min(parent.width - width - 8, point.x))
+        // The popup and dismiss layer are page children rather than Flickable
+        // content, so controls stay interactable while the page scrolls.
+        function reposition() {
+            const contentFlickable = devicesScroll ? devicesScroll.contentItem : null
+            if (!rigDetailsOverflowButton || !parent || !contentFlickable) return
+            const rootOrigin = root.mapToGlobal(0, 0)
+            const trailingEdge = rigDetailsOverflowButton.mapToGlobal(
+                rigDetailsOverflowButton.width, 0).x - rootOrigin.x
+            x = Math.max(8, Math.min(parent.width - width - 8, trailingEdge - width))
+            const below = rigDetailsOverflowButton.mapToGlobal(0,
+                rigDetailsOverflowButton.height + 6).y - rootOrigin.y
+            const above = rigDetailsOverflowButton.mapToGlobal(0, -height - 6).y - rootOrigin.y
+            y = below + height <= parent.height - 8 ? below : Math.max(8, above)
         }
-        y: {
-            if (!rigDetailsOverflowButton || !parent) return 8
-            const below = rigDetailsOverflowButton.mapToItem(parent, 0,
-                                                              rigDetailsOverflowButton.height + 6).y
-            const above = rigDetailsOverflowButton.mapToItem(parent, 0, -height - 6).y
-            return below + height <= parent.height - 8 ? below : Math.max(8, above)
+        function deferReposition() {
+            Qt.callLater(function() {
+                if (rigDetailsActions.visible) rigDetailsActions.reposition()
+            })
         }
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: deferReposition()
+        // A Popup lives outside Flickable layout. While it is open, refresh
+        // its anchor through live resize and scroll settling; this timer is
+        // UI-only and stops as soon as the small overflow menu closes.
+        Timer {
+            interval: 10
+            repeat: true
+            running: rigDetailsActions.visible
+            onTriggered: rigDetailsActions.reposition()
+        }
+        closePolicy: Popup.CloseOnEscape
         // The overflow is part of the Devices presentation system, not a
         // generic Qt popup.  In particular, Legacy needs the same layered
         // surface construction as its established cards and dialogs.

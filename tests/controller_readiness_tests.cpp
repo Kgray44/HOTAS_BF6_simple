@@ -468,9 +468,12 @@ void ControllerReadinessTests::externalVJoyConflictRequiresAction()
     vjoy.busy = true;
     const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
         connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
-    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Error);
-    QCOMPARE(plan.state, ControllerReadinessState::NeedsChanges);
+    QVERIFY(!plan.vjoyNeedsChanges);
+    QVERIFY(!plan.vjoyCanApply);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Attention);
+    QCOMPARE(plan.state, ControllerReadinessState::Attention);
     QVERIFY(plan.vjoySummary.contains(QStringLiteral("another application")));
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("capabilities are correct")));
 }
 
 void ControllerReadinessTests::passiveIdentityGapIsAttentionNotFailure()
