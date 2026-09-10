@@ -595,5 +595,17 @@
       "Input Learning, Quick Map, native selectors, portability, setup and repair explanations, diagnostics, and Adaptive Response all reuse their existing control-plane contracts. No controller migration or mapper hot-path behavior changes.",
       "Qualification includes native Light and Dark review, width and height containment fixtures, Qt 125% and 150% scale checks, full CTest coverage, staged package smoke, and a zero-allocation synthetic mapper benchmark; external hardware and installer acceptance retain their explicit evidence boundaries."
     ]
+  },
+  {
+    "version": "2.5.1",
+    "title": "Flight Deck hardening and runtime bundle repair",
+    "summary": "Refines Flight Deck's shared navigation and device context while correcting the Windows package runtime needed to initialize the Qt platform plugin outside a developer shell.",
+    "highlights": [
+      "Flight Deck now owns one shared page title and shared Controller and Appearance controls on every primary page. Controller routes to Devices & setup; Appearance toggles the existing Light/Dark appearance authority.",
+      "Selected Device is a persistent canonical viewing and editing context across device-aware Flight Deck pages. It distinguishes the inspected device from global Controller readiness and does not activate a rig merely by selection.",
+      "Curve Editor is positioned beside Axes and uses the Flight Deck surface hierarchy while retaining the existing graph and curve configuration behavior. Profiles use a compact category-and-profile library with a detail pane rather than a large category-card stack.",
+      "Adaptive Response identifies Selected Device, profile, and axis in that order; keeps independent multi-select trace controls with the graph; and separates configured preset limits from awaiting-input live telemetry. Predictor mathematics and curve mathematics are unchanged.",
+      "Release staging now verifies and includes the x64 Microsoft C++ runtime DLLs required by the Qt 6.8.3 Windows platform plugin, preventing developer-environment PATH from masking a missing package dependency."
+    ]
   }
 ]

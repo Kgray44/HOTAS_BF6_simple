@@ -462,13 +462,6 @@ Flickable {
             Layout.fillWidth: true
             spacing: deck.space4
             Text {
-                text: "SETTINGS"
-                color: deck.textPrimary
-                font.family: deck.displayFont
-                font.pixelSize: 25
-                font.bold: true
-            }
-            Text {
                 text: "Application preferences and presentation. Controller configuration stays in its dedicated workspaces."
                 color: deck.textSecondary
                 font.pixelSize: 11

@@ -182,13 +182,6 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space4
                 Text {
-                    text: "Devices"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: root.wide ? 30 : 25
-                    font.bold: true
-                }
-                Text {
                     text: "See what is connected, what needs attention, and the real next step."
                     color: deck.textSecondary
                     font.pixelSize: 12

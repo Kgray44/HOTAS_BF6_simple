@@ -113,6 +113,8 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckSurface.qml
         qml/FlightDeckCard.qml
         qml/FlightDeckNavItem.qml
+        qml/FlightDeckHeaderPill.qml
+        qml/FlightDeckSelectedDeviceSelector.qml
         qml/FlightDeckStatusChip.qml
         qml/FlightDeckReadiness.qml
         qml/FlightDeckHealthCard.qml
@@ -210,6 +212,8 @@ endif()
 add_library(hotas_launcher_core STATIC
     launcher/launcher_core.cpp
     launcher/launcher_core.h
+    launcher/update_transaction.cpp
+    launcher/update_transaction.h
 )
 target_compile_features(hotas_launcher_core PUBLIC cxx_std_20)
 target_include_directories(hotas_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/launcher")
@@ -222,6 +226,8 @@ target_compile_definitions(hotas_launcher_core PRIVATE NOMINMAX WIN32_LEAN_AND_M
 add_library(hotas_update_core STATIC
     launcher/launcher_core.cpp
     launcher/launcher_core.h
+    launcher/update_transaction.cpp
+    launcher/update_transaction.h
 )
 target_compile_features(hotas_update_core PUBLIC cxx_std_20)
 target_include_directories(hotas_update_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/launcher")
@@ -419,6 +425,17 @@ if (BUILD_TESTING)
     if (WIN32)
         set_tests_properties(widgets_startup_contract_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+
+    # Keep the Flight Deck type contract observable under every Qt runtime we
+    # build and package.  This probe is deliberately outside the mapper path:
+    # it characterizes the fonts Qt Quick and Qt Quick Controls actually use.
+    qt_add_executable(font_resolution_probe tests/font_resolution_probe.cpp)
+    target_link_libraries(font_resolution_probe PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Widgets)
+    add_test(NAME font_resolution_contract COMMAND font_resolution_probe --verify-flight-deck-contract)
+    set_tests_properties(font_resolution_contract PROPERTIES
+        # Font resolution must use the native Windows font backend.  The
+        # offscreen plugin intentionally has no installed-font database.
+        ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(upgrade_configuration_fixture
@@ -507,6 +524,8 @@ if (BUILD_TESTING)
             qml/FlightDeckSurface.qml
             qml/FlightDeckCard.qml
             qml/FlightDeckNavItem.qml
+            qml/FlightDeckHeaderPill.qml
+            qml/FlightDeckSelectedDeviceSelector.qml
             qml/FlightDeckStatusChip.qml
             qml/FlightDeckReadiness.qml
             qml/FlightDeckHealthCard.qml

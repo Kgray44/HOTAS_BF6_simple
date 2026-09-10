@@ -1059,13 +1059,6 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: 2
                 Text {
-                    text: "Buttons"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: 24
-                    font.bold: true
-                }
-                Text {
                     text: inputDeviceName + " · " + assignedButtonCount() + " assigned of " + buttonItems.length + " controls"
                     color: deck.textMuted
                     font.family: deck.telemetryFont

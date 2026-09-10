@@ -3077,6 +3077,11 @@ QVariantList AppBackend::editingDevices() const
     return result;
 }
 
+QString AppBackend::selectedDeviceRigId() const { return editingDeviceRigId(); }
+QString AppBackend::selectedDeviceRigName() const { return editingDeviceRigName(); }
+QString AppBackend::selectedDeviceLabel() const { return editingScopeLabel(); }
+QVariantList AppBackend::selectedDevices() const { return editingDevices(); }
+
 QString AppBackend::deviceRigMigrationWarning() const { return m_configuration.deviceRigMigrationWarning; }
 QString AppBackend::deviceRigDetectionMessage() const { return m_deviceRigDetectionMessage; }
 
@@ -3959,6 +3964,12 @@ bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList
     emit buttonTelemetryChanged();
     emit deviceRigsChanged();
     return true;
+}
+
+bool AppBackend::setSelectedDeviceContext(const QString &rigId,
+                                          const QStringList &controllerRecordIds)
+{
+    return setEditingDeviceContext(rigId, controllerRecordIds);
 }
 
 bool AppBackend::focusIssueTarget(const QString &objectType, const QString &objectId)

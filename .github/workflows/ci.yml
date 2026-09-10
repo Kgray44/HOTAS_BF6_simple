@@ -17,15 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify qualified toolchain alignment
+        shell: pwsh
+        run: .\scripts\verify-toolchain-consistency.ps1
+
       - name: Verify generated documentation is synchronized
         shell: pwsh
         run: .\scripts\sync-documentation.ps1 -Check
 
-      - name: Install Qt 6.5.3
+      - name: Install qualified Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'
-          arch: 'win64_msvc2019_64'
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
 
       - name: Locate Qt tools
         shell: pwsh
@@ -43,20 +47,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $nativeErrorPreference = $PSNativeCommandUseErrorActionPreference
-          $PSNativeCommandUseErrorActionPreference = $false
-          try {
-            $output = Get-ChildItem -LiteralPath "$PWD\qml" -Filter '*.qml' | ForEach-Object {
-              & $env:QMLLINT $_.FullName 2>&1 | Out-String
-            } | Out-String
-          } finally {
-            $PSNativeCommandUseErrorActionPreference = $nativeErrorPreference
+          foreach ($qml in Get-ChildItem -LiteralPath "$PWD\qml" -Filter '*.qml') {
+            Write-Host "Linting $($qml.Name)"
+            & $env:QMLLINT $qml.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "qmllint failed for $($qml.Name) with exit code $LASTEXITCODE."
+            }
           }
-          Write-Host $output
-          if ($output -match '(?im)\berror:|syntax error|parse error') {
-            throw 'qmllint reported a QML syntax or tool error.'
-          }
-          exit 0 # Qt 6.5 uses a non-zero exit code for advisory warnings.
 
       - name: Enable matching MSVC x64 toolchain
         uses: ilammy/msvc-dev-cmd@v1

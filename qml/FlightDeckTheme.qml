@@ -7,7 +7,11 @@ QtObject {
     id: tokens
 
     readonly property bool light: themeManager.flightDeckAppearance === "Light"
-    readonly property string displayFont: "Segoe UI Variable"
+    // "Segoe UI Variable" is not a stable umbrella family across the Qt
+    // runtimes we support.  Keep Flight Deck's human-facing font exact and
+    // reserve the technical face for dense diagnostic data only.
+    readonly property string displayFont: "Segoe UI"
+    readonly property string bodyFont: displayFont
     readonly property string telemetryFont: "Consolas"
 
     readonly property int space4: 4
@@ -66,6 +70,55 @@ QtObject {
     readonly property color disabled: light ? "#a9b7c2" : "#49626f"
     readonly property color selected: light ? "#d7eff7" : "#174656"
     readonly property color focus: light ? "#126b8d" : "#78d8ed"
+
+    // Compatibility aliases let the established Curve Editor render inside
+    // Flight Deck without falling back to undefined legacy tokens. They are
+    // presentation-only mappings; curve data and mathematics stay untouched.
+    readonly property bool topGun: false
+    readonly property bool dayOps: false
+    readonly property bool legacy: false
+    readonly property color background: primarySurface
+    readonly property color borderStrong: focus
+    readonly property color buttonHover: selected
+    readonly property color buttonSecondary: secondarySurface
+    readonly property color buttonSecondaryHover: selected
+    readonly property color buttonSurface: accent
+    readonly property color control: secondarySurface
+    readonly property color controlDisabled: disabled
+    readonly property color controlPressed: accentMuted
+    readonly property int controlRadius: radiusControl
+    readonly property color curveDangerBorder: fault
+    readonly property color curveDangerSurface: secondarySurface
+    readonly property color curveDialogBorder: border
+    readonly property color curveDialogSurface: elevatedSurface
+    readonly property color curveMenuBorder: border
+    readonly property color curveMenuSurface: elevatedSurface
+    readonly property color curvePanelSurface: elevatedSurface
+    readonly property color cyan: accent
+    readonly property color danger: fault
+    readonly property color destructive: fault
+    readonly property color graphBackground: "#0a141c"
+    readonly property color graphFrame: light ? "#567182" : "#315064"
+    readonly property color graphGrid: light ? "#344b59" : "#315064"
+    readonly property color graphInput: textMuted
+    readonly property color graphLabel: textSecondary
+    readonly property color graphOutput: healthy
+    readonly property color graphPanelGradientTop: graphBackground
+    readonly property color graphPanelGradientMiddle: graphBackground
+    readonly property color graphPanelGradientBottom: graphBackground
+    readonly property color graphPreview: attention
+    readonly property color graphZero: textMuted
+    readonly property color ivory: textPrimary
+    readonly property color orange: accent
+    readonly property color orangeBright: accent
+    readonly property color panelInset: secondarySurface
+    readonly property color ready: healthy
+    readonly property color selection: selected
+    readonly property color text: textPrimary
+    readonly property color textFaint: disabled
+    readonly property color textStrong: textPrimary
+    readonly property color tooltip: elevatedSurface
+    readonly property color warning: attention
 
     function statusColor(tone) {
         if (tone === "healthy")

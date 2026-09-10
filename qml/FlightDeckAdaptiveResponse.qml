@@ -138,10 +138,16 @@ Flickable {
     }
 
     function runtimeSourceSummary() {
-        const globalLayer = runtimeState.global || ({});
-        const categoryLayer = runtimeState.categoryLayer || ({});
-        const profileLayer = runtimeState.profileLayer || ({});
-        return "Built-in default  →  Global: " + (globalLayer.source || "Application default") + "  →  Category: " + (categoryLayer.source || "Inherited") + "  →  Profile: " + (profileLayer.source || "Inherited") + "  →  Automation: " + runtimeAutomationText() + "  →  Effective runtime";
+        const source = String(scopeInfo().source || scopeInfo().presetId || "the inherited response")
+        const automation = runtimeAutomationText()
+        return "Using " + source + " for this selection. "
+            + (automation === "None" ? "No Automation response override is active."
+                : automation + ".")
+    }
+
+    function liveInputAvailable() {
+        return !!backendObject.physicalConnected
+            && Number(backendObject.lastPhysicalUpdateAgeMs) >= 0
     }
 
     function propertyMask(key) {
@@ -1224,7 +1230,7 @@ Flickable {
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-                text: control.text
+                text: (control.checked ? "✓  " : "") + control.text
                 color: control.checked ? deck.textPrimary : deck.textMuted
                 font.family: deck.telemetryFont
                 font.pixelSize: 8
@@ -1234,9 +1240,10 @@ Flickable {
         background: Rectangle {
             radius: deck.radiusPill
             color: control.checked ? deck.selected : deck.secondarySurface
-            border.color: control.activeFocus ? deck.focus : deck.border
+            border.color: control.activeFocus ? deck.focus : control.checked ? control.tone : deck.border
             border.width: control.activeFocus ? 2 : 1
         }
+        Accessible.name: (checked ? "Hide " : "Show ") + text + " trace"
     }
 
     component InstrumentGraph: Canvas {
@@ -1685,11 +1692,8 @@ Flickable {
                     width: parent.width
                     ColumnLayout {
                         Layout.fillWidth: true
-                        SectionLabel {
-                            textValue: "FLIGHT DECK · ADAPTIVE RESPONSE"
-                        }
                         Text {
-                            text: "Predictive response, made legible"
+                            text: "Configured response"
                             color: deck.textPrimary
                             font.pixelSize: 25
                             font.bold: true
@@ -1697,7 +1701,7 @@ Flickable {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: "Choose a response in seconds. Continue into tuning and analysis only when you need it."
+                            text: "Select a device, profile, and axis, then review the configured limits and response preview."
                             color: deck.textSecondary
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
@@ -1726,43 +1730,6 @@ Flickable {
                                 font.pixelSize: 8
                             }
                         }
-                    }
-                }
-                Flow {
-                    width: parent.width
-                    spacing: deck.space8
-                    Component.onCompleted: forceLayout()
-                    onWidthChanged: forceLayout()
-                    SectionLabel {
-                        textValue: "STATIC TRACES"
-                    }
-                    TraceLegend {
-                        objectName: "flightDeckStaticTracePhysical"
-                        text: "PHYSICAL"
-                        tone: deck.textMuted
-                        checked: root.showPhysicalTrace
-                        onClicked: root.showPhysicalTrace = checked
-                    }
-                    TraceLegend {
-                        objectName: "flightDeckStaticTracePredicted"
-                        text: "PREDICTED MAPPED"
-                        tone: deck.attention
-                        checked: root.showPredictedTrace
-                        onClicked: root.showPredictedTrace = checked
-                    }
-                    TraceLegend {
-                        objectName: "flightDeckStaticTraceOutput"
-                        text: "FINAL OUTPUT"
-                        tone: deck.healthy
-                        checked: root.showOutputTrace
-                        onClicked: root.showOutputTrace = checked
-                    }
-                    TraceLegend {
-                        objectName: "flightDeckStaticTraceBaseline"
-                        text: "BASELINE"
-                        tone: deck.informational
-                        checked: root.showBaselineTrace
-                        onClicked: root.showBaselineTrace = checked
                     }
                 }
                 Rectangle {
@@ -1822,7 +1789,7 @@ Flickable {
                 anchors.margins: deck.space12
                 spacing: deck.space8
                 SectionLabel {
-                    textValue: "EDITING CONTEXT"
+                            textValue: "SELECTED DEVICE CONTEXT"
                 }
                 Flow {
                     objectName: "adaptiveContextSelectors"
@@ -1832,11 +1799,75 @@ Flickable {
                     Component.onCompleted: forceLayout()
                     onWidthChanged: forceLayout()
                     Column {
+                        objectName: "adaptiveSelectedDeviceContext"
+                        width: Math.max(180, Math.min(260, (parent.width - deck.space24) / 3))
+                        spacing: 4
+                        SectionLabel { textValue: "SELECTED DEVICE" }
+                        Rectangle {
+                            width: parent.width
+                            height: deck.controlHeight
+                            radius: deck.radiusControl
+                            color: deck.primarySurface
+                            border.color: deck.border
+                            Text {
+                                anchors.fill: parent
+                                anchors.leftMargin: deck.space12
+                                anchors.rightMargin: deck.space12
+                                text: backendObject.selectedDeviceLabel
+                                color: deck.textPrimary
+                                font.family: deck.bodyFont
+                                font.pixelSize: 10
+                                font.bold: true
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+                    Column {
+                        objectName: "adaptiveContextTarget"
+                        width: Math.max(180, Math.min(300, (parent.width - deck.space24) / 3))
+                        spacing: 4
+                        SectionLabel {
+                            textValue: root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : root.editScope === "global" ? "PROFILE SOURCE" : "PROFILE"
+                        }
+                        DeckCombo {
+                            objectName: "adaptiveTargetSelector"
+                            width: parent.width
+                            model: root.targetChoices()
+                            textRole: "label"
+                            valueRole: "id"
+                            currentIndex: root.targetIndex()
+                            onChoiceActivated: function (index, value) {
+                                root.targetId = String(value);
+                                root.setPreview();
+                                popup.close();
+                            }
+                        }
+                    }
+                    Column {
+                        objectName: "adaptiveContextAxis"
+                        width: Math.max(160, Math.min(240, (parent.width - deck.space24) / 3))
+                        spacing: 4
+                        SectionLabel { textValue: "AXIS" }
+                        DeckCombo {
+                            objectName: "adaptiveAxisSelector"
+                            width: parent.width
+                            model: backendObject.axes
+                            textRole: "label"
+                            valueRole: "index"
+                            currentIndex: root.axisModelIndex(backendObject.selectedAxisIndex)
+                            onChoiceActivated: function (index, value) {
+                                root.selectAxisModelIndex(index);
+                                popup.close();
+                            }
+                        }
+                    }
+                    Column {
                         objectName: "adaptiveContextLevel"
                         width: Math.max(180, Math.min(240, (parent.width - deck.space24) / 3))
                         spacing: 4
                         SectionLabel {
-                            textValue: "LEVEL"
+                            textValue: "CONFIGURATION LAYER"
                         }
                         DeckCombo {
                             objectName: "adaptiveEditScopeSelector"
@@ -1866,46 +1897,6 @@ Flickable {
                                 root.editScope = String(value);
                                 root.targetId = "";
                                 root.setPreview();
-                                popup.close();
-                            }
-                        }
-                    }
-                    Column {
-                        objectName: "adaptiveContextTarget"
-                        width: Math.max(180, Math.min(300, (parent.width - deck.space24) / 3))
-                        spacing: 4
-                        SectionLabel {
-                            textValue: root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : root.editScope === "global" ? "DEFAULT TARGET" : "PROFILE"
-                        }
-                        DeckCombo {
-                            objectName: "adaptiveTargetSelector"
-                            width: parent.width
-                            model: root.targetChoices()
-                            textRole: "label"
-                            valueRole: "id"
-                            currentIndex: root.targetIndex()
-                            onChoiceActivated: function (index, value) {
-                                root.targetId = String(value);
-                                root.setPreview();
-                                popup.close();
-                            }
-                        }
-                    }
-                    Column {
-                        width: Math.max(160, Math.min(240, (parent.width - deck.space24) / 3))
-                        spacing: 4
-                        SectionLabel {
-                            textValue: "AXIS"
-                        }
-                        DeckCombo {
-                            objectName: "adaptiveAxisSelector"
-                            width: parent.width
-                            model: backendObject.axes
-                            textRole: "label"
-                            valueRole: "index"
-                            currentIndex: root.axisModelIndex(backendObject.selectedAxisIndex)
-                            onChoiceActivated: function (index, value) {
-                                root.selectAxisModelIndex(index);
                                 popup.close();
                             }
                         }
@@ -1949,17 +1940,17 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         SectionLabel {
-                            textValue: "BASIC RESPONSE"
+                            textValue: "BASIC RESPONSE · CONFIGURED LIMITS"
                         }
                         Text {
-                            text: "Make the first decision obvious"
+                            text: "What this preset is configured to do"
                             color: deck.textPrimary
                             font.pixelSize: 18
                             font.bold: true
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: root.effective().enabled ? "Adaptive Response is shaping the selected axis with the active authoritative configuration." : "Adaptive Response is off for this effective configuration. Existing settings remain preserved."
+                            text: root.effective().enabled ? "These are fixed preset limits for the selected axis. Live behavior is shown below when input is available." : "Adaptive Response is off. Its saved preset limits remain available for review."
                             color: deck.textSecondary
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
@@ -2069,28 +2060,28 @@ Flickable {
                     Component.onCompleted: forceLayout()
                     onWidthChanged: forceLayout()
                     MetricTile {
-                        caption: "ACTIVE HORIZON"
-                        value: root.effective().enabled ? root.numericOr(root.telemetry.activeHorizonMs, 0).toFixed(1) + " ms" : "OFF"
-                        detail: "Bounded live snapshot"
+                        caption: "MAXIMUM HORIZON"
+                        value: root.numericOr(root.effective().maximumHorizonMs, 0).toFixed(1) + " ms"
+                        detail: "Preset limit"
                         tone: deck.attention
                     }
                     MetricTile {
-                        caption: "PREDICTION LEAD"
-                        value: root.effective().enabled ? root.percent(root.telemetry.appliedLead) : "—"
-                        detail: "Mapped output"
+                        caption: "MAXIMUM LEAD"
+                        value: root.percent(root.numericOr(root.effective().maximumLead, 0))
+                        detail: "Mapped-output limit"
                         tone: deck.healthy
                     }
                     MetricTile {
-                        caption: "CONFIDENCE"
-                        value: root.effective().enabled ? Math.round(root.numericOr(root.telemetry.confidence, 0) * 100) + "%" : "—"
-                        detail: "Estimator state"
+                        caption: "PREDICTOR"
+                        value: String(root.effective().model || "Configured").toUpperCase()
+                        detail: "Preset model"
                         tone: deck.accent
                     }
                     MetricTile {
-                        caption: "MOTION"
-                        value: root.effective().enabled ? String(root.telemetry.state || "Stable").toUpperCase() : "IDLE"
-                        detail: root.telemetry.reversing ? "Reversal protection" : "Authoritative state"
-                        tone: root.telemetry.reversing ? deck.attention : deck.textPrimary
+                        caption: "REVERSAL RESPONSE"
+                        value: root.effective().turningPointProtection ? "PROTECTED" : "STANDARD"
+                        detail: "Preset behavior"
+                        tone: root.effective().turningPointProtection ? deck.healthy : deck.textPrimary
                     }
                 }
             }
@@ -2126,7 +2117,7 @@ Flickable {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: "The same existing production estimator preview is replayed at settings-change frequency. It is not live controller telemetry."
+                            text: "Preview uses simulated movement. Connect a controller for live input."
                             color: deck.textSecondary
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
@@ -2150,6 +2141,15 @@ Flickable {
                             }
                         }
                     }
+                }
+                Flow {
+                    width: parent.width
+                    spacing: deck.space8
+                    SectionLabel { textValue: "VISIBLE TRACES" }
+                    TraceLegend { objectName: "flightDeckStaticTracePhysical"; text: "PHYSICAL"; tone: deck.textMuted; checked: root.showPhysicalTrace; onClicked: root.showPhysicalTrace = checked }
+                    TraceLegend { objectName: "flightDeckStaticTracePredicted"; text: "PREDICTED MAPPED"; tone: deck.attention; checked: root.showPredictedTrace; onClicked: root.showPredictedTrace = checked }
+                    TraceLegend { objectName: "flightDeckStaticTraceOutput"; text: "FINAL OUTPUT"; tone: deck.healthy; checked: root.showOutputTrace; onClicked: root.showOutputTrace = checked }
+                    TraceLegend { objectName: "flightDeckStaticTraceBaseline"; text: "BASELINE"; tone: deck.informational; checked: root.showBaselineTrace; onClicked: root.showBaselineTrace = checked }
                 }
                 Rectangle {
                     width: parent.width
@@ -2885,7 +2885,8 @@ Flickable {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: root.effective().enabled ? "Published by the existing UI-safe snapshot. Values are observational; viewing them cannot change the predictor." : "Adaptive Response is off. Physical controller state may remain available, but prediction values are intentionally not presented as active."
+                            text: !root.liveInputAvailable() ? "Awaiting controller input. Configured limits above remain unchanged."
+                                : root.effective().enabled ? "Live values are observational and do not change the predictor." : "Adaptive Response is off. Physical input may remain available, but prediction is not active."
                             color: deck.textSecondary
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
@@ -2907,19 +2908,19 @@ Flickable {
                     onWidthChanged: forceLayout()
                     MetricTile {
                         caption: "PHYSICAL"
-                        value: root.percent(root.telemetry.physical)
+                        value: root.liveInputAvailable() ? root.percent(root.telemetry.physical) : "—"
                         detail: "Controller input"
                         tone: deck.textPrimary
                     }
                     MetricTile {
                         caption: "PREDICTED"
-                        value: root.effective().enabled ? root.percent(root.telemetry.predicted) : "—"
+                        value: root.liveInputAvailable() && root.effective().enabled ? root.percent(root.telemetry.predicted) : "—"
                         detail: "Estimator position"
                         tone: deck.attention
                     }
                     MetricTile {
                         caption: "FINAL OUTPUT"
-                        value: root.effective().enabled ? root.percent(root.telemetry.adaptiveOutput) : "—"
+                        value: root.liveInputAvailable() && root.effective().enabled ? root.percent(root.telemetry.adaptiveOutput) : "—"
                         detail: "Mapped output"
                         tone: deck.healthy
                     }
