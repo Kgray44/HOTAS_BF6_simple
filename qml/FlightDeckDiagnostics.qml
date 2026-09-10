@@ -32,6 +32,7 @@ Flickable {
     readonly property var isolationHealth: readinessModel ? readinessModel.isolation : ({})
     readonly property var gameHealth: readinessModel ? readinessModel.game : ({})
     readonly property var profileHealth: readinessModel ? readinessModel.profile : ({})
+    readonly property var activation: backend.activationResolverState
 
     readonly property var axes: overrideValue("axes", backend.axes)
     readonly property var buttons: overrideValue("buttons", backend.buttons)
@@ -1134,10 +1135,28 @@ Flickable {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
-                    OutlineButton {
-                        objectName: "flightDeckDiagnosticsOpenProfile"
-                        text: "OPEN PROFILES"
-                        onClicked: root.navigateToPage(5)
+                    Text {
+                        objectName: "flightDeckDiagnosticsActivationExplanation"
+                        text: "Automatic Activation: " + String(activation.explanation || "Checking resolver state.")
+                        color: activation.valid ? deck.textMuted : deck.statusColor("attention")
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        OutlineButton {
+                            objectName: "flightDeckDiagnosticsOpenProfile"
+                            text: "OPEN PROFILES"
+                            onClicked: root.navigateToPage(5)
+                        }
+                        OutlineButton {
+                            visible: !!activation.manualOverride
+                            text: "RESUME AUTOMATIC"
+                            tone: "attention"
+                            onClicked: backend.resumeAutomaticActivation()
+                        }
                     }
                 }
             }

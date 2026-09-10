@@ -27,6 +27,10 @@ bool renameProfile(MapperConfiguration &configuration, const QString &profileId,
 bool moveProfileToCategory(MapperConfiguration &configuration, const QString &profileId,
                            const QString &categoryId);
 bool deleteProfile(MapperConfiguration &configuration, const QString &profileId);
+bool setProfileAutomaticSelectionMode(MapperConfiguration &configuration, const QString &profileId,
+                                      ProfileAutomaticSelectionMode mode);
+bool reorderCategoryProfiles(MapperConfiguration &configuration, const QString &categoryId,
+                             const QStringList &profileIds);
 bool activateProfile(MapperConfiguration &configuration, const QString &profileId);
 bool activateCategoryProfile(MapperConfiguration &configuration, const QString &categoryId,
                              QString *activatedProfileId = nullptr);

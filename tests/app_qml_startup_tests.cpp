@@ -3389,7 +3389,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     openFixtureCategory.evaluate();
     settlePresentation();
     if (openFixtureCategory.hasError() || profilesPage->property("view").toString() != QStringLiteral("category")
-        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryBehaviorSelector"))
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryActivationResolver"))
         || !captureShell(QStringLiteral("profiles-category"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Category fixture did not render")
             .arg(appearance));
@@ -3536,11 +3536,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 duplicate, move, rename, or delete command did not retain profile isolation")
             .arg(appearance));
     }
-    const QString unaffectedCategoryName = backend.activeCategoryName();
-    const QVariantMap unaffectedCategoryBefore = categoryWithName(unaffectedCategoryName);
-    if (!backend.setCategoryRestoreLastProfile(testCategoryId, false)
-        || !backend.setCategoryDefaultProfile(testCategoryId, firstId)
-        || !backend.setCategoryGameDetectionRules(testCategoryId, {QStringLiteral("flight-deck-test.exe")})) {
+    if (!backend.setCategoryGameDetectionRules(testCategoryId, {QStringLiteral("flight-deck-test.exe")})
+        || !backend.setProfileAutomaticSelectionMode(firstId, QStringLiteral("fallback"))
+        || !backend.setProfileAutomaticSelectionMode(secondId, QStringLiteral("preferred"))
+        || !backend.reorderCategoryAutomaticProfiles(testCategoryId, {secondId, firstId})) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not configure its category fixture")
             .arg(appearance));
     }
@@ -3571,14 +3570,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("openCategory('%1')").arg(testCategoryId));
     openCategoryForBehavior.evaluate();
     settlePresentation();
-    QObject *behaviorSelector = findVisualItemByObjectName(profilesItem,
-        QStringLiteral("flightDeckCategoryBehaviorSelector"));
-    if (openCategoryForBehavior.hasError() || !behaviorSelector
-        || !clickResponseComboRow(window, profilesPage, behaviorSelector, 0)
-        || !categoryWithName(testCategoryName).value(QStringLiteral("restoreLastProfile")).toBool()
-        || categoryWithName(unaffectedCategoryName).value(QStringLiteral("restoreLastProfile"))
-            != unaffectedCategoryBefore.value(QStringLiteral("restoreLastProfile"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 category behavior selector was not isolated")
+    const QVariantMap resolvedCategory = categoryWithName(testCategoryName);
+    if (openCategoryForBehavior.hasError()
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryActivationResolver"))
+        || resolvedCategory.value(QStringLiteral("profileIds")).toStringList()
+            != QStringList{secondId, firstId}
+        || profileWithName(firstName).value(QStringLiteral("automaticSelectionMode")).toString()
+            != QStringLiteral("fallback")
+        || profileWithName(secondName).value(QStringLiteral("automaticSelectionMode")).toString()
+            != QStringLiteral("preferred")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 automatic activation policy was not isolated")
             .arg(appearance));
     }
     QQmlExpression openForDeepLinks(qmlContext(profilesPage), profilesPage,

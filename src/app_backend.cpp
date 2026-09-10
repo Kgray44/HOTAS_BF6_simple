@@ -471,6 +471,9 @@ AppBackend::AppBackend(QObject *parent)
     connect(&m_numericTelemetryTimer, &QTimer::timeout, this, &AppBackend::refreshNumericTelemetry);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
+    m_activationResolveTimer.setSingleShot(true);
+    m_activationResolveTimer.setInterval(120);
+    connect(&m_activationResolveTimer, &QTimer::timeout, this, &AppBackend::resolveActivationNow);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
     connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] {
         // A generic hardware change also covers vJoy readiness and status.
@@ -478,6 +481,7 @@ AppBackend::AppBackend(QObject *parent)
         // DirectInput identity changed; inventory changes use their dedicated
         // low-frequency path below.
         if (deviceId() != m_controllerUiModelLiveDeviceId) rebuildControllerUiModel();
+        scheduleActivationResolution(u"runtime output state changed"_qs);
         emit stateChanged();
     }, Qt::QueuedConnection);
     m_uiPerformanceInstrumentationEnabled = qEnvironmentVariableIntValue("HOTAS_ENABLE_UI_PERFORMANCE_INSTRUMENTATION") != 0;
@@ -2790,6 +2794,10 @@ QVariantList AppBackend::profiles() const
         item.insert(u"displayName"_qs, category ? QString(u"%1 / %2"_qs).arg(category->name, profile.name) : profile.name);
         item.insert(u"active"_qs, profile.id == m_configuration.activeProfileId);
         item.insert(u"enabled"_qs, profile.enabled);
+        item.insert(u"automaticSelectionMode"_qs,
+                    profileAutomaticSelectionModeKey(profile.automaticSelectionMode));
+        item.insert(u"automaticSelectionLabel"_qs,
+                    profileAutomaticSelectionModeLabel(profile.automaticSelectionMode));
         item.insert(u"effective"_qs, profile.id == effectiveProfileId());
         item.insert(u"effectiveSource"_qs, profile.id == effectiveProfileId()
             ? profileSourceLabel() : QString{});
@@ -2809,6 +2817,13 @@ QVariantList AppBackend::profiles() const
                                         : u"Global response defaults"_qs);
         item.insert(u"curveTransitionInherited"_qs, !profile.curveTransitionSmoothingOverride);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, profile.outputLayoutId);
+        const DeviceRig *rig = findDeviceRig(m_configuration, profile.deviceRigId);
+        const auto rigStatus = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [&profile](const DeviceRigStatus &status) { return status.rigId == profile.deviceRigId; });
+        item.insert(u"deviceRigId"_qs, profile.deviceRigId);
+        item.insert(u"deviceRigName"_qs, rig ? rig->name : u"Device Rig needed"_qs);
+        item.insert(u"deviceRigReady"_qs, rigStatus != m_deviceRigStatuses.cend() && rigStatus->complete
+            && rigStatus->ambiguousMemberIds.isEmpty() && rigStatus->needsVerificationMemberIds.isEmpty());
         item.insert(u"outputLayoutId"_qs, profile.outputLayoutId);
         item.insert(u"outputLayoutName"_qs, layout ? layout->name : u"Output unavailable"_qs);
         item.insert(u"outputDeviceId"_qs, layout ? layout->requirements.deviceId : 0);
@@ -2834,6 +2849,10 @@ QVariantList AppBackend::profileCategories() const
         item.insert(u"active"_qs, category.id == activeCategoryId());
         item.insert(u"enabled"_qs, category.enabled);
         item.insert(u"restoreLastProfile"_qs, category.restoreLastProfile);
+        QStringList profileIds;
+        profileIds.reserve(static_cast<qsizetype>(category.profileIds.size()));
+        for (const QString &profileId : category.profileIds) profileIds.append(profileId);
+        item.insert(u"profileIds"_qs, profileIds);
         item.insert(u"executableRules"_qs, category.executableRules);
         item.insert(u"adaptiveOverrideAxes"_qs, adaptiveOverrideAxisCount(category.adaptiveResponse));
         result.append(item);
@@ -6949,33 +6968,38 @@ bool AppBackend::activateProfile(const QString &profileId)
 {
     const ControllerProfile *profile = findProfile(m_configuration, profileId);
     if (!profile || !profile->enabled) return false;
-    if (profileId == m_configuration.activeProfileId) return true;
-    const bool outputChanges = profile->outputLayoutId != currentProfile().outputLayoutId;
-    const bool mappingWasRequested = outputChanges && m_worker.mappingRequested();
-    if (outputChanges && !m_worker.prepareForDriverConfiguration()) {
-        appendEvent(u"Could not safely release the current virtual output for profile switching"_qs);
-        return false;
+    const DeviceRig *rig = findDeviceRig(m_configuration, profile->deviceRigId);
+    if (!rig) {
+        // Preserve deliberate manual selection for legacy single-controller
+        // profiles. They remain ineligible for Automatic Activation until a
+        // Device Rig is assigned, but viewing or selecting one must not
+        // strand an upgraded user behind the new resolver gate.
+        MapperConfiguration candidate = m_configuration;
+        if (!hotas::activateProfile(candidate, profileId)) return false;
+        candidate.activationManualOverride = true;
+        candidate.manualOverrideProfileId = profileId;
+        m_configuration = std::move(candidate);
+        synchronizeActiveOutputLayout();
+        persistAndApply();
+        appendEvent(u"Manual activation retained for a profile without a Device Rig."_qs);
+        return true;
     }
-    if (outputChanges) {
-        ControllerReadinessService visibility;
-        const OutputVisibilitySwitchResult visibilityResult =
-            visibility.applyManagedOutputVisibility(m_configuration, profile->outputLayoutId);
-        if (!visibilityResult.succeeded) {
-            m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
-            appendEvent(visibilityResult.status);
-            return false;
-        }
-        appendEvent(visibilityResult.status);
+    ActivationDecision decision;
+    decision.categoryId = profile->categoryId;
+    decision.profileId = profile->id;
+    decision.deviceRigId = rig->id;
+    decision.outputLayoutId = profile->outputLayoutId;
+    decision.valid = true;
+    decision.changed = profile->id != m_configuration.activeProfileId
+        || rig->id != m_configuration.activeDeviceRigId;
+    decision.explanation = QStringLiteral("Selected directly by the user.");
+    if (!decision.changed) {
+        m_configuration.activationManualOverride = true;
+        m_configuration.manualOverrideProfileId = profile->id;
+        persistAndApply();
+        return true;
     }
-    const QString name = profile->name;
-    if (!hotas::activateProfile(m_configuration, profileId)) return false;
-    synchronizeActiveOutputLayout();
-    persistAndApply();
-    if (outputChanges && !m_worker.restoreAfterDriverConfiguration(mappingWasRequested)) {
-        appendEvent(u"Profile was selected, but mapping could not reacquire its virtual output"_qs);
-    }
-    appendEvent(u"Activated profile: "_qs + name + u" · "_qs + activeOutputLayoutName());
-    return true;
+    return applyActivationDecision(decision, false);
 }
 
 bool AppBackend::createProfileCategory(const QString &name)
@@ -7015,12 +7039,12 @@ bool AppBackend::deleteProfileCategory(const QString &categoryId)
 
 bool AppBackend::activateProfileCategory(const QString &categoryId)
 {
-    QString profileId;
-    MapperConfiguration candidate = m_configuration;
-    if (!hotas::activateCategoryProfile(candidate, categoryId, &profileId)) return false;
-    // Route category selection through the existing safe profile activation;
-    // it retains vJoy layout release/reacquire behavior.
-    return activateProfile(profileId);
+    const ActivationDecision decision = activationDecision(categoryId);
+    if (!decision.valid) {
+        appendEvent(decision.explanation);
+        return false;
+    }
+    return applyActivationDecision(decision, false);
 }
 
 bool AppBackend::setProfileCategoryEnabled(const QString &categoryId, bool enabled)
@@ -7069,6 +7093,7 @@ bool AppBackend::setCategoryGameDetectionRules(const QString &categoryId, const 
     }
     category->executableRules = normalized;
     persistAndApply();
+    scheduleActivationResolution(u"Game / Application association changed"_qs);
     return true;
 }
 
@@ -7100,6 +7125,203 @@ void AppBackend::setAutomaticGameDetection(bool enabled)
     persistAndApply();
     appendEvent(enabled ? u"Automatic game category detection enabled"_qs
                         : u"Automatic game category detection disabled"_qs);
+    if (enabled) scheduleActivationResolution(u"Automatic Activation resumed"_qs);
+}
+
+ActivationContext AppBackend::activationContext(const QString &categoryId) const
+{
+    ActivationContext context;
+    context.activeCategoryId = activeCategoryId();
+    context.activeProfileId = m_configuration.activeProfileId;
+    context.activeDeviceRigId = m_configuration.activeDeviceRigId;
+    context.activeOutputLayoutId = currentProfile().outputLayoutId;
+    context.rigStatuses = m_deviceRigStatuses;
+    context.automaticActivationEnabled = m_configuration.automaticGameDetection;
+    context.manualOverrideActive = m_configuration.activationManualOverride;
+    context.manualOverrideProfileId = m_configuration.manualOverrideProfileId;
+    for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
+        const QVariantMap detail = virtualOutputDetail(layout.id);
+        // An uninspected output is not assumed broken. Once the existing
+        // readiness service has inspected it, however, a known unavailable
+        // virtual output is an explicit resolver blocker.
+        if (detail.value(u"inspected"_qs, false).toBool()
+            && !detail.value(u"ready"_qs, false).toBool()) {
+            context.unavailableOutputLayoutIds.append(layout.id);
+        }
+    }
+    if (!categoryId.trimmed().isEmpty()) {
+        context.matchedCategoryId = categoryId.trimmed();
+    } else {
+        context.matchedCategoryId = categoryForRunningExecutables(m_configuration,
+            m_lastDetectedExecutables, context.activeCategoryId).categoryId;
+    }
+    return context;
+}
+
+ActivationDecision AppBackend::activationDecision(const QString &categoryId) const
+{
+    return resolveActivation(m_configuration, activationContext(categoryId));
+}
+
+QVariantMap AppBackend::activationDecisionVariant(const ActivationDecision &decision) const
+{
+    const ProfileCategory *category = findProfileCategory(m_configuration, decision.categoryId);
+    const ControllerProfile *profile = findProfile(m_configuration, decision.profileId);
+    const DeviceRig *rig = findDeviceRig(m_configuration, decision.deviceRigId);
+    const VirtualOutputLayout *output = findOutputLayout(m_configuration, decision.outputLayoutId);
+    QVariantList blockers;
+    for (const QString &blocker : decision.blockers) blockers.append(blocker);
+    return {{u"valid"_qs, decision.valid},
+            {u"changed"_qs, decision.changed},
+            {u"retainedCurrent"_qs, decision.retainedCurrent},
+            {u"manualOverride"_qs, decision.manualOverride || m_configuration.activationManualOverride},
+            {u"reason"_qs, activationDecisionReasonKey(decision.reason)},
+            {u"explanation"_qs, decision.explanation},
+            {u"blockers"_qs, blockers},
+            {u"categoryId"_qs, decision.categoryId},
+            {u"categoryName"_qs, category ? category->name : QString{}},
+            {u"profileId"_qs, decision.profileId},
+            {u"profileName"_qs, profile ? profile->name : QString{}},
+            {u"deviceRigId"_qs, decision.deviceRigId},
+            {u"deviceRigName"_qs, rig ? rig->name : QString{}},
+            {u"outputLayoutId"_qs, decision.outputLayoutId},
+            {u"outputLayoutName"_qs, output ? output->name : QString{}}};
+}
+
+QVariantMap AppBackend::activationResolverState() const
+{
+    return activationDecisionVariant(activationDecision());
+}
+
+QVariantMap AppBackend::activationPreview(const QString &categoryId) const
+{
+    return activationDecisionVariant(activationDecision(categoryId));
+}
+
+QVariantMap AppBackend::explainActivation(const QString &categoryId) const
+{
+    return activationPreview(categoryId);
+}
+
+void AppBackend::scheduleActivationResolution(const QString &reason)
+{
+    if (!reason.trimmed().isEmpty()) m_pendingActivationReason = reason.trimmed();
+    if (!m_activationResolveTimer.isActive()) m_activationResolveTimer.start();
+}
+
+bool AppBackend::applyActivationDecision(const ActivationDecision &decision, bool automatic)
+{
+    if (!decision.valid) return false;
+    const ControllerProfile *target = findProfile(m_configuration, decision.profileId);
+    const DeviceRig *targetRig = findDeviceRig(m_configuration, decision.deviceRigId);
+    if (!target || !targetRig || !target->enabled || !targetRig->enabled) return false;
+    if (!findOutputLayout(m_configuration, decision.outputLayoutId)) return false;
+    // Revalidate the complete profile/rig/output route immediately before
+    // changing runtime state. This is a configuration-boundary check only.
+    const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, targetRig->id, target->id);
+    if (!compiled.valid) {
+        appendEvent(u"Activation preflight refused: "_qs + compiled.issue);
+        return false;
+    }
+
+    const bool outputChanges = target->outputLayoutId != currentProfile().outputLayoutId;
+    const bool mappingWasRequested = outputChanges && m_worker.mappingRequested();
+    if (outputChanges && !m_worker.prepareForDriverConfiguration()) {
+        appendEvent(u"Activation preflight could not safely release the current virtual output."_qs);
+        return false;
+    }
+    if (outputChanges) {
+        // This is the established virtual-output visibility transaction. The
+        // resolver never mutates physical-controller HidHide membership.
+        ControllerReadinessService visibility;
+        const OutputVisibilitySwitchResult result =
+            visibility.applyManagedOutputVisibility(m_configuration, target->outputLayoutId);
+        if (!result.succeeded) {
+            m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+            appendEvent(result.status);
+            return false;
+        }
+        appendEvent(result.status);
+    }
+
+    MapperConfiguration candidate = m_configuration;
+    if (!hotas::activateProfile(candidate, target->id)) {
+        if (outputChanges) m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        return false;
+    }
+    candidate.activeDeviceRigId = targetRig->id;
+    if (!automatic) {
+        candidate.activationManualOverride = true;
+        candidate.manualOverrideProfileId = target->id;
+    }
+    m_configuration = std::move(candidate);
+    synchronizeActiveOutputLayout();
+    persistAndApply();
+    if (outputChanges && !m_worker.restoreAfterDriverConfiguration(mappingWasRequested)) {
+        appendEvent(u"Activation committed, but mapping could not reacquire its virtual output."_qs);
+    }
+    appendEvent(QString(u"%1 activation: %2 → %3 → %4"_qs)
+        .arg(automatic ? u"Automatic"_qs : u"Manual"_qs,
+             activeCategoryName(), target->name, targetRig->name));
+    emit deviceRigsChanged();
+    return true;
+}
+
+void AppBackend::resolveActivationNow()
+{
+    const ActivationDecision decision = activationDecision();
+    const QString trigger = m_pendingActivationReason;
+    m_pendingActivationReason.clear();
+    if (!decision.valid || !decision.changed) {
+        emit stateChanged();
+        return;
+    }
+    if (applyActivationDecision(decision, true)) {
+        appendEvent(QString(u"Activation Resolver (%1): %2"_qs)
+            .arg(trigger.isEmpty() ? u"state change"_qs : trigger, decision.explanation));
+    }
+    emit stateChanged();
+}
+
+bool AppBackend::resumeAutomaticActivation()
+{
+    if (!m_configuration.activationManualOverride) return true;
+    m_configuration.activationManualOverride = false;
+    m_configuration.manualOverrideProfileId.clear();
+    persistAndApply();
+    appendEvent(u"Manual Override ended; Automatic Activation resumed."_qs);
+    scheduleActivationResolution(u"Manual Override ended"_qs);
+    return true;
+}
+
+bool AppBackend::setProfileAutomaticSelectionMode(const QString &profileId, const QString &mode)
+{
+    ProfileAutomaticSelectionMode parsed;
+    if (!profileAutomaticSelectionModeFromKey(mode, &parsed)
+        || !hotas::setProfileAutomaticSelectionMode(m_configuration, profileId, parsed)) return false;
+    persistAndApply();
+    scheduleActivationResolution(u"profile automatic-selection policy changed"_qs);
+    return true;
+}
+
+bool AppBackend::reorderCategoryAutomaticProfiles(const QString &categoryId,
+                                                   const QStringList &profileIds)
+{
+    if (!hotas::reorderCategoryProfiles(m_configuration, categoryId, profileIds)) return false;
+    persistAndApply();
+    scheduleActivationResolution(u"automatic selection order changed"_qs);
+    return true;
+}
+
+bool AppBackend::assignProfileDeviceRig(const QString &profileId, const QString &rigId)
+{
+    ControllerProfile *profile = findProfile(m_configuration, profileId);
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId);
+    if (!profile || !rig) return false;
+    profile->deviceRigId = rig->id;
+    persistAndApply();
+    scheduleActivationResolution(u"Profile Device Rig changed"_qs);
+    return true;
 }
 
 void AppBackend::startRunningApplicationSnapshot(bool resolvePaths)
@@ -7133,13 +7355,10 @@ void AppBackend::startRunningApplicationSnapshot(bool resolvePaths)
             if (!m_configuration.automaticGameDetection
                 || runningExecutables == m_lastDetectedExecutables) return;
             m_lastDetectedExecutables = runningExecutables;
-            const GameCategoryMatch match = categoryForRunningExecutables(
-                m_configuration, runningExecutables, activeCategoryId());
-            if (match.categoryId.isEmpty() || match.categoryId == activeCategoryId()) return;
-            const ProfileCategory *category = findProfileCategory(m_configuration, match.categoryId);
-            if (category && activateProfileCategory(match.categoryId)) {
-                appendEvent(QString(u"Game detection selected category: %1"_qs).arg(category->name));
-            }
+            // Category matching produces facts only. The single resolver then
+            // owns profile/rig/output policy and its atomic apply, including
+            // explaining the no-match case after an application exits.
+            scheduleActivationResolution(u"matching Game / Application changed"_qs);
         }, Qt::QueuedConnection);
     });
     m_gameDetectionThread = thread;
@@ -7167,6 +7386,36 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
     detail.insert(u"protected"_qs, profile->id == normalProfileId());
+    detail.insert(u"automaticSelectionMode"_qs,
+                  profileAutomaticSelectionModeKey(profile->automaticSelectionMode));
+    detail.insert(u"automaticSelectionLabel"_qs,
+                  profileAutomaticSelectionModeLabel(profile->automaticSelectionMode));
+    const DeviceRig *profileRig = findDeviceRig(m_configuration, profile->deviceRigId);
+    const auto profileRigStatus = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+        [profile](const DeviceRigStatus &status) { return status.rigId == profile->deviceRigId; });
+    int requiredCount = 0;
+    int optionalCount = 0;
+    if (profileRig) {
+        for (const DeviceRigMember &member : profileRig->members) {
+            if (!member.enabled) continue;
+            if (member.required) ++requiredCount;
+            else ++optionalCount;
+        }
+    }
+    const int requiredMissing = profileRigStatus == m_deviceRigStatuses.cend() ? requiredCount
+        : profileRigStatus->missingRequiredMemberIds.size();
+    const int optionalMissing = profileRigStatus == m_deviceRigStatuses.cend() ? optionalCount
+        : profileRigStatus->missingOptionalMemberIds.size();
+    const bool rigReady = profileRig && profileRigStatus != m_deviceRigStatuses.cend()
+        && profileRigStatus->complete && profileRigStatus->ambiguousMemberIds.isEmpty()
+        && profileRigStatus->needsVerificationMemberIds.isEmpty();
+    detail.insert(u"deviceRigId"_qs, profile->deviceRigId);
+    detail.insert(u"deviceRigName"_qs, profileRig ? profileRig->name : u"No Device Rig assigned"_qs);
+    detail.insert(u"deviceRigReady"_qs, rigReady);
+    detail.insert(u"requiredDevices"_qs, requiredCount);
+    detail.insert(u"requiredConnected"_qs, std::max(0, requiredCount - requiredMissing));
+    detail.insert(u"optionalDevices"_qs, optionalCount);
+    detail.insert(u"optionalConnected"_qs, std::max(0, optionalCount - optionalMissing));
     const CurveTransitionSmoothingSettings transitionSettings = sanitizedCurveTransitionSmoothing(
         profile->curveTransitionSmoothingOverride ? profile->curveTransitionSmoothing
                                                   : m_configuration.curveTransitionSmoothing);
@@ -9728,18 +9977,11 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
 void AppBackend::reconcileDeviceRigInventory()
 {
     m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
-    const DeviceRigActivationDecision decision = chooseDeviceRigActivation(m_configuration,
-                                                                            m_deviceRigStatuses);
-    m_deviceRigDetectionMessage = decision.ambiguous ? decision.reason : QString{};
-    // The decision is intentionally applied only on an inventory/control-plane
-    // transition. Editing context never enters this function, so browsing a
-    // rig cannot affect live mapping selection.
-    if (!decision.rigId.isEmpty() && !decision.retainedActiveRig
-        && decision.rigId != m_configuration.activeDeviceRigId) {
-        m_configuration.activeDeviceRigId = decision.rigId;
-        ConfigStore::save(m_configuration);
-        appendEvent(QString(u"Device Rig detection: %1"_qs).arg(decision.reason));
-    }
+    // V2.5.4 intentionally retires the independent rig auto-selector here.
+    // Inventory changes feed the one Category → Profile → Rig → Output
+    // resolver, so a ready rig for another game cannot win on its own.
+    m_deviceRigDetectionMessage.clear();
+    scheduleActivationResolution(u"Device Rig readiness changed"_qs);
     emit deviceRigsChanged();
 }
 
@@ -10483,6 +10725,10 @@ void AppBackend::persistAndApply()
     rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit stateChanged();
+    // Configuration commits happen on the UI/control plane. Coalescing here
+    // covers topology, profile, and output edits without adding work to the
+    // DirectInput → MappingWorker → vJoy report path.
+    scheduleActivationResolution(u"configuration changed"_qs);
 }
 
 void AppBackend::rebuildSelectedAxisCurve()

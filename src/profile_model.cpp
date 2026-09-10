@@ -244,10 +244,37 @@ bool deleteProfile(MapperConfiguration &configuration, const QString &profileId)
             removeProfileFromCategory(*category, profileId);
         }
         clearProfileReferences(configuration, profileId);
+        if (configuration.manualOverrideProfileId == profileId) {
+            configuration.manualOverrideProfileId.clear();
+            configuration.activationManualOverride = false;
+        }
         configuration.profiles.erase(iterator);
         return true;
     }
     return false;
+}
+
+bool setProfileAutomaticSelectionMode(MapperConfiguration &configuration, const QString &profileId,
+                                      ProfileAutomaticSelectionMode mode)
+{
+    ControllerProfile *profile = findProfile(configuration, profileId);
+    if (!profile) return false;
+    profile->automaticSelectionMode = mode;
+    return true;
+}
+
+bool reorderCategoryProfiles(MapperConfiguration &configuration, const QString &categoryId,
+                             const QStringList &profileIds)
+{
+    ProfileCategory *category = findProfileCategory(configuration, categoryId);
+    if (!category || profileIds.size() != static_cast<qsizetype>(category->profileIds.size())) return false;
+    QSet<QString> expected;
+    QSet<QString> proposed;
+    for (const QString &profileId : category->profileIds) expected.insert(profileId);
+    for (const QString &profileId : profileIds) proposed.insert(profileId);
+    if (expected != proposed || expected.size() != profileIds.size()) return false;
+    category->profileIds.assign(profileIds.cbegin(), profileIds.cend());
+    return true;
 }
 
 bool activateProfile(MapperConfiguration &configuration, const QString &profileId)

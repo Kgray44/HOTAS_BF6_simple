@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "app_issue.h"
 #include "app_health_service.h"
+#include "activation_resolver.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
 #include "device_rig.h"
@@ -206,6 +207,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
     Q_PROPERTY(bool automaticGameDetection READ automaticGameDetection NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap activationResolverState READ activationResolverState NOTIFY stateChanged)
+    Q_PROPERTY(bool manualActivationOverride READ manualActivationOverride NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap portableImportPreview READ portableImportPreview NOTIFY stateChanged)
     Q_PROPERTY(QString portableImportStatus READ portableImportStatus NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
@@ -404,6 +407,8 @@ public:
     QVariantList quickAssignAxisTargets() const;
     QVariantList quickMapButtonTargets() const;
     bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
+    QVariantMap activationResolverState() const;
+    bool manualActivationOverride() const { return m_configuration.activationManualOverride; }
     QVariantMap portableImportPreview() const;
     QString portableImportStatus() const { return m_portableImportStatus; }
     QStringList eventLog() const { return m_events.entries(); }
@@ -540,6 +545,13 @@ public:
     Q_INVOKABLE bool setCategoryDefaultProfile(const QString &categoryId, const QString &profileId);
     Q_INVOKABLE bool setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile);
     Q_INVOKABLE bool setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules);
+    Q_INVOKABLE bool setProfileAutomaticSelectionMode(const QString &profileId, const QString &mode);
+    Q_INVOKABLE bool reorderCategoryAutomaticProfiles(const QString &categoryId,
+                                                      const QStringList &profileIds);
+    Q_INVOKABLE bool assignProfileDeviceRig(const QString &profileId, const QString &rigId);
+    Q_INVOKABLE QVariantMap activationPreview(const QString &categoryId = {}) const;
+    Q_INVOKABLE QVariantMap explainActivation(const QString &categoryId = {}) const;
+    Q_INVOKABLE bool resumeAutomaticActivation();
     Q_INVOKABLE QVariantList runningApplications() const;
     Q_INVOKABLE void refreshRunningApplications();
     Q_INVOKABLE void setAutomaticGameDetection(bool enabled);
@@ -872,6 +884,12 @@ private:
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
     void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
+    ActivationContext activationContext(const QString &categoryId = {}) const;
+    ActivationDecision activationDecision(const QString &categoryId = {}) const;
+    QVariantMap activationDecisionVariant(const ActivationDecision &decision) const;
+    void scheduleActivationResolution(const QString &reason);
+    void resolveActivationNow();
+    bool applyActivationDecision(const ActivationDecision &decision, bool automatic);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
     void releasePresentationResources();
@@ -1022,6 +1040,8 @@ private:
     QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
+    QTimer m_activationResolveTimer;
+    QString m_pendingActivationReason;
     QStringList m_lastDetectedExecutables;
     QVariantList m_runningApplications;
     QHash<QString, QString> m_runningApplicationPathCache;

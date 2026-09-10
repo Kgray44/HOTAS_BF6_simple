@@ -813,18 +813,18 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema24()
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 24")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v24")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v24")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 25")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v25")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v25")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v24")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v24")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v25")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v25")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v24")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v25")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 
@@ -922,6 +922,12 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(profiles.contains(QStringLiteral("displayName.indexOf(query)")));
     QVERIFY(profiles.contains(QStringLiteral("executable.indexOf(query)")));
     QVERIFY(profiles.contains(QStringLiteral("Clear the search to see all running applications")));
+    QVERIFY(profiles.contains(QStringLiteral("AUTOMATIC ACTIVATION")));
+    QVERIFY(profiles.contains(QStringLiteral("flightDeckCategoryActivationResolver")));
+    QVERIFY(profiles.contains(QStringLiteral("flightDeckProfileAutomaticPolicySelector")));
+    QVERIFY(profiles.contains(QStringLiteral("reorderCategoryAutomaticProfiles")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QVariantMap activationResolverState")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool resumeAutomaticActivation")));
     QVERIFY(standard.contains(QStringLiteral("root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("objectName: \"flightDeckCurveEditor\"")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("ACTIVE CURVE CONTEXT")));

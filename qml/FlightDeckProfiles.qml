@@ -39,6 +39,8 @@ Flickable {
     readonly property var selectedCategory: categoryById(selectedCategoryId)
     readonly property var selectedProfile: profileById(selectedProfileId)
     readonly property var selectedDetail: detailFor(selectedProfileId)
+    readonly property var selectedCategoryActivation: selectedCategoryId.length > 0
+        ? backend.activationPreview(selectedCategoryId) : ({})
     readonly property bool usingPresentationFixture: (profilesPresentationOverride !== null && profilesPresentationOverride !== undefined) || (categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined)
 
     contentWidth: width
@@ -93,11 +95,32 @@ Flickable {
     }
     function profilesForCategory(id) {
         const result = [];
+        const category = categoryById(id);
+        const orderedIds = category ? (category.profileIds || []) : [];
+        for (let ordered = 0; ordered < orderedIds.length; ++ordered) {
+            const profile = profileById(orderedIds[ordered]);
+            if (profile && String(profile.categoryId || "") === String(id || ""))
+                result.push(profile);
+        }
         for (let index = 0; index < profiles.length; ++index) {
-            if (String(profiles[index].categoryId || "") === String(id || ""))
+            if (String(profiles[index].categoryId || "") === String(id || "")
+                    && result.indexOf(profiles[index]) < 0)
                 result.push(profiles[index]);
         }
         return result;
+    }
+    function moveAutomaticProfile(profileId, direction) {
+        if (usingPresentationFixture || !selectedCategoryId.length)
+            return false;
+        const ids = profilesForCategory(selectedCategoryId).map(function(profile) { return String(profile.id || ""); });
+        const source = ids.indexOf(String(profileId || ""));
+        const destination = source + direction;
+        if (source < 0 || destination < 0 || destination >= ids.length)
+            return false;
+        const moved = ids[source];
+        ids[source] = ids[destination];
+        ids[destination] = moved;
+        return backend.reorderCategoryAutomaticProfiles(selectedCategoryId, ids);
     }
     function friendlyGameName(executable) {
         const base = String(executable || "").split(/[\\/]/).pop();
@@ -708,6 +731,21 @@ Flickable {
             }
             RowLayout {
                 Layout.fillWidth: true
+                SummaryChip {
+                    label: String(profile.automaticSelectionLabel || "Preferred").toUpperCase()
+                    tone: String(profile.automaticSelectionMode || "preferred") === "manual-only" ? "attention" : "informational"
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: String(profile.deviceRigName || "No Device Rig") + (profile.deviceRigReady ? "  ·  READY" : "  ·  REVIEW RIG")
+                    color: profile.deviceRigReady ? deck.textMuted : deck.statusColor("attention")
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 8
+                    elide: Text.ElideRight
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
                 DeckButton {
                     text: "OPEN PROFILE"
                     subdued: true
@@ -721,6 +759,20 @@ Flickable {
                     text: profile.active ? "ACTIVE NOW" : "ACTIVATE"
                     enabled: !profile.active && !!profile.enabled && !root.usingPresentationFixture
                     onClicked: root.activateProfile(profile.id)
+                }
+                DeckButton {
+                    visible: root.view === "category"
+                    text: "↑"
+                    subdued: true
+                    enabled: !root.usingPresentationFixture && root.profilesForCategory(root.selectedCategoryId).indexOf(profile) > 0
+                    onClicked: root.moveAutomaticProfile(profile.id, -1)
+                }
+                DeckButton {
+                    visible: root.view === "category"
+                    text: "↓"
+                    subdued: true
+                    enabled: !root.usingPresentationFixture && root.profilesForCategory(root.selectedCategoryId).indexOf(profile) < root.profilesForCategory(root.selectedCategoryId).length - 1
+                    onClicked: root.moveAutomaticProfile(profile.id, 1)
                 }
             }
         }
@@ -1316,9 +1368,10 @@ Flickable {
                 }
 
                 SectionLabel {
-                    label: "WHEN THIS CATEGORY BECOMES ACTIVE"
+                    label: "AUTOMATIC ACTIVATION"
                 }
                 FlightDeckCard {
+                    objectName: "flightDeckCategoryActivationResolver"
                     tokens: deck
                     Layout.fillWidth: true
                     implicitHeight: behaviorContent.implicitHeight + deck.space24
@@ -1328,75 +1381,66 @@ Flickable {
                         anchors.margins: deck.space12
                         spacing: deck.space8
                         Text {
-                            text: "Choose how HOTAS BF6 picks a profile after this category is selected manually or by game detection."
+                            text: "The resolver considers this category's ordered profiles: valid Preferred configurations first, then valid Fallback configurations. Manual Only never switches automatically. A valid active configuration remains stable until it becomes unavailable."
                             color: deck.textSecondary
                             font.pixelSize: 10
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
-                        DeckCombo {
-                            id: categoryBehaviorSelector
-                            objectName: "flightDeckCategoryBehaviorSelector"
+                        RowLayout {
                             Layout.fillWidth: true
-                            model: [
-                                {
-                                    name: "Keep the last profile I used",
-                                    value: true
-                                },
-                                {
-                                    name: "Always use a specific profile",
-                                    value: false
-                                }
-                            ]
-                            textRole: "name"
-                            valueRole: "value"
-                            currentIndex: (root.selectedCategory || {}).restoreLastProfile ? 0 : 1
-                            enabled: !root.usingPresentationFixture
-                            onActivated: function (index) {
-                                backend.setCategoryRestoreLastProfile(root.selectedCategoryId, index === 0);
+                            SummaryChip {
+                                label: String(root.selectedCategoryActivation.reason || "checking").replace(/-/g, " ").toUpperCase()
+                                tone: root.selectedCategoryActivation.valid ? "healthy" : "attention"
+                            }
+                            SummaryChip {
+                                visible: !!root.selectedCategoryActivation.manualOverride
+                                label: "MANUAL OVERRIDE"
+                                tone: "attention"
+                            }
+                            Item { Layout.fillWidth: true }
+                            DeckButton {
+                                objectName: "flightDeckResumeAutomaticActivation"
+                                visible: !!root.selectedCategoryActivation.manualOverride
+                                text: "RESUME AUTOMATIC"
+                                subdued: true
+                                enabled: !root.usingPresentationFixture
+                                onClicked: backend.resumeAutomaticActivation()
                             }
                         }
                         Text {
-                            text: (root.selectedCategory || {}).restoreLastProfile ? "HOTAS BF6 remembers the most recently active profile in this category. If it cannot be used, the category default or another enabled profile is used." : "HOTAS BF6 always chooses the specific profile below when this category becomes active."
-                            color: deck.textMuted
-                            font.pixelSize: 10
+                            text: String(root.selectedCategoryActivation.explanation || "Checking automatic configuration.")
+                            color: deck.textPrimary
+                            font.pixelSize: 11
+                            font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
-                        RowLayout {
-                            visible: !(root.selectedCategory || {}).restoreLastProfile
+                        Text {
+                            visible: !!root.selectedCategoryActivation.valid
+                            text: String(root.selectedCategoryActivation.profileName || "Profile") + "  →  " + String(root.selectedCategoryActivation.deviceRigName || "Device Rig") + "  →  " + String(root.selectedCategoryActivation.outputLayoutName || "Virtual Output")
+                            color: deck.textSecondary
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
                             Layout.fillWidth: true
-                            Text {
-                                text: "DEFAULT PROFILE"
-                                color: deck.textMuted
-                                font.family: deck.telemetryFont
-                                font.pixelSize: 8
-                                font.bold: true
-                            }
-                            DeckCombo {
-                                id: categoryDefaultSelector
-                                objectName: "flightDeckCategoryDefaultProfileSelector"
+                            wrapMode: Text.WordWrap
+                        }
+                        Repeater {
+                            model: root.selectedCategoryActivation.blockers || []
+                            delegate: Text {
+                                required property var modelData
+                                text: "• " + String(modelData)
+                                color: deck.statusColor("attention")
+                                font.pixelSize: 9
                                 Layout.fillWidth: true
-                                model: root.profilesForCategory(root.selectedCategoryId)
-                                textRole: "name"
-                                valueRole: "id"
-                                currentIndex: {
-                                    const choices = root.profilesForCategory(root.selectedCategoryId);
-                                    for (let index = 0; index < choices.length; ++index) {
-                                        if (String(choices[index].id) === String((root.selectedCategory || {}).defaultProfileId || ""))
-                                            return index;
-                                    }
-                                    return 0;
-                                }
-                                enabled: !root.usingPresentationFixture
-                                onActivated: backend.setCategoryDefaultProfile(root.selectedCategoryId, currentValue)
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
                 }
 
                 SectionLabel {
-                    label: "PROFILES IN THIS CATEGORY"
+                    label: "CONFIGURATION ORDER"
                 }
                 Text {
                     visible: root.profilesForCategory(root.selectedCategoryId).length === 0
@@ -1520,6 +1564,93 @@ Flickable {
                                 visible: !root.selectedDetail.enabled
                                 label: "DISABLED"
                                 tone: "attention"
+                            }
+                        }
+                    }
+                }
+
+                SectionLabel {
+                    label: "DEVICE RIG & AUTOMATIC ACTIVATION"
+                }
+                FlightDeckCard {
+                    tokens: deck
+                    Layout.fillWidth: true
+                    implicitHeight: activationProfileContent.implicitHeight + deck.space24
+                    ColumnLayout {
+                        id: activationProfileContent
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space8
+                        Text {
+                            text: "Device Rig"
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+                        DeckCombo {
+                            id: profileRigSelector
+                            objectName: "flightDeckProfileRigSelector"
+                            Layout.fillWidth: true
+                            model: backend.deviceRigs
+                            textRole: "name"
+                            valueRole: "id"
+                            currentIndex: {
+                                const rigs = backend.deviceRigs || [];
+                                for (let index = 0; index < rigs.length; ++index) {
+                                    if (String(rigs[index].id || "") === String(root.selectedDetail.deviceRigId || ""))
+                                        return index;
+                                }
+                                return -1;
+                            }
+                            enabled: !root.usingPresentationFixture && (backend.deviceRigs || []).length > 0
+                            onActivated: backend.assignProfileDeviceRig(root.selectedProfileId, currentValue)
+                        }
+                        Text {
+                            text: String(root.selectedDetail.deviceRigName || "No Device Rig assigned") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
+                            color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
+                            font.pixelSize: 9
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            text: "Automatic policy"
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+                        DeckCombo {
+                            id: profileAutomaticPolicySelector
+                            objectName: "flightDeckProfileAutomaticPolicySelector"
+                            Layout.fillWidth: true
+                            model: [
+                                { name: "Preferred — first safe choice", value: "preferred" },
+                                { name: "Fallback — used only when no Preferred choice is safe", value: "fallback" },
+                                { name: "Manual Only — never selected automatically", value: "manual-only" }
+                            ]
+                            textRole: "name"
+                            valueRole: "value"
+                            currentIndex: {
+                                const policy = String(root.selectedDetail.automaticSelectionMode || "preferred");
+                                return policy === "fallback" ? 1 : policy === "manual-only" ? 2 : 0;
+                            }
+                            enabled: !root.usingPresentationFixture
+                            onActivated: backend.setProfileAutomaticSelectionMode(root.selectedProfileId, currentValue)
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Automatic order follows the Configuration Order on this profile's category page."
+                                color: deck.textMuted
+                                font.pixelSize: 9
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                text: "OPEN DEVICES"
+                                subdued: true
+                                onClicked: root.navigateToPage(10)
                             }
                         }
                     }

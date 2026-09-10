@@ -51,6 +51,8 @@ set(HOTAS_MAPPER_SOURCES
     src/input_learning.cpp
     src/profile_model.h
     src/profile_model.cpp
+    src/activation_resolver.h
+    src/activation_resolver.cpp
     src/profile_portability.h
     src/profile_portability.cpp
     src/profile_trigger_runtime.h
@@ -284,6 +286,8 @@ if (BUILD_TESTING)
         src/input_learning.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/profile_trigger_runtime.h
@@ -340,6 +344,12 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
+        src/device_rig.h
+        src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/config_store.h
@@ -454,6 +464,12 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
+        src/device_rig.h
+        src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/config_store.h

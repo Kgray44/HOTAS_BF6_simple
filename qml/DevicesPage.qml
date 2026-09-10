@@ -628,6 +628,13 @@ Page {
                                             }
                                         }
                                     }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Physical game visibility is controlled only here. Automatic profile selection never hides or shows this device."
+                                        color: themeTokens.textMuted
+                                        font.pixelSize: 9
+                                        wrapMode: Text.WordWrap
+                                    }
                                     RowLayout {
                                         visible: selectedRig && selectedRig.outputs.length > 1
                                         Layout.fillWidth: true
