@@ -577,6 +577,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantSteps READ setupAssistantSteps")));
     QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
     QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
+    QVERIFY(backendHeader.contains(QStringLiteral("completeSetupAssistantDevice")));
     QVERIFY(backendHeader.contains(QStringLiteral("beginCalibrationForDevice")));
     QVERIFY(backendHeader.contains(QStringLiteral("skipCalibrationForSetup")));
     QVERIFY(backendHeader.contains(QStringLiteral("applySetupAssistantIssueAction")));
@@ -592,6 +593,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceOffline")));
     QVERIFY(backend.contains(QStringLiteral("OptionalDeviceOffline")));
     QVERIFY(backend.contains(QStringLiteral("VirtualOutputBusy")));
+    QVERIFY(backend.contains(QStringLiteral("m_pendingSetupVerificationRecordId")));
+    QVERIFY(backend.contains(QStringLiteral("physicalStatus == VerificationSubsystemState::Ready")));
     QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
     QVERIFY(backend.contains(QStringLiteral("NoMappedControl")));
     QVERIFY(backend.contains(QStringLiteral("meaningfulInputSequence")));
@@ -617,6 +620,11 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     }
     QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
+    QVERIFY(devices.contains(QStringLiteral("contentHeight: contentLayout ? contentLayout.measuredHeight + 20 : 0")));
+    QVERIFY(devices.contains(QStringLiteral("rigDetailsActionsDismissArea")));
+    QVERIFY(devices.contains(QStringLiteral("function reposition()")));
+    QVERIFY(!devices.contains(QStringLiteral("HIDE ALL INPUTS")));
+    QVERIFY(!devices.contains(QStringLiteral("SHOW ACTIVE OUTPUTS")));
     QVERIFY(devices.contains(QStringLiteral("Refreshing devices")));
     QVERIFY(devices.contains(QStringLiteral("5000")));
     QVERIFY(health.contains(QStringLiteral("x: Math.max(0, Math.round(((parent ? parent.width : width) - width) / 2))")));
@@ -636,6 +644,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(!assistant.contains(QStringLiteral("guidedStepIndex")));
     QVERIFY(assistant.contains(QStringLiteral("Applying game visibility...")));
     QVERIFY(assistant.contains(QStringLiteral("applySetupAssistantIssueAction")));
+    QVERIFY(assistant.contains(QStringLiteral("completeSetupAssistantDevice")));
+    QVERIFY(assistant.contains(QStringLiteral("actionResultDismissTimer")));
     QVERIFY(assistant.contains(QStringLiteral("COPY DIAGNOSTICS")));
     QVERIFY(assistant.contains(QStringLiteral("ThemedDialogHeader")));
     QVERIFY(!assistant.contains(QStringLiteral("setupAssistantRelevantStep")));
@@ -679,6 +689,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(issue.contains(QStringLiteral("navigationTarget")));
     QVERIFY(issue.contains(QStringLiteral("affectedObjectIds")));
     QVERIFY(readiness.contains(QStringLiteral("applyManagedPhysicalInputVisibility")));
+    QVERIFY(readiness.contains(QStringLiteral("capabilities are correct")));
+    QVERIFY(readiness.contains(QStringLiteral("ownership is reported separately")));
     QVERIFY(readiness.contains(QStringLiteral("const SetupProcessResult readback")));
     QVERIFY(readiness.contains(QStringLiteral("completed changes were rolled back")));
     QVERIFY(health.contains(QStringLiteral("APP HEALTH")));

@@ -1051,7 +1051,10 @@ Page {
         RowLayout {
             anchors.fill: parent
  anchors.leftMargin: 18
- anchors.rightMargin: 20
+ // Mapping is deliberately anchored outside this layout. Reserve its
+ // trailing lane so the always-available Device Context cannot drift
+ // underneath it at ordinary desktop widths.
+ anchors.rightMargin: globalMappingControl.visible ? globalMappingControl.implicitWidth + 36 : 20
  spacing: 12
             ToolButton {
                 id: menuButton
@@ -1089,9 +1092,12 @@ Page {
      font.bold: true }
                 }
             }
-            FineLine { visible: root.width >= 940; Layout.preferredWidth: 1
+            // At middling desktop widths the editing context and mapping
+            // command are more actionable than duplicate status telemetry.
+            // Restore the complete flight-instrument strip on wide shells.
+            FineLine { visible: root.width >= 1420; Layout.preferredWidth: 1
  Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 940; spacing: 7
+            Row { visible: root.width >= 1420; spacing: 7
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
  color: "#c3cecf"
@@ -1104,18 +1110,18 @@ Page {
  font.pixelSize: 10
  font.bold: true }
             }
-            FineLine { visible: root.width >= 1100; Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1420; Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1100; spacing: 7
+            Row { visible: root.width >= 1420; spacing: 7
                 StatusDot { tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3" }
                 Text { text: "VJOY " + backend.vjoyDeviceId
                     color: "#c3d2d5"; font.pixelSize: 10; font.bold: true }
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
                     color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
             }
-            FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
+            FineLine { visible: root.width >= 1520 && (root.width >= 1650 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
-            Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
+            Row { visible: root.width >= 1520 && (root.width >= 1650 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
                 Text { text: "PROFILE"
                     color: "#78919a"; font.pixelSize: 9; font.bold: true }
                 Text { text: backend.effectiveProfileDisplayName.toUpperCase()
@@ -1171,12 +1177,24 @@ Page {
             Rectangle {
                 id: globalMappingControl
                 objectName: "globalMappingControl"
-                implicitWidth: legacyMappingRow.implicitWidth + 18; implicitHeight: 30; radius: 3
+                // The mapping command is an application-level header control,
+                // not a participant in the shrinking profile/context strip.
+                // Keep its established trailing position explicit so a
+                // compact Device Context can never share its layout origin.
+                parent: headerBar
+                anchors.right: parent.right
+                anchors.rightMargin: 20
+                anchors.verticalCenter: parent.verticalCenter
+                // Keep both global mapping control and the compact Device
+                // Context reachable in the 640px shell.  The status stays a
+                // real mapping control; only its secondary sentence yields
+                // to the concise established MAP label at this width.
+                implicitWidth: legacyMappingRow.implicitWidth + (root.width < 720 ? 14 : 18); implicitHeight: 30; radius: 3
                 color: legacyMappingMouse.pressed ? "#284751" : legacyMappingMouse.containsMouse ? "#263f49" : "#18242a"
                 border.color: backend.mappingActive ? "#91c4a4" : backend.mappingRequested ? "#d6bd78" : "#52717c"
-                Row { id: legacyMappingRow; anchors.centerIn: parent; spacing: 7
+                Row { id: legacyMappingRow; anchors.centerIn: parent; spacing: root.width < 720 ? 4 : 7
                     StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
-                    Text { text: backend.mappingStatus; color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1"); font.pixelSize: 10; font.bold: true }
+                    Text { text: root.width < 720 ? "MAP" : backend.mappingStatus; color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1"); font.pixelSize: 10; font.bold: true }
                 }
                 MouseArea { id: legacyMappingMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.toggleMapping() }
                 ToolTip { visible: legacyMappingMouse.containsMouse; delay: 350; text: backend.mappingRequested ? "Stop Mapping" : "Start Mapping" }

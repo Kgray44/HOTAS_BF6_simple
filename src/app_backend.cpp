@@ -4639,7 +4639,7 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
             u"HOTAS BF6 uses vJoy to present one clean controller to your game."_qs,
             u"setup-vjoy"_qs, u"SET UP VJOY"_qs, false, false, 40);
     } else if (needsVirtualOutput && vjoyBusy && !vjoyOwned) {
-        append(u"VirtualOutput"_qs, u"VirtualOutputBusy"_qs, u"setup-needed"_qs,
+        append(u"VirtualOutput"_qs, u"VirtualOutputBusy"_qs, u"busy"_qs,
             u"virtualOutput"_qs, outputId, outputName + u" is already in use"_qs,
             u"Another application currently owns this vJoy device. Close that application, then check setup again."_qs,
             u"check-again"_qs, u"CHECK AGAIN"_qs, false, false, 45);
@@ -4653,7 +4653,12 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
     } else {
         outputSetupComplete = true;
     }
-    bool visibilitySetupComplete = hidhideInstalled && hidhideReady;
+    // Visibility, routing, and live proof are consequences of the first
+    // unresolved physical/output prerequisite. Do not present those
+    // consequences as separate repair jobs while their root cause is open.
+    bool visibilitySetupComplete = false;
+    if (physicalSetupComplete && outputSetupComplete) {
+    visibilitySetupComplete = hidhideInstalled && hidhideReady;
     if (!hidhideInstalled || !hidhideReady) {
         append(u"Driver"_qs, u"HidHideUnavailable"_qs, u"setup-needed"_qs,
             u"gameVisibility"_qs, {}, u"Game visibility protection needs setup"_qs,
@@ -4722,6 +4727,7 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
             u"Games need to see "_qs + outputName + u" to use your HOTAS BF6 mappings."_qs,
             u"check-again"_qs, u"CHECK VISIBILITY"_qs, false, false, 75);
         visibilitySetupComplete = false;
+    }
     }
     const bool prerequisitesReadyForRouting = physicalSetupComplete && outputSetupComplete
         && visibilitySetupComplete;
@@ -4955,6 +4961,7 @@ QVariantMap AppBackend::setupAssistantSummary() const
     } else if (!primaryIssue.isEmpty() || requiredStepIncomplete) {
         const QString severity = primaryIssue.value(u"severity"_qs).toString();
         state = severity == u"offline"_qs ? u"OFFLINE"_qs
+            : severity == u"busy"_qs ? u"BUSY"_qs
             : severity == u"waiting"_qs ? u"WAITING"_qs : u"SETUP NEEDED"_qs;
         title = primaryIssue.value(u"title"_qs, u"Complete the required setup steps"_qs).toString();
         message = primaryIssue.value(u"explanation"_qs,
@@ -8299,6 +8306,42 @@ QVariantMap AppBackend::startSetupAssistantCheckForScope(const QString &scopeTyp
     return startSetupAssistantCheck();
 }
 
+QVariantMap AppBackend::completeSetupAssistantDevice(const QString &recordId)
+{
+    const QString targetId = recordId.trimmed().isEmpty() ? m_setupAssistantScopeId : recordId.trimmed();
+    const SavedControllerRecord *saved = savedControllerRecord(targetId);
+    if (!saved) {
+        return actionResult(false, u"Selected controller is no longer available"_qs,
+            u"Refresh Devices, select the saved controller again, then retry setup."_qs,
+            u"physicalDevice"_qs, targetId, u"open-devices"_qs, u"OPEN DEVICES"_qs);
+    }
+    const PhysicalControllerCapabilities current = currentPhysicalCapabilities();
+    PhysicalControllerCapabilities expected;
+    expected.directInputId = saved->lastDirectInputId;
+    expected.hidInstanceId = saved->hidInstanceId;
+    expected.hidContainerId = saved->hidContainerId;
+    if (!current.connected || !ControllerReadinessService::samePhysicalController(expected, current)) {
+        return actionResult(false, u"Connect the selected controller"_qs,
+            u"HOTAS BF6 will verify only the saved controller you selected. Connect that exact controller, then choose Set Up Device again."_qs,
+            u"physicalDevice"_qs, targetId, u"check-again"_qs, u"CHECK AGAIN"_qs);
+    }
+    if (m_verificationInProgress) {
+        return actionResult(false, u"Setup check is already running"_qs,
+            u"HOTAS BF6 is still verifying the selected controller."_qs,
+            u"physicalDevice"_qs, targetId, u"wait"_qs, {}, {}, true);
+    }
+    m_setupAssistantScopeType = u"device"_qs;
+    m_setupAssistantScopeId = targetId;
+    // Completion is committed only after the full verifier returns with the
+    // same physical identity. HidHide/route follow-up may still be needed,
+    // but they must not turn physical verification into a circular check.
+    m_pendingSetupVerificationRecordId = targetId;
+    verifyHotasSetup();
+    return actionResult(true, u"Setting up selected controller"_qs,
+        u"HOTAS BF6 is verifying this controller's exact identity and will save that verification before advancing to the next setup step."_qs,
+        u"physicalDevice"_qs, targetId, u"wait"_qs, {}, {}, true);
+}
+
 QVariantMap AppBackend::applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds,
                                                           bool hidden)
 {
@@ -8493,7 +8536,7 @@ QVariantMap AppBackend::startSetupAssistantLiveTest()
     return actionResult(true, u"Live control test started"_qs,
                         u"Move an axis about 2% or press and release a mapped button on the highlighted physical controller."_qs,
                         m_setupAssistantScopeType, m_setupAssistantScopeId,
-                        u"live-test"_qs, {}, {}, true);
+                        u"live-test"_qs);
 }
 
 QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)
@@ -8666,8 +8709,11 @@ void AppBackend::startVerification(VerificationMode mode)
         ? u"Full controller verification started"_qs
         : u"Quick controller verification started"_qs);
 
+    const QString setupVerificationRecordId = mode == VerificationMode::Full
+        ? m_pendingSetupVerificationRecordId : QString{};
     QThread *thread = QThread::create([this, configuration, physical, mode, mappingWasRequested,
-                                       mapperOwnsVjoy, outputReportsSucceeding, arrivalId] {
+                                       mapperOwnsVjoy, outputReportsSucceeding, arrivalId,
+                                       setupVerificationRecordId] {
         ControllerReadinessPlan plan;
         bool prepared = true;
         bool restored = true;
@@ -8705,7 +8751,8 @@ void AppBackend::startVerification(VerificationMode mode)
             }
         }
 
-        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId] () mutable {
+        QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId,
+                                         setupVerificationRecordId] () mutable {
             m_readiness.adoptPlan(std::move(plan));
             if (m_readiness.hasPendingRecovery()) {
                 // A process restart between the privileged change and fresh
@@ -8727,10 +8774,27 @@ void AppBackend::startVerification(VerificationMode mode)
             appendEvent(restored
                 ? QString(u"Controller verification complete: %1"_qs).arg(m_readiness.plan().status)
                 : u"Controller verification complete, but mapping restoration failed"_qs);
-            if (mode == VerificationMode::Full && restored
-                && m_readiness.plan().state == ControllerReadinessState::Ready
-                && currentPhysicalCapabilities().connected) {
-                rememberCurrentController();
+            if (mode == VerificationMode::Full && restored && currentPhysicalCapabilities().connected) {
+                if (!setupVerificationRecordId.isEmpty()) {
+                    if (m_pendingSetupVerificationRecordId == setupVerificationRecordId)
+                        m_pendingSetupVerificationRecordId.clear();
+                    const SavedControllerRecord *saved = savedControllerRecord(setupVerificationRecordId);
+                    PhysicalControllerCapabilities expected;
+                    if (saved) {
+                        expected.directInputId = saved->lastDirectInputId;
+                        expected.hidInstanceId = saved->hidInstanceId;
+                        expected.hidContainerId = saved->hidContainerId;
+                    }
+                    if (saved && m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready
+                        && ControllerReadinessService::samePhysicalController(expected, currentPhysicalCapabilities())) {
+                        rememberCurrentController(setupVerificationRecordId);
+                        appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
+                    } else {
+                        appendEvent(u"Selected controller setup did not establish a matching physical identity"_qs);
+                    }
+                } else if (m_readiness.plan().state == ControllerReadinessState::Ready) {
+                    rememberCurrentController();
+                }
             }
             if (mode == VerificationMode::Quick && !arrivalId.isEmpty()
                 && arrivalId == m_pendingControllerArrivalId) {
@@ -9101,15 +9165,29 @@ ControllerVJoyRequirements AppBackend::currentVjoyRequirements() const
     return result;
 }
 
-void AppBackend::rememberCurrentController()
+void AppBackend::rememberCurrentController(const QString &expectedRecordId)
 {
     const DiscoveredController *controller = discoveredController(deviceId());
     if (!controller || controller->virtualDevice) return;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
-    const QString existingId = match.ambiguous ? QString{} : match.recordId;
+    QString existingId = match.ambiguous ? QString{} : match.recordId;
+    if (!expectedRecordId.isEmpty()) {
+        const SavedControllerRecord *expected = savedControllerRecord(expectedRecordId);
+        PhysicalControllerCapabilities remembered;
+        if (!expected) return;
+        remembered.directInputId = expected->lastDirectInputId;
+        remembered.hidInstanceId = expected->hidInstanceId;
+        remembered.hidContainerId = expected->hidContainerId;
+        PhysicalControllerCapabilities observed;
+        observed.directInputId = controller->directInputId;
+        observed.hidInstanceId = controller->hidInstanceId;
+        observed.connected = controller->connected;
+        if (!ControllerReadinessService::samePhysicalController(remembered, observed)) return;
+        existingId = expectedRecordId;
+    }
     ControllerVJoyRequirements verifiedRequirements = currentVjoyRequirements();
     const ControllerReadinessPlan &verifiedPlan = m_readiness.plan();
-    if (verifiedPlan.state == ControllerReadinessState::Ready
+    if (verifiedPlan.physicalStatus == VerificationSubsystemState::Ready
         && verifiedPlan.physical.directInputId == controller->directInputId) {
         verifiedRequirements.axes = verifiedPlan.requirements.axes;
         verifiedRequirements.buttons = verifiedPlan.requirements.buttons;

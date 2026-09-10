@@ -395,11 +395,12 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(
 bool ControllerReadinessService::isVJoySufficient(const VJoyCapabilities &vjoy,
                                                    const MapperOutputRequirements &requirements)
 {
-    // An active mapper can safely own a BUSY device, but ownership and
-    // successful reports never prove the device has enough axes, buttons, or
-    // POV capacity for the selected controller.
+    // This is the configured-device/capability dimension only. Temporary
+    // ownership is reported separately by planFor(): an otherwise-correct
+    // vJoy device held by another process must never be diagnosed as needing
+    // a destructive descriptor reconfiguration.
     return vjoy.installed && vjoy.configurationUtilityAvailable && vjoy.driverReady
-        && vjoy.devicePresent && (!vjoy.busy || vjoy.ownedByHotasBf6)
+        && vjoy.devicePresent
         && capabilityAxesMatch(vjoy.axes, requirements.axes)
         && vjoy.buttons >= requirements.buttons
         && vjoy.continuousPovs >= requirements.continuousPovs
@@ -456,23 +457,31 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
     }
     plan.vjoyNeedsChanges = !isVJoySufficient(vjoy, effectiveRequirements);
     if (!plan.vjoyNeedsChanges) {
-        plan.vjoyStatus = VerificationSubsystemState::Ready;
         const QString extras = extraAxisList(vjoy.axes, effectiveRequirements.axes);
         const QString capabilitySuffix = extras == QStringLiteral("none")
             ? QString{}
             : QStringLiteral(" Extra available axes: %1.").arg(extras);
-        plan.vjoySummary = (vjoy.ownedByHotasBf6
+        if (vjoy.busy && !vjoy.ownedByHotasBf6) {
+            plan.vjoyStatus = VerificationSubsystemState::Attention;
+            plan.vjoySummary = QStringLiteral("vJoy Device %1 — Busy in another application; its configured capabilities are correct.")
+                .arg(vjoy.deviceId) + capabilitySuffix;
+            plan.findings.append(plan.vjoySummary);
+        } else {
+            plan.vjoyStatus = VerificationSubsystemState::Ready;
+            plan.vjoySummary = (vjoy.ownedByHotasBf6
             ? QStringLiteral("vJoy Device %1 — Ready · HOTAS BF6 currently owns this device.")
             : QStringLiteral("vJoy Device %1 — Ready · required capabilities present."))
                 .arg(vjoy.deviceId) + capabilitySuffix;
-        plan.findings.append(plan.vjoySummary);
+            plan.findings.append(plan.vjoySummary);
+        }
     } else if (!vjoy.installed || !vjoy.configurationUtilityAvailable) {
         plan.vjoyStatus = VerificationSubsystemState::Error;
         plan.vjoySummary = QStringLiteral("vJoy is unavailable — install or repair the vJoy driver.");
         plan.findings.append(QStringLiteral("VJOY NOT DETECTED — Install vJoy before configuring virtual output."));
     } else if (vjoy.busy && !vjoy.ownedByHotasBf6) {
-        plan.vjoyStatus = VerificationSubsystemState::Error;
-        plan.vjoySummary = QStringLiteral("vJoy Device %1 — In use by another application.").arg(vjoy.deviceId);
+        plan.vjoyStatus = VerificationSubsystemState::Attention;
+        plan.vjoySummary = QStringLiteral("vJoy Device %1 — Busy in another application; release it before correcting its capabilities.")
+            .arg(vjoy.deviceId);
         plan.findings.append(plan.vjoySummary);
     } else {
         plan.vjoyStatus = VerificationSubsystemState::Error;

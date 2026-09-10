@@ -599,6 +599,10 @@ public:
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();
     Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
                                                              const QString &scopeId = {});
+    // Completes the selected saved controller's exact-identity verification.
+    // This differs from a generic diagnostic rerun: success persists the
+    // verified device record and advances the assistant to the next cause.
+    Q_INVOKABLE QVariantMap completeSetupAssistantDevice(const QString &recordId = {});
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
@@ -861,7 +865,7 @@ private:
                                               const QString &scopeId) const;
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
-    void rememberCurrentController();
+    void rememberCurrentController(const QString &expectedRecordId = {});
     void tryAutoSwitchVerifiedController();
     void refreshTrayStatus();
     void rebuildSelectedAxisCurve();
@@ -938,6 +942,7 @@ private:
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;
+    QString m_pendingSetupVerificationRecordId;
     // Output inspection is explicit and scoped.  A rig/device check must not
     // accidentally change another saved output's readiness presentation.
     QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;
