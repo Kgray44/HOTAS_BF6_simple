@@ -315,6 +315,8 @@ Flickable {
             height: 34
             highlighted: control.highlightedIndex === index
             contentItem: Text {
+                leftPadding: deck.popupRowPadding
+                rightPadding: deck.popupRowPadding
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
@@ -328,7 +330,7 @@ Flickable {
             objectName: control.objectName + "Popup"
             y: control.height - 1
             width: control.width
-            padding: 4
+            padding: deck.popupPadding
             implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
             contentItem: ListView {
                 clip: true
@@ -397,20 +399,21 @@ Flickable {
         objectName: "flightDeckButtonCard_" + buttonIndex
         width: root.width >= 1180 ? (assignedFlow.width - deck.space12) / 2 : assignedFlow.width
         visible: root.isAssigned(button) && root.buttonVisible(button)
-        implicitHeight: visible ? content.implicitHeight + deck.space24 : 0
+        implicitHeight: visible ? content.implicitHeight + contentPadding * 2 : 0
         color: button.pressed ? deck.selected : deck.elevatedSurface
         border.color: button.pressed ? deck.accent : deck.border
 
         ColumnLayout {
             id: content
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space12
             RowLayout {
                 Layout.fillWidth: true
                 spacing: deck.space12
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     spacing: 2
                     Text {
                         text: String(button.label || button.hardwareLabel || "Button")
@@ -420,6 +423,7 @@ Flickable {
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                     Text {
                         text: root.inputDeviceName + " · " + String(button.hardwareLabel || "Button " + buttonIndex)
@@ -428,6 +432,7 @@ Flickable {
                         font.pixelSize: 9
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                 }
                 SummaryChip {
@@ -712,12 +717,12 @@ Flickable {
         readonly property int buttonIndex: Number(button.index)
         visible: !root.isAssigned(button) && root.expandedButtonIndex === buttonIndex && root.buttonVisible(button)
         Layout.fillWidth: true
-        implicitHeight: visible ? editorContent.implicitHeight + deck.space24 : 0
+        implicitHeight: visible ? editorContent.implicitHeight + contentPadding * 2 : 0
         color: deck.elevatedSurface
         ColumnLayout {
             id: editorContent
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space12
             RowLayout {
                 Layout.fillWidth: true
@@ -811,7 +816,7 @@ Flickable {
         readonly property var directions: root.directionsForHat(hatIndex)
         objectName: "flightDeckHatCard_" + hatIndex
         Layout.fillWidth: true
-        implicitHeight: content.implicitHeight + deck.space24
+        implicitHeight: content.implicitHeight + contentPadding * 2
         color: hat.centered ? deck.elevatedSurface : deck.selected
         border.color: hat.centered ? deck.border : deck.accent
         function directionAt(index) { return root.directionForHat(hatIndex, index) }
@@ -819,7 +824,7 @@ Flickable {
         ColumnLayout {
             id: content
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space12
             RowLayout {
                 Layout.fillWidth: true
@@ -923,13 +928,14 @@ Flickable {
                 Layout.fillWidth: true
             }
             ColumnLayout {
+                id: povDetail
                 visible: root.expandedHatIndex === card.hatIndex && root.expandedPovDirection >= 0
                 Layout.fillWidth: true
                 spacing: deck.space12
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
                 readonly property var selectedDirection: card.directionAt(root.expandedPovDirection)
                 SectionLabel {
-                    text: "HAT " + card.hatIndex + " · " + String(selectedDirection.label || "DIRECTION").toUpperCase()
+                    text: "HAT " + card.hatIndex + " · " + String(povDetail.selectedDirection.label || "DIRECTION").toUpperCase()
                 }
                 Text {
                     text: "Physical POV direction → existing vJoy button route."
@@ -941,10 +947,10 @@ Flickable {
                     objectName: "flightDeckPovMappingSelector_" + card.hatIndex + "_" + root.expandedPovDirection
                     Layout.fillWidth: true
                     model: root.outputChoices
-                    currentIndex: Math.max(0, Number(selectedDirection.target || 0))
+                    currentIndex: Math.max(0, Number(povDetail.selectedDirection.target || 0))
                     onActivated: {
                         if (!root.requestPovMapping(card.hatIndex, root.expandedPovDirection, currentIndex, false))
-                            currentIndex = Math.max(0, Number(selectedDirection.target || 0))
+                            currentIndex = Math.max(0, Number(povDetail.selectedDirection.target || 0))
                     }
                 }
                 RowLayout {
@@ -979,7 +985,7 @@ Flickable {
                             model: root.profileChoices
                             textRole: "label"
                             valueRole: "id"
-                            currentIndex: root.profileChoiceIndex(selectedDirection.profileControlTargetId)
+                            currentIndex: root.profileChoiceIndex(povDetail.selectedDirection.profileControlTargetId)
                             onActivated: backend.setPovProfileTrigger(card.hatIndex, root.expandedPovDirection,
                                 root.profileIdAt(currentIndex), povBehaviorSelector.currentText)
                         }
@@ -991,7 +997,7 @@ Flickable {
                             id: povBehaviorSelector
                             Layout.fillWidth: true
                             model: root.behaviorChoices
-                            currentIndex: root.behaviorChoiceIndex(selectedDirection.profileControlMode)
+                            currentIndex: root.behaviorChoiceIndex(povDetail.selectedDirection.profileControlMode)
                             onActivated: {
                                 const profileId = root.profileIdAt(povProfileSelector.currentIndex)
                                 if (profileId.length > 0) backend.setPovProfileTrigger(card.hatIndex,
@@ -1001,21 +1007,21 @@ Flickable {
                     }
                 }
                 RowLayout {
-                    visible: selectedDirection.profileControlEnabled
+                    visible: Boolean(povDetail.selectedDirection.profileControlEnabled)
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
-                        text: selectedDirection.profileControlTargetAvailable
-                            ? "References " + String(selectedDirection.profileControlTargetName)
+                        text: povDetail.selectedDirection.profileControlTargetAvailable
+                            ? "References " + String(povDetail.selectedDirection.profileControlTargetName)
                             : "The referenced profile is unavailable."
-                        color: selectedDirection.profileControlTargetAvailable ? deck.textSecondary : deck.attention
+                        color: povDetail.selectedDirection.profileControlTargetAvailable ? deck.textSecondary : deck.attention
                         font.pixelSize: 10
                     }
                     DeckButton {
                         text: "OPEN PROFILE"
                         subdued: true
-                        enabled: selectedDirection.profileControlTargetAvailable
-                        onClicked: root.navigateToProfile(String(selectedDirection.profileControlTargetId || ""))
+                        enabled: Boolean(povDetail.selectedDirection.profileControlTargetAvailable)
+                        onClicked: root.navigateToProfile(String(povDetail.selectedDirection.profileControlTargetId || ""))
                     }
                 }
                 Repeater {
@@ -1086,13 +1092,14 @@ Flickable {
 
         FlightDeckCard {
             tokens: deck
+            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: statusContent.implicitHeight + deck.space24
+            implicitHeight: statusContent.implicitHeight + contentPadding * 2
             color: backend.physicalConnected ? deck.secondarySurface : deck.elevatedSurface
             ColumnLayout {
                 id: statusContent
                 anchors.fill: parent
-                anchors.margins: deck.space12
+                anchors.margins: parent.contentPadding
                 spacing: deck.space8
                 RowLayout {
                     Layout.fillWidth: true
@@ -1223,7 +1230,7 @@ Flickable {
         tone: "attention"
         preferredWidth: 520
         contentItem: ColumnLayout {
-            width: mappingConflict.width - deck.space32
+            width: mappingConflict.availableWidth
             spacing: deck.space12
             Text {
                 Layout.fillWidth: true

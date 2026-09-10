@@ -53,15 +53,9 @@ int main(int argc, char *argv[])
     if (const std::optional<int> repairExit = hotas::runElevatedRepairTransaction(argc, argv)) {
         return *repairExit;
     }
-    const bool flightDeckPreviewIsolated = hasArgument(argc, argv, "--flight-deck-preview-isolated");
     const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
-    // Phase 1 keeps the incomplete alternate shell out of the normal
-    // Appearance UI. This explicit development switch is the only route that
-    // enables its persisted presentation selection.
-    const bool flightDeckPreview = hasArgument(argc, argv, "--flight-deck-preview")
-        || flightDeckPreviewIsolated;
-    if (isolatedStartupSmoke || flightDeckPreviewIsolated) {
+    if (isolatedStartupSmoke) {
         // Keep a local package smoke run away from the user's established
         // QSettings location. CI upgrade acceptance intentionally uses the
         // ordinary smoke argument so it can verify the seeded migration.
@@ -107,8 +101,7 @@ int main(int argc, char *argv[])
     }
 
     hotas::AppBackend backend;
-    hotas::ThemeManager themeManager({}, flightDeckPreview);
-    if (flightDeckPreview) themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    hotas::ThemeManager themeManager;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
@@ -125,7 +118,10 @@ int main(int argc, char *argv[])
     if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
         backend.attachMainWindow(window);
     }
-    if (hotas::CrashDiagnostics::previousRunWasAbnormal()) {
+    // A normal interactive launch must offer recovery after an abnormal exit.
+    // The explicit startup-smoke route instead needs to initialize and close
+    // deterministically in an off-screen package/upgrade acceptance run.
+    if (!startupSmoke && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
         QTimer::singleShot(0, &application, [] {
             QMessageBox recovery;
             recovery.setWindowTitle(QStringLiteral("HOTAS BF6 recovery"));

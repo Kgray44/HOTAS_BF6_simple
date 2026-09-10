@@ -616,14 +616,16 @@ Flickable {
                             }
                         ]
                         delegate: FlightDeckCard {
+                            required property var modelData
                             tokens: deck
+                            contentPadding: deck.cardPaddingCompact
                             Layout.fillWidth: true
-                            implicitHeight: pathNode.implicitHeight + deck.space24
+                            implicitHeight: pathNode.implicitHeight + contentPadding * 2
                             color: deck.elevatedSurface
                             ColumnLayout {
                                 id: pathNode
                                 anchors.fill: parent
-                                anchors.margins: deck.space12
+                                anchors.margins: parent.contentPadding
                                 spacing: deck.space4
                                 Text {
                                     text: modelData.label
@@ -1352,6 +1354,7 @@ Flickable {
                 Repeater {
                     model: axes
                     delegate: FlightDeckCard {
+                        required property var modelData
                         tokens: deck
                         Layout.fillWidth: true
                         visible: modelData.available || !physicalConnected
@@ -1419,6 +1422,7 @@ Flickable {
                     Repeater {
                         model: buttons
                         delegate: FlightDeckStatusChip {
+                            required property var modelData
                             tokens: deck
                             label: modelData.label || ("B" + (modelData.index + 1))
                             value: modelData.pressed ? "PRESSED" : "RELEASED"
@@ -1441,6 +1445,7 @@ Flickable {
                     Repeater {
                         model: povs
                         delegate: FlightDeckStatusChip {
+                            required property var modelData
                             tokens: deck
                             label: "POV " + modelData.index
                             value: String(modelData.direction || "Centered").toUpperCase()
@@ -1699,6 +1704,7 @@ Flickable {
                     Repeater {
                         model: controllers
                         delegate: TechnicalRow {
+                            required property var modelData
                             label: modelData.name || "Controller"
                             value: (modelData.state || "Unknown") + "  •  " + modelData.directInputId
                             valueTone: modelData.connected ? "informational" : "attention"
@@ -1715,6 +1721,7 @@ Flickable {
                     Repeater {
                         model: axes
                         delegate: TechnicalRow {
+                            required property var modelData
                             label: modelData.label || "Axis"
                             value: "Target " + (modelData.target || "Disabled") + "  •  " + (modelData.curveSummary || "Linear") + "  •  deadzone " + Number(modelData.deadzone || 0).toFixed(3)
                             valueTone: root.routeStatus(modelData).tone
@@ -1773,9 +1780,11 @@ Flickable {
                             policy: ScrollBar.AsNeeded
                         }
                         delegate: Text {
-                            width: parent.width - deck.space8
+                            required property var modelData
+                            required property int index
+                            width: ListView.view ? ListView.view.width - deck.space8 : 0
                             text: modelData
-                            color: index === parent.count - 1 ? deck.textPrimary : deck.textSecondary
+                            color: ListView.view && index === ListView.view.count - 1 ? deck.textPrimary : deck.textSecondary
                             font.family: deck.telemetryFont
                             font.pixelSize: 9
                             wrapMode: Text.WrapAnywhere

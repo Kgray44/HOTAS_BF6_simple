@@ -97,164 +97,163 @@ Item {
 
         FlightDeckSurface {
             id: navigationRail
+            objectName: "flightDeckNavigationRail"
             tokens: deck
             Layout.fillHeight: true
             Layout.preferredWidth: root.width < 1080 ? 202 : 250
             Layout.minimumWidth: 188
             color: deck.navigationSurface
+            // The rail has fixed branding and readiness regions. Only the
+            // navigation list consumes flexible height, so a short window
+            // never pushes the system state below the rounded surface.
+            property bool compactReadiness: height < 720
 
-            Flickable {
-                id: navigationViewport
-                objectName: "flightDeckNavigationViewport"
+            ColumnLayout {
                 anchors.fill: parent
-                clip: true
-                contentWidth: width
-                contentHeight: navigationContent.height + deck.space32
-                boundsBehavior: Flickable.StopAtBounds
+                anchors.margins: deck.railPadding
+                spacing: deck.controlGap
 
-                ScrollBar.vertical: ScrollBar {
-                    policy: navigationViewport.contentHeight > navigationViewport.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Rectangle {
+                        Layout.preferredWidth: 34
+                        Layout.preferredHeight: 34
+                        radius: deck.radiusControl
+                        color: deck.accentMuted
+                        border.color: deck.accent
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: deck.space4
+                            source: "qrc:/assets/icons/png/hotas-bf6-256.png"
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                            Accessible.name: "HOTAS BF6"
+                        }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 1
+                        Text {
+                            text: "HOTAS BF6"
+                            color: deck.textPrimary
+                            font.family: deck.displayFont
+                            font.pixelSize: 16
+                            font.bold: true
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: "FLIGHT DECK"
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 8
+                            font.bold: true
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
                 }
 
-                ColumnLayout {
-                    id: navigationContent
-                    x: deck.space16
-                    y: deck.space16
-                    width: navigationViewport.width - deck.space32
-                    // At normal sizes the readiness card remains low in the
-                    // rail. At the supported minimum the entire rail scrolls
-                    // instead of letting controls escape below the surface.
-                    height: Math.max(implicitHeight, navigationViewport.height - deck.space32)
-                    spacing: deck.space12
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: deck.divider
+                }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: deck.space12
-                        Rectangle {
-                            Layout.preferredWidth: 34
-                            Layout.preferredHeight: 34
-                            radius: deck.radiusControl
-                            color: deck.accentMuted
-                            border.color: deck.accent
-                            Text {
-                                anchors.centerIn: parent
-                                text: "FD"
-                                color: deck.accent
-                                font.family: deck.telemetryFont
-                                font.pixelSize: 11
-                                font.bold: true
-                            }
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 1
-                            Text {
-                                text: "HOTAS BF6"
-                                color: deck.textPrimary
-                                font.family: deck.displayFont
-                                font.pixelSize: 16
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-                            Text {
-                                text: "FLIGHT DECK · PREVIEW"
-                                color: deck.textMuted
-                                font.family: deck.telemetryFont
-                                font.pixelSize: 8
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-                        }
+                Flickable {
+                    id: navigationViewport
+                    objectName: "flightDeckNavigationViewport"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: deck.navigationRowHeight * 2
+                    clip: true
+                    contentWidth: width
+                    contentHeight: navigationContent.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: navigationViewport.contentHeight > navigationViewport.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                     }
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: deck.divider
-                    }
+                    ColumnLayout {
+                        id: navigationContent
+                        width: navigationViewport.width
+                        spacing: deck.controlGap
 
-                    Repeater {
-                        model: [
-                            {
-                                label: "Overview",
-                                page: 8
-                            },
-                            {
-                                label: "Devices & setup",
-                                page: 2
-                            },
-                            {
-                                label: "Axes",
-                                page: 0
-                            },
-                            {
-                                label: "Buttons",
-                                page: 1
-                            },
-                            {
-                                label: "Profiles",
-                                page: 5
-                            },
-                            {
-                                label: "Adaptive Response",
-                                page: 9
-                            },
-                            {
-                                label: "Automation",
-                                page: 7
-                            },
-                            {
-                                label: "Diagnostics",
-                                page: 3
-                            },
-                            {
-                                label: "Settings",
-                                page: 4
-                            },
-                            {
-                                label: "Curve editor",
-                                page: 6
-                            }
-                        ]
-                        delegate: FlightDeckNavItem {
-                            objectName: "flightDeckNav_" + modelData.page
-                            tokens: deck
-                            label: modelData.label
-                            selected: root.currentPage === modelData.page
-                            Layout.fillWidth: true
-                            onClicked: root.navigateTo(modelData.page)
-                        }
-                    }
-
-                    Item {
-                        Layout.fillHeight: true
-                    }
-
-                    FlightDeckCard {
-                        objectName: "flightDeckReadiness"
-                        tokens: deck
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: readinessCard.implicitHeight + deck.space24
-                        ColumnLayout {
-                            id: readinessCard
-                            anchors.fill: parent
-                            anchors.margins: deck.space12
-                            spacing: deck.space8
-                            Text {
-                                text: "SYSTEM READINESS"
-                                color: deck.textMuted
-                                font.family: deck.telemetryFont
-                                font.pixelSize: 9
-                                font.bold: true
-                            }
-                            FlightDeckStatusChip {
+                        Repeater {
+                            model: [
+                                { label: "Overview", page: 8 },
+                                { label: "Devices & setup", page: 2 },
+                                { label: "Axes", page: 0 },
+                                { label: "Buttons", page: 1 },
+                                { label: "Profiles", page: 5 },
+                                { label: "Adaptive Response", page: 9 },
+                                { label: "Automation", page: 7 },
+                                { label: "Diagnostics", page: 3 },
+                                { label: "Settings", page: 4 },
+                                { label: "Curve editor", page: 6 }
+                            ]
+                            delegate: FlightDeckNavItem {
+                                objectName: "flightDeckNav_" + modelData.page
                                 tokens: deck
-                                label: readinessModel.readiness.label
-                                tone: readinessModel.readiness.tone
+                                label: modelData.label
+                                selected: root.currentPage === modelData.page
+                                scrollViewport: navigationViewport
                                 Layout.fillWidth: true
+                                onClicked: root.navigateTo(modelData.page)
                             }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: deck.divider
+                }
+
+                FlightDeckCard {
+                    objectName: "flightDeckReadiness"
+                    tokens: deck
+                    contentPadding: deck.cardPaddingCompact
+                    Layout.fillWidth: true
+                    implicitHeight: readinessCard.implicitHeight + contentPadding * 2
+                    ColumnLayout {
+                        id: readinessCard
+                        objectName: "flightDeckReadinessContent"
+                        anchors.fill: parent
+                        anchors.margins: parent.contentPadding
+                        spacing: deck.space8
+                        Text {
+                            visible: !navigationRail.compactReadiness
+                            text: "SYSTEM READINESS"
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            font.bold: true
+                        }
+                        FlightDeckStatusChip {
+                            tokens: deck
+                            label: readinessModel.readiness.label
+                            tone: readinessModel.readiness.tone
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            visible: navigationRail.compactReadiness
+                            text: readinessModel.input.title + " · " + readinessModel.game.title
+                            color: deck.textSecondary
+                            font.pixelSize: 9
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                        }
+                        ColumnLayout {
+                            visible: !navigationRail.compactReadiness
+                            Layout.fillWidth: true
+                            spacing: deck.space4
                             Text {
                                 text: readinessModel.input.title
                                 color: deck.textSecondary

@@ -25,10 +25,15 @@ Flickable {
     signal navigateToButton(int buttonIndex)
     signal presentationStateCaptured(var state)
 
-    readonly property var rules: automationPresentationOverride !== null ? automationPresentationOverride : backend.automationRules
-    readonly property var profiles: profilePresentationOverride !== null ? profilePresentationOverride : backend.profiles
-    readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttons
-    readonly property bool usingPresentationFixture: automationPresentationOverride !== null || profilePresentationOverride !== null || buttonPresentationOverride !== null
+    readonly property var rules: listOrEmpty(automationPresentationOverride !== null && automationPresentationOverride !== undefined
+                                              ? automationPresentationOverride : backend.automationRules)
+    readonly property var profiles: listOrEmpty(profilePresentationOverride !== null && profilePresentationOverride !== undefined
+                                                 ? profilePresentationOverride : backend.profiles)
+    readonly property var buttonItems: listOrEmpty(buttonPresentationOverride !== null && buttonPresentationOverride !== undefined
+                                                    ? buttonPresentationOverride : backend.buttons)
+    readonly property bool usingPresentationFixture: automationPresentationOverride !== null && automationPresentationOverride !== undefined
+                                                       || profilePresentationOverride !== null && profilePresentationOverride !== undefined
+                                                       || buttonPresentationOverride !== null && buttonPresentationOverride !== undefined
     readonly property var axisLabels: ["Roll", "Pitch", "Throttle", "Rotation X", "Rotation Y", "Yaw", "Additional axis 1", "Additional axis 2"]
     readonly property var directionLabels: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
     readonly property var conditionTypes: ["All the time", "Axis is above", "Axis is below", "Axis is between", "Axis is outside range", "Button is held", "Button is not held", "POV points direction", "POV is not pointing direction", "Selected profile is", "Active profile is", "Button is pressed", "Button is released", "Button is pressed multiple times", "Button is held for a while", "Axis crosses above", "Axis crosses below"]
@@ -55,6 +60,9 @@ Flickable {
 
     function copyValue(value) {
         return JSON.parse(JSON.stringify(value || ({})));
+    }
+    function listOrEmpty(value) {
+        return value !== null && value !== undefined && typeof value.length === "number" ? value : [];
     }
     function lower(value) {
         return String(value || "").toLowerCase();
@@ -516,6 +524,8 @@ Flickable {
             highlighted: control.highlightedIndex === index
             objectName: control.objectName + "Choice_" + index
             contentItem: Text {
+                leftPadding: deck.popupRowPadding
+                rightPadding: deck.popupRowPadding
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
@@ -531,7 +541,7 @@ Flickable {
             objectName: control.objectName + "Popup"
             y: control.height - 1
             width: control.width
-            padding: 4
+            padding: deck.popupPadding
             contentItem: ListView {
                 clip: true
                 implicitHeight: Math.min(contentHeight, 224)
@@ -783,13 +793,13 @@ Flickable {
                     property var rule: modelData
                     objectName: "flightDeckAutomationRule_" + String(rule.id || "")
                     Layout.fillWidth: true
-                    implicitHeight: ruleCard.implicitHeight + deck.space24
+                    implicitHeight: ruleCard.implicitHeight + contentPadding * 2
                     color: rule.enabled ? deck.elevatedSurface : deck.secondarySurface
                     border.color: Number(rule.health) === 2 ? deck.fault : rule.enabled ? deck.border : deck.attention
                     ColumnLayout {
                         id: ruleCard
                         anchors.fill: parent
-                        anchors.margins: deck.space12
+                        anchors.margins: parent.contentPadding
                         spacing: deck.space8
                         RowLayout {
                             Layout.fillWidth: true
@@ -1080,7 +1090,7 @@ Flickable {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Text {
-                                        text: "CONDITION " + (index + 1)
+                                        text: "CONDITION " + (conditionIndex + 1)
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
                                         font.pixelSize: 9
@@ -1095,7 +1105,7 @@ Flickable {
                                     }
                                 }
                                 DeckCombo {
-                                    objectName: "flightDeckAutomationConditionType_" + index
+                                    objectName: "flightDeckAutomationConditionType_" + conditionIndex
                                     Layout.fillWidth: true
                                     model: root.conditionTypes
                                     currentIndex: Number(condition.type)
@@ -1219,18 +1229,18 @@ Flickable {
                                             font.pixelSize: 9
                                         }
                                         DeckCombo {
-                                            objectName: "flightDeckAutomationConditionProfile_" + index
+                                        objectName: "flightDeckAutomationConditionProfile_" + conditionIndex
                                             width: 250
                                             model: root.profileChoices()
                                             textRole: "label"
-                                            currentIndex: Math.max(0, root.profileChoiceIndex(condition.profileId))
+                                            currentIndex: Math.max(0, root.profileChoiceIndex((condition || {}).profileId))
                                             onActivated: root.updateCondition(conditionIndex, "profileId", root.profileChoiceId(currentIndex))
                                         }
                                         DeckButton {
-                                            visible: String(condition.profileId || "").length > 0
+                                            visible: String((condition || {}).profileId || "").length > 0
                                             text: "OPEN PROFILE"
                                             subdued: true
-                                            onClicked: root.navigateToProfile(String(condition.profileId))
+                                            onClicked: root.navigateToProfile(String((condition || {}).profileId || ""))
                                         }
                                     }
                                 }
@@ -1292,7 +1302,7 @@ Flickable {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Text {
-                                        text: "ACTION " + (index + 1)
+                                        text: "ACTION " + (actionIndex + 1)
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
                                         font.pixelSize: 9
@@ -1307,7 +1317,7 @@ Flickable {
                                     }
                                 }
                                 DeckCombo {
-                                    objectName: "flightDeckAutomationActionType_" + index
+                                    objectName: "flightDeckAutomationActionType_" + actionIndex
                                     Layout.fillWidth: true
                                     model: root.actionTypes
                                     currentIndex: Number(action.type)
@@ -1352,18 +1362,18 @@ Flickable {
                                             font.pixelSize: 9
                                         }
                                         DeckCombo {
-                                            objectName: "flightDeckAutomationActionProfile_" + index
+                                        objectName: "flightDeckAutomationActionProfile_" + actionIndex
                                             width: 250
                                             model: root.profileChoices()
                                             textRole: "label"
-                                            currentIndex: Math.max(0, root.profileChoiceIndex(action.profileId))
+                                            currentIndex: Math.max(0, root.profileChoiceIndex((action || {}).profileId))
                                             onActivated: root.updateAction(actionIndex, "profileId", root.profileChoiceId(currentIndex))
                                         }
                                         DeckButton {
-                                            visible: String(action.profileId || "").length > 0
+                                            visible: String((action || {}).profileId || "").length > 0
                                             text: "OPEN PROFILE"
                                             subdued: true
-                                            onClicked: root.navigateToProfile(String(action.profileId))
+                                            onClicked: root.navigateToProfile(String((action || {}).profileId || ""))
                                         }
                                     }
                                     RowLayout {
@@ -1654,7 +1664,7 @@ Flickable {
         tone: "fault"
         preferredWidth: 420
         contentItem: ColumnLayout {
-            width: 340
+            width: deleteDialog.availableWidth
             spacing: deck.space12
             Text {
                 text: "This removes the automation rule. It does not delete a referenced profile or control."

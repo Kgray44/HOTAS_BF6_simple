@@ -8,6 +8,7 @@ Button {
     property string label: ""
     property string detail: ""
     property bool selected: false
+    property var scrollViewport: null
     // The offscreen startup-test capture neutralizes transient pointer/focus
     // decoration after exercising routes. It is always false in the product.
     property bool suppressTransientEmphasis: false
@@ -16,6 +17,22 @@ Button {
     rightPadding: tokens.space12
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
+
+    onSelectedChanged: {
+        if (!selected || !scrollViewport)
+            return
+        Qt.callLater(function () {
+            if (!scrollViewport || !control.selected)
+                return
+            const content = scrollViewport.contentItem
+            const top = control.mapToItem(content, 0, 0).y
+            const bottom = top + control.height
+            if (top < scrollViewport.contentY)
+                scrollViewport.contentY = top
+            else if (bottom > scrollViewport.contentY + scrollViewport.height)
+                scrollViewport.contentY = bottom - scrollViewport.height
+        })
+    }
 
     contentItem: Row {
         spacing: tokens.space8

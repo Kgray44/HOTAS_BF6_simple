@@ -15,6 +15,9 @@ Flickable {
     // touching AppBackend, device discovery, or persisted configuration.
     // Production never assigns this and always consumes backend.controllers.
     property var controllerPresentationOverride: null
+    // A long repair-plan fixture exercises the dialog's internal-scroll
+    // contract without asking AppBackend to alter vJoy or HidHide state.
+    property var proposedChangesPresentationOverride: null
     property bool virtualDetailsOpen: false
     property bool isolationDetailsOpen: false
     property bool verificationDetailsOpen: false
@@ -64,8 +67,10 @@ Flickable {
         ? backend.controllerReadinessState : state.controllerReadinessState
     readonly property string verificationStatus: state.controllerReadinessStatus === undefined
         ? backend.controllerReadinessStatus : state.controllerReadinessStatus
-    readonly property var proposedChanges: state.controllerReadinessProposedChanges === undefined
-        ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
+    readonly property var proposedChanges: proposedChangesPresentationOverride !== null
+        ? proposedChangesPresentationOverride
+        : state.controllerReadinessProposedChanges === undefined
+            ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
     readonly property bool reconnectRequired: state.controllerReconnectRequired === undefined
         ? backend.controllerReconnectRequired : state.controllerReconnectRequired
     readonly property bool disconnectObserved: state.controllerDisconnectObserved === undefined
@@ -204,14 +209,15 @@ Flickable {
             id: setupHealthHero
             objectName: "flightDeckSetupHealthHero"
             tokens: deck
+            contentPadding: deck.cardPadding
             color: deck.secondarySurface
             Layout.fillWidth: true
-            implicitHeight: setupHealthContent.implicitHeight + deck.space32
+            implicitHeight: setupHealthContent.implicitHeight + contentPadding * 2
 
             ColumnLayout {
                 id: setupHealthContent
                 anchors.fill: parent
-                anchors.margins: deck.space16
+                anchors.margins: parent.contentPadding
                 spacing: deck.space16
 
                 RowLayout {
@@ -388,27 +394,41 @@ Flickable {
                     objectName: "flightDeckControllerCard_" + controller.directInputId
                     readonly property string controllerActionLabel: root.controllerActionLabel(controller)
                     tokens: deck
+                    contentPadding: deck.cardPadding
                     Layout.fillWidth: true
-                    implicitHeight: controllerContent.implicitHeight + deck.space32
+                    implicitHeight: controllerContent.implicitHeight + contentPadding * 2
                     border.color: controller.active ? deck.accent : deck.border
                     ColumnLayout {
                         id: controllerContent
                         anchors.fill: parent
-                        anchors.margins: deck.space16
+                        anchors.margins: parent.contentPadding
                         spacing: deck.space8
                         RowLayout {
                             Layout.fillWidth: true
                             ColumnLayout {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 spacing: deck.space4
                                 Text { text: "PHYSICAL CONTROLLER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                                Text { text: controllerCard.controller.name || "Controller"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 16; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                                Text {
+                                    objectName: "flightDeckControllerName_" + controllerCard.index
+                                    text: controllerCard.controller.name || "Controller"
+                                    color: deck.textPrimary
+                                    font.family: deck.displayFont
+                                    font.pixelSize: 16
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    wrapMode: Text.WrapAnywhere
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                }
                             }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: deck.space12
-                            Text { text: root.markerFor(root.controllerTone(controllerCard.controller)) + " " + root.controllerState(controllerCard.controller); color: deck.statusColor(root.controllerTone(controllerCard.controller)); font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: root.markerFor(root.controllerTone(controllerCard.controller)) + " " + root.controllerState(controllerCard.controller); color: deck.statusColor(root.controllerTone(controllerCard.controller)); font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
                             Text { text: controllerCard.controller.verified ? "✓ Verified" : "! Not yet verified"; color: controllerCard.controller.verified ? deck.healthy : deck.attention; font.pixelSize: 10; font.bold: true }
                         }
                         Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -589,13 +609,14 @@ Flickable {
         FlightDeckCard {
             objectName: "flightDeckCalibration"
             tokens: deck
+            contentPadding: deck.cardPaddingCompact
             Layout.fillWidth: true
-            implicitHeight: calibrationEntry.implicitHeight + deck.space24
+            implicitHeight: calibrationEntry.implicitHeight + contentPadding * 2
             color: deck.secondarySurface
             ColumnLayout {
                 id: calibrationEntry
                 anchors.fill: parent
-                anchors.margins: deck.space12
+                anchors.margins: parent.contentPadding
                 spacing: deck.space8
                 RowLayout {
                     Layout.fillWidth: true
@@ -732,12 +753,13 @@ Flickable {
 
         FlightDeckCard {
             tokens: deck
+            contentPadding: deck.cardPaddingCompact
             Layout.fillWidth: true
-            implicitHeight: advancedContent.implicitHeight + deck.space24
+            implicitHeight: advancedContent.implicitHeight + contentPadding * 2
             ColumnLayout {
                 id: advancedContent
                 anchors.fill: parent
-                anchors.margins: deck.space12
+                anchors.margins: parent.contentPadding
                 spacing: deck.space4
                 Text { text: "ADVANCED / TECHNICAL"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                 Text { text: "For device identifiers, raw controller state, and detailed troubleshooting, use Diagnostics."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -760,45 +782,59 @@ Flickable {
         heading: "Repair setup?"
         tone: "attention"
         preferredWidth: 560
-        contentItem: ColumnLayout {
+        contentItem: Flickable {
+            objectName: "flightDeckRepairConfirmationBody"
             width: repairConfirmation.availableWidth
-            spacing: deck.space12
-            Text { text: "HOTAS BF6 will apply only the scoped changes listed below, then verify the resulting controller state. Windows may request administrator permission."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: repairPlan.implicitHeight + deck.space24
-                color: deck.elevatedSurface
-                border.color: deck.border
-                radius: deck.radiusControl
-                ColumnLayout {
-                    id: repairPlan
-                    anchors.fill: parent
-                    anchors.margins: deck.space12
-                    spacing: deck.space4
-                    Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                    Repeater {
-                        model: root.proposedChanges
-                        delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            implicitHeight: Math.min(repairContent.implicitHeight,
+                repairConfirmation.maximumBodyHeight)
+            contentWidth: width
+            contentHeight: repairContent.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            ColumnLayout {
+                id: repairContent
+                width: parent.width
+                spacing: deck.space12
+                Text { text: "HOTAS BF6 will apply only the scoped changes listed below, then verify the resulting controller state. Windows may request administrator permission."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: repairPlan.implicitHeight + deck.space24
+                    color: deck.elevatedSurface
+                    border.color: deck.border
+                    radius: deck.radiusControl
+                    ColumnLayout {
+                        id: repairPlan
+                        anchors.fill: parent
+                        anchors.margins: deck.space12
+                        spacing: deck.space4
+                        Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                        Repeater {
+                            model: root.proposedChanges
+                            delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        }
+                        Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
-                    Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                Button {
-                    text: "CANCEL"
-                    focusPolicy: Qt.StrongFocus
-                    onClicked: repairConfirmation.close()
-                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                }
-                Button {
-                    text: "REPAIR SETUP"
-                    focusPolicy: Qt.StrongFocus
-                    onClicked: { repairConfirmation.close(); backend.applyControllerReadiness() }
-                    background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                RowLayout {
+                    objectName: "flightDeckRepairConfirmationActions"
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: "CANCEL"
+                        focusPolicy: Qt.StrongFocus
+                        onClicked: repairConfirmation.close()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        text: "REPAIR SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        onClicked: { repairConfirmation.close(); backend.applyControllerReadiness() }
+                        background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
                 }
             }
         }
@@ -812,8 +848,10 @@ Flickable {
         tone: backend.calibrationActive ? "attention" : backend.calibrationSuccess ? "informational" : "informational"
         preferredWidth: 620
         contentItem: Flickable {
-            width: calibrationDialog.width - deck.space32
-            implicitHeight: Math.min(calibrationContent.implicitHeight, 430)
+            width: calibrationDialog.availableWidth
+            implicitHeight: Math.min(calibrationContent.implicitHeight,
+                                      Math.max(260, (calibrationDialog.parent
+                                          ? calibrationDialog.parent.height : 650) - deck.space48))
             contentWidth: width
             contentHeight: calibrationContent.implicitHeight
             clip: true

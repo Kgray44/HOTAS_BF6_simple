@@ -248,6 +248,8 @@ Flickable {
             height: 34
             highlighted: control.highlightedIndex === index
             contentItem: Text {
+                leftPadding: deck.popupRowPadding
+                rightPadding: deck.popupRowPadding
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
@@ -263,7 +265,7 @@ Flickable {
             objectName: control.objectName + "Popup"
             y: control.height - 1
             width: control.width
-            padding: 4
+            padding: deck.popupPadding
             implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
             contentItem: ListView {
                 clip: true
@@ -331,13 +333,13 @@ Flickable {
         objectName: "flightDeckAxisCard_" + axisIndex
         Layout.fillWidth: true
         visible: Boolean(axis && axis.available)
-        implicitHeight: visible ? cardContent.implicitHeight + deck.space24 : 0
+        implicitHeight: visible ? cardContent.implicitHeight + contentPadding * 2 : 0
         color: axis.target === "Disabled" ? deck.secondarySurface : deck.elevatedSurface
 
         ColumnLayout {
             id: cardContent
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space12
 
             RowLayout {
@@ -345,6 +347,7 @@ Flickable {
                 spacing: deck.space12
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     spacing: 2
                     Text {
                         text: axis.label || axis.hardwareLabel || "Axis"
@@ -354,6 +357,7 @@ Flickable {
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                     Text {
                         text: root.sourceLabel(axis)
@@ -362,6 +366,7 @@ Flickable {
                         font.pixelSize: 9
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                 }
                 SummaryChip {
@@ -979,13 +984,14 @@ Flickable {
 
         FlightDeckCard {
             tokens: deck
+            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: contextContent.implicitHeight + deck.space24
+            implicitHeight: contextContent.implicitHeight + contentPadding * 2
             color: deck.elevatedSurface
             ColumnLayout {
                 id: contextContent
                 anchors.fill: parent
-                anchors.margins: deck.space12
+                anchors.margins: parent.contentPadding
                 spacing: deck.space8
                 RowLayout {
                     Layout.fillWidth: true
@@ -1073,14 +1079,15 @@ Flickable {
 
         FlightDeckCard {
             tokens: deck
+            contentPadding: deck.cardPaddingCompact
             visible: !root.hasVisibleAxes
             Layout.fillWidth: true
-            implicitHeight: emptyContent.implicitHeight + deck.space32
+            implicitHeight: emptyContent.implicitHeight + contentPadding * 2
             color: deck.secondarySurface
             ColumnLayout {
                 id: emptyContent
                 anchors.fill: parent
-                anchors.margins: deck.space16
+                anchors.margins: parent.contentPadding
                 spacing: deck.space8
                 Text {
                     text: "NO PHYSICAL AXES AVAILABLE"
@@ -1121,6 +1128,7 @@ Flickable {
         tone: "attention"
         preferredWidth: 460
         contentItem: ColumnLayout {
+            width: routeConflictDialog.availableWidth
             spacing: deck.space12
             Text {
                 text: "The requested output may already be used, or it is not currently exposed by vJoy."

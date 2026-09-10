@@ -204,6 +204,8 @@ FlightDeckDialog {
             height: 34
             highlighted: combo.highlightedIndex === index
             contentItem: Text {
+                leftPadding: deckTokens.popupRowPadding
+                rightPadding: deckTokens.popupRowPadding
                 text: combo.textAt(index)
                 color: deckTokens.textPrimary
                 font.family: deckTokens.telemetryFont
@@ -216,7 +218,7 @@ FlightDeckDialog {
         popup: Popup {
             y: combo.height - 1
             width: combo.width
-            padding: 4
+            padding: deckTokens.popupPadding
             contentItem: ListView {
                 clip: true
                 implicitHeight: Math.min(contentHeight, 224)
@@ -260,13 +262,17 @@ FlightDeckDialog {
     }
 
     contentItem: ScrollView {
-        implicitWidth: control.width - control.tokens.space32
-        implicitHeight: Math.min(590, Math.max(300, control.parent ? control.parent.height - 190 : 590))
+        implicitWidth: control.availableWidth
+        // Keep the compact import/export chooser intentional; grow only as
+        // real form content arrives, then scroll its body before the modal can
+        // extend beyond the application viewport.
+        implicitHeight: Math.min(590, Math.max(120, transferBody.implicitHeight))
         clip: true
         contentWidth: availableWidth
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
+            id: transferBody
             width: parent.width
             spacing: deckTokens.space12
 

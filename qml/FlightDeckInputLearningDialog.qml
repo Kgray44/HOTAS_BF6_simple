@@ -9,7 +9,7 @@ FlightDeckDialog {
     id: control
     objectName: "flightDeckInputLearningDialog"
 
-    // This preview-only popup owns its semantic token object. Keeping it
+    // This application-owned popup owns its semantic token object. Keeping it
     // self-contained lets the application-window overlay host it without
     // reparenting the Flight Deck shell's theme resource.
     FlightDeckTheme { id: learningTokens }
@@ -226,8 +226,8 @@ FlightDeckDialog {
         popup: Popup {
             y: selector.height + 4
             width: selector.width
-            implicitHeight: Math.min(contentItem.implicitHeight + control.tokens.space8, 260)
-            padding: control.tokens.space4
+            implicitHeight: Math.min(contentItem.implicitHeight + control.tokens.popupPadding * 2, 260)
+            padding: control.tokens.popupPadding
             contentItem: ListView {
                 clip: true
                 implicitHeight: contentHeight
@@ -246,6 +246,8 @@ FlightDeckDialog {
             text: modelData
             highlighted: selector.highlightedIndex === index
             contentItem: Text {
+                leftPadding: control.tokens.popupRowPadding
+                rightPadding: control.tokens.popupRowPadding
                 text: parent.text
                 color: parent.highlighted ? control.tokens.accent : control.tokens.textPrimary
                 font.family: control.tokens.telemetryFont
@@ -260,9 +262,21 @@ FlightDeckDialog {
         }
     }
 
-    contentItem: ColumnLayout {
-        width: control.width - control.tokens.space32
-        spacing: control.tokens.space12
+    contentItem: Flickable {
+        objectName: "flightDeckInputLearningBody"
+        width: control.availableWidth
+        implicitHeight: Math.min(learningContent.implicitHeight,
+            control.maximumBodyHeight)
+        contentWidth: width
+        contentHeight: learningContent.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        ColumnLayout {
+            id: learningContent
+            width: parent.width
+            spacing: control.tokens.space12
 
         Text {
             Layout.fillWidth: true
@@ -373,7 +387,7 @@ FlightDeckDialog {
                 }
             }
         }
-        RowLayout {
+        Flow {
             Layout.fillWidth: true
             spacing: control.tokens.space8
             DeckButton {
@@ -422,7 +436,6 @@ FlightDeckDialog {
                     control.startError = "Button mappings reset for the active profile."
                 }
             }
-            Item { Layout.fillWidth: true }
             DeckButton {
                 visible: control.workflow === "single-button" && !control.learning.active && control.phase !== "assigned"
                 text: "START LISTENING"
@@ -435,5 +448,6 @@ FlightDeckDialog {
                 onClicked: control.cancelWorkflow()
             }
         }
+    }
     }
 }

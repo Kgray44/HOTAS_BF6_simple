@@ -36,7 +36,7 @@ Page {
     property string flightDeckAutomationContext: ""
     property string flightDeckAdaptiveProfileContext: ""
     // Flight Deck owns the shared learning modal at the alternate-shell
-    // level. Retain a first request until that preview-only surface arrives.
+    // level. Retain a first request until that alternate surface arrives.
     property string flightDeckLearningOperation: ""
     property var flightDeckLearningArgument: null
     property var flightDeckLearningDialog: null
@@ -1313,6 +1313,7 @@ Page {
                     ]
                     delegate: Item {
                         required property var modelData
+                        required property int index
                         width: index === 0 ? 184 : index === 1 ? 116 : 144; height: parent.height
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: index === 2 ? "transparent" : "#7c442f" }
                         Column { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 14; spacing: 7
@@ -2051,8 +2052,13 @@ Page {
                     Repeater { model: 8
                         delegate: Panel {
                             id: calibrationAxisCard
-                            property var info: root.axisAt(index)
-                            visible: info && info.available
+                            // Repeaters instantiate their delegates even when
+                            // the selected controller exposes fewer than eight
+                            // axes. Keep every hidden calibration card bound to
+                            // a harmless object so it cannot churn warnings or
+                            // evaluate text outside its available data.
+                            property var info: root.axisAt(index) || ({})
+                            visible: Boolean(info.available)
                             Layout.fillWidth: true
                             Layout.preferredHeight: 118
                             color: backend.calibrationActive ? Qt.rgba(theme.orange.r, theme.orange.g, theme.orange.b, 0.14) : (theme.topGun ? "#d80b1b20" : theme.cockpitSurface)
@@ -2060,7 +2066,7 @@ Page {
                             RowLayout { anchors.fill: parent
  anchors.margins: 15
                                 ColumnLayout { Layout.preferredWidth: 130
-                                    Text { text: calibrationAxisCard.info.label.toUpperCase()
+                                    Text { text: String(calibrationAxisCard.info.label || "").toUpperCase()
  color: theme.topGun ? theme.ivory : theme.cockpitText
  font.pixelSize: theme.topGun ? 15 : 12
  font.bold: true
@@ -2236,14 +2242,14 @@ Page {
                     Repeater { model: 8
                         delegate: Panel {
                             id: diagnosticAxisCard
-                            property var info: root.axisAt(index)
-                            visible: info && info.available
+                            property var info: root.axisAt(index) || ({})
+                            visible: Boolean(info.available)
                             Layout.fillWidth: true
  Layout.preferredHeight: 132
                             Column { anchors.fill: parent
  anchors.margins: 12
  spacing: 4
-                                Text { text: diagnosticAxisCard.info.label.toUpperCase()
+                                Text { text: String(diagnosticAxisCard.info.label || "").toUpperCase()
  color: theme.cockpitMetric
  font.pixelSize: 9
  font.bold: true }
@@ -2263,22 +2269,22 @@ Page {
  color: diagnosticAxisCard.info.virtualValid ? theme.cockpitReady : theme.cockpitWarning
  font.pixelSize: 10
  font.family: "Consolas" }
-                                Text { text: "ROUTE     " + diagnosticAxisCard.info.target.toUpperCase()
+                                Text { text: "ROUTE     " + String(diagnosticAxisCard.info.target || "").toUpperCase()
  color: theme.cockpitLabel; font.pixelSize: 9; font.family: "Consolas" }
                             }
                         }
                     }
                 }
-                Panel { width: parent.width; Layout.fillWidth: true; Layout.preferredHeight: 116
+                Panel { id: adaptiveDiagnosticsPanel; width: parent.width; Layout.fillWidth: true; Layout.preferredHeight: 116
                     property var adaptive: backend.adaptiveResponseTelemetry
                     Column { anchors.fill: parent; anchors.margins: 12; spacing: 4
-                        Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptive.state || "STABLE").toUpperCase()
+                        Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptiveDiagnosticsPanel.adaptive.state || "STABLE").toUpperCase()
                             color: theme.textMuted; font.pixelSize: 9; font.bold: true }
-                        Text { text: "PHYSICAL " + root.valuePercent(adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptive.virtualOutput || 0)
+                        Text { text: "PHYSICAL " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.virtualOutput || 0)
                             color: theme.text; font.pixelSize: 11; font.family: theme.telemetryFont }
-                        Text { text: "V " + Number(adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptive.lead || 0)
+                        Text { text: "V " + Number(adaptiveDiagnosticsPanel.adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptiveDiagnosticsPanel.adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptiveDiagnosticsPanel.adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.lead || 0)
                             color: theme.textMuted; font.pixelSize: 10; font.family: theme.telemetryFont }
-                        Text { text: "MODEL " + String(adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptive.safetyClampCount || 0)
+                        Text { text: "MODEL " + String(adaptiveDiagnosticsPanel.adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptiveDiagnosticsPanel.adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptiveDiagnosticsPanel.adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptiveDiagnosticsPanel.adaptive.safetyClampCount || 0)
                             color: theme.textMuted; font.pixelSize: 9; font.family: theme.telemetryFont }
                     }
                 }

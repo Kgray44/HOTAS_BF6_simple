@@ -12,12 +12,12 @@ FlightDeckCard {
     signal actionRequested
 
     Layout.fillWidth: true
-    implicitHeight: healthContent.implicitHeight + tokens.space32
+    implicitHeight: healthContent.implicitHeight + contentPadding * 2
 
     ColumnLayout {
         id: healthContent
         anchors.fill: parent
-        anchors.margins: root.tokens.space16
+        anchors.margins: root.contentPadding
         spacing: root.tokens.space8
 
         RowLayout {

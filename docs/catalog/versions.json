@@ -583,5 +583,17 @@
       "The Device Rigs workspace keeps its constrained full-page layout, per-object visibility actions, transient feedback lifecycle, and setup-state transitions covered by focused QML and backend contract tests.",
       "The mapping worker and DirectInput-to-vJoy report path are unchanged; the synthetic benchmark continues to report zero hot-path allocations."
     ]
+  },
+  {
+    "version": "2.5.0",
+    "title": "Flight Deck",
+    "summary": "Adds Flight Deck as a complete, persisted fifth presentation experience while preserving the existing mapper configuration, DirectInput-to-vJoy runtime, and all four established experiences.",
+    "highlights": [
+      "Flight Deck presents the complete native workspace suite over existing backend commands and state; browsing a profile remains distinct from runtime activation.",
+      "The normal presentation selector lists Legacy, Standard, Top Gun, Day Ops, and Flight Deck without a preview flag. Existing user selections remain intact, and Flight Deck stores its Light or Dark appearance separately.",
+      "Shared cards, dialogs, menus, status surfaces, and the left navigation rail use semantic content-safe insets, intentional wrapping or elision, bounded modal bodies, and a reachable readiness footer at supported responsive sizes.",
+      "Input Learning, Quick Map, native selectors, portability, setup and repair explanations, diagnostics, and Adaptive Response all reuse their existing control-plane contracts. No controller migration or mapper hot-path behavior changes.",
+      "Qualification includes native Light and Dark review, width and height containment fixtures, Qt 125% and 150% scale checks, full CTest coverage, staged package smoke, and a zero-allocation synthetic mapper benchmark; external hardware and installer acceptance retain their explicit evidence boundaries."
+    ]
   }
 ]

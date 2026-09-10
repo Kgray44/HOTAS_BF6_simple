@@ -11,7 +11,11 @@ ApplicationWindow {
     height: 840
     minimumWidth: 900
     minimumHeight: 650
-    visible: true
+    // Native visual fixtures may exercise the same QML tree while the owner
+    // is using the desktop. The explicit test argument keeps that window
+    // constructed but never shown or focused; normal launches are unchanged.
+    readonly property bool presentationHeadless: Qt.application.arguments.indexOf("--headless-presentation") >= 0
+    visible: !presentationHeadless
     title: "HOTAS BF6"
     property var flightDeckLearningDialog: null
     onClosing: function(close) {

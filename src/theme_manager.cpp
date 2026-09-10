@@ -23,12 +23,9 @@ QString defaultSettingsFilePath()
 
 } // namespace
 
-ThemeManager::ThemeManager(const QString &settingsFilePath,
-                           const bool flightDeckPreviewEnabled,
-                           QObject *parent)
+ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
     : QObject(parent)
     , m_settingsFilePath(settingsFilePath.isEmpty() ? defaultSettingsFilePath() : settingsFilePath)
-    , m_flightDeckPreviewEnabled(flightDeckPreviewEnabled)
 {
     const QSettings stored(m_settingsFilePath, QSettings::IniFormat);
     // A missing key is the explicit v1.7 migration path: existing installs
@@ -57,8 +54,7 @@ QStringList ThemeManager::themeChoices() const
 
 QStringList ThemeManager::experienceChoices() const
 {
-    if (m_flightDeckPreviewEnabled) return {u"Existing"_qs, u"Flight Deck"_qs};
-    return {u"Existing"_qs};
+    return {u"Existing"_qs, u"Flight Deck"_qs};
 }
 
 QString ThemeManager::currentPresentationId() const
@@ -86,15 +82,12 @@ QVariantList ThemeManager::presentationChoices() const
         }
         choices.push_back(choice);
     }
-    if (m_flightDeckPreviewEnabled) {
-        choices.push_back(QVariantMap{
-            {u"id"_qs, u"flight-deck"_qs},
-            {u"label"_qs, u"Flight Deck"_qs},
-            {u"description"_qs, u"Modern simplified alternate interface"_qs},
-            {u"kind"_qs, u"alternate-shell"_qs},
-            {u"preview"_qs, true},
-        });
-    }
+    choices.push_back(QVariantMap{
+        {u"id"_qs, u"flight-deck"_qs},
+        {u"label"_qs, u"Flight Deck"_qs},
+        {u"description"_qs, u"Modern simplified aircraft-controls interface"_qs},
+        {u"kind"_qs, u"alternate-shell"_qs},
+    });
     return choices;
 }
 
@@ -163,8 +156,7 @@ QString ThemeManager::normalizedTheme(const QString &theme)
 
 QString ThemeManager::normalizedExperience(const QString &experience) const
 {
-    if (m_flightDeckPreviewEnabled
-        && experience.trimmed().compare(u"Flight Deck"_qs, Qt::CaseInsensitive) == 0) {
+    if (experience.trimmed().compare(u"Flight Deck"_qs, Qt::CaseInsensitive) == 0) {
         return u"Flight Deck"_qs;
     }
     return u"Existing"_qs;

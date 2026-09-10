@@ -748,7 +748,7 @@ Item {
     }
     Dialog {
         id: discardDialog
-        parent: Overlay.overlay; anchors.centerIn: parent; modal: true; title: "Discard changes?"; standardButtons: Dialog.NoButton
+        parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 378; title: "Discard changes?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 350; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "This Automation has unsaved editor changes. The active compiled rule will remain unchanged."; color: root.textColor; font.pixelSize: 12 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
@@ -762,7 +762,7 @@ Item {
         id: deleteDialog
         property string ruleId: ""
         property bool fromEditor: false
-        parent: Overlay.overlay; anchors.centerIn: parent; modal: true; title: "Delete Automation?"; standardButtons: Dialog.NoButton
+        parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 378; title: "Delete Automation?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 350; spacing: 14
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete this Automation rule? This removes its saved configuration and compiled runtime entry."; color: root.textColor; font.pixelSize: 12 }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }

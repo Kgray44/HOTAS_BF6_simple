@@ -567,7 +567,11 @@ if (BUILD_TESTING)
     qt_add_resources(app_qml_startup_tests hotas_starter_profile_qml_test_resources
         PREFIX "/"
         FILES
+            assets/icons/png/hotas-bf6-256.png
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
+            assets/themes/topgun/fighter-silhouette.svg
+            assets/themes/topgun/wing-badge.svg
+            assets/themes/topgun/slash-stripes.svg
     )
     qt_add_resources(app_qml_startup_tests flight_deck_automation_qml_test_resources
         PREFIX "/qt/qml/HOTASMapper/qml"

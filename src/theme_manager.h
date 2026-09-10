@@ -20,16 +20,13 @@ class ThemeManager final : public QObject {
     Q_PROPERTY(QString currentExperience READ currentExperience WRITE setCurrentExperience NOTIFY experienceChanged)
     Q_PROPERTY(QString flightDeckAppearance READ flightDeckAppearance WRITE setFlightDeckAppearance NOTIFY flightDeckAppearanceChanged)
     Q_PROPERTY(QStringList experienceChoices READ experienceChoices CONSTANT)
-    Q_PROPERTY(bool flightDeckPreviewEnabled READ flightDeckPreviewEnabled CONSTANT)
     // The existing theme family and the alternate Flight Deck shell are
     // combined here only for presentation selection, never mapper state.
     Q_PROPERTY(QString currentPresentationId READ currentPresentationId NOTIFY presentationChanged)
     Q_PROPERTY(QVariantList presentationChoices READ presentationChoices CONSTANT)
 
 public:
-    explicit ThemeManager(const QString &settingsFilePath = {},
-                          bool flightDeckPreviewEnabled = false,
-                          QObject *parent = nullptr);
+    explicit ThemeManager(const QString &settingsFilePath = {}, QObject *parent = nullptr);
 
     QString currentTheme() const { return m_currentTheme; }
     bool isTopGun() const;
@@ -38,7 +35,6 @@ public:
     QString currentExperience() const { return m_currentExperience; }
     QString flightDeckAppearance() const { return m_flightDeckAppearance; }
     QStringList experienceChoices() const;
-    bool flightDeckPreviewEnabled() const { return m_flightDeckPreviewEnabled; }
     QString currentPresentationId() const;
     QVariantList presentationChoices() const;
 
@@ -62,7 +58,6 @@ private:
     QString m_currentTheme;
     QString m_currentExperience;
     QString m_flightDeckAppearance;
-    bool m_flightDeckPreviewEnabled = false;
 };
 
 } // namespace hotas

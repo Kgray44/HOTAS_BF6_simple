@@ -88,12 +88,12 @@ Flickable {
             tokens: deck
             color: deck.secondarySurface
             Layout.fillWidth: true
-            implicitHeight: setupContent.implicitHeight + deck.space32
+            implicitHeight: setupContent.implicitHeight + contentPadding * 2
 
             ColumnLayout {
                 id: setupContent
                 anchors.fill: parent
-                anchors.margins: deck.space16
+                anchors.margins: parent.contentPadding
                 spacing: deck.space16
 
                 RowLayout {
@@ -329,12 +329,12 @@ Flickable {
         FlightDeckCard {
             tokens: deck
             Layout.fillWidth: true
-            implicitHeight: controlsContent.implicitHeight + deck.space32
+            implicitHeight: controlsContent.implicitHeight + contentPadding * 2
 
             ColumnLayout {
                 id: controlsContent
                 anchors.fill: parent
-                anchors.margins: deck.space16
+                anchors.margins: parent.contentPadding
                 spacing: deck.space12
                 RowLayout {
                     Layout.fillWidth: true

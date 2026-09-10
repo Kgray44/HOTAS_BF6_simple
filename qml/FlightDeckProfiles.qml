@@ -377,6 +377,8 @@ Flickable {
             height: 34
             highlighted: control.highlightedIndex === index
             contentItem: Text {
+                leftPadding: deck.popupRowPadding
+                rightPadding: deck.popupRowPadding
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
@@ -392,7 +394,7 @@ Flickable {
             objectName: control.objectName + "Popup"
             y: control.height - 1
             width: control.width
-            padding: 4
+            padding: deck.popupPadding
             contentItem: ListView {
                 clip: true
                 implicitHeight: Math.min(contentHeight, 224)
@@ -441,19 +443,20 @@ Flickable {
         readonly property bool running: root.categoryHasRunningGame(category)
         objectName: "flightDeckCategoryCard_" + String(category.id || "")
         width: root.width >= 1110 ? (categoryFlow.width - deck.space12) / 2 : categoryFlow.width
-        implicitHeight: categoryContent.implicitHeight + deck.space24
+        implicitHeight: categoryContent.implicitHeight + contentPadding * 2
         color: category.active ? deck.selected : deck.elevatedSurface
         border.color: category.active ? deck.accent : deck.border
 
         ColumnLayout {
             id: categoryContent
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space12
             RowLayout {
                 Layout.fillWidth: true
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     spacing: 2
                     Text {
                         text: String(category.name || "Unnamed category")
@@ -463,6 +466,7 @@ Flickable {
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                     Text {
                         text: Number(category.profileCount !== undefined ? category.profileCount : categoryProfiles.length) + " profile" + (categoryProfiles.length === 1 ? "" : "s")
@@ -470,6 +474,7 @@ Flickable {
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         elide: Text.ElideRight
                     }
                 }
@@ -524,7 +529,8 @@ Flickable {
                     model: categoryProfiles.slice(0, 4)
                     delegate: Rectangle {
                         required property var modelData
-                        implicitWidth: profileTag.implicitWidth + deck.space16
+                        implicitWidth: Math.min(profileTag.implicitWidth + deck.space16,
+                                                card.width - card.contentPadding * 2)
                         implicitHeight: 25
                         radius: deck.radiusPill
                         color: modelData.active ? deck.accentMuted : deck.secondarySurface
@@ -532,7 +538,11 @@ Flickable {
                         border.color: modelData.active ? deck.accent : deck.border
                         Text {
                             id: profileTag
-                            anchors.centerIn: parent
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: deck.space8
+                            anchors.rightMargin: deck.space8
                             text: String(modelData.name || "Profile") + (modelData.active ? "  ACTIVE" : "")
                             color: deck.textSecondary
                             font.family: deck.telemetryFont
@@ -578,19 +588,20 @@ Flickable {
         readonly property bool selectedForEditing: root.view === "profile" && String(root.selectedProfileId) === String(profile.id || "")
         objectName: "flightDeckProfileCard_" + String(profile.id || "")
         width: root.width >= 1160 ? (profileFlow.width - deck.space12) / 2 : profileFlow.width
-        implicitHeight: profileContent.implicitHeight + deck.space24
+        implicitHeight: profileContent.implicitHeight + contentPadding * 2
         color: profile.active ? deck.selected : selectedForEditing ? deck.secondarySurface : deck.elevatedSurface
         border.color: profile.active ? deck.accent : selectedForEditing ? deck.focus : deck.border
 
         ColumnLayout {
             id: profileContent
             anchors.fill: parent
-            anchors.margins: deck.space12
+            anchors.margins: parent.contentPadding
             spacing: deck.space8
             RowLayout {
                 Layout.fillWidth: true
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     spacing: 2
                     Text {
                         text: String(profile.name || "Unnamed profile")
@@ -600,6 +611,7 @@ Flickable {
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                     }
                     Text {
                         text: String(profile.categoryName || "General")
@@ -689,8 +701,9 @@ Flickable {
                     font.family: deck.displayFont
                     font.pixelSize: 24
                     font.bold: true
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        elide: Text.ElideRight
                 }
                 Text {
                     text: root.view === "library" ? "Game-aware controller configurations" : root.view === "category" ? "Game association, category behavior, and contained profiles" : "Selected for editing — inspecting this profile does not activate it"
@@ -927,14 +940,15 @@ Flickable {
 
                 FlightDeckCard {
                     tokens: deck
+                    contentPadding: deck.cardPadding
                     Layout.fillWidth: true
-                    implicitHeight: categoryHeroContent.implicitHeight + deck.space24
+                    implicitHeight: categoryHeroContent.implicitHeight + contentPadding * 2
                     color: deck.selected
                     border.color: deck.accent
                     ColumnLayout {
                         id: categoryHeroContent
                         anchors.fill: parent
-                        anchors.margins: deck.space12
+                        anchors.margins: parent.contentPadding
                         spacing: deck.space8
                         RowLayout {
                             Layout.fillWidth: true
@@ -1019,12 +1033,13 @@ Flickable {
                 }
                 FlightDeckCard {
                     tokens: deck
+                    contentPadding: deck.cardPaddingCompact
                     Layout.fillWidth: true
-                    implicitHeight: gameAssociationContent.implicitHeight + deck.space24
+                    implicitHeight: gameAssociationContent.implicitHeight + contentPadding * 2
                     ColumnLayout {
                         id: gameAssociationContent
                         anchors.fill: parent
-                        anchors.margins: deck.space12
+                        anchors.margins: parent.contentPadding
                         spacing: deck.space8
                         Text {
                             text: backend.automaticGameDetection ? "When a configured game runs, HOTAS BF6 selects this category." : "Game detection is currently disabled globally; these associations are retained but will not select a category."
@@ -1249,14 +1264,15 @@ Flickable {
 
                 FlightDeckCard {
                     tokens: deck
+                    contentPadding: deck.cardPadding
                     Layout.fillWidth: true
-                    implicitHeight: profileHeroContent.implicitHeight + deck.space24
+                    implicitHeight: profileHeroContent.implicitHeight + contentPadding * 2
                     color: root.selectedDetail.active ? deck.selected : deck.elevatedSurface
                     border.color: root.selectedDetail.active ? deck.accent : deck.focus
                     ColumnLayout {
                         id: profileHeroContent
                         anchors.fill: parent
-                        anchors.margins: deck.space12
+                        anchors.margins: parent.contentPadding
                         spacing: deck.space8
                         RowLayout {
                             Layout.fillWidth: true

@@ -11,12 +11,27 @@ QtObject {
     readonly property string telemetryFont: "Consolas"
 
     readonly property int space4: 4
+    readonly property int space6: 6
     readonly property int space8: 8
+    readonly property int space10: 10
     readonly property int space12: 12
     readonly property int space16: 16
+    readonly property int space20: 20
     readonly property int space24: 24
     readonly property int space32: 32
     readonly property int space48: 48
+
+    // Semantic content-safe areas keep the soft Flight Deck surfaces
+    // comfortable without forcing every page to invent ad-hoc margins.
+    readonly property int cardPadding: space20
+    readonly property int cardPaddingCompact: space16
+    readonly property int cardPaddingTechnical: space16
+    readonly property int dialogPadding: space24
+    readonly property int popupPadding: space8
+    readonly property int popupRowPadding: space12
+    readonly property int sectionGap: space16
+    readonly property int controlGap: space8
+    readonly property int railPadding: space16
 
     readonly property int radiusShell: 28
     readonly property int radiusPanel: 22

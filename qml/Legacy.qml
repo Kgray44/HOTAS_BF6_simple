@@ -43,7 +43,11 @@ Page {
     readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var nativePovTargetChoices: backend.nativePovTargetChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
-    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
+    // Repeater and selection transitions can briefly leave the chosen axis
+    // absent. Keep bound panels concrete while separately preserving whether
+    // an actual selection exists.
+    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex) || ({})
+    readonly property bool hasSelectedAxis: Boolean(root.axisAt(backend.selectedAxisIndex))
     readonly property int loadedPageCount: (overviewPageLoader.item ? 1 : 0)
         + (settingsPageLoader.item ? 1 : 0)
         + (profileLibraryLoader.item ? 1 : 0)
@@ -1044,6 +1048,7 @@ Page {
 
     header: Rectangle {
         id: headerBar
+        objectName: "legacyHeaderBar"
         height: 58
         color: "#f114191d"
         border.color: "#1e3a444b"
@@ -1428,7 +1433,7 @@ Page {
                 Item {
                     width: parent.width
                     height: axesWorkspace.implicitHeight
-                    visible: root.hasPhysicalInput && root.selectedAxisInfo
+                    visible: root.hasPhysicalInput && root.hasSelectedAxis
                     GridLayout {
                         id: axesWorkspace
                         width: parent.width
@@ -1752,8 +1757,11 @@ Page {
                     Repeater { model: 8
                         delegate: Panel {
                             id: calibrationAxisCard
-                            property var info: root.axisAt(index)
-                            visible: info && info.available
+                            // A controller can expose fewer than eight axes.
+                            // The delegate remains instantiated while hidden,
+                            // so keep its text bindings inside a safe object.
+                            property var info: root.axisAt(index) || ({})
+                            visible: Boolean(info.available)
                             Layout.fillWidth: true
                             Layout.preferredHeight: 118
                             color: backend.calibrationActive ? "#ea1a2930" : "#ed182128"
@@ -1761,7 +1769,7 @@ Page {
                             RowLayout { anchors.fill: parent
  anchors.margins: 15
                                 ColumnLayout { Layout.preferredWidth: 130
-                                    Text { text: calibrationAxisCard.info.label.toUpperCase()
+                                    Text { text: String(calibrationAxisCard.info.label || "").toUpperCase()
  color: "#eaf0f1"
  font.pixelSize: 12
  font.bold: true }
@@ -1934,14 +1942,14 @@ Page {
                     Repeater { model: 8
                         delegate: Panel {
                             id: diagnosticAxisCard
-                            property var info: root.axisAt(index)
-                            visible: info && info.available
+                            property var info: root.axisAt(index) || ({})
+                            visible: Boolean(info.available)
                             Layout.fillWidth: true
  Layout.preferredHeight: 132
                             Column { anchors.fill: parent
  anchors.margins: 12
  spacing: 4
-                                Text { text: diagnosticAxisCard.info.label.toUpperCase()
+                                Text { text: String(diagnosticAxisCard.info.label || "").toUpperCase()
  color: "#aebcc0"
  font.pixelSize: 9
  font.bold: true }
@@ -1961,22 +1969,22 @@ Page {
  color: diagnosticAxisCard.info.virtualValid ? "#b7d7c0" : "#c59a79"
  font.pixelSize: 10
  font.family: "Consolas" }
-                                Text { text: "ROUTE     " + diagnosticAxisCard.info.target.toUpperCase()
+                                Text { text: "ROUTE     " + String(diagnosticAxisCard.info.target || "").toUpperCase()
  color: "#7c97a1"; font.pixelSize: 9; font.family: "Consolas" }
                             }
                         }
                     }
                 }
-                Panel { width: parent.width; Layout.fillWidth: true; Layout.preferredHeight: 116
+                Panel { id: adaptiveDiagnosticsPanel; width: parent.width; Layout.fillWidth: true; Layout.preferredHeight: 116
                     property var adaptive: backend.adaptiveResponseTelemetry
                     Column { anchors.fill: parent; anchors.margins: 12; spacing: 4
-                        Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptive.state || "STABLE").toUpperCase()
+                        Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptiveDiagnosticsPanel.adaptive.state || "STABLE").toUpperCase()
                             color: "#9aa3a7"; font.pixelSize: 9; font.bold: true }
-                        Text { text: "PHYSICAL " + root.valuePercent(adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptive.virtualOutput || 0)
+                        Text { text: "PHYSICAL " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.virtualOutput || 0)
                             color: "#d5e0e3"; font.pixelSize: 11; font.family: "Consolas" }
-                        Text { text: "V " + Number(adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptive.lead || 0)
+                        Text { text: "V " + Number(adaptiveDiagnosticsPanel.adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptiveDiagnosticsPanel.adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptiveDiagnosticsPanel.adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.lead || 0)
                             color: "#9aa3a7"; font.pixelSize: 10; font.family: "Consolas" }
-                        Text { text: "MODEL " + String(adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptive.safetyClampCount || 0)
+                        Text { text: "MODEL " + String(adaptiveDiagnosticsPanel.adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptiveDiagnosticsPanel.adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptiveDiagnosticsPanel.adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptiveDiagnosticsPanel.adaptive.safetyClampCount || 0)
                             color: "#9aa3a7"; font.pixelSize: 9; font.family: "Consolas" }
                     }
                 }

@@ -92,6 +92,108 @@ Flickable {
         }
     }
 
+    // Keep compact numeric controls inside the Flight Deck language. Qt's
+    // platform SpinBox indicators otherwise remain visible even when the
+    // surrounding field has a themed background.
+    component DeckStepper: SpinBox {
+        id: stepper
+        property int stepperButtonWidth: deck.space24 + deck.space4
+        property bool flightDeckStyled: true
+
+        implicitWidth: 92
+        implicitHeight: deck.compactControlHeight
+        editable: false
+        font.family: deck.telemetryFont
+        font.pixelSize: 10
+
+        contentItem: Text {
+            text: stepper.textFromValue(stepper.value, stepper.locale)
+            color: stepper.enabled ? deck.textPrimary : deck.disabled
+            font: stepper.font
+            leftPadding: deck.space8
+            rightPadding: stepper.stepperButtonWidth + deck.space8
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        background: Rectangle {
+            radius: deck.radiusControl
+            color: stepper.enabled ? deck.primarySurface : deck.secondarySurface
+            border.width: stepper.activeFocus ? 2 : 1
+            border.color: stepper.activeFocus ? deck.focus : deck.border
+
+            Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: stepper.stepperButtonWidth
+                radius: parent.radius
+                color: stepper.enabled ? deck.secondarySurface : deck.primarySurface
+            }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: stepper.stepperButtonWidth
+                height: 1
+                color: deck.divider
+            }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.rightMargin: stepper.stepperButtonWidth
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: deck.divider
+            }
+        }
+
+        up.indicator: Item {
+            objectName: "flightDeckSettingsVjoyDeviceIncrement"
+            x: stepper.mirrored ? 0 : stepper.width - width
+            y: 0
+            width: stepper.stepperButtonWidth
+            height: stepper.height / 2
+            Rectangle {
+                anchors.fill: parent
+                color: !stepper.enabled ? "transparent"
+                      : stepper.up.pressed ? deck.accentMuted
+                      : stepper.up.hovered ? Qt.rgba(deck.accent.r, deck.accent.g, deck.accent.b, 0.13)
+                      : "transparent"
+            }
+            Text {
+                anchors.centerIn: parent
+                text: "+"
+                color: !stepper.enabled ? deck.disabled : stepper.up.hovered ? deck.accent : deck.textSecondary
+                font.family: deck.telemetryFont
+                font.pixelSize: 13
+                font.bold: true
+            }
+        }
+
+        down.indicator: Item {
+            objectName: "flightDeckSettingsVjoyDeviceDecrement"
+            x: stepper.mirrored ? 0 : stepper.width - width
+            y: stepper.height / 2
+            width: stepper.stepperButtonWidth
+            height: stepper.height - y
+            Rectangle {
+                anchors.fill: parent
+                color: !stepper.enabled ? "transparent"
+                      : stepper.down.pressed ? deck.accentMuted
+                      : stepper.down.hovered ? Qt.rgba(deck.accent.r, deck.accent.g, deck.accent.b, 0.13)
+                      : "transparent"
+            }
+            Text {
+                anchors.centerIn: parent
+                text: "−"
+                color: !stepper.enabled ? deck.disabled : stepper.down.hovered ? deck.accent : deck.textSecondary
+                font.family: deck.telemetryFont
+                font.pixelSize: 13
+                font.bold: true
+            }
+        }
+    }
+
     component DeckToggle: Rectangle {
         id: toggle
         property bool checked: false
@@ -167,12 +269,12 @@ Flickable {
         property string detail: ""
         tokens: deck
         Layout.fillWidth: true
-        implicitHeight: groupContent.implicitHeight + deck.space32
+        implicitHeight: groupContent.implicitHeight + contentPadding * 2
 
         ColumnLayout {
             id: groupContent
             anchors.fill: parent
-            anchors.margins: deck.space16
+            anchors.margins: parent.contentPadding
             spacing: deck.space4
             Text {
                 visible: group.title.length > 0
@@ -282,18 +384,22 @@ Flickable {
         required property var choice
         property bool selected: themeManager.currentPresentationId === choice.id
         objectName: "flightDeckExperience_" + choice.id
-        implicitHeight: 146
+        implicitHeight: 156
         implicitWidth: 220
+        leftPadding: deck.cardPadding
+        rightPadding: deck.cardPadding
+        topPadding: deck.cardPadding
+        bottomPadding: deck.cardPadding
         focusPolicy: Qt.StrongFocus
-        Accessible.name: choice.label + (choice.preview ? " Preview" : "")
+        Accessible.name: choice.label
         onClicked: {
             const presentationId = choice.id
             Qt.callLater(function() { themeManager.selectPresentation(presentationId) })
         }
 
         contentItem: ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: deck.space16
+            width: card.availableWidth
+            height: card.availableHeight
             spacing: deck.space8
             RowLayout {
                 Layout.fillWidth: true
@@ -305,23 +411,6 @@ Flickable {
                     font.bold: true
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                }
-                Rectangle {
-                    visible: card.choice.preview
-                    implicitWidth: previewLabel.implicitWidth + deck.space8
-                    implicitHeight: 20
-                    radius: deck.radiusPill
-                    color: Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, deck.light ? 0.12 : 0.18)
-                    border.color: deck.attention
-                    Text {
-                        id: previewLabel
-                        anchors.centerIn: parent
-                        text: "PREVIEW"
-                        color: deck.attention
-                        font.family: deck.telemetryFont
-                        font.pixelSize: 8
-                        font.bold: true
-                    }
                 }
             }
             Text {
@@ -647,30 +736,13 @@ Flickable {
                 title: "VJOY DEVICE"
                 detail: backend.virtualAxisStatus + " · " + backend.vjoyButtonCount + " buttons · " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"
                 RowLayout {
-                    SpinBox {
+                    DeckStepper {
                         id: vjoyDevice
                         objectName: "flightDeckSettingsVjoyDevice"
                         from: 1
                         to: 16
                         value: backend.vjoyDeviceId
-                        implicitWidth: 92
-                        implicitHeight: deck.compactControlHeight
-                        editable: false
                         onValueModified: backend.setVjoyDeviceId(value)
-                        contentItem: Text {
-                            text: vjoyDevice.textFromValue(vjoyDevice.value, vjoyDevice.locale)
-                            color: deck.textPrimary
-                            font.family: deck.telemetryFont
-                            font.pixelSize: 10
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: deck.radiusControl
-                            color: deck.primarySurface
-                            border.width: vjoyDevice.activeFocus ? 2 : 1
-                            border.color: vjoyDevice.activeFocus ? deck.focus : deck.border
-                        }
                     }
                     DeckButton {
                         text: "CONFIGURE VJOY"
@@ -857,7 +929,7 @@ Flickable {
         tone: maintenanceDialog.action === "uninstall" || maintenanceDialog.action === "configuration" ? "fault" : "attention"
         preferredWidth: 460
         contentItem: ColumnLayout {
-            width: Math.min(430, root.width - deck.space48)
+            width: maintenanceDialog.availableWidth
             spacing: deck.space16
             Text {
                 text: maintenanceDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, Automation, and saved data remain by default." : maintenanceDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles and Automation remain." : maintenanceDialog.action === "calibration" ? "This clears calibration only for the active controller. Profiles, curves, and mappings remain." : "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and Automation are reset as part of the application configuration."

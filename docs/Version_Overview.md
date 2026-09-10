@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.4.1**
+**Current release: v2.5.0**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.0 — Flight Deck
+
+Adds Flight Deck as a complete, persisted fifth presentation experience while preserving the existing mapper configuration, DirectInput-to-vJoy runtime, and all four established experiences.
+
+- Flight Deck presents the complete native workspace suite over existing backend commands and state; browsing a profile remains distinct from runtime activation.
+- The normal presentation selector lists Legacy, Standard, Top Gun, Day Ops, and Flight Deck without a preview flag. Existing user selections remain intact, and Flight Deck stores its Light or Dark appearance separately.
+- Shared cards, dialogs, menus, status surfaces, and the left navigation rail use semantic content-safe insets, intentional wrapping or elision, bounded modal bodies, and a reachable readiness footer at supported responsive sizes.
+- Input Learning, Quick Map, native selectors, portability, setup and repair explanations, diagnostics, and Adaptive Response all reuse their existing control-plane contracts. No controller migration or mapper hot-path behavior changes.
+- Qualification includes native Light and Dark review, width and height containment fixtures, Qt 125% and 150% scale checks, full CTest coverage, staged package smoke, and a zero-allocation synthetic mapper benchmark; external hardware and installer acceptance retain their explicit evidence boundaries.
 
 ## v2.4.1 — Device setup reliability
 

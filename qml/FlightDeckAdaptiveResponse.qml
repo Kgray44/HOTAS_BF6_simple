@@ -969,6 +969,7 @@ Flickable {
     component DeckButton: Button {
         id: control
         property bool subdued: false
+        property var flightDeckRoot: root
         implicitHeight: deck.compactControlHeight
         padding: deck.space12
         focusPolicy: Qt.StrongFocus
@@ -1043,6 +1044,8 @@ Flickable {
             height: 36
             highlighted: control.highlightedIndex === index
             contentItem: Text {
+                leftPadding: deck.popupRowPadding
+                rightPadding: deck.popupRowPadding
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
@@ -1062,7 +1065,7 @@ Flickable {
             objectName: control.objectName + "Popup"
             y: control.height - 1
             width: control.width
-            padding: 4
+            padding: deck.popupPadding
             implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
             background: Rectangle {
                 radius: deck.radiusControl
@@ -1495,7 +1498,7 @@ Flickable {
         minimumHeight: 280
         color: deck.applicationBackground
         modality: Qt.NonModal
-        transientParent: root.window
+        transientParent: root.Window.window
         flags: Qt.Window | (root.responseMonitorPinned ? Qt.WindowStaysOnTopHint : 0)
         onClosing: function (close) {
             // Keep the reusable monitor component alive and let its visible
@@ -1655,7 +1658,6 @@ Flickable {
             }
         }
         onOpened: { root.presetError = ""; renamePresetInput.forceActiveFocus(); renamePresetInput.selectAll(); }
-        Keys.onReturnPressed: function(event) { root.commitPresetRename(); event.accepted = true; }
     }
 
     Item {
@@ -1965,7 +1967,7 @@ Flickable {
                     }
                     Row {
                         spacing: deck.space8
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.alignment: Qt.AlignVCenter
                         Text {
                             text: root.effective().enabled ? "ON" : "OFF"
                             color: root.effective().enabled ? deck.healthy : deck.textMuted
@@ -2015,8 +2017,14 @@ Flickable {
                             contentItem: Column {
                                 id: presetText
                                 anchors.fill: parent
+                                // Button.padding does not automatically inset an
+                                // anchored custom contentItem. Preserve the
+                                // control's shared safe area explicitly so both
+                                // preset labels stay clear of the rounded edge.
+                                anchors.margins: presetButton.padding
                                 spacing: 4
                                 Text {
+                                    objectName: "adaptivePresetTitle_" + presetButton.modelData.id
                                     width: parent.width
                                     text: presetButton.modelData.name.toUpperCase()
                                     color: presetButton.checked ? deck.primarySurface : deck.textPrimary
@@ -2026,6 +2034,7 @@ Flickable {
                                     elide: Text.ElideRight
                                 }
                                 Text {
+                                    objectName: "adaptivePresetDescription_" + presetButton.modelData.id
                                     width: parent.width
                                     text: presetButton.modelData.id === "extreme" ? "EXPERIMENTAL" : presetButton.modelData.description
                                     color: presetButton.checked ? deck.primarySurface : deck.textSecondary
@@ -2488,7 +2497,7 @@ Flickable {
             objectName: "flightDeckAdaptiveAdvancedCard"
             y: adaptiveComparisonCard.y + adaptiveComparisonCard.height + deck.space16
             width: parent.width
-            implicitHeight: deck.space24 + advancedToggle.height + (root.advancedExpanded ? deck.space12 + advancedTuningContent.height : 0)
+            implicitHeight: deck.space24 + advancedToggle.height + (root.advancedExpanded ? deck.space12 + advancedTuningContent.implicitHeight : 0)
             height: implicitHeight
             radius: deck.radiusPanel
             color: deck.primarySurface
@@ -2498,7 +2507,7 @@ Flickable {
                 x: deck.space12
                 y: deck.space12
                 width: parent.width - deck.space24
-                height: advancedToggle.height + (root.advancedExpanded ? spacing + advancedTuningContent.height : 0)
+                height: advancedToggle.height + (root.advancedExpanded ? spacing + advancedTuningContent.implicitHeight : 0)
                 spacing: deck.space12
                 Button {
                     id: advancedToggle
@@ -2552,12 +2561,11 @@ Flickable {
                     id: advancedTuningContent
                     visible: root.advancedExpanded
                     width: parent.width
-                    height: root.advancedExpanded ? childrenRect.height : 0
                     spacing: deck.space12
                     Rectangle {
                         id: presetWorkshopCard
                         width: parent.width
-                        implicitHeight: presetWorkshopContent.height + deck.space24
+                        implicitHeight: presetWorkshopContent.implicitHeight + deck.space24
                         height: implicitHeight
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -2567,7 +2575,7 @@ Flickable {
                             x: deck.space12
                             y: deck.space12
                             width: parent.width - deck.space24
-                            height: presetWorkshopHeader.height + (root.presetWorkshopExpanded ? deck.space8 + presetWorkshopDetails.height : 0)
+                            height: presetWorkshopHeader.height + (root.presetWorkshopExpanded ? deck.space8 + presetWorkshopDetails.implicitHeight : 0)
                             spacing: deck.space8
                             RowLayout {
                                 id: presetWorkshopHeader
@@ -2599,7 +2607,6 @@ Flickable {
                                 id: presetWorkshopDetails
                                 visible: root.presetWorkshopExpanded
                                 width: parent.width
-                                height: root.presetWorkshopExpanded ? childrenRect.height : 0
                                 spacing: deck.space8
                                 RowLayout {
                                     width: parent.width
@@ -2610,6 +2617,7 @@ Flickable {
                                         placeholderText: "Preset name"
                                         text: root.presetNameDraft
                                         onTextEdited: root.presetNameDraft = text
+                                        Keys.onReturnPressed: function(event) { root.commitPresetRename(); event.accepted = true; }
                                         color: deck.textPrimary
                                         background: Rectangle {
                                             radius: deck.radiusControl
@@ -2685,9 +2693,9 @@ Flickable {
                                                     text: "EDIT"
                                                     subdued: true
                                                     onClicked: {
-                                                        root.editScope = "preset";
-                                                        root.targetId = modelData.id;
-                                                        root.setPreview();
+                                                        flightDeckRoot.editScope = "preset";
+                                                        flightDeckRoot.targetId = modelData.id;
+                                                        flightDeckRoot.setPreview();
                                                     }
                                                 }
                                                 DeckButton {
@@ -2695,8 +2703,8 @@ Flickable {
                                                     text: "RENAME"
                                                     subdued: true
                                                     onClicked: {
-                                                        root.renamePresetId = modelData.id;
-                                                        root.renamePresetDraft = modelData.name;
+                                                        flightDeckRoot.renamePresetId = modelData.id;
+                                                        flightDeckRoot.renamePresetDraft = modelData.name;
                                                         renamePresetDialog.open();
                                                     }
                                                 }
@@ -2706,7 +2714,7 @@ Flickable {
                                                     subdued: true
                                                     onClicked: {
                                                         backendObject.duplicateAdaptiveResponsePreset(modelData.id, modelData.name + " Copy");
-                                                        root.setPreview();
+                                                        flightDeckRoot.setPreview();
                                                     }
                                                 }
                                                 DeckButton {
@@ -2716,9 +2724,9 @@ Flickable {
                                                     enabled: backendObject.adaptiveResponsePresetDependencies(modelData.id).length === 0
                                                     onClicked: {
                                                         backendObject.deleteAdaptiveResponsePreset(modelData.id);
-                                                        if (root.editScope === "preset" && root.targetId === modelData.id)
-                                                            root.targetId = "";
-                                                        root.setPreview();
+                                                        if (flightDeckRoot.editScope === "preset" && flightDeckRoot.targetId === modelData.id)
+                                                            flightDeckRoot.targetId = "";
+                                                        flightDeckRoot.setPreview();
                                                     }
                                                 }
                                             }
@@ -3683,7 +3691,7 @@ Flickable {
             objectName: "flightDeckAdaptiveTestLabCard"
             y: liveAnalysisSection.y + liveAnalysisSection.height + deck.space16
             width: parent.width
-            implicitHeight: deck.space24 + testLabToggle.height + (root.testLabExpanded ? deck.space12 + testLabDetails.height : 0)
+            implicitHeight: deck.space24 + testLabToggle.height + (root.testLabExpanded ? deck.space12 + testLabDetails.implicitHeight : 0)
             height: implicitHeight
             radius: deck.radiusPanel
             color: deck.primarySurface
@@ -3693,7 +3701,7 @@ Flickable {
                 x: deck.space12
                 y: deck.space12
                 width: parent.width - deck.space24
-                height: testLabToggle.height + (root.testLabExpanded ? spacing + testLabDetails.height : 0)
+                height: testLabToggle.height + (root.testLabExpanded ? spacing + testLabDetails.implicitHeight : 0)
                 spacing: deck.space12
                 Button {
                     id: testLabToggle
@@ -3747,7 +3755,6 @@ Flickable {
                     id: testLabDetails
                     visible: root.testLabExpanded
                     width: parent.width
-                    height: root.testLabExpanded ? childrenRect.height : 0
                     spacing: deck.space12
                     RowLayout {
                         width: parent.width

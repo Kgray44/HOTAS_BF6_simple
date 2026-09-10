@@ -265,3 +265,33 @@ absent from this baseline and remains a later coexistence integration item.
   structural evidence, while a direct native Qt fixture run records readable
   Day Ops and Flight Deck captures. Owner-session physical, OS-owned, and
   accessibility conditions remain separate boundaries.
+
+## Phase 14 graduation and containment status
+
+The preceding Phase 1 through Phase 13 entries record the source state at the
+time of each phase. This section records the current Phase 14 candidate
+without rewriting that history.
+
+- `ThemeManager.presentationChoices` now exposes the four real token themes
+  plus `Flight Deck` as the fifth canonical presentation. There is no preview
+  flag on the Flight Deck choice and no command-line preview gate. Selecting a
+  presentation remains separate from profile activation, mapper startup,
+  device-rig selection, or other configuration authority.
+- The shared Flight Deck card, dialog, menu, status, settings-row, and page
+  surfaces enforce semantic safe insets. Reusable text is bounded to its
+  available content width and uses wrapping, elision, or content-driven height
+  rather than growing through a rounded boundary.
+- The navigation rail is intentionally divided into branding, a scrollable
+  navigation middle, and a pinned readiness footer. A compact footer preserves
+  current state at short heights. Its brand image is the packaged HOTAS BF6
+  application icon resource, not a text-only substitute.
+- Current automated structural checks cover the adaptive choice safe area and
+  the rail at 900x650, 1000x720, 1200x800, 1400x900, and 1600x980 in both
+  Flight Deck appearances. They are supplementary evidence; native visual,
+  DPI, OS-owned-dialog, physical-device, vJoy, and HidHide qualification stay
+  owner-session release gates.
+
+The in-progress Phase 14 record,
+`phase14-final-release-validation.md`, is the current source of truth for
+the final qualification matrix and must be updated to PASS or FAIL only after
+each remaining release gate has direct evidence.
