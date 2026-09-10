@@ -942,6 +942,11 @@ private:
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;
+    // A saved controller can be present in discovery yet still fail the
+    // explicit DirectInput acquisition required for verification. Retain that
+    // distinct result so the assistant does not send the user through an
+    // indistinguishable Set Up loop.
+    QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
     QString m_pendingSetupVerificationRecordId;
     // Output inspection is explicit and scoped.  A rig/device check must not
     // accidentally change another saved output's readiness presentation.

@@ -4574,6 +4574,20 @@ QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
     const bool outputScope = scopeType == u"virtualOutput"_qs;
     const bool needsPhysicalInput = !outputScope;
     const bool needsVirtualOutput = !deviceScope;
+    if (!testFacts && deviceScope) {
+        const QString acquisitionFailure = m_setupAssistantDeviceAcquisitionFailures.value(scopeId);
+        if (!acquisitionFailure.isEmpty()) {
+            const SavedControllerRecord *record = savedControllerRecord(scopeId);
+            const QString name = record ? record->displayName : u"selected controller"_qs;
+            append(u"PhysicalInput"_qs, u"PhysicalDeviceAcquisitionFailed"_qs, u"error"_qs,
+                u"physicalDevice"_qs, scopeId,
+                u"HOTAS BF6 could not acquire your "_qs + name,
+                acquisitionFailure, u"set-up-device"_qs, u"RETRY ACQUISITION"_qs,
+                false, true, 5,
+                QString(u"ISSUE\nPhysicalDeviceAcquisitionFailed\n\nTARGET\n%1\n\nRESULT\nThe saved controller matched the discovery inventory, but HOTAS BF6 did not receive a fresh DirectInput report during the 3.5-second acquisition window.\n\nNEXT STEP\nClose other HOTAS BF6 sessions or any program that owns the controller or vJoy Device 1, then retry acquisition. If that does not help, check the controller's HidHide allowlist and Windows driver state.\n\nCURRENT READINESS\n%2"_qs)
+                    .arg(name, m_readiness.plan().status));
+        }
+    }
     if (needsPhysicalInput && inputs.isEmpty()) {
         append(u"PhysicalInput"_qs, u"PhysicalDeviceMissing"_qs, u"setup-needed"_qs,
             u"physicalDevice"_qs, {}, u"Let's set up your controller"_qs,
@@ -8336,6 +8350,7 @@ QVariantMap AppBackend::completeSetupAssistantDevice(const QString &recordId)
     }
     m_setupAssistantScopeType = u"device"_qs;
     m_setupAssistantScopeId = targetId;
+    m_setupAssistantDeviceAcquisitionFailures.remove(targetId);
     // The discovery match establishes the saved target. Acquire that exact
     // DirectInput device before verification, rather than requiring an
     // already-active worker snapshot that setup itself is meant to create.
@@ -9360,11 +9375,18 @@ void AppBackend::startExplicitNewControllerVerification(const QString &directInp
         QMetaObject::invokeMethod(this, [this, selected, displayName] {
             m_controllerSelectionInProgress = false;
             if (selected) {
+                m_setupAssistantDeviceAcquisitionFailures.remove(m_pendingSetupVerificationRecordId);
                 appendEvent(QString(u"Selected controller acquired for setup: %1; starting explicit verification"_qs)
                     .arg(displayName));
                 verifyHotasSetup();
             } else {
-                appendEvent(QString(u"Could not acquire %1 for setup; close any other HOTAS BF6 session using it, then try Set Up again"_qs)
+                const QString failedRecordId = m_pendingSetupVerificationRecordId;
+                m_pendingSetupVerificationRecordId.clear();
+                if (!failedRecordId.isEmpty()) {
+                    m_setupAssistantDeviceAcquisitionFailures.insert(failedRecordId,
+                        QString(u"HOTAS BF6 found the saved controller in discovery, but it did not receive a fresh DirectInput report while acquiring it. Close other HOTAS BF6 sessions or any controller software using the device, then retry acquisition."_qs));
+                }
+                appendEvent(QString(u"Could not acquire %1 for setup; no fresh DirectInput report arrived"_qs)
                     .arg(displayName));
             }
             emit stateChanged();

@@ -601,6 +601,9 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(completeSetup.contains(QStringLiteral(
         "startExplicitNewControllerVerification(discovered->directInputId, discovered->name)")));
     QVERIFY(!completeSetup.contains(QStringLiteral("currentPhysicalCapabilities()")));
+    QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceAcquisitionFailed")));
+    QVERIFY(backend.contains(QStringLiteral("RETRY ACQUISITION")));
+    QVERIFY(backend.contains(QStringLiteral("m_setupAssistantDeviceAcquisitionFailures")));
     QVERIFY(backend.contains(QStringLiteral("Connect a controller to create your first Device Rig.")));
     QVERIFY(backend.contains(QStringLiteral("match-physical")));
     QVERIFY(backend.contains(QStringLiteral("copy-output")));
