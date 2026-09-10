@@ -817,6 +817,7 @@ void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema23()
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
+    QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
     QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v23")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));

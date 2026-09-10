@@ -28,6 +28,16 @@ function Invoke-Installer([string] $installer, [string] $target) {
     if ($result.ExitCode -ne 0) { throw "Installer failed with exit code $($result.ExitCode): $installer" }
 }
 
+function Remove-InstallerTestInstallation([string] $target) {
+    $uninstaller = Join-Path $target 'unins000.exe'
+    if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+        throw "Test installation cannot be unregistered because its uninstaller is missing: $target"
+    }
+    $result = Start-Process -FilePath $uninstaller -ArgumentList @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+    if ($result.ExitCode -ne 0) { throw "Test installation uninstaller failed with exit code $($result.ExitCode): $target" }
+}
+
 function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion, [switch] $AllowMissingLauncher) {
     $requiredFiles = @(
         'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Qml.dll', 'Qt6Quick.dll',
@@ -174,8 +184,11 @@ try {
 
     # The default local-app-data installation path and both shortcuts are
     # checked only on the ephemeral GitHub runner. No redirected /DIR is used
-    # for this acceptance case.
+    # for this acceptance case. Inno Setup remembers the last AppId directory,
+    # so unregister the preceding redirected installation before testing the
+    # default path instead of accidentally reinstalling into that test folder.
     Write-Host 'Installer acceptance: default path and shortcuts.'
+    Remove-InstallerTestInstallation $priorStableInstall
     $defaultInstall = Join-Path $env:LOCALAPPDATA 'Programs\HOTAS BF6'
     if (Test-Path -LiteralPath $defaultInstall) { throw "Default acceptance path already exists: $defaultInstall" }
     $defaultResult = Start-Process -FilePath $candidate -ArgumentList @(
