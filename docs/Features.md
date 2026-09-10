@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current version: v2.5.2**
+**Current version: v2.5.3**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
