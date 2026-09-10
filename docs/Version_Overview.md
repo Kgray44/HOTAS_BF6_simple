@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.5.3**
+**Current version: v2.5.4**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.4 — Hardware-aware Activation Resolver (candidate)
+
+Introduces one explainable low-frequency authority for automatic configuration selection without changing the DirectInput-to-vJoy mapping report path.
+
+- A single resolver evaluates the detected Game / Application category, ordered Profile policy, verified Device Rig, and available virtual output; a valid active pair stays stable rather than switching mid-session when a higher-ranked target appears.
+- Profiles persist Preferred, Fallback, or Manual Only automatic-selection policy. The resolver selects the first safe Preferred profile, then the first safe Fallback profile, and never selects Manual Only automatically.
+- Manual profile selection is a durable Manual Override. Returning to automatic mode is explicit; legacy profiles without a Device Rig remain manually selectable but are not automatically eligible until assigned a valid rig.
+- Schema 25 adds automatic-selection policy and manual override. Schema 24-and-earlier categories migrate their default (or first) profile to Preferred and remaining profiles to deterministic Fallback order without losing prior configuration.
+- Flight Deck Profiles, Overview, Diagnostics, and Devices expose selection reason, blockers, Device Rig readiness, ordering, and the physical-visibility boundary. Automatic activation never changes physical HidHide membership.
+- Candidate qualification covers pure resolver policy, persistence/migration, upgrade fixtures, QML startup, and source contracts. No protected-main merge, release tag, signing, updater publication, public package, or physical controller-to-vJoy acceptance claim is made.
 
 ## v2.5.3 — Flight Deck shared-surface polish
 

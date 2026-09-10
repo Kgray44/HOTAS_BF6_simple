@@ -75,6 +75,8 @@
       "Persistent base profiles with create, clone/start-from, rename, delete, and live activation.",
       "Profile Library cards and detail views show category, mapped axes/buttons/POVs, curves, Automation links, active state, output layout, and controller compatibility without using live mapper telemetry as a rebuild trigger.",
       "User-managed categories support defaults, last-active restoration, enable state, case-insensitive unique names within a category, and explicit profile move or duplicate actions that retain stable profile IDs and references.",
+      "Automatic Activation uses one ordered, hardware-aware Category → Profile → Device Rig → Virtual Output resolver. Profiles persist Preferred, Fallback, or Manual Only policy; a valid current pair remains stable, and Manual Only is never selected automatically.",
+      "Direct manual profile activation creates an explicit override that can be ended with Resume Automatic. Profiles without a Device Rig remain manually selectable but are ineligible for automatic selection until assigned a complete, verified rig.",
       "Optional foreground executable matching evaluates at a low control-plane cadence and only changes a category when a configured executable transition occurs.",
       "New profiles are deep copies with no live parent link.",
       "Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, custom names, and virtual-output layout selection.",
@@ -145,7 +147,7 @@
       "Calibration and remembered vJoy capability requirements belong to the physical controller rather than leaking between unrelated hardware.",
       "Known healthy controllers reconnect quietly; new controllers invoke themed verification, and optional automatic switching only uses one unambiguous verified device.",
       "Device Rigs persist required/optional physical members, enabled multi-output targets, default/priority/fallback policy, disconnect behavior, and exact member-to-output assignments.",
-      "Smart inventory reconciliation retains a healthy active rig, selects complete eligible rigs by saved default/priority policy, recognizes partial rigs, and never infers an identity from a friendly name.",
+      "Smart inventory reconciliation feeds complete, partial, ambiguous, and verification-needed rig state to the Activation Resolver. It never independently changes the active rig or infers identity from a friendly name.",
       "The Devices workspace provides landing, physical-device, rig, and virtual-output detail surfaces with progressive disclosure rather than duplicating device management in Settings.",
       "Setup Assistant can be opened at application, Device Rig, physical-device, or Virtual Output scope. It diagnoses structured issues with an exact next action, shows when an offline device is only an offline state, and asks for meaningful input movement plus a causally changed mapped output before live proof passes.",
       "A compact global App Health control summarizes actionable device, mapping, profile, automation, update, and runtime findings and deep-links to the owning workspace without turning normal pages into permanent warning banners."
@@ -165,7 +167,8 @@
       "A lightweight session marker distinguishes clean shutdown from a previous abnormal exit and offers local crash-report access on the next startup when a report could not be completed.",
       "Per-axis Adaptive Response estimated/predicted positions, velocity, acceleration, active horizon, lead, confidence, deliberate-motion evidence, normal/rapid authority, rapid blend, motion state, reversal count, and safety-clamp count.",
       "Actual parked disabled-axis output reported separately from raw physical input.",
-      "Configuration warnings for capability mismatch or unavailable targets."
+      "Configuration warnings for capability mismatch or unavailable targets.",
+      "Activation Resolver reason, selected Category/Profile/Device Rig/Virtual Output, stable retention, manual override, and actionable ineligibility blockers are published as low-frequency control-plane state."
     ]
   },
   {
@@ -182,6 +185,7 @@
       "Shared themed selectors, numeric inputs, dialogs, cards, and status controls.",
       "Curve Transition Smoothing, Device Rigs, top-bar device context, and unified verification use the same shared themed surfaces in Legacy, Standard, Top Gun, and Day Ops.",
       "Overview names the active Device Rig and effective profile; Settings is limited to application preferences and global maintenance, while physical devices and Virtual Outputs are owned by Devices.",
+      "Flight Deck Profiles orders automatic configurations and exposes Device Rig readiness and Preferred/Fallback/Manual Only policy; Overview and Diagnostics show the active resolver explanation and Resume Automatic action.",
       "Embedded application icon used by the mapper, launcher, installer, shortcuts, and in-app surfaces."
     ]
   },
@@ -209,6 +213,7 @@
       "HidHideCLI integration adds the mapper allowlist entry before hiding only the exact selected HID instance or enabling cloaking.",
       "An explicit Settings adoption step validates an exact currently enumerated vJoy HID instance before normal output-layout visibility changes act on it; display names and broad hide rules are never used.",
       "Normal output-layout visibility changes are non-elevated, hide inactive adopted outputs before exposing the selected one, and roll back completed changes if a switch fails.",
+      "Automatic Activation may use the established virtual-output visibility transaction, but never hides, shows, adopts, or changes a physical controller's HidHide membership.",
       "HidHide affects future enumeration; a game that already opened a device handle may need a restart after an output-layout switch.",
       "Existing HidHide allowlist entries, inverse behavior, and unrelated hidden devices are preserved.",
       "Direct action to open the HidHide Configuration Client."
@@ -253,6 +258,7 @@
       "Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.",
       "Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.",
       "Schema 24 and Adaptive Response schema 2 persist Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity across global, category, profile, device, custom-preset, and portable-profile resolution while missing fields inherit conservative Balanced values.",
+      "Schema 25 persists Profile automatic-selection policy plus an explicit manual override. Schema-24-and-earlier categories migrate their saved default (or first profile) to Preferred and the remaining profiles to deterministic Fallback order.",
       "Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.",
       "Automation schema defaults new temporal fields deterministically.",
       "Profile IDs remain stable for controls and readable summaries use profile names.",
