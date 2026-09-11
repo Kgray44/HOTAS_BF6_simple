@@ -151,11 +151,23 @@ int main(int argc, char *argv[])
                         const QVariantList steadyButtonModel = backend.buttons();
                         const QVariantList steadyProfiles = backend.profiles();
                         const QVariantList steadyCategories = backend.profileCategories();
+                        const QVariantList steadyAxisConfiguration = backend.axisConfiguration();
+                        const QVariantList steadyAxisTelemetry = backend.axisTelemetry();
+                        bool axisProjectionSeparated = steadyAxisConfiguration.size() == steadyAxisTelemetry.size();
+                        for (int index = 0; axisProjectionSeparated && index < steadyAxisConfiguration.size(); ++index) {
+                            const QVariantMap configuration = steadyAxisConfiguration.at(index).toMap();
+                            const QVariantMap telemetry = steadyAxisTelemetry.at(index).toMap();
+                            axisProjectionSeparated = configuration.contains(QStringLiteral("label"))
+                                && !configuration.contains(QStringLiteral("calibrated"))
+                                && telemetry.contains(QStringLiteral("calibrated"))
+                                && !telemetry.contains(QStringLiteral("label"))
+                                && configuration.value(QStringLiteral("index")) == telemetry.value(QStringLiteral("index"));
+                        }
                         Q_UNUSED(steadyControllerModel);
                         Q_UNUSED(steadyButtonModel);
                         Q_UNUSED(steadyProfiles);
                         Q_UNUSED(steadyCategories);
-                        QTimer::singleShot(10'000, &application, [&] {
+                        QTimer::singleShot(10'000, &application, [&, axisProjectionSeparated] {
             const QVariantMap counters = backend.uiPerformanceCounters();
             const qulonglong controllerGetterCalls = counters.value(QStringLiteral("controllerGetterCalls")).toULongLong();
             const qulonglong controllerRebuilds = counters.value(QStringLiteral("controllerModelRebuilds")).toULongLong();
@@ -204,7 +216,8 @@ int main(int argc, char *argv[])
                 && stateNotifications < telemetryNotifications / 4
                 && (controllerBackgroundRuns >= 1 || controllerDiscoveryTimerActive)
                 && gameBackgroundRuns >= 1
-                && uiStallsOver250Ms == 0;
+                && uiStallsOver250Ms == 0
+                && axisProjectionSeparated;
             backend.setAutomaticGameDetection(false);
             QCoreApplication::quit();
         });

@@ -116,14 +116,26 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString flightDeckAxes = sourceFile(QStringLiteral("qml/FlightDeckAxes.qml"));
+    const QString signalFlow = sourceFile(QStringLiteral("qml/FlightDeckSignalFlow.qml"));
+    const QString qmlLifecycle = sourceFile(QStringLiteral("tests/app_qml_startup_tests.cpp"));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged")));
+    QVERIFY(header.contains(QStringLiteral("effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged")));
+    QVERIFY(header.contains(QStringLiteral("profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("void controllersChanged();")));
     QVERIFY(header.contains(QStringLiteral("void telemetryChanged();")));
     QVERIFY(header.contains(QStringLiteral("void buttonTelemetryChanged();")));
+    QVERIFY(header.contains(QStringLiteral("void profilePresentationChanged();")));
+    QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::axisConfiguration() const")));
+    QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::axisTelemetry() const")));
+    QVERIFY(backend.contains(QStringLiteral("void AppBackend::publishProfilePresentationIfChanged()")));
     QVERIFY(backend.contains(QStringLiteral("return m_controllerUiModel;")));
     QVERIFY(backend.contains(QStringLiteral("sameControllerInventory")));
     QVERIFY(backend.contains(QStringLiteral("if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();")));
@@ -145,6 +157,16 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(settings.contains(QStringLiteral("readonly property var controllerModel: backend.controllers")));
     QVERIFY(devices.contains(QStringLiteral("readonly property var controllers: backendObject ? backendObject.controllers : []")));
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisConfiguration")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisTelemetry")));
+    QVERIFY(!flightDeckAxes.contains(QStringLiteral("backend.axes")));
+    QVERIFY(signalFlow.contains(QStringLiteral("function rebuildGraphIndexes()")));
+    QVERIFY(signalFlow.contains(QStringLiteral("function rebuildLiveTelemetryIndex()")));
+    QVERIFY(signalFlow.contains(QStringLiteral("routeLiveById[String(route && route.id || \"\")]")));
+    QVERIFY(!signalFlow.contains(QStringLiteral("wireGeometry.filter(")));
+    QVERIFY(qmlLifecycle.contains(QStringLiteral("HOTAS_QML_FLIGHT_DECK_PERF_ONLY")));
+    QVERIFY(qmlLifecycle.contains(QStringLiteral("verifyFlightDeckPageNavigationPerformance")));
+    QVERIFY(qmlLifecycle.contains(QStringLiteral("flight_deck_page_navigation_summary")));
 }
 
 void UiReleaseContractTests::presentationLifecycleSleepsOnlyTheGuiControlPlane()
@@ -464,6 +486,7 @@ void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMe
 void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane()
 {
     const QString adaptive = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+    const QString flightDeckAdaptive = sourceFile(QStringLiteral("qml/FlightDeckAdaptiveResponse.qml"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
     QVERIFY(adaptive.contains(QStringLiteral("function axisModelIndex(physicalAxis)")));
@@ -540,6 +563,13 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(backend.contains(QStringLiteral("m_adaptiveResponseSimulatorRecording")));
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(
         QStringLiteral("adaptiveResponseSimulator")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("backendObject.axes")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("property int simulatorReplayCursor")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("function updateReplayPresentation()")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("Math.ceil(sampleCount / Math.max(1, Math.floor(plotWidth)))")));
+    QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("simulatorSamples.slice(0)")));
+    QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("simulatorDisplaySamples = simulatorSamples.slice(0)")));
+    QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("interval: 16")));
 }
 
 void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts()

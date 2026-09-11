@@ -604,6 +604,14 @@ AppBackend::AppBackend(QObject *parent)
     rebuildCurveAxisChoices();
     rebuildControllerUiModel();
     rebuildButtonUiModel();
+    m_presentedEffectiveProfileName = effectiveProfileName();
+    m_presentedEffectiveProfileDisplayName = effectiveProfileDisplayName();
+    m_presentedProfileSourceLabel = profileSourceLabel();
+    // Profile presentation is a derived control-plane projection.  Keep the
+    // shell's text bindings asleep during ordinary 30 Hz input telemetry and
+    // notify them only after a relevant state boundary actually changes it.
+    connect(this, &AppBackend::stateChanged, this,
+            &AppBackend::publishProfilePresentationIfChanged);
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
     // rebuilding editor data. HighPriority is intentionally below
@@ -673,6 +681,87 @@ AppBackend::~AppBackend()
     m_worker.wait();
 }
 
+QVariantList AppBackend::axisConfiguration() const
+{
+    QVariantList result;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const auto axis = static_cast<PhysicalAxis>(index);
+        const AxisMapping &mapping = axes[index];
+        QVariantMap item;
+        item.insert(u"index"_qs, index);
+        item.insert(u"key"_qs, physicalAxisKey(axis));
+        const QString hardwareLabel = physicalAxisLabel(axis);
+        const QString customLabel = mapping.customName.trimmed();
+        item.insert(u"label"_qs, customLabel.isEmpty() ? hardwareLabel : customLabel);
+        item.insert(u"hardwareLabel"_qs, hardwareLabel);
+        item.insert(u"customName"_qs, customLabel);
+        item.insert(u"detail"_qs, physicalAxisDetail(axis));
+        item.insert(u"available"_qs, runtime.axisAvailable[index].load());
+        const PhysicalAxisActivity activity = static_cast<PhysicalAxisActivity>(
+            runtime.axisActivity[index].load());
+        const bool fixed = activity == PhysicalAxisActivity::Fixed;
+        item.insert(u"activity"_qs, physicalAxisActivityKey(activity));
+        item.insert(u"activityLabel"_qs, physicalAxisActivityLabel(activity));
+        item.insert(u"activityDetail"_qs, fixed
+            ? u"No meaningful movement observed during completed calibration"_qs : QString{});
+        item.insert(u"fixed"_qs, fixed);
+        item.insert(u"target"_qs, virtualAxisLabel(mapping.target));
+        const int targetIndex = static_cast<int>(mapping.target);
+        const QString alias = targetIndex > 0 && targetIndex < kVirtualAxisSlotCount
+            ? profile.virtualAxisAliases[static_cast<size_t>(targetIndex)].trimmed() : QString{};
+        item.insert(u"outputAlias"_qs, alias);
+        item.insert(u"targetAvailable"_qs, targetIndex == 0 || runtime.virtualAxisAvailable[
+            static_cast<size_t>(targetIndex)].load());
+        item.insert(u"rangeMode"_qs, axisRangeModeKey(mapping.rangeMode));
+        item.insert(u"rangeModeLabel"_qs, axisRangeModeLabel(mapping.rangeMode));
+        item.insert(u"inverted"_qs, mapping.inverted);
+        item.insert(u"deadzone"_qs, mapping.deadzone);
+        item.insert(u"hysteresis"_qs, mapping.hysteresis);
+        item.insert(u"outputMinimum"_qs, mapping.outputMinimum);
+        item.insert(u"outputMaximum"_qs, mapping.outputMaximum);
+        item.insert(u"curveSummary"_qs, curveDefinitionSummary(mapping.curve));
+        item.insert(u"curvePointEditing"_qs, mapping.curve.pointEditing);
+        item.insert(u"unipolar"_qs, mapping.rangeMode == AxisRangeMode::OneSided);
+        item.insert(u"calibrationEnabled"_qs, m_configuration.calibration[index].enabled);
+        item.insert(u"calibrationCentered"_qs, m_configuration.calibration[index].centered);
+        result.append(item);
+    }
+    return result;
+}
+
+QVariantList AppBackend::axisTelemetry() const
+{
+    QVariantList result;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
+    const AxisMappings &mappings = deviceMapping ? deviceMapping->axes : currentProfile().axes;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const AxisMapping &mapping = mappings[index];
+        const bool fixed = static_cast<PhysicalAxisActivity>(runtime.axisActivity[index].load())
+            == PhysicalAxisActivity::Fixed;
+        const int targetIndex = static_cast<int>(mapping.target);
+        const bool virtualRouted = !fixed && targetIndex > 0 && targetIndex < kVirtualAxisSlotCount
+            && runtime.virtualAxisAvailable[static_cast<size_t>(targetIndex)].load();
+        const float virtualValue = virtualRouted ? runtime.virtualValues[index].load()
+                                                 : std::numeric_limits<float>::quiet_NaN();
+        QVariantMap item;
+        item.insert(u"index"_qs, index);
+        item.insert(u"raw"_qs, runtime.raw[index].load());
+        item.insert(u"calibrated"_qs, runtime.normalized[index].load());
+        item.insert(u"curveResponse"_qs, runtime.curveResponse[index].load());
+        item.insert(u"transformed"_qs, runtime.transformed[index].load());
+        item.insert(u"virtualValue"_qs, virtualValue);
+        item.insert(u"virtualRouted"_qs, virtualRouted);
+        item.insert(u"virtualValid"_qs, virtualRouted && std::isfinite(virtualValue));
+        result.append(item);
+    }
+    return result;
+}
+
 QVariantList AppBackend::axes() const
 {
     QVariantList result;
@@ -702,8 +791,6 @@ QVariantList AppBackend::axes() const
             ? u"No meaningful movement observed during completed calibration"_qs : QString{});
         item.insert(u"fixed"_qs, fixed);
         item.insert(u"raw"_qs, runtime.raw[index].load());
-        // Normal screens deliberately use the calibrated coordinate system.
-        // Raw remains exposed separately for calibration and support work.
         item.insert(u"calibrated"_qs, runtime.normalized[index].load());
         item.insert(u"curveResponse"_qs, runtime.curveResponse[index].load());
         item.insert(u"transformed"_qs, runtime.transformed[index].load());
@@ -3055,6 +3142,22 @@ QString AppBackend::profileSourceLabel() const
             .arg(profileTriggerModeLabel(mode));
     }
     return u"Manual base profile"_qs;
+}
+
+void AppBackend::publishProfilePresentationIfChanged()
+{
+    const QString effectiveName = effectiveProfileName();
+    const QString effectiveDisplayName = effectiveProfileDisplayName();
+    const QString source = profileSourceLabel();
+    if (effectiveName == m_presentedEffectiveProfileName
+        && effectiveDisplayName == m_presentedEffectiveProfileDisplayName
+        && source == m_presentedProfileSourceLabel) {
+        return;
+    }
+    m_presentedEffectiveProfileName = effectiveName;
+    m_presentedEffectiveProfileDisplayName = effectiveDisplayName;
+    m_presentedProfileSourceLabel = source;
+    emit profilePresentationChanged();
 }
 int AppBackend::activeProfileIndex() const
 {
