@@ -80,6 +80,7 @@ Page {
         + (diagnosticsPageLoader.item ? 1 : 0)
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
+        + (signalFlowPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
         + (devicesPageLoader.item ? 1 : 0)
 
@@ -93,6 +94,7 @@ Page {
         case 5: return profileLibraryLoader.item
         case 6: return curveEditorLoader.item
         case 7: return automationPageLoader.item
+        case 11: return signalFlowPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
         case 10: return devicesPageLoader.item
@@ -1446,7 +1448,7 @@ Page {
                 model: [
                     { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
-                    { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "SIGNAL FLOW", page: 11, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
@@ -2464,6 +2466,20 @@ Page {
                             root.flightDeckAutomationContext = ""
                         }
                     } }
+            }
+        }
+        Loader {
+            id: signalFlowPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 11
+            sourceComponent: Component {
+                SignalFlow {
+                    anchors.fill: parent
+                    visible: root.currentPage === 11
+                    backendObject: backend
+                    themeTokens: root.themeTokens
+                    legacy: false
+                }
             }
         }
         Loader {

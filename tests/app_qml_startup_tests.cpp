@@ -6060,6 +6060,126 @@ bool verifyFlightDeckAutomationInteraction(hotas::AppBackend &backend, hotas::Th
     return true;
 }
 
+bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    // This compact harness is intentionally separate from the broad visual
+    // matrix below. It instantiates all five production experiences and
+    // exercises a route through the QML-owned click-click command function,
+    // while retaining the real AppBackend/configuration authority.
+    backend.setVirtualAxisAvailabilityForTest(true);
+    const auto signalFlowWarnings = [](QStringList warnings) {
+        warnings.erase(std::remove_if(warnings.begin(), warnings.end(), [](const QString &warning) {
+            return !warning.contains(QStringLiteral("SignalFlow.qml"));
+        }), warnings.end());
+        return warnings;
+    };
+    const auto loadExistingExperience = [&backend, &themeManager, &signalFlowWarnings](const QString &theme) {
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        themeManager.setCurrentTheme(theme);
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        QObject::connect(&engine, &QQmlApplicationEngine::warnings, &engine,
+            [&warnings](const QList<QQmlError> &items) {
+                for (const QQmlError &item : items) warnings.push_back(item.toString());
+            });
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+        engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+        auto *window = engine.rootObjects().isEmpty()
+            ? nullptr : qobject_cast<QWindow *>(engine.rootObjects().constFirst());
+        QObject *presentation = window ? window->findChild<QObject *>(QStringLiteral("presentationLoader")) : nullptr;
+        QObject *surface = presentation ? qvariant_cast<QObject *>(presentation->property("item")) : nullptr;
+        settlePresentation();
+        if (!window || !surface || !selectPage(surface, 11)) {
+            return failPresentationLifecycleTest(QStringLiteral("Signal Flow %1 surface did not load").arg(theme));
+        }
+        QObject *page = pageItem(surface, 11);
+        const QStringList pageWarnings = signalFlowWarnings(warnings);
+        if (!page || page->objectName() != QStringLiteral("signalFlowPage")
+            || backend.signalFlowGraph().value(QStringLiteral("routes")).toList().isEmpty()
+            || !pageWarnings.isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose its canonical graph page (page=%2 routes=%3 warnings=%4)")
+                .arg(theme).arg(page ? page->objectName() : QStringLiteral("missing"))
+                .arg(backend.signalFlowGraph().value(QStringLiteral("routes")).toList().size())
+                .arg(pageWarnings.join(u" | "_qs)));
+        }
+
+        if (theme == QStringLiteral("Standard")) {
+            // Source axis 7 and Slider 1 are unused by the default fixture.
+            // Execute the page's own click-click functions rather than
+            // bypassing QML with a direct backend invocation.
+            QQmlExpression routeThroughPage(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " const source = inputPorts().filter(function(port) { return port.id === 'axis:6'; })[0];"
+                " const destination = outputPorts().filter(function(port) { return port.id === 'axis:8'; })[0];"
+                " if (!source || !destination) return false;"
+                " chooseSource(source); chooseOutput(destination);"
+                " return selectedSource && selectedSource.kind ? false : true;"
+                "})()"));
+            const bool routed = routeThroughPage.evaluate().toBool();
+            settlePresentation();
+            const QVariantMap changedGraph = backend.signalFlowGraph();
+            const QVariantList changedRoutes = changedGraph.value(QStringLiteral("routes")).toList();
+            const bool routePresent = std::any_of(changedRoutes.cbegin(), changedRoutes.cend(), [](const QVariant &entry) {
+                    const QVariantMap route = entry.toMap();
+                    return route.value(QStringLiteral("sourcePortId")).toString() == QStringLiteral("axis:6")
+                        && route.value(QStringLiteral("destinationPortId")).toString() == QStringLiteral("axis:8");
+                });
+            if (routeThroughPage.hasError() || !routed || !routePresent || !backend.signalFlowCanUndo()) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow click-click routing did not commit canonical state (error=%1 routed=%2 route=%3 undo=%4)")
+                    .arg(routeThroughPage.hasError() ? routeThroughPage.error().toString() : QStringLiteral("none"))
+                    .arg(routed).arg(routePresent).arg(backend.signalFlowCanUndo()));
+            }
+            const QVariantMap undo = backend.signalFlowUndo(backend.signalFlowRevision());
+            if (!undo.value(QStringLiteral("success")).toBool()) {
+                return failPresentationLifecycleTest(QStringLiteral("Signal Flow undo did not restore the prior topology"));
+            }
+        }
+        return true;
+    };
+
+    for (const QString &theme : {QStringLiteral("Legacy"), QStringLiteral("Standard"),
+                                 QStringLiteral("Top Gun"), QStringLiteral("Day Ops")}) {
+        if (!loadExistingExperience(theme)) return false;
+    }
+
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    QQmlApplicationEngine flightDeckEngine;
+    QStringList flightDeckWarnings;
+    QObject::connect(&flightDeckEngine, &QQmlApplicationEngine::warnings, &flightDeckEngine,
+        [&flightDeckWarnings](const QList<QQmlError> &items) {
+            for (const QQmlError &item : items) flightDeckWarnings.push_back(item.toString());
+        });
+    flightDeckEngine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    flightDeckEngine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    flightDeckEngine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *flightDeckWindow = flightDeckEngine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QWindow *>(flightDeckEngine.rootObjects().constFirst());
+    QObject *flightDeckPresentation = flightDeckWindow
+        ? flightDeckWindow->findChild<QObject *>(QStringLiteral("presentationLoader")) : nullptr;
+    QObject *flightDeckSurface = flightDeckPresentation
+        ? qvariant_cast<QObject *>(flightDeckPresentation->property("item")) : nullptr;
+    settlePresentation();
+    if (!flightDeckWindow || !flightDeckSurface || !selectPage(flightDeckSurface, 11)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Signal Flow surface did not load"));
+    }
+    QObject *flightDeckPage = pageItem(flightDeckSurface, 11);
+    const QStringList deckWarnings = signalFlowWarnings(flightDeckWarnings);
+    if (!flightDeckPage || flightDeckPage->objectName() != QStringLiteral("flightDeckSignalFlow")
+        || !flightDeckSurface->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowLoader"))
+        || !deckWarnings.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow did not use its native page (page=%1 warnings=%2)")
+            .arg(flightDeckPage ? flightDeckPage->objectName() : QStringLiteral("missing"))
+            .arg(deckWarnings.join(u" | "_qs)));
+    }
+    themeManager.setCurrentExperience(QStringLiteral("Existing"));
+    return true;
+}
+
 }
 
 int main(int argc, char *argv[])
@@ -6100,6 +6220,7 @@ int main(int argc, char *argv[])
     // fresh, inspectable screenshots after shared presentation changes.
     const bool flightDeckVisualOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_VISUAL_ONLY");
+    const bool signalFlowOnly = qEnvironmentVariableIsSet("HOTAS_QML_SIGNAL_FLOW_ONLY");
     if (adaptiveChoiceGeometryOnly || containmentGeometryOnly) {
         const bool geometrySafe = (!containmentGeometryOnly
                 || (verifyFlightDeckNavigationRailGeometry(backend, themeManager, QStringLiteral("Dark"))
@@ -6135,6 +6256,11 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return visualSafe ? 0 : 1;
+    }
+    if (signalFlowOnly) {
+        const bool signalFlowSafe = verifySignalFlowQmlSurface(backend, themeManager);
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return signalFlowSafe ? 0 : 1;
     }
     QStringList themes{
         QStringLiteral("Legacy"),

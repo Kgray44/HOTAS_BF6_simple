@@ -7,6 +7,7 @@
 #include "button_mapping.h"
 #include "profile_portability.h"
 #include "response_curve.h"
+#include "signal_flow_model.h"
 
 #include <QDir>
 #include <QJsonArray>
@@ -24,7 +25,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 25;
+constexpr int kProfileSchemaVersion = 26;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -68,6 +69,196 @@ Calibration calibrationFromJson(const QJsonObject &json)
         calibration.centered = true;
     }
     return calibration;
+}
+
+QJsonObject signalFlowIdentityToJson(const SignalFlowIdentityRecord &identity)
+{
+    return {{u"key"_qs, identity.key.trimmed().left(320)},
+            {u"id"_qs, identity.id.trimmed().left(96)},
+            {u"generation"_qs, static_cast<int>(identity.generation)},
+            {u"active"_qs, identity.active}};
+}
+
+bool signalFlowIdentityFromJson(const QJsonObject &json, SignalFlowIdentityRecord *identity)
+{
+    if (!identity || json.isEmpty()) return false;
+    SignalFlowIdentityRecord restored;
+    restored.key = json.value(u"key"_qs).toString().trimmed().left(320);
+    restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
+    const int generation = json.value(u"generation"_qs).toInt(0);
+    if (restored.key.isEmpty() || restored.id.isEmpty() || generation < 1
+        || !json.value(u"active"_qs).isBool()) return false;
+    restored.generation = static_cast<std::uint32_t>(generation);
+    restored.active = json.value(u"active"_qs).toBool();
+    *identity = std::move(restored);
+    return true;
+}
+
+QJsonObject signalFlowWorkspaceToJson(const SignalFlowWorkspaceState &workspace)
+{
+    return {{u"key"_qs, workspace.key.trimmed().left(320)},
+            {u"panX"_qs, std::clamp(workspace.panX, -100000.0F, 100000.0F)},
+            {u"panY"_qs, std::clamp(workspace.panY, -100000.0F, 100000.0F)},
+            {u"zoom"_qs, std::clamp(workspace.zoom, 0.25F, 4.0F)},
+            {u"wireStyle"_qs, workspace.wireStyle.trimmed().left(24)},
+            {u"densityMode"_qs, workspace.densityMode.trimmed().left(24)},
+            {u"inspectorWidth"_qs, std::clamp(workspace.inspectorWidth, 240, 720)},
+            {u"layoutLocked"_qs, workspace.layoutLocked}};
+}
+
+bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceState *workspace)
+{
+    if (!workspace || json.isEmpty()) return false;
+    const QJsonValue panX = json.value(u"panX"_qs);
+    const QJsonValue panY = json.value(u"panY"_qs);
+    const QJsonValue zoom = json.value(u"zoom"_qs);
+    const QJsonValue width = json.value(u"inspectorWidth"_qs);
+    if (!panX.isDouble() || !panY.isDouble() || !zoom.isDouble() || !width.isDouble()
+        || !json.value(u"layoutLocked"_qs).isBool()) return false;
+    SignalFlowWorkspaceState restored;
+    restored.key = json.value(u"key"_qs).toString().trimmed().left(320);
+    restored.wireStyle = json.value(u"wireStyle"_qs).toString().trimmed().left(24);
+    restored.densityMode = json.value(u"densityMode"_qs).toString().trimmed().left(24);
+    if (restored.key.isEmpty()
+        || (restored.wireStyle != u"smooth"_qs && restored.wireStyle != u"orthogonal"_qs)
+        || (restored.densityMode != u"detailed"_qs && restored.densityMode != u"compact"_qs
+            && restored.densityMode != u"overview"_qs)) return false;
+    restored.panX = std::clamp(static_cast<float>(panX.toDouble()), -100000.0F, 100000.0F);
+    restored.panY = std::clamp(static_cast<float>(panY.toDouble()), -100000.0F, 100000.0F);
+    restored.zoom = std::clamp(static_cast<float>(zoom.toDouble()), 0.25F, 4.0F);
+    restored.inspectorWidth = std::clamp(width.toInt(), 240, 720);
+    restored.layoutLocked = json.value(u"layoutLocked"_qs).toBool();
+    *workspace = std::move(restored);
+    return true;
+}
+
+QJsonObject signalFlowNodeLayoutToJson(const SignalFlowNodeLayout &layout)
+{
+    return {{u"workspaceKey"_qs, layout.workspaceKey.trimmed().left(320)},
+            {u"objectId"_qs, layout.objectId.trimmed().left(96)},
+            {u"x"_qs, std::clamp(layout.x, -100000.0F, 100000.0F)},
+            {u"y"_qs, std::clamp(layout.y, -100000.0F, 100000.0F)},
+            {u"pinned"_qs, layout.pinned}};
+}
+
+bool signalFlowNodeLayoutFromJson(const QJsonObject &json, SignalFlowNodeLayout *layout)
+{
+    if (!layout || json.isEmpty()) return false;
+    const QJsonValue x = json.value(u"x"_qs);
+    const QJsonValue y = json.value(u"y"_qs);
+    if (!x.isDouble() || !y.isDouble() || !json.value(u"pinned"_qs).isBool()) return false;
+    SignalFlowNodeLayout restored;
+    restored.workspaceKey = json.value(u"workspaceKey"_qs).toString().trimmed().left(320);
+    restored.objectId = json.value(u"objectId"_qs).toString().trimmed().left(96);
+    if (restored.workspaceKey.isEmpty() || restored.objectId.isEmpty()) return false;
+    restored.x = std::clamp(static_cast<float>(x.toDouble()), -100000.0F, 100000.0F);
+    restored.y = std::clamp(static_cast<float>(y.toDouble()), -100000.0F, 100000.0F);
+    restored.pinned = json.value(u"pinned"_qs).toBool();
+    *layout = std::move(restored);
+    return true;
+}
+
+QJsonObject signalFlowPortGroupToJson(const SignalFlowPortGroupState &state)
+{
+    return {{u"workspaceKey"_qs, state.workspaceKey.trimmed().left(320)},
+            {u"cardId"_qs, state.cardId.trimmed().left(96)},
+            {u"group"_qs, state.group.trimmed().left(96)},
+            {u"collapsed"_qs, state.collapsed}};
+}
+
+bool signalFlowPortGroupFromJson(const QJsonObject &json, SignalFlowPortGroupState *state)
+{
+    if (!state || json.isEmpty() || !json.value(u"collapsed"_qs).isBool()) return false;
+    SignalFlowPortGroupState restored;
+    restored.workspaceKey = json.value(u"workspaceKey"_qs).toString().trimmed().left(320);
+    restored.cardId = json.value(u"cardId"_qs).toString().trimmed().left(96);
+    restored.group = json.value(u"group"_qs).toString().trimmed().left(96);
+    if (restored.workspaceKey.isEmpty() || restored.cardId.isEmpty() || restored.group.isEmpty()) return false;
+    restored.collapsed = json.value(u"collapsed"_qs).toBool();
+    *state = std::move(restored);
+    return true;
+}
+
+template <typename Item, typename Parse, typename Key>
+bool signalFlowArrayFromJson(const QJsonValue &value, int maximum, std::vector<Item> *items,
+                             Parse parse, Key key)
+{
+    if (!items || !value.isArray()) return false;
+    const QJsonArray values = value.toArray();
+    if (values.size() > maximum) return false;
+    QSet<QString> keys;
+    for (const QJsonValue &value : values) {
+        Item item;
+        if (!parse(value.toObject(), &item) || keys.contains(key(item))) return false;
+        keys.insert(key(item));
+        items->push_back(std::move(item));
+    }
+    return true;
+}
+
+QJsonObject signalFlowStateToJson(const SignalFlowState &state)
+{
+    QJsonArray routeIdentities;
+    for (const SignalFlowIdentityRecord &identity : state.routeIdentities) {
+        routeIdentities.append(signalFlowIdentityToJson(identity));
+    }
+    QJsonArray processorIdentities;
+    for (const SignalFlowIdentityRecord &identity : state.processorIdentities) {
+        processorIdentities.append(signalFlowIdentityToJson(identity));
+    }
+    QJsonArray workspaces;
+    for (const SignalFlowWorkspaceState &workspace : state.workspaces) {
+        workspaces.append(signalFlowWorkspaceToJson(workspace));
+    }
+    QJsonArray nodeLayouts;
+    for (const SignalFlowNodeLayout &layout : state.nodeLayouts) {
+        nodeLayouts.append(signalFlowNodeLayoutToJson(layout));
+    }
+    QJsonArray portGroups;
+    for (const SignalFlowPortGroupState &group : state.portGroups) {
+        portGroups.append(signalFlowPortGroupToJson(group));
+    }
+    return {{u"routeIdentities"_qs, routeIdentities},
+            {u"processorIdentities"_qs, processorIdentities},
+            {u"workspaces"_qs, workspaces},
+            {u"nodeLayouts"_qs, nodeLayouts},
+            {u"portGroups"_qs, portGroups}};
+}
+
+bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
+{
+    if (!state || !value.isObject()) return false;
+    const QJsonObject json = value.toObject();
+    SignalFlowState restored;
+    if (!signalFlowArrayFromJson(json.value(u"routeIdentities"_qs),
+                                 kMaximumSignalFlowIdentityRecords, &restored.routeIdentities,
+                                 signalFlowIdentityFromJson,
+                                 [](const auto &identity) { return identity.key; })
+        || !signalFlowArrayFromJson(json.value(u"processorIdentities"_qs),
+                                    kMaximumSignalFlowIdentityRecords, &restored.processorIdentities,
+                                    signalFlowIdentityFromJson,
+                                    [](const auto &identity) { return identity.key; })
+        || !signalFlowArrayFromJson(json.value(u"workspaces"_qs),
+                                    kMaximumSignalFlowWorkspaces, &restored.workspaces,
+                                    signalFlowWorkspaceFromJson,
+                                    [](const auto &workspace) { return workspace.key; })
+        || !signalFlowArrayFromJson(json.value(u"nodeLayouts"_qs),
+                                    kMaximumSignalFlowNodeLayouts, &restored.nodeLayouts,
+                                    signalFlowNodeLayoutFromJson,
+                                    [](const auto &layout) {
+                                        return layout.workspaceKey + u":"_qs + layout.objectId;
+                                    })
+        || !signalFlowArrayFromJson(json.value(u"portGroups"_qs),
+                                    kMaximumSignalFlowPortGroupStates, &restored.portGroups,
+                                    signalFlowPortGroupFromJson,
+                                    [](const auto &group) {
+                                        return group.workspaceKey + u":"_qs + group.cardId
+                                            + u":"_qs + group.group;
+                                    })) {
+        return false;
+    }
+    *state = std::move(restored);
+    return true;
 }
 
 QJsonObject adaptiveResponseSettingsToJson(const AdaptiveResponseSettings &settings)
@@ -1526,6 +1717,7 @@ MapperConfiguration ConfigStore::load()
     if (!document.isObject()) {
         MapperConfiguration configuration = defaultConfiguration();
         seedBundledBattlefieldHelicopterProfile(&configuration);
+        reconcileSignalFlowState(&configuration);
         return configuration;
     }
 
@@ -1636,6 +1828,7 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"nativePovBindings"_qs, nativePovBindingsToJson(configuration.nativePovBindings)},
         {u"automationEnabled"_qs, configuration.automationEnabled},
         {u"automations"_qs, automations},
+        {u"signalFlow"_qs, signalFlowStateToJson(configuration.signalFlow)},
         {u"activeProfileId"_qs, configuration.activeProfileId},
     };
 }
@@ -1646,14 +1839,17 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version == 1 || version == 2) {
         bool migratedValid = false;
         MapperConfiguration configuration = migrateLegacyConfiguration(json, version, &migratedValid);
-        if (migratedValid) seedBundledBattlefieldHelicopterProfile(&configuration);
+        if (migratedValid) {
+            seedBundledBattlefieldHelicopterProfile(&configuration);
+            reconcileSignalFlowState(&configuration);
+        }
         if (valid) *valid = migratedValid;
         return configuration;
     }
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
-        && version != 21 && version != 22 && version != 23 && version != 24
+        && version != 21 && version != 22 && version != 23 && version != 24 && version != 25
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -2186,6 +2382,11 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             configuration.deviceRigMigrationWarning = u"Existing controller configuration was preserved, but no Device Rig was created because the legacy controller identity was missing or ambiguous."_qs;
         }
     }
+    if (version >= 26
+        && !signalFlowStateFromJson(json.value(u"signalFlow"_qs), &configuration.signalFlow)) {
+        if (valid) *valid = false;
+        return fallbackWithGlobalSettings(json);
+    }
     if (version < 25) {
         // V2.5.4 establishes one resolver authority. Existing categories keep
         // their explicit default as Preferred; remaining profiles become
@@ -2210,6 +2411,11 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version < kProfileSchemaVersion) {
         seedBundledBattlefieldHelicopterProfile(&configuration);
     }
+    // The V2.6 migration backfills identity from the existing canonical
+    // mappings without changing any route, processor setting, profile, or
+    // runtime behavior. Reconciliation also safely retires IDs for removed
+    // sources while preserving presentation-only workspace state.
+    reconcileSignalFlowState(&configuration);
     if (valid) *valid = true;
     return configuration;
 }

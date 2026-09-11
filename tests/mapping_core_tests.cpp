@@ -14,6 +14,7 @@
 #include "profile_portability.h"
 #include "profile_trigger_runtime.h"
 #include "response_curve.h"
+#include "signal_flow_model.h"
 
 #include <QtTest>
 
@@ -848,6 +849,7 @@ private slots:
     void inputLearningSelectsDeliberateAxisWithoutGuessing();
     void inputLearningSelectsAReleasedThenPressedButton();
     void configurationRoundTrips();
+    void signalFlowIdentityMigrationRoundTripAndLifecycle();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void v24MigrationPreservesVerifiedSavedActiveController();
@@ -1815,7 +1817,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 26);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -3734,6 +3736,96 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.calibrationHistory.front().calibratedAxisCount, 4);
     QCOMPARE(restored.calibrationHistory.front().calibration[2].center, 0.1F);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
+}
+
+void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    reconcileSignalFlowState(&configuration);
+
+    const QString routeKey = signalFlowRouteIdentityKey(profile, {}, QStringLiteral("axis"),
+        static_cast<int>(PhysicalAxis::X));
+    const SignalFlowIdentityRecord *initial = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(initial);
+    QVERIFY(initial->active);
+    QCOMPARE(initial->generation, std::uint32_t{1});
+    const QString initialId = initial->id;
+    QVERIFY(!initialId.isEmpty());
+
+    // Changing the destination does not make a new logical route.  The
+    // identity belongs to the canonical source endpoint/lifecycle, not a
+    // transient selected output label.
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::Ry;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *retargeted = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(retargeted);
+    QVERIFY(retargeted->active);
+    QCOMPARE(retargeted->generation, std::uint32_t{1});
+    QCOMPARE(retargeted->id, initialId);
+
+    // A deleted and later recreated route cannot revive stale selection,
+    // undo, or deep-link identity from the old lifecycle.
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::Disabled;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *deleted = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(deleted);
+    QVERIFY(!deleted->active);
+    QCOMPARE(deleted->id, initialId);
+
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::X;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *recreated = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(recreated);
+    QVERIFY(recreated->active);
+    QCOMPARE(recreated->generation, std::uint32_t{2});
+    QVERIFY(recreated->id != initialId);
+
+    SignalFlowWorkspaceState workspace;
+    workspace.key = QStringLiteral("signal-flow:profile-normal:no-rig:legacy-source");
+    workspace.panX = 142.0F;
+    workspace.panY = 78.0F;
+    workspace.zoom = 1.2F;
+    workspace.wireStyle = QStringLiteral("orthogonal");
+    workspace.densityMode = QStringLiteral("compact");
+    workspace.layoutLocked = true;
+    configuration.signalFlow.workspaces.push_back(workspace);
+    configuration.signalFlow.nodeLayouts.push_back({workspace.key, recreated->id, 420.0F, 180.0F, true});
+
+    bool valid = false;
+    const QJsonObject serialized = ConfigStore::toJson(configuration);
+    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 26);
+    QVERIFY(serialized.value(QStringLiteral("signalFlow")).isObject());
+    const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
+    QVERIFY(valid);
+    const SignalFlowIdentityRecord *persisted = findSignalFlowIdentity(
+        restored.signalFlow.routeIdentities, routeKey);
+    QVERIFY(persisted);
+    QVERIFY(persisted->active);
+    QCOMPARE(persisted->generation, std::uint32_t{2});
+    QCOMPARE(persisted->id, recreated->id);
+    QCOMPARE(restored.signalFlow.workspaces.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.nodeLayouts.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.workspaces.front().wireStyle, QStringLiteral("orthogonal"));
+    QVERIFY(restored.signalFlow.workspaces.front().layoutLocked);
+
+    // v2.5 configuration has no Signal Flow JSON.  Loading it is a pure,
+    // deterministic migration: mapping semantics do not change and identity
+    // is backfilled from the same canonical route fields.
+    QJsonObject v25 = serialized;
+    v25.insert(QStringLiteral("version"), 25);
+    v25.remove(QStringLiteral("signalFlow"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(v25, &valid);
+    QVERIFY(valid);
+    const SignalFlowIdentityRecord *migratedRoute = findSignalFlowIdentity(
+        migrated.signalFlow.routeIdentities, routeKey);
+    QVERIFY(migratedRoute);
+    QVERIFY(migratedRoute->active);
+    QCOMPARE(activeProfile(migrated).axes[static_cast<int>(PhysicalAxis::X)].target, VirtualAxis::X);
 }
 
 void MappingCoreTests::outputLimitsRoundTripAcrossDomainsAndSchemaMigration()

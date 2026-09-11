@@ -26,7 +26,9 @@ Page {
         control: "#10171b", controlDisabled: "#0c1013", controlPressed: "#29414a",
         controlHover: "#142128", buttonSurface: "#324f5a", buttonHover: "#456c78", buttonSecondary: "#222c32", buttonSecondaryHover: "#303d44",
         tooltip: "#151e23", selection: "#315a66", selectionCurrent: "#244650", orange: "#78aab9", cyan: "#8fc8c0",
-        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9"
+        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9",
+        graphBackground: "#091116", graphGrid: "#294a55", graphInput: "#d0e1e2", graphOutput: "#8fc8c0",
+        graphPreview: "#5e9caf", graphLabel: "#8ba5ad", graphFrame: "#52717c"
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
@@ -57,6 +59,7 @@ Page {
         + (diagnosticsPageLoader.item ? 1 : 0)
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
+        + (signalFlowPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
         + (devicesPageLoader.item ? 1 : 0)
 
@@ -70,6 +73,7 @@ Page {
         case 5: return profileLibraryLoader.item
         case 6: return curveEditorLoader.item
         case 7: return automationPageLoader.item
+        case 11: return signalFlowPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
         case 10: return devicesPageLoader.item
@@ -1265,7 +1269,7 @@ Page {
                 model: [
                     { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
-                    { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "SIGNAL FLOW", page: 11, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
@@ -2116,6 +2120,20 @@ Page {
                 AutomationPage { anchors.fill: parent; visible: root.currentPage === 7; backendObject: backend; legacy: true
                     presentationState: root.automationPresentationState
                     onPresentationStateCaptured: function(state) { root.automationPresentationState = state } }
+            }
+        }
+        Loader {
+            id: signalFlowPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 11
+            sourceComponent: Component {
+                SignalFlow {
+                    anchors.fill: parent
+                    visible: root.currentPage === 11
+                    backendObject: backend
+                    themeTokens: root.adaptiveThemeTokens
+                    legacy: true
+                }
             }
         }
         Loader {

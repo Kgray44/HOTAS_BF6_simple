@@ -831,6 +831,60 @@ struct CalibrationHistoryEntry {
     std::array<Calibration, kPhysicalAxisCount> calibration{};
 };
 
+// Signal Flow identity is canonical control-plane state.  It deliberately
+// records identity and presentation metadata only; it never becomes a second
+// mapping payload beside the established profile/device mappings below.
+// Keys are stable canonical endpoint/processor descriptors, while IDs are
+// durable opaque references used by the graph, diagnostics, undo, and deep
+// links.  A retained inactive record is a tombstone: recreating a deleted
+// route receives a new lifecycle generation rather than borrowing the old
+// identity.
+constexpr int kMaximumSignalFlowIdentityRecords = 4096;
+constexpr int kMaximumSignalFlowWorkspaces = 128;
+constexpr int kMaximumSignalFlowNodeLayouts = 2048;
+constexpr int kMaximumSignalFlowPortGroupStates = 2048;
+
+struct SignalFlowIdentityRecord {
+    QString key;
+    QString id;
+    std::uint32_t generation = 0;
+    bool active = false;
+};
+
+struct SignalFlowWorkspaceState {
+    QString key;
+    float panX = 0.0F;
+    float panY = 0.0F;
+    float zoom = 1.0F;
+    QString wireStyle = u"smooth"_qs;
+    QString densityMode = u"detailed"_qs;
+    int inspectorWidth = 360;
+    bool layoutLocked = false;
+};
+
+struct SignalFlowNodeLayout {
+    QString workspaceKey;
+    QString objectId;
+    float x = 0.0F;
+    float y = 0.0F;
+    bool pinned = false;
+};
+
+struct SignalFlowPortGroupState {
+    QString workspaceKey;
+    QString cardId;
+    QString group;
+    bool collapsed = false;
+};
+
+struct SignalFlowState {
+    std::vector<SignalFlowIdentityRecord> routeIdentities;
+    std::vector<SignalFlowIdentityRecord> processorIdentities;
+    std::vector<SignalFlowWorkspaceState> workspaces;
+    std::vector<SignalFlowNodeLayout> nodeLayouts;
+    std::vector<SignalFlowPortGroupState> portGroups;
+};
+
 struct MapperConfiguration {
     QString preferredDeviceId;
     std::vector<SavedControllerRecord> savedControllers;
@@ -898,6 +952,10 @@ struct MapperConfiguration {
     // absent field migrates to this ON/empty state, preserving v1.7 behavior.
     bool automationEnabled = true;
     std::vector<AutomationDefinition> automations;
+    // V2.6.0 canonical graph identity and presentation metadata.  Mapping
+    // semantics remain in profiles/device mappings until the Signal Flow
+    // compiler projects them; the worker never reads this field per report.
+    SignalFlowState signalFlow;
     QString activeProfileId;
 };
 

@@ -59,6 +59,8 @@ set(HOTAS_MAPPER_SOURCES
     src/profile_trigger_runtime.cpp
     src/automation_engine.h
     src/automation_engine.cpp
+    src/signal_flow_model.h
+    src/signal_flow_model.cpp
     src/config_store.h
     src/config_store.cpp
     src/controller_manager.h
@@ -103,10 +105,12 @@ qt_add_qml_module(HOTASMapper
         qml/AviationPanel.qml
         qml/AdaptiveResponsePage.qml
         qml/AutomationPage.qml
+        qml/SignalFlow.qml
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
         qml/Legacy.qml
         qml/FlightDeck.qml
+        qml/FlightDeckSignalFlow.qml
         qml/FlightDeckTheme.qml
         qml/FlightDeckDialog.qml
         qml/FlightDeckInputLearningDialog.qml
@@ -294,6 +298,8 @@ if (BUILD_TESTING)
         src/profile_trigger_runtime.cpp
         src/automation_engine.h
         src/automation_engine.cpp
+        src/signal_flow_model.h
+        src/signal_flow_model.cpp
         src/config_store.h
         src/config_store.cpp
         src/controller_manager.h
@@ -352,6 +358,8 @@ if (BUILD_TESTING)
         src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
+        src/signal_flow_model.h
+        src/signal_flow_model.cpp
         src/config_store.h
         src/config_store.cpp
     )
@@ -472,6 +480,8 @@ if (BUILD_TESTING)
         src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
+        src/signal_flow_model.h
+        src/signal_flow_model.cpp
         src/config_store.h
         src/config_store.cpp
     )
@@ -529,10 +539,12 @@ if (BUILD_TESTING)
             qml/AviationPanel.qml
             qml/AdaptiveResponsePage.qml
             qml/AutomationPage.qml
+            qml/SignalFlow.qml
             qml/LegacyAviationPanel.qml
             qml/LegacyCurveEditor.qml
             qml/Legacy.qml
             qml/FlightDeck.qml
+            qml/FlightDeckSignalFlow.qml
             qml/FlightDeckTheme.qml
             qml/FlightDeckDialog.qml
             qml/FlightDeckInputLearningDialog.qml
