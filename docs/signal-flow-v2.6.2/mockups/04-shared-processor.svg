@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
-  <title id="title">V2.6.1 Flight Deck Signal Flow — shared processor</title>
+  <title id="title">V2.6.2 Flight Deck Signal Flow — shared processor</title>
   <desc id="desc">A proposed shared Adaptive Response processor exposing three real channel input and output port pairs connected to physical and virtual device cards.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b1721"/><stop offset="1" stop-color="#071017"/></linearGradient>
@@ -19,7 +19,7 @@
   <rect width="1600" height="900" fill="url(#bg)"/>
   <rect x="34" y="28" width="1532" height="78" rx="22" fill="#112433" stroke="#355a70"/>
   <text x="65" y="64" class="label" font-size="28" font-weight="700">Signal Flow</text>
-  <text x="65" y="87" class="muted" font-size="13">PROPOSED V2.6.1 · SHARED PROCESSOR WITH THREE REAL CHANNEL PAIRS</text>
+  <text x="65" y="87" class="muted" font-size="13">PROPOSED V2.6.2 · SHARED PROCESSOR WITH THREE REAL CHANNEL PAIRS</text>
   <text x="1178" y="72" class="tech">SHARED ID · ONE SETTINGS OWNER · THREE CHANNELS</text>
   <rect x="34" y="128" width="1532" height="736" rx="24" fill="#0b1a24" stroke="#31586d"/>
   <rect x="58" y="152" width="1484" height="688" rx="18" fill="url(#grid)" stroke="#27495c"/>

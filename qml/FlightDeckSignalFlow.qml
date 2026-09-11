@@ -1,6 +1,7 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
+import QtQuick.Window 6.5
 
 // A Flight Deck-native Signal Flow surface.  It shares the authoritative
 // backend commands with the other experiences, but deliberately has its own
@@ -39,6 +40,15 @@ Item {
     property var routeExplanation: ({})
     property bool xrayMode: false
     property var wireGeometry: []
+    property var wireBuckets: ({})
+    property var portAnchors: ({})
+    property string hoveredRouteId: ""
+    // Diagnostic-only lifecycle counters.  They make event-driven rendering
+    // observable in tests without adding product logging.
+    property int canvasPaintCount: 0
+    property int geometryRebuildCount: 0
+    property int pointerHitCandidateCount: 0
+    property int liveSampleCount: 0
     property var retiringWireGeometry: []
     property real wireReveal: 1.0
     property real wireRetire: 1.0
@@ -51,13 +61,16 @@ Item {
     property var connectionPreview: ({})
     property string pendingProcessorRouteId: ""
     readonly property string semanticDensity: {
-        const requested = graph.workspace && graph.workspace.densityMode || "detailed"
+        const requested = graph.workspace && graph.workspace.densityMode || "compact"
         if (zoom <= 0.62) return "overview"
         if (zoom <= 0.82 && requested === "detailed") return "compact"
         return requested
     }
     readonly property int canvasPortLimit: semanticDensity === "overview" ? 12
         : semanticDensity === "compact" ? 18 : 48
+    readonly property var sceneBounds: graphLayoutBounds()
+    readonly property real sceneLogicalWidth: Math.max(1040, Number(sceneBounds.maxX || 0) + 64)
+    readonly property real sceneLogicalHeight: Math.max(700, Number(sceneBounds.maxY || 0) + 64)
 
     signal navigateRequested(int page, int axis, var state)
 
@@ -202,12 +215,16 @@ Item {
         return true
     }
     function ports(kind) { return node(kind).ports || [] }
+    function inputNodes() { return (graph.nodes || []).filter(function(item) { return item.kind === "input" }) }
+    function portsForNode(nodeData) { return nodeData && nodeData.ports ? nodeData.ports : [] }
     function routesForPort(port, isOutput) {
         const matches = []
         const routes = graph.routes || []
         for (let i = 0; i < routes.length; ++i) {
             const route = routes[i]
-            if ((isOutput ? route.destinationPortId : route.sourcePortId) === port.id)
+            const endpoint = isOutput ? route.destinationEndpointId : route.sourceEndpointId
+            const legacy = isOutput ? route.destinationPortId : route.sourcePortId
+            if ((port.endpointId && String(endpoint || "") === String(port.endpointId)) || legacy === port.id)
                 matches.push(route)
         }
         return matches
@@ -242,30 +259,136 @@ Item {
         return String(port.index)
     }
     function groups(kind) { return node(kind).portGroups || [] }
-    function groupCollapsed(kind, group) {
-        const states = groups(kind)
-        let collapsed = false
-        for (let i = 0; i < states.length; ++i) if (states[i].group === group) { collapsed = Boolean(states[i].collapsed); break }
-        if (collapsed && source && source.kind) {
-            const allPorts = ports(kind)
-            for (let i = 0; i < allPorts.length; ++i) {
-                if (allPorts[i].group === group && (kind === "input"
-                        ? allPorts[i].id === source.id : compatible(allPorts[i]))) return false
-            }
+    function groupCard(nodeOrKind) {
+        return typeof nodeOrKind === "string" ? node(nodeOrKind) : (nodeOrKind || ({}))
+    }
+    function cardGroups(nodeData) {
+        const states = nodeData && nodeData.portGroups ? nodeData.portGroups : []
+        if (states.length > 0) return states
+        const seen = ({})
+        const result = []
+        const cardPorts = portsForNode(nodeData)
+        for (let index = 0; index < cardPorts.length; ++index) {
+            const group = String(cardPorts[index].group || "Controls")
+            if (seen[group]) continue
+            seen[group] = true
+            result.push({ "group": group, "collapsed": group !== "Axes" && group !== "Virtual Axes" })
         }
-        return collapsed
+        return result
     }
-    function groupPorts(kind, group, limit) {
-        return ports(kind).filter(function(port) { return port.group === group && matching(port, kind === "output") })
-            .slice(0, limit || 48)
+    function cardGroupStoredCollapsed(nodeData, group) {
+        const states = cardGroups(nodeData)
+        for (let index = 0; index < states.length; ++index)
+            if (String(states[index].group || "") === String(group || "")) return Boolean(states[index].collapsed)
+        return String(group || "") !== "Axes" && String(group || "") !== "Virtual Axes"
     }
-    function setGroup(kind, group, collapsed) {
-        const card = node(kind)
+    function cardGroupRouteCount(nodeData, group, destination) {
+        const seen = ({})
+        const cardPorts = portsForNode(nodeData)
+        for (let index = 0; index < cardPorts.length; ++index) {
+            const port = cardPorts[index]
+            if (String(port.group || "") !== String(group || "")) continue
+            const matches = routesForPort(port, destination)
+            for (let routeIndex = 0; routeIndex < matches.length; ++routeIndex)
+                seen[String(matches[routeIndex].id || routeIndex)] = true
+        }
+        return Object.keys(seen).length
+    }
+    function cardGroupNeedsAttention(nodeData, group, destination) {
+        const cardPorts = portsForNode(nodeData)
+        if (normalized(query).length > 0 || filter !== "all" || routeStateFilter !== "all") return true
+        if (String(learnedSourcePortId || "").length > 0 || (inspectedNode && String(inspectedNode.id || "") === String(nodeData.id || ""))) return true
+        for (let index = 0; index < cardPorts.length; ++index) {
+            const port = cardPorts[index]
+            if (String(port.group || "") !== String(group || "")) continue
+            if (source && source.id && (!destination
+                    ? String(port.endpointId || port.id) === String(source.endpointId || source.id)
+                    : compatible(port))) return true
+            if (inspectedRoute && inspectedRoute.id && routesForPort(port, destination).some(function(route) {
+                    return String(route.id || "") === String(inspectedRoute.id || "") })) return true
+        }
+        return cardGroupRouteCount(nodeData, group, destination) > 0
+    }
+    function cardGroupCollapsed(nodeData, group, destination) {
+        return cardGroupStoredCollapsed(nodeData, group)
+            && !cardGroupNeedsAttention(nodeData, group, destination)
+    }
+    function cardGroupPorts(nodeData, group, destination) {
+        const storedCollapsed = cardGroupStoredCollapsed(nodeData, group)
+        const attention = cardGroupNeedsAttention(nodeData, group, destination)
+        let result = portsForNode(nodeData).filter(function(port) {
+            return String(port.group || "") === String(group || "") && matching(port, destination)
+        })
+        // A collapsed group that is temporarily revealed by a live selection
+        // shows the related endpoints, not a surprise bank of 32 controls.
+        if (storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
+                && routeStateFilter === "all") {
+            result = result.filter(function(port) {
+                return Boolean(port.mapped) || (source && source.id && (!destination
+                    ? String(port.endpointId || port.id) === String(source.endpointId || source.id)
+                    : compatible(port))) || (inspectedRoute && routesForPort(port, destination).some(function(route) {
+                        return String(route.id || "") === String(inspectedRoute.id || "") }))
+            })
+        }
+        const limit = semanticDensity === "overview" ? 3 : semanticDensity === "compact" ? 10 : 14
+        return result.slice(0, limit)
+    }
+    function groupCollapsed(kind, group) { return cardGroupCollapsed(node(kind), group, kind === "output") }
+    function groupPorts(kind, group, limit) { return cardGroupPorts(node(kind), group, kind === "output").slice(0, limit || 48) }
+    function setGroup(nodeOrKind, group, collapsed) {
+        const card = groupCard(nodeOrKind)
         announce(backendObject.signalFlowSetPortGroupCollapsed(String(card.objectId || card.id || ""), group, collapsed),
             "Port group state was not saved.")
     }
-    function sourcePorts() { return ports("input").filter(function(port) { return matching(port, false) && !groupCollapsed("input", port.group) }).slice(0, 48) }
+    function sourcePorts() {
+        const all = []
+        const cards = inputNodes()
+        for (let cardIndex = 0; cardIndex < cards.length; ++cardIndex) {
+            const cardPorts = portsForNode(cards[cardIndex])
+            for (let portIndex = 0; portIndex < cardPorts.length; ++portIndex) {
+                if (matching(cardPorts[portIndex], false)) all.push(cardPorts[portIndex])
+            }
+        }
+        return all.slice(0, 96)
+    }
     function destinationPorts() { return ports("output").filter(function(port) { return matching(port, true) && !groupCollapsed("output", port.group) }) }
+    function visibleCardPorts(nodeData, destination) {
+        const result = []
+        const state = cardGroups(nodeData)
+        for (let index = 0; index < state.length; ++index) {
+            const group = String(state[index].group || "")
+            if (!cardGroupCollapsed(nodeData, group, destination))
+                result = result.concat(cardGroupPorts(nodeData, group, destination))
+        }
+        return result
+    }
+    function graphCardWidth(nodeData) { return nodeData && nodeData.kind === "processor" ? 188 : 294 }
+    function graphCardHeight(nodeData) {
+        if (!nodeData) return 96
+        if (nodeData.kind === "processor") return 92 + Math.max(0, Number(nodeData.sharedChannelCount || 0) - 1) * 20
+        const destination = nodeData.kind === "output"
+        const state = cardGroups(nodeData)
+        let rows = 0
+        let collapsed = 0
+        for (let index = 0; index < state.length; ++index) {
+            const group = String(state[index].group || "")
+            if (cardGroupCollapsed(nodeData, group, destination)) ++collapsed
+            else rows += cardGroupPorts(nodeData, group, destination).length
+        }
+        return 76 + state.length * 22 + rows * 28 + collapsed * 14
+    }
+    function graphLayoutBounds() {
+        const nodes = graph.nodes || []
+        let maxX = 976
+        let maxY = 636
+        for (let index = 0; index < nodes.length; ++index) {
+            const nodeData = nodes[index]
+            const position = nodePosition(nodeData, nodeData.kind === "output" ? 1320 : nodeData.kind === "processor" ? 680 : 80, 120)
+            maxX = Math.max(maxX, Number(position.x || 0) + graphCardWidth(nodeData))
+            maxY = Math.max(maxY, Number(position.y || 0) + graphCardHeight(nodeData))
+        }
+        return ({ "maxX": maxX, "maxY": maxY })
+    }
     function compatible(port) {
         if (!source || !source.kind || !port) return false
         if (source.kind === "axis") return port.kind === "axis"
@@ -425,7 +548,9 @@ Item {
         if (!routeMatchesSearch(route) || !routeMatchesState(route)) return 0.12
         if (!routeIsXrayRelated(route)) return 0.08
         if (signalFocus && !live) return 0.18
-        return live ? 1.0 : 0.82
+        if (inspectedRoute && String(inspectedRoute.id || "") === String(route.id || "")) return 1.0
+        if (routeHasProblem(route)) return 0.76
+        return live ? 0.94 : 0.48
     }
     function stableLane(value, count) {
         const text = String(value || "")
@@ -451,6 +576,96 @@ Item {
         nodePositions = next
         wireGeometryTimer.restart()
     }
+    // The rendered port dot is the single source of truth for its wire
+    // endpoint.  Card delegates register their own scene-space center; the
+    // geometry cache never estimates a row from a label hash or card formula.
+    function notePortAnchor(port, x, y) {
+        if (!port || !isFinite(x) || !isFinite(y)) return
+        const next = ({})
+        for (const key in portAnchors) next[key] = portAnchors[key]
+        if (port.endpointId) next[String(port.endpointId)] = ({ "x": Number(x), "y": Number(y) })
+        if (port.id) next[String(port.id)] = ({ "x": Number(x), "y": Number(y) })
+        portAnchors = next
+        wireGeometryTimer.restart()
+    }
+    function registeredPortAnchor(route, sourceSide, fallback) {
+        const endpoint = sourceSide ? route.sourceEndpointId : route.destinationEndpointId
+        const legacy = sourceSide ? route.sourcePortId : route.destinationPortId
+        return portAnchors[String(endpoint || "")] || portAnchors[String(legacy || "")] || fallback
+    }
+    function wirePoints(segment, lane) {
+        const points = []
+        const direction = segment.endX >= segment.startX ? 1 : -1
+        if (graph.workspace && graph.workspace.wireStyle === "orthogonal") {
+            const stub = segment.hasDetour ? Math.max(42, Math.min(120, Math.abs(segment.endX - segment.startX) * 0.22))
+                : Math.round((segment.startX + segment.endX) * 0.5 + lane * 12) - segment.startX
+            if (segment.hasDetour) {
+                points.push({ "x": segment.startX, "y": segment.startY })
+                points.push({ "x": segment.startX + direction * stub, "y": segment.startY })
+                points.push({ "x": segment.startX + direction * stub, "y": segment.detourY })
+                points.push({ "x": segment.endX - direction * stub, "y": segment.detourY })
+                points.push({ "x": segment.endX - direction * stub, "y": segment.endY })
+                points.push({ "x": segment.endX, "y": segment.endY })
+            } else {
+                const middle = Math.round((segment.startX + segment.endX) * 0.5 + lane * 12)
+                points.push({ "x": segment.startX, "y": segment.startY })
+                points.push({ "x": middle, "y": segment.startY })
+                points.push({ "x": middle, "y": segment.endY })
+                points.push({ "x": segment.endX, "y": segment.endY })
+            }
+            return points
+        }
+        const firstControlX = segment.startX + direction * (segment.hasDetour ? 86 : 178)
+        const secondControlX = segment.endX - direction * (segment.hasDetour ? 86 : 178)
+        // Stable vertical offsets preserve a fan-out's individual paths
+        // without introducing a bundled trunk in the normal view.
+        // Detours must retain the route's lane identity too. Otherwise two
+        // fan-out paths which share a detour collapse into one apparent wire.
+        const detourY = Number(segment.detourY || 0) + lane * 12
+        const firstControlY = segment.hasDetour ? detourY : segment.startY + lane * 12
+        const secondControlY = segment.hasDetour ? detourY : segment.endY + lane * 12
+        for (let step = 0; step <= 16; ++step) {
+            const t = step / 16
+            const mt = 1 - t
+            points.push({
+                "x": mt * mt * mt * segment.startX + 3 * mt * mt * t * firstControlX
+                    + 3 * mt * t * t * secondControlX + t * t * t * segment.endX,
+                "y": mt * mt * mt * segment.startY + 3 * mt * mt * t * firstControlY
+                    + 3 * mt * t * t * secondControlY + t * t * t * segment.endY
+            })
+        }
+        return points
+    }
+    function pointToSegmentDistance(x, y, a, b) {
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const length = dx * dx + dy * dy
+        if (length < 0.0001) return Math.hypot(x - a.x, y - a.y)
+        const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / length))
+        return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t))
+    }
+    function hitWire(x, y) {
+        const cell = 96
+        const bucket = wireBuckets[Math.floor(x / cell) + ":" + Math.floor(y / cell)] || []
+        pointerHitCandidateCount = bucket.length
+        let best = null
+        let bestDistance = 11
+        for (let index = 0; index < bucket.length; ++index) {
+            const entry = bucket[index]
+            const points = entry.points || []
+            for (let point = 1; point < points.length; ++point) {
+                let distance = pointToSegmentDistance(x, y, points[point - 1], points[point])
+                if (String(entry.routeId || "") === hoveredRouteId) distance -= 0.75
+                if (distance < bestDistance) { bestDistance = distance; best = entry }
+            }
+        }
+        return best
+    }
+    function updateWireHover(x, y) {
+        const hit = hitWire(x, y)
+        const next = hit ? String(hit.routeId || "") : ""
+        if (hoveredRouteId !== next) { hoveredRouteId = next; if (diagram) diagram.requestPaint() }
+    }
     function obstaclePlan(startX, startY, endX, endY, excludedIds) {
         const left = Math.min(startX, endX)
         const right = Math.max(startX, endX)
@@ -463,8 +678,8 @@ Item {
             const candidateId = String(candidate.id || candidate.objectId || "")
             if (excludedIds && excludedIds[candidateId]) continue
             const position = nodePosition(candidate, 0, 0)
-            const cardWidth = candidate.kind === "processor" ? 180 : 250
-            const cardHeight = candidate.kind === "processor" ? 112 : 142
+            const cardWidth = graphCardWidth(candidate)
+            const cardHeight = graphCardHeight(candidate)
             if (position.x + cardWidth <= left + 28 || position.x >= right - 28) continue
             const span = Math.max(1, endX - startX)
             const t = Math.max(0, Math.min(1, (position.x + cardWidth * 0.5 - startX) / span))
@@ -480,17 +695,27 @@ Item {
         return ({ "hasDetour": blockers > 0, "underCard": false, "detourY": detourY })
     }
     function rebuildWireGeometry() {
+        geometryRebuildCount += 1
         const routes = graph.routes || []
         const nodes = graph.nodes || []
         const nodeById = ({})
-        const bundleCounts = ({})
-        const bundleLeads = ({})
+        const fanOutGroups = ({})
+        const fanOutLanes = ({})
+        const buckets = ({})
+        const cell = 96
         const next = []
         for (let i = 0; i < nodes.length; ++i) nodeById[String(nodes[i].id || "")] = nodes[i]
         for (let i = 0; i < routes.length; ++i) {
             const route = routes[i]
-            const key = String(route.sourcePortId || route.id || i) + "|" + String(route.viaNodeId || "direct")
-            bundleCounts[key] = Number(bundleCounts[key] || 0) + 1
+            const key = String(route.sourceEndpointId || route.sourcePortId || route.id || i)
+            if (!fanOutGroups[key]) fanOutGroups[key] = []
+            fanOutGroups[key].push(String(route.id || i))
+        }
+        for (const key in fanOutGroups) {
+            const ids = fanOutGroups[key]
+            ids.sort()
+            for (let index = 0; index < ids.length; ++index)
+                fanOutLanes[ids[index]] = index - (ids.length - 1) * 0.5
         }
         for (let i = 0; i < routes.length; ++i) {
             const route = routes[i]
@@ -499,9 +724,6 @@ Item {
             if (!input || !output) continue
             const inputPosition = nodePosition(input, 50, 150)
             const outputPosition = nodePosition(output, 1190, 150)
-            const bundleKey = String(route.sourcePortId || route.id || i) + "|" + String(route.viaNodeId || "direct")
-            const firstBundleLeg = !bundleLeads[bundleKey]
-            bundleLeads[bundleKey] = true
             const excludedIds = ({})
             excludedIds[String(input.id || "")] = true
             excludedIds[String(output.id || "")] = true
@@ -516,10 +738,13 @@ Item {
                 processorWaypoints.push({ "id": processorId, "leftX": position.x,
                     "rightX": position.x + 180, "y": position.y + 40 })
             }
-            const branchX = bundleCounts[bundleKey] > 1 ? inputPosition.x + 334 : inputPosition.x + 260
             const segments = []
-            let currentX = branchX
-            let currentY = inputPosition.y + 52 + stableLane(route.sourcePortId, 13) * 6
+            const sourceAnchor = registeredPortAnchor(route, true,
+                ({ "x": inputPosition.x + graphCardWidth(input), "y": inputPosition.y + 52 + stableLane(route.sourcePortId, 13) * 6 }))
+            const destinationAnchor = registeredPortAnchor(route, false,
+                ({ "x": outputPosition.x, "y": outputPosition.y + 52 + stableLane(route.destinationPortId + route.id, 18) * 5 }))
+            let currentX = sourceAnchor.x
+            let currentY = sourceAnchor.y
             for (let processorIndex = 0; processorIndex < processorWaypoints.length; ++processorIndex) {
                 const waypoint = processorWaypoints[processorIndex]
                 const obstacle = obstaclePlan(currentX, currentY, waypoint.leftX, waypoint.y, excludedIds)
@@ -529,30 +754,57 @@ Item {
                 currentX = waypoint.rightX
                 currentY = waypoint.y
             }
-            const finalX = outputPosition.x
-            const finalY = outputPosition.y + 52 + stableLane(route.destinationPortId + route.id, 18) * 5
+            const finalX = destinationAnchor.x
+            const finalY = destinationAnchor.y
             const finalObstacle = obstaclePlan(currentX, currentY, finalX, finalY, excludedIds)
             segments.push({ "startX": currentX, "startY": currentY, "endX": finalX,
                 "endY": finalY, "hasDetour": finalObstacle.hasDetour,
                 "detourY": finalObstacle.detourY, "underCard": finalObstacle.underCard })
             const focusSegment = segments[Math.floor(segments.length * 0.5)]
-            next.push({
+            const lane = Number(fanOutLanes[String(route.id || i)] || 0)
+            const entry = {
                 "route": route,
                 "routeId": String(route.id || ""),
-                "startX": inputPosition.x + 260,
-                "startY": inputPosition.y + 52 + stableLane(route.sourcePortId, 13) * 6,
+                "routeSegmentId": String(route.routeSegmentId || route.id || ""),
+                "startX": sourceAnchor.x,
+                "startY": sourceAnchor.y,
                 "endX": finalX,
                 "endY": finalY,
                 "segments": segments,
                 "focusX": focusSegment ? (focusSegment.startX + focusSegment.endX) * 0.5 : finalX,
                 "focusY": focusSegment ? (focusSegment.startY + focusSegment.endY) * 0.5 : finalY,
-                "bundleCount": Number(bundleCounts[bundleKey] || 1),
-                "drawBundleTrunk": Number(bundleCounts[bundleKey] || 1) > 1 && firstBundleLeg,
-                "bundleX": inputPosition.x + 334,
-                "processorCount": processorWaypoints.length
-            })
+                "bundleCount": 1,
+                "drawBundleTrunk": false,
+                "bundleX": inputPosition.x + graphCardWidth(input),
+                "processorCount": processorWaypoints.length,
+                "lane": lane
+            }
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex]
+                segment.points = wirePoints(segment, lane)
+                let minX = Number.POSITIVE_INFINITY
+                let minY = Number.POSITIVE_INFINITY
+                let maxX = Number.NEGATIVE_INFINITY
+                let maxY = Number.NEGATIVE_INFINITY
+                for (let pointIndex = 0; pointIndex < segment.points.length; ++pointIndex) {
+                    const point = segment.points[pointIndex]
+                    minX = Math.min(minX, point.x); minY = Math.min(minY, point.y)
+                    maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y)
+                }
+                segment.bounds = ({ "left": minX - 12, "top": minY - 12, "right": maxX + 12, "bottom": maxY + 12 })
+                for (let bx = Math.floor(segment.bounds.left / cell); bx <= Math.floor(segment.bounds.right / cell); ++bx) {
+                    for (let by = Math.floor(segment.bounds.top / cell); by <= Math.floor(segment.bounds.bottom / cell); ++by) {
+                        const key = bx + ":" + by
+                        if (!buckets[key]) buckets[key] = []
+                        buckets[key].push({ "route": route, "routeId": entry.routeId,
+                            "routeSegmentId": entry.routeSegmentId, "points": segment.points })
+                    }
+                }
+            }
+            next.push(entry)
         }
         wireGeometry = next
+        wireBuckets = buckets
         if (diagram) diagram.requestPaint()
     }
     function restartWireMotion() {
@@ -570,8 +822,12 @@ Item {
         } else wireRetire = 1
     }
     function fitGraph() {
-        const horizontal = Math.max(0.5, Math.min(1.15, (graphViewport.width - 42) / scene.width))
-        const vertical = Math.max(0.5, Math.min(1.15, (graphViewport.height - 42) / scene.height))
+        // The scene has a logical 64 px trailing margin and physical cards
+        // start at least 80 px in, so Fit always leaves a calm visual border
+        // instead of clipping the output card or its endpoint dots.
+        const margin = 48
+        const horizontal = Math.max(0.42, Math.min(1.15, (graphViewport.width - margin * 2) / scene.width))
+        const vertical = Math.max(0.42, Math.min(1.15, (graphViewport.height - margin * 2) / scene.height))
         zoom = Math.min(horizontal, vertical)
         graphViewport.contentX = 0
         graphViewport.contentY = 0
@@ -744,11 +1000,6 @@ Item {
         noticeError = !(result && result.success)
     }
     function selectSource(port) {
-        if (port && port.scopeEditable === false) {
-            notice = "This saved input is visible for the whole rig but is not the active editing scope. Select its card, then choose Edit this input scope."
-            noticeError = true
-            return
-        }
         if (mode === "effective") { notice = "Effective view is read-only. Return to Configured to edit."; noticeError = true; return }
         if (!port.available) { notice = "This input is inactive until calibration reports meaningful travel."; noticeError = true; return }
         source = port
@@ -765,7 +1016,11 @@ Item {
         const sourceBeforeConnect = source
         const destination = destinationFor(port)
         previewDestination(port)
-        const result = backendObject.signalFlowConnect(String(source.kind), Number(source.index), Number(source.subIndex || 0), destination, replace, Number(graph.revision || 0))
+        const result = source.endpointId && port.endpointId
+            ? backendObject.connectSignalFlowEndpoints(String(source.endpointId), String(port.endpointId),
+                replace ? "replace" : "", Number(graph.revision || 0))
+            : backendObject.signalFlowConnect(String(source.kind), Number(source.index), Number(source.subIndex || 0),
+                destination, replace, Number(graph.revision || 0))
         announce(result, "Connection was not applied.")
         if (result && result.success) {
             if (!keepLearnedRouteHighlighted(sourceBeforeConnect, port.id)) {
@@ -790,8 +1045,14 @@ Item {
     }
     function connectWithMixer(modeName) {
         const sourceBeforeConnect = source
-        const result = backendObject.signalFlowConnectWithMixer(String(source.kind), Number(source.index),
-            Number(source.subIndex || 0), conflictDialog.destination, modeName, Number(graph.revision || 0))
+        const destinationPort = destinationPorts().filter(function(port) {
+            return String(port.id || "") === String(conflictDialog.destinationPortId || "")
+        })[0]
+        const result = source.endpointId && destinationPort && destinationPort.endpointId
+            ? backendObject.connectSignalFlowEndpoints(String(source.endpointId), String(destinationPort.endpointId),
+                modeName, Number(graph.revision || 0))
+            : backendObject.signalFlowConnectWithMixer(String(source.kind), Number(source.index),
+                Number(source.subIndex || 0), conflictDialog.destination, modeName, Number(graph.revision || 0))
         announce(result, "Mixer connection was not applied.")
         if (result && result.success) {
             if (!keepLearnedRouteHighlighted(sourceBeforeConnect, conflictDialog.destinationPortId)) {
@@ -1018,6 +1279,7 @@ Item {
         Qt.callLater(restorePresentationState)
     }
     onInspectedRouteChanged: if (diagram) diagram.requestPaint()
+    onHoveredRouteIdChanged: if (diagram) diagram.requestPaint()
     onSourceChanged: if (diagram) diagram.requestPaint()
     onInspectedNodeChanged: if (diagram) diagram.requestPaint()
     onModeChanged: if (diagram) diagram.requestPaint()
@@ -1038,6 +1300,10 @@ Item {
     onDragWireChanged: if (diagram) diagram.requestPaint()
     onRouteStateFilterChanged: if (diagram) diagram.requestPaint()
     onQueryChanged: if (diagram) diagram.requestPaint()
+    onNoticeChanged: {
+        if (notice.length > 0) noticeTimer.restart()
+        else noticeTimer.stop()
+    }
 
     Connections {
         target: backendObject
@@ -1075,8 +1341,10 @@ Item {
         id: liveSampleTimer
         interval: 100
         repeat: true
-        running: root.liveMode || root.signalFocus || root.mode === "effective"
-        onTriggered: root.liveTelemetry = backendObject.signalFlowLiveTelemetry()
+        running: root.visible && (!root.Window.window || (root.Window.window.active
+            && root.Window.window.visibility !== Window.Minimized))
+            && (root.liveMode || root.signalFocus || root.mode === "effective")
+        onTriggered: { root.liveTelemetry = backendObject.signalFlowLiveTelemetry(); root.liveSampleCount += 1 }
     }
 
     Timer {
@@ -1084,6 +1352,13 @@ Item {
         interval: 16
         repeat: false
         onTriggered: root.rebuildWireGeometry()
+    }
+
+    Timer {
+        id: noticeTimer
+        interval: root.noticeError ? 8000 : 4200
+        repeat: false
+        onTriggered: { root.notice = ""; root.noticeError = false }
     }
 
     NumberAnimation {
@@ -1229,86 +1504,224 @@ Item {
                                        : "Select this physical source, then choose a compatible destination."
     }
 
+    // A port row lives on its owning card.  The visual dot stays compact while
+    // its 30 px target provides the forgiving direct-manipulation affordance.
+    component GraphPortRow: Item {
+        id: graphPortRow
+        property var port: ({})
+        property bool destination: false
+        property bool compatibleTarget: root.compatible(port)
+        implicitHeight: 28
+        Accessible.name: (destination ? "Destination " : "Source ") + String(port.label || "port")
+        Accessible.description: destination
+            ? "Click or drop a compatible source here to create a canonical route."
+            : "Click or drag from this physical endpoint to route it."
+        function updateAnchor() {
+            if (!port || !port.id || !scene) return
+            const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
+            root.notePortAnchor(port, point.x, point.y)
+        }
+        onXChanged: Qt.callLater(updateAnchor)
+        onYChanged: Qt.callLater(updateAnchor)
+        onWidthChanged: Qt.callLater(updateAnchor)
+        Component.onCompleted: Qt.callLater(updateAnchor)
+        RowLayout {
+            anchors.fill: parent
+            spacing: deck.space6
+            Item {
+                Layout.preferredWidth: graphPortRow.destination ? 30 : 0
+                Layout.preferredHeight: 28
+                visible: graphPortRow.destination
+                Rectangle {
+                    id: destinationDot
+                    anchors.centerIn: parent
+                    width: 10; height: 10; radius: 5
+                    color: !graphPortRow.port.available ? deck.disabled
+                        : graphPortRow.compatibleTarget ? deck.accent : graphPortRow.port.mapped ? deck.healthy : deck.textMuted
+                    border.width: graphPortRow.compatibleTarget ? 2 : 1
+                    border.color: graphPortRow.compatibleTarget ? deck.focus : deck.border
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: String(graphPortRow.port.label || "")
+                color: !graphPortRow.port.available ? deck.disabled : deck.textPrimary
+                font.family: deck.bodyFont; font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+            Text {
+                visible: !graphPortRow.destination && Boolean(graphPortRow.port.mapped)
+                text: "LINKED"
+                color: deck.informational; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true
+            }
+            Item {
+                Layout.preferredWidth: graphPortRow.destination ? 0 : 30
+                Layout.preferredHeight: 28
+                visible: !graphPortRow.destination
+                Rectangle {
+                    id: sourceDot
+                    anchors.centerIn: parent
+                    width: 10; height: 10; radius: 5
+                    color: !graphPortRow.port.available ? deck.disabled
+                        : root.source && String(root.source.endpointId || root.source.id) === String(graphPortRow.port.endpointId || graphPortRow.port.id)
+                            ? deck.accent : graphPortRow.port.mapped ? deck.informational : deck.textMuted
+                    border.width: root.source && String(root.source.endpointId || root.source.id) === String(graphPortRow.port.endpointId || graphPortRow.port.id) ? 2 : 1
+                    border.color: deck.focus
+                }
+            }
+        }
+        Item {
+            id: hitTarget
+            width: 30; height: 30
+            x: destination ? 0 : parent.width - width
+            y: -1
+            Drag.active: sourceDrag.active
+            Drag.source: graphPortRow
+            Drag.keys: ["signal-flow-source"]
+            Drag.hotSpot.x: width / 2
+            Drag.hotSpot.y: height / 2
+            DragHandler {
+                id: sourceDrag
+                enabled: !graphPortRow.destination && root.mode === "configured" && graphPortRow.port.available
+                onActiveChanged: {
+                    if (active) {
+                        const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
+                        root.beginSourceDrag(graphPortRow.port, point)
+                    } else root.endSourceDrag()
+                }
+                onTranslationChanged: {
+                    if (!active) return
+                    const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5 + translation.x,
+                        hitTarget.height * 0.5 + translation.y)
+                    root.updateSourceDrag(point)
+                }
+            }
+            DropArea {
+                anchors.fill: parent
+                keys: ["signal-flow-source"]
+                enabled: graphPortRow.destination && root.mode === "configured" && graphPortRow.port.available
+                onEntered: function(drag) { root.previewDestination(graphPortRow.port) }
+                onExited: root.clearDestinationPreview(graphPortRow.port)
+                onDropped: function(drop) {
+                    if (drop.source && drop.source.port) root.connectDragged(drop.source.port, graphPortRow.port)
+                    drop.accepted = true
+                }
+            }
+            TapHandler {
+                acceptedButtons: Qt.LeftButton
+                onTapped: {
+                    if (graphPortRow.destination) root.connect(graphPortRow.port, false)
+                    else root.selectSource(graphPortRow.port)
+                }
+            }
+            HoverHandler {
+                onHoveredChanged: {
+                    if (hovered && graphPortRow.destination) root.previewDestination(graphPortRow.port)
+                    else if (!hovered && graphPortRow.destination) root.clearDestinationPreview(graphPortRow.port)
+                }
+            }
+        }
+    }
+
+    component SignalFlowPortGroups: Column {
+        id: signalFlowPortGroups
+        property var nodeData: ({})
+        property bool destination: false
+        width: parent ? parent.width : 0
+        spacing: 3
+        Repeater {
+            model: root.cardGroups(signalFlowPortGroups.nodeData)
+            delegate: Column {
+                id: groupColumn
+                required property var modelData
+                readonly property string groupName: String(modelData.group || "Controls")
+                readonly property bool collapsed: root.cardGroupCollapsed(signalFlowPortGroups.nodeData,
+                    groupName, signalFlowPortGroups.destination)
+                readonly property int routeCount: root.cardGroupRouteCount(signalFlowPortGroups.nodeData,
+                    groupName, signalFlowPortGroups.destination)
+                width: signalFlowPortGroups.width
+                spacing: 2
+                Row {
+                    id: groupHeader
+                    width: parent.width
+                    height: 20
+                    spacing: 4
+                    Text {
+                        width: Math.max(48, groupHeader.width - groupToggle.width - 4)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: groupColumn.groupName.toUpperCase() + " · " + groupColumn.routeCount
+                            + (groupColumn.routeCount === 1 ? " ROUTE" : " ROUTES")
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 8
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+                    DeckButton {
+                        id: groupToggle
+                        width: 28
+                        height: 20
+                        padding: 0
+                        text: groupColumn.collapsed ? "+" : "−"
+                        Accessible.name: (groupColumn.collapsed ? "Expand " : "Collapse ") + groupColumn.groupName
+                        onClicked: root.setGroup(signalFlowPortGroups.nodeData, groupColumn.groupName,
+                            !groupColumn.collapsed)
+                    }
+                }
+                Text {
+                    visible: groupColumn.collapsed
+                    width: parent.width
+                    text: groupColumn.routeCount > 0 ? groupColumn.routeCount + " routed endpoint"
+                        + (groupColumn.routeCount === 1 ? "" : "s") + " hidden" : "Collapsed"
+                    color: deck.textMuted
+                    font.family: deck.bodyFont
+                    font.pixelSize: 8
+                    elide: Text.ElideRight
+                }
+                Repeater {
+                    model: groupColumn.collapsed ? [] : root.cardGroupPorts(signalFlowPortGroups.nodeData,
+                        groupColumn.groupName, signalFlowPortGroups.destination)
+                    delegate: GraphPortRow {
+                        required property var modelData
+                        width: parent.width
+                        port: modelData
+                        destination: signalFlowPortGroups.destination
+                    }
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: deck.sectionGap
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: deck.space12
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Text { text: "Signal Flow"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 25; font.bold: true }
-                Text { text: "Device Rig: " + (root.graph.deviceRigName || "Profile-local input scope") + " · Profile: " + (root.graph.profileName || "active profile"); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { visible: Boolean(root.graph.editingDiffersFromEffective); text: "Effective runtime profile: " + (root.graph.effectiveProfileName || "unknown") + " · editing remains on " + (root.graph.profileName || "selected profile"); color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
-            }
-            DeckButton { text: "Profile…"; helpText: "Choose the active profile whose durable Signal Flow topology is being edited."; onClicked: deckProfileContextMenu.open() }
-            DeckButton { text: "Device Rig…"; helpText: "Choose the Device Rig context. A multi-device rig stays visible until one input card is selected for editing."; onClicked: deckRigContextMenu.open() }
+            spacing: deck.space8
+            Text { text: "SIGNAL FLOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+            DeckButton { Layout.preferredWidth: 138; text: "Device Rig"; helpText: root.graph.deviceRigName || "Choose the Device Rig context."; onClicked: deckRigContextMenu.open() }
+            DeckButton { Layout.preferredWidth: 126; text: "Profile"; helpText: root.graph.profileName || "Choose the editing profile."; onClicked: deckProfileContextMenu.open() }
             DeckButton { text: "Configured"; emphasized: root.mode === "configured"; onClicked: root.mode = "configured" }
             DeckButton { text: "Effective"; emphasized: root.mode === "effective"; onClicked: root.mode = "effective" }
+            TextField {
+                id: deckSearch
+                Layout.preferredWidth: 190
+                Layout.fillWidth: true
+                implicitHeight: deck.compactControlHeight
+                placeholderText: "Search ports"
+                color: deck.textPrimary
+                placeholderTextColor: deck.textMuted
+                selectByMouse: true
+                onTextChanged: root.query = text
+                background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border }
+            }
+            DeckButton { visible: root.query.length > 0; text: "Focus"; helpText: "Center the first matching route or source port."; onClicked: root.focusSearchResult() }
+            DeckButton { text: root.routeStateFilter === "all" ? "Filter" : "Filter: " + root.routeStateFilter; helpText: "Filter routes by mapping state, problems, or current activity."; onClicked: deckStateFilterMenu.open() }
+            DeckButton { text: root.liveMode ? "Live: on" : "Live"; emphasized: root.liveMode; helpText: "Sample bounded latest telemetry without affecting MappingWorker."; onClicked: { root.liveMode = !root.liveMode; if (root.liveMode) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
             DeckButton { text: "Undo"; enabled: backendObject.signalFlowCanUndo; onClicked: root.announce(backendObject.signalFlowUndo(Number(root.graph.revision || 0)), "Undo was not applied.") }
             DeckButton { text: "Redo"; enabled: backendObject.signalFlowCanRedo; onClicked: root.announce(backendObject.signalFlowRedo(Number(root.graph.revision || 0)), "Redo was not applied.") }
-        }
-
-        FlightDeckCard {
-            tokens: deck
-            Layout.fillWidth: true
-            implicitHeight: commandBar.implicitHeight + deck.cardPaddingCompact * 2
-            contentPadding: deck.cardPaddingCompact
-            color: deck.elevatedSurface
-            RowLayout {
-                id: commandBar
-                anchors.fill: parent
-                spacing: deck.space8
-                TextField {
-                    id: deckSearch
-                    Layout.preferredWidth: 220
-                    Layout.fillWidth: root.width < 1120
-                    implicitHeight: deck.compactControlHeight
-                    placeholderText: "Search ports"
-                    color: deck.textPrimary
-                    placeholderTextColor: deck.textMuted
-                    selectByMouse: true
-                    onTextChanged: root.query = text
-                    background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border }
-                }
-                DeckButton { visible: root.query.length > 0; text: "Focus result" + (root.searchResultCount() > 1 ? " (" + root.searchResultCount() + ")" : ""); helpText: "Center the first matching route or source port and preserve the rest of the graph context."; onClicked: root.focusSearchResult() }
-                Repeater {
-                    model: [ { label: "All", key: "all" }, { label: "Axes", key: "axis" }, { label: "Buttons", key: "button" }, { label: "POV", key: "pov" }, { label: "Native POV", key: "native-pov" } ]
-                    delegate: DeckButton { required property var modelData; text: modelData.label; emphasized: root.filter === modelData.key; onClicked: root.filter = modelData.key }
-                }
-                DeckButton { text: "State: " + (root.routeStateFilter === "all" ? "All" : root.routeStateFilter); helpText: "Filter ports and routes by mapped state, problems, or current activity."; onClicked: deckStateFilterMenu.open() }
-                Item { Layout.fillWidth: true }
-                DeckButton { text: root.signalFocus ? "Focus: on" : "Signal focus"; emphasized: root.signalFocus; helpText: "Dim inactive routes and sample bounded live telemetry."; onClicked: { root.signalFocus = !root.signalFocus; if (root.signalFocus) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
-                DeckButton { text: root.liveMode ? "Live: on" : "Live"; emphasized: root.liveMode; helpText: "Sample bounded latest telemetry and illuminate active routes without affecting MappingWorker."; onClicked: { root.liveMode = !root.liveMode; if (root.liveMode) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
-                DeckButton { text: root.xrayMode ? "X-ray: on" : "X-ray"; emphasized: root.xrayMode; helpText: "Isolate topology related to the selected route or source without changing mapping."; onClicked: root.keyboardAction("xray") }
-                DeckButton { text: "Learn input"; helpText: "Move or press a physical control first, then choose one of the highlighted compatible destinations."; enabled: root.mode === "configured" && root.graph.editable; onClicked: root.startSignalFlowSourceLearning() }
-                DeckButton { text: "Learn destination"; helpText: "Choose a virtual destination first, then move the physical control that should drive it."; enabled: root.mode === "configured" && root.graph.editable; onClicked: learnDialog.open() }
-                DeckButton { text: "Alias"; helpText: "Assign a profile-local friendly name without changing the vJoy target."; enabled: root.mode === "configured" && root.graph.editable; onClicked: aliasDialog.open() }
-                DeckButton { text: "Fit"; helpText: "Fit the current workspace into the graph viewport. Shortcut: Home."; onClicked: root.keyboardAction("fit") }
-                DeckButton { text: "Auto-layout"; helpText: "Arrange unpinned cards with the stable bounded layout."; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onClicked: root.announce(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
-                DeckButton { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; helpText: "Prevent accidental card dragging while preserving each saved placement."; onClicked: root.toggleLayoutLocked() }
-                DeckButton { text: "Density: " + ((root.graph.workspace && root.graph.workspace.densityMode) || "detailed"); helpText: "Cycle detailed, compact, and overview port density. Shortcut: D."; onClicked: root.cycleDensityMode() }
-                DeckButton { text: "Wires: " + ((root.graph.workspace && root.graph.workspace.wireStyle) || "smooth"); helpText: "Switch between smooth and orthogonal cached wire rendering."; onClicked: root.toggleWireStyle() }
-                DeckButton { text: root.reducedMotion ? "Reduced" : "Motion"; emphasized: root.reducedMotion; helpText: "Disable movement animation while keeping topology changes visible."; onClicked: root.reducedMotion = !root.reducedMotion }
-                DeckButton { text: "Default map"; helpText: "Preview deterministic mappings for unassigned routes before applying them."; enabled: root.mode === "configured" && root.graph.editable; onClicked: root.preview("unassigned") }
-                DeckButton { text: "Replace all"; destructive: true; helpText: "Preview every replacement before rewriting current routes."; enabled: root.mode === "configured" && root.graph.editable; onClicked: root.preview("replace-all") }
-                DeckButton { text: "−"; Accessible.name: "Zoom out"; helpText: "Zoom out. Shortcut: Ctrl+-"; onClicked: root.keyboardAction("zoom-out") }
-                Text { text: Math.round(root.zoom * 100) + "%"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9 }
-                DeckButton { text: "+"; Accessible.name: "Zoom in"; helpText: "Zoom in. Shortcut: Ctrl++"; onClicked: root.keyboardAction("zoom-in") }
-            }
-        }
-
-        FlightDeckCard {
-            tokens: deck
-            visible: root.notice.length > 0 || root.mode === "effective"
-            Layout.fillWidth: true
-            implicitHeight: alertText.implicitHeight + deck.cardPaddingCompact * 2
-            contentPadding: deck.cardPaddingCompact
-            color: root.noticeError ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.12) : root.mode === "effective" ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.10) : Qt.rgba(deck.healthy.r, deck.healthy.g, deck.healthy.b, 0.10)
-            border.color: root.noticeError ? deck.fault : root.mode === "effective" ? deck.attention : deck.healthy
-            Text { id: alertText; anchors.fill: parent; text: root.notice.length > 0 ? root.notice : root.graph.effectiveSummary; color: root.noticeError ? deck.fault : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            DeckButton { text: "More"; helpText: "View, layout, learning, and diagnostics."; onClicked: deckMoreMenu.open() }
         }
 
         RowLayout {
@@ -1318,6 +1731,9 @@ Item {
 
             FlightDeckCard {
                 tokens: deck
+                // Retired V2.6.0 surrogate: direct card ports own routing now.
+                visible: false
+                enabled: false
                 Layout.preferredWidth: Math.max(210, Math.min(275, root.width * 0.23))
                 Layout.fillHeight: true
                 contentPadding: deck.cardPaddingTechnical
@@ -1379,10 +1795,10 @@ Item {
                     onMovementEnded: saveTimer.restart()
                     ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                    Item {
-                        id: scene
-                        width: 1560
-                        height: 850
+                        Item {
+                            id: scene
+                            width: root.sceneLogicalWidth
+                            height: root.sceneLogicalHeight
                         scale: root.zoom
                         transformOrigin: Item.TopLeft
                         Canvas {
@@ -1404,14 +1820,15 @@ Item {
                                 }
                                 const path = function() {
                                     const direction = endX >= startX ? 1 : -1
+                                    const laneDetourY = detourY + lane * 12
                                     context.beginPath()
                                     context.moveTo(startX, startY)
                                     if (root.graph.workspace && root.graph.workspace.wireStyle === "orthogonal") {
                                         if (detour) {
                                             const stub = Math.max(42, Math.min(120, Math.abs(endX - startX) * 0.22))
                                             context.lineTo(startX + direction * stub, startY)
-                                            context.lineTo(startX + direction * stub, detourY)
-                                            context.lineTo(endX - direction * stub, detourY)
+                                            context.lineTo(startX + direction * stub, laneDetourY)
+                                            context.lineTo(endX - direction * stub, laneDetourY)
                                             context.lineTo(endX - direction * stub, endY)
                                             context.lineTo(endX, endY)
                                         } else {
@@ -1423,12 +1840,13 @@ Item {
                                     } else if (detour) {
                                         const middleX = (startX + endX) * 0.5
                                         context.bezierCurveTo(startX + direction * 86, startY,
-                                            startX + direction * 118, detourY, middleX, detourY)
-                                        context.bezierCurveTo(endX - direction * 118, detourY,
+                                            startX + direction * 118, laneDetourY, middleX, laneDetourY)
+                                        context.bezierCurveTo(endX - direction * 118, laneDetourY,
                                             endX - direction * 86, endY, endX, endY)
                                     } else {
-                                        const offset = 178 + lane * 10
-                                        context.bezierCurveTo(startX + offset, startY, endX - offset, endY, endX, endY)
+                                        const offset = 178
+                                        context.bezierCurveTo(startX + offset, startY + lane * 12,
+                                            endX - offset, endY + lane * 12, endX, endY)
                                     }
                                 }
                                 // A quiet clearance underlay makes crossings read as
@@ -1449,6 +1867,7 @@ Item {
                                 context.restore()
                             }
                             onPaint: {
+                                root.canvasPaintCount += 1
                                 const context = getContext("2d")
                                 context.clearRect(0, 0, width, height)
                                 context.strokeStyle = deck.graphGrid
@@ -1464,7 +1883,8 @@ Item {
                                         const segment = retiredSegments[segmentIndex]
                                         drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
                                             deck.textMuted, 1.8, 0.62 * (1 - root.wireRetire),
-                                            root.stableLane(retired.routeId, 5) - 2, true, 1 - root.wireRetire,
+                                            Number(retired.lane === undefined ? root.stableLane(retired.routeId, 9) - 4 : retired.lane),
+                                            true, 1 - root.wireRetire,
                                             segment.hasDetour, segment.detourY, segment.underCard)
                                     }
                                 }
@@ -1474,9 +1894,11 @@ Item {
                                     const route = entry.route
                                     if (root.mode === "effective" && !route.effective) continue
                                     const live = root.routeIsLive(route)
-                                    const color = root.inspectedRoute && root.inspectedRoute.id === route.id
-                                        ? deck.attention : route.effective ? deck.healthy : deck.accent
-                                    const lineWidth = root.inspectedRoute && root.inspectedRoute.id === route.id ? 4 : live ? 2.75 : 2
+                                    const selected = root.inspectedRoute && root.inspectedRoute.id === route.id
+                                    const hovered = String(root.hoveredRouteId || "") === String(route.id || "")
+                                    const color = selected ? deck.attention : hovered ? deck.focus
+                                        : route.effective ? deck.healthy : routeHasProblem(route) ? deck.attention : deck.graphLabel
+                                    const lineWidth = selected ? 3.6 : hovered ? 3.0 : live ? 2.5 : 1.65
                                     const alpha = root.routeVisualAlpha(route, live)
                                     const dashed = root.routeHasProblem(route)
                                     if (entry.drawBundleTrunk) {
@@ -1495,16 +1917,16 @@ Item {
                                     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
                                         const segment = segments[segmentIndex]
                                         drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
-                                            color, lineWidth, alpha, root.stableLane(route.id, 5) - 2, dashed,
+                                            color, lineWidth, alpha, Number(entry.lane === undefined
+                                                ? root.stableLane(route.id, 9) - 4 : entry.lane), dashed,
                                             root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
                                     }
                                 }
                                 if (root.dragWire && root.dragWire.active) {
-                                    const input = root.node("input")
-                                    const inputPosition = root.nodePosition(input, 50, 150)
                                     const sourceId = String(root.dragWire.source && root.dragWire.source.id || "")
-                                    const startX = inputPosition.x + 260
-                                    const startY = inputPosition.y + 52 + root.stableLane(sourceId, 13) * 6
+                                    const registered = root.portAnchors[String(root.dragWire.source && (root.dragWire.source.endpointId || root.dragWire.source.id) || "")]
+                                    const startX = registered ? registered.x : 310
+                                    const startY = registered ? registered.y : 202 + root.stableLane(sourceId, 13) * 6
                                     drawWire(context, startX, startY, Number(root.dragWire.x || startX),
                                         Number(root.dragWire.y || startY), deck.attention, 2.5, 0.94, 0, true,
                                         1, false, 0, false)
@@ -1518,34 +1940,68 @@ Item {
                                 }
                             }
                         }
+                        // One interaction layer tests the same cached paths that Canvas paints.
+                        // Cards sit above it, so endpoint hit areas always take precedence.
+                        MouseArea {
+                            id: wireInteractionLayer
+                            anchors.fill: parent
+                            z: 1
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onPositionChanged: function(mouse) { root.updateWireHover(mouse.x, mouse.y) }
+                            onExited: root.updateWireHover(-10000, -10000)
+                            onClicked: function(mouse) {
+                                const hit = root.hitWire(mouse.x, mouse.y)
+                                if (!hit || !hit.route) {
+                                    if (mouse.button === Qt.LeftButton) { root.inspectedRoute = ({}); root.inspectedNode = ({}) }
+                                    return
+                                }
+                                root.inspectedRoute = hit.route
+                                root.inspectedNode = ({})
+                                root.source = ({})
+                                if (mouse.button === Qt.RightButton) {
+                                    deckRouteContextMenu.targetRoute = hit.route
+                                    deckRouteContextMenu.open()
+                                }
+                            }
+                        }
                         FlightDeckCard {
                             id: inputNode
                             tokens: deck
                             readonly property var nodeData: root.node("input")
-                            x: Number(nodeData.x || 50)
-                            y: Number(nodeData.y || 150)
-                            onXChanged: root.noteNodePosition(nodeData.objectId, x, y)
-                            onYChanged: root.noteNodePosition(nodeData.objectId, x, y)
+                            x: Number(root.nodePosition(nodeData, 80, 120).x)
+                            y: Number(root.nodePosition(nodeData, 80, 120).y)
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            width: 250
-                            height: 118
+                            width: root.graphCardWidth(nodeData)
+                            height: Math.max(root.graphCardHeight(nodeData), inputCardContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
-                            ColumnLayout {
+                            Column {
+                                id: inputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                Text { text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: inputNode.nodeData.detail || "Physical source"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                Text { text: "PORTS " + root.sourcePorts().length; color: deck.informational; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                Text { width: parent.width; text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
+                                Text { width: parent.width; text: inputNode.nodeData.connected ? "CONNECTED · VERIFIED" : "OFFLINE · SAVED IDENTITY"; color: inputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                SignalFlowPortGroups { width: parent.width; nodeData: inputNode.nodeData; destination: false }
                             }
                             MouseArea {
                                 anchors.fill: parent
+                                z: -1
                                 drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? inputNode : null
                                 drag.axis: Drag.XAndYAxis
-                                onReleased: { if (drag.active) root.saveNodePlacement(inputNode.nodeData, inputNode.x, inputNode.y, Boolean(inputNode.nodeData.pinned)); saveTimer.restart() }
+                                onPositionChanged: function(mouse) {
+                                    if (drag.active) root.noteNodePosition(inputNode.nodeData.objectId, inputNode.x, inputNode.y)
+                                }
+                                onReleased: {
+                                    if (drag.active) {
+                                        root.noteNodePosition(inputNode.nodeData.objectId, inputNode.x, inputNode.y)
+                                        root.saveNodePlacement(inputNode.nodeData, inputNode.x, inputNode.y, Boolean(inputNode.nodeData.pinned))
+                                    }
+                                    saveTimer.restart()
+                                }
                                 onClicked: function(mouse) { if (!drag.active) root.selectNode(inputNode.nodeData) }
                                 onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(inputNode.nodeData) }
                             }
@@ -1559,30 +2015,39 @@ Item {
                                 id: secondaryInputNode
                                 required property var modelData
                                 tokens: deck
-                                x: Number(modelData.x || 50)
-                                y: Number(modelData.y || 390)
-                                onXChanged: root.noteNodePosition(modelData.objectId, x, y)
-                                onYChanged: root.noteNodePosition(modelData.objectId, x, y)
+                                x: Number(root.nodePosition(modelData, 80, 120).x)
+                                y: Number(root.nodePosition(modelData, 80, 120).y)
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                width: 250
-                                height: 118
+                                width: root.graphCardWidth(modelData)
+                                height: Math.max(root.graphCardHeight(modelData), secondaryCardContent.implicitHeight + contentPadding * 2)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
                                 color: modelData.missingReference ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface
-                                ColumnLayout {
+                                Column {
+                                    id: secondaryCardContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                    Text { text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: modelData.detail || "Saved Device Rig member"; color: modelData.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                    Text { text: modelData.connected ? "SAVED INPUT · READY" : modelData.missingReference ? "MISSING REFERENCE" : "SAVED INPUT · OFFLINE"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                    Text { width: parent.width; text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: modelData.connected ? "CONNECTED · SAVED MEMBER" : modelData.missingReference ? "MISSING REFERENCE" : "OFFLINE · SAVED MEMBER"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                    SignalFlowPortGroups { width: parent.width; nodeData: modelData; destination: false }
                                 }
                                 MouseArea {
                                     anchors.fill: parent
+                                    z: -1
                                     drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? secondaryInputNode : null
                                     drag.axis: Drag.XAndYAxis
-                                    onReleased: { if (drag.active) root.saveNodePlacement(modelData, secondaryInputNode.x, secondaryInputNode.y, Boolean(modelData.pinned)); saveTimer.restart() }
+                                    onPositionChanged: function(mouse) {
+                                        if (drag.active) root.noteNodePosition(modelData.objectId, secondaryInputNode.x, secondaryInputNode.y)
+                                    }
+                                    onReleased: {
+                                        if (drag.active) {
+                                            root.noteNodePosition(modelData.objectId, secondaryInputNode.x, secondaryInputNode.y)
+                                            root.saveNodePlacement(modelData, secondaryInputNode.x, secondaryInputNode.y, Boolean(modelData.pinned))
+                                        }
+                                        saveTimer.restart()
+                                    }
                                     onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
                                     onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(modelData) }
                                 }
@@ -1595,14 +2060,12 @@ Item {
                                 id: processorNode
                                 required property var modelData
                                 tokens: deck
-                                x: Number(modelData.x || 540)
-                                y: Number(modelData.y || 170)
-                                onXChanged: root.noteNodePosition(modelData.objectId, x, y)
-                                onYChanged: root.noteNodePosition(modelData.objectId, x, y)
+                                x: Number(root.nodePosition(modelData, 680, 120).x)
+                                y: Number(root.nodePosition(modelData, 680, 120).y)
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                width: 180
-                                height: 88 + Math.max(0, Number(modelData.sharedChannelCount || 0) - 1) * 20
+                                width: root.graphCardWidth(modelData)
+                                height: root.graphCardHeight(modelData)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -1628,7 +2091,16 @@ Item {
                                     anchors.fill: parent
                                     drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? processorNode : null
                                     drag.axis: Drag.XAndYAxis
-                                    onReleased: { if (drag.active) root.saveNodePlacement(modelData, processorNode.x, processorNode.y, Boolean(modelData.pinned)); saveTimer.restart() }
+                                    onPositionChanged: function(mouse) {
+                                        if (drag.active) root.noteNodePosition(modelData.objectId, processorNode.x, processorNode.y)
+                                    }
+                                    onReleased: {
+                                        if (drag.active) {
+                                            root.noteNodePosition(modelData.objectId, processorNode.x, processorNode.y)
+                                            root.saveNodePlacement(modelData, processorNode.x, processorNode.y, Boolean(modelData.pinned))
+                                        }
+                                        saveTimer.restart()
+                                    }
                                     onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
                                     onDoubleClicked: function(mouse) { if (!drag.active) root.openNodeSettings(modelData) }
                                 }
@@ -1639,30 +2111,39 @@ Item {
                             id: outputNode
                             tokens: deck
                             readonly property var nodeData: root.node("output")
-                            x: Number(nodeData.x || 1190)
-                            y: Number(nodeData.y || 150)
-                            onXChanged: root.noteNodePosition(nodeData.objectId, x, y)
-                            onYChanged: root.noteNodePosition(nodeData.objectId, x, y)
+                            x: Number(root.nodePosition(nodeData, 1320, 120).x)
+                            y: Number(root.nodePosition(nodeData, 1320, 120).y)
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            width: 250
-                            height: 118
+                            width: root.graphCardWidth(nodeData)
+                            height: Math.max(root.graphCardHeight(nodeData), outputCardContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
-                            ColumnLayout {
+                            Column {
+                                id: outputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                Text { text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: outputNode.nodeData.detail || "vJoy destination"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                Text { text: "DESTINATIONS " + root.destinationPorts().length; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                Text { width: parent.width; text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
+                                Text { width: parent.width; text: outputNode.nodeData.connected ? "READY · VIRTUAL OUTPUT" : "OUTPUT UNAVAILABLE"; color: outputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                SignalFlowPortGroups { width: parent.width; nodeData: outputNode.nodeData; destination: true }
                             }
                             MouseArea {
                                 anchors.fill: parent
+                                z: -1
                                 drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? outputNode : null
                                 drag.axis: Drag.XAndYAxis
-                                onReleased: { if (drag.active) root.saveNodePlacement(outputNode.nodeData, outputNode.x, outputNode.y, Boolean(outputNode.nodeData.pinned)); saveTimer.restart() }
+                                onPositionChanged: function(mouse) {
+                                    if (drag.active) root.noteNodePosition(outputNode.nodeData.objectId, outputNode.x, outputNode.y)
+                                }
+                                onReleased: {
+                                    if (drag.active) {
+                                        root.noteNodePosition(outputNode.nodeData.objectId, outputNode.x, outputNode.y)
+                                        root.saveNodePlacement(outputNode.nodeData, outputNode.x, outputNode.y, Boolean(outputNode.nodeData.pinned))
+                                    }
+                                    saveTimer.restart()
+                                }
                                 onClicked: function(mouse) { if (!drag.active) root.selectNode(outputNode.nodeData) }
                                 onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(outputNode.nodeData) }
                             }
@@ -1670,6 +2151,10 @@ Item {
                         }
                         Column {
                             x: 470; y: 660; width: 620; spacing: 4
+                            // Retired V2.6.0 surrogate: Canvas geometry is the
+                            // only wire hover/click/context target in this page.
+                            visible: false
+                            enabled: false
                             Text { text: "ROUTE LANES · click to inspect"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                             Repeater {
                                 model: root.graph.routes || []
@@ -1723,11 +2208,25 @@ Item {
                         }
                     }
                 }
-                Text { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: deck.space12; text: root.connectionPreview && root.connectionPreview.message ? root.connectionPreview.message : "Click-click or drag to route · drop a processor chip on a route lane · right-click a wire for processing · right-click a card to pin · Delete disconnects"; color: deck.graphLabel; font.family: deck.bodyFont; font.pixelSize: 9 }
+                Text {
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.margins: deck.space12
+                    visible: Boolean(root.connectionPreview && root.connectionPreview.message) || Boolean(root.source && root.source.id)
+                    text: root.connectionPreview && root.connectionPreview.message ? root.connectionPreview.message
+                        : "Choose a compatible destination for " + String(root.source.label || "the selected source") + "."
+                    color: deck.graphLabel
+                    font.family: deck.bodyFont
+                    font.pixelSize: 9
+                }
             }
 
             FlightDeckCard {
                 tokens: deck
+                // Contextual inspector: it explains the current selection and
+                // releases its width entirely when no object is selected.
+                visible: root.width >= 1600 && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
+                    || Boolean(root.inspectedNode && root.inspectedNode.id))
                 Layout.preferredWidth: Math.max(220, Math.min(305, root.width * 0.25))
                 Layout.fillHeight: true
                 contentPadding: deck.cardPaddingTechnical
@@ -1735,11 +2234,14 @@ Item {
                     anchors.fill: parent
                     anchors.margins: parent.contentPadding
                     spacing: deck.space8
-                    Text { text: root.inspectedNode && root.inspectedNode.id ? "CARD BUS" : "DESTINATION BUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text { text: "INSPECTOR"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
+                        DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close inspector"; onClicked: { root.inspectedRoute = ({}); root.inspectedNode = ({}) } }
+                    }
                     Text { text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode && root.inspectedNode.id ? root.inspectedNode.label : "Select a route or destination"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: String(root.inspectedNode.detail || "") + (root.inspectedNode.capabilitySummary ? "\n" + root.inspectedNode.capabilitySummary : ""); color: root.inspectedNode && root.inspectedNode.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: Number(root.inspectedNode.routeCount || 0) + " configured route" + (Number(root.inspectedNode.routeCount || 0) === 1 ? "" : "s") + (root.inspectedNode.connected ? " · READY" : " · OFFLINE / UNAVAILABLE"); color: root.inspectedNode && root.inspectedNode.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "input" && root.inspectedNode.scopeEditable === false && root.inspectedNode.controllerRecordId); text: "Edit this input scope"; helpText: "Make this saved Device Rig member the explicit input scope before changing its routes."; Layout.fillWidth: true; onClicked: root.useInputScope(root.inspectedNode) }
                     DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: root.inspectedNode && root.inspectedNode.kind === "input" ? "Open input setup" : "Open output setup"; helpText: "Open Devices & setup while preserving this Flight Deck Signal Flow card selection for return."; Layout.fillWidth: true; onClicked: root.openCardSettings(root.inspectedNode) }
                     Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: root.inspectedRoute && root.inspectedRoute.processors && root.inspectedRoute.processors.length ? "Conditioning nodes: " + root.inspectedRoute.processors.length + (root.inspectedRoute.viaNodeId ? " · explicit mixer" : "") : "Direct route — no visible conditioning node."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { visible: Boolean(root.inspectedRoute && root.processorDetail("adaptive-response").settingsSummary); text: "ADAPTIVE RESPONSE · " + String(root.processorDetail("adaptive-response").settingsSummary); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -1753,6 +2255,10 @@ Item {
                     DeckButton { text: "Disconnect selected"; destructive: true; helpText: "Remove this canonical route. Shortcut: Delete."; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
                     ScrollView {
+                        // Port browsing is intentionally retired: destination
+                        // selection is performed on the output card itself.
+                        visible: false
+                        enabled: false
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
@@ -1784,6 +2290,69 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Notices float above the graph: feedback must never push the topology
+    // down or turn an ordinary action into a permanent status strip.
+    Popup {
+        id: feedbackToast
+        parent: Overlay.overlay
+        visible: root.notice.length > 0
+        modal: false
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        width: Math.min(460, Math.max(250, root.width - deck.space32))
+        x: Math.max(deck.space16, root.width - width - deck.space16)
+        y: deck.space16 + deck.compactControlHeight + deck.space8
+        padding: deck.space10
+        background: Rectangle {
+            radius: deck.radiusControl
+            color: root.noticeError ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.94)
+                : Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.97)
+            border.width: 1
+            border.color: root.noticeError ? deck.fault : deck.border
+        }
+        contentItem: Text {
+            width: feedbackToast.availableWidth
+            text: root.notice
+            color: root.noticeError ? deck.applicationBackground : deck.textPrimary
+            font.family: deck.bodyFont
+            font.pixelSize: 10
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    // At narrower widths the inspector overlays the graph instead of taking a
+    // permanent third column.  Its open/close state does not touch workspace
+    // coordinates or topology.
+    Popup {
+        id: compactInspector
+        parent: Overlay.overlay
+        visible: root.width < 1600 && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
+            || Boolean(root.inspectedNode && root.inspectedNode.id))
+        modal: false
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        width: Math.min(360, root.width - 32)
+        height: Math.min(420, root.height - 32)
+        x: root.width - width - deck.space16
+        y: Math.max(deck.space16, (root.height - height) * 0.5)
+        padding: deck.cardPaddingTechnical
+        background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        contentItem: ColumnLayout {
+            spacing: deck.space8
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "INSPECTOR"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
+                DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close inspector"; onClicked: { root.inspectedRoute = ({}); root.inspectedNode = ({}) } }
+            }
+            Text { Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode.label || "Signal Flow object"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); Layout.fillWidth: true; text: String(root.inspectedNode.detail || ""); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Item { Layout.fillHeight: true }
+            DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Explain route"; Layout.fillWidth: true; onClicked: root.explainRoute() }
+            DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Disconnect"; destructive: true; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
         }
     }
 
@@ -1832,6 +2401,27 @@ Item {
         MenuItem { text: "Unmapped"; checkable: true; checked: root.routeStateFilter === "unmapped"; onTriggered: root.routeStateFilter = "unmapped" }
         MenuItem { text: "Problems"; checkable: true; checked: root.routeStateFilter === "problems"; onTriggered: root.routeStateFilter = "problems" }
         MenuItem { text: "Active now"; checkable: true; checked: root.routeStateFilter === "active"; onTriggered: root.routeStateFilter = "active" }
+    }
+
+    Menu {
+        id: deckMoreMenu
+        title: "Signal Flow tools"
+        background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        MenuItem { text: "Fit graph"; onTriggered: root.fitGraph() }
+        MenuItem { text: "Auto-layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.announce(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
+        MenuItem { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onTriggered: root.toggleLayoutLocked() }
+        MenuSeparator {}
+        MenuItem { text: root.signalFocus ? "Signal focus: on" : "Signal focus"; checkable: true; checked: root.signalFocus; onTriggered: { root.signalFocus = !root.signalFocus; if (root.signalFocus) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
+        MenuItem { text: "X-ray related paths"; checkable: true; checked: root.xrayMode; onTriggered: root.keyboardAction("xray") }
+        MenuItem { text: "Density: " + ((root.graph.workspace && root.graph.workspace.densityMode) || "detailed"); onTriggered: root.cycleDensityMode() }
+        MenuItem { text: "Wire style: " + ((root.graph.workspace && root.graph.workspace.wireStyle) || "smooth"); onTriggered: root.toggleWireStyle() }
+        MenuItem { text: root.reducedMotion ? "Reduced motion: on" : "Reduced motion: off"; onTriggered: root.reducedMotion = !root.reducedMotion }
+        MenuSeparator {}
+        MenuItem { text: "Learn input"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: root.startSignalFlowSourceLearning() }
+        MenuItem { text: "Learn destination"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: learnDialog.open() }
+        MenuItem { text: "Default connections"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: root.preview("unassigned") }
+        MenuItem { text: "Replace all…"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: root.preview("replace-all") }
+        MenuItem { text: "Manage aliases"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: aliasDialog.open() }
     }
 
     Menu {

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="740" viewBox="0 0 1200 740" role="img" aria-labelledby="title desc">
-  <title id="title">V2.6.1 Flight Deck Signal Flow — small window</title>
+  <title id="title">V2.6.2 Flight Deck Signal Flow — small window</title>
   <desc id="desc">A proposed small-window Flight Deck Signal Flow layout with compact command strip, large graph, and an inspector overlay rather than permanent sidebars.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b1721"/><stop offset="1" stop-color="#071017"/></linearGradient>

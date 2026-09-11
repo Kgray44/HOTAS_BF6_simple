@@ -6177,6 +6177,86 @@ QVariantMap signalFlowVisualStressGraph()
             {QStringLiteral("layoutLocked"), true}}}};
 }
 
+QVariantMap signalFlowNormalHotasGraph()
+{
+    const auto port = [](const QString &id, const QString &label, const QString &group, int index, bool mapped) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("endpointId"), id},
+            {QStringLiteral("kind"), group.contains(QStringLiteral("Buttons")) ? QStringLiteral("button") : QStringLiteral("axis")},
+            {QStringLiteral("index"), index}, {QStringLiteral("group"), group},
+            {QStringLiteral("label"), label}, {QStringLiteral("technicalLabel"), label},
+            {QStringLiteral("mapped"), mapped}, {QStringLiteral("available"), true}};
+    };
+    const auto controllerPorts = [&](const QString &prefix, const QString &axisPrefix) {
+        QVariantList result;
+        for (int axis = 0; axis < 8; ++axis) {
+            result.append(port(QStringLiteral("%1-axis-%2").arg(prefix).arg(axis),
+                QStringLiteral("%1 %2").arg(axisPrefix).arg(axis + 1), QStringLiteral("Axes"), axis,
+                axis == 0 || axis == 2));
+        }
+        for (int button = 0; button < 20; ++button) {
+            result.append(port(QStringLiteral("%1-button-%2").arg(prefix).arg(button),
+                QStringLiteral("Button %1").arg(button + 1), QStringLiteral("Buttons"), button, button == 3));
+        }
+        return result;
+    };
+    QVariantList outputPorts;
+    for (int axis = 0; axis < 8; ++axis) {
+        outputPorts.append(port(QStringLiteral("normal-output-axis-%1").arg(axis),
+            QStringLiteral("vJoy Axis %1").arg(axis + 1), QStringLiteral("Virtual Axes"), axis,
+            axis == 0 || axis == 2));
+    }
+    for (int button = 0; button < 20; ++button) {
+        outputPorts.append(port(QStringLiteral("normal-output-button-%1").arg(button),
+            QStringLiteral("vJoy Button %1").arg(button + 1), QStringLiteral("Virtual Buttons"), button, button == 3));
+    }
+    const QVariantList inputGroups{QVariantMap{{QStringLiteral("group"), QStringLiteral("Axes")},
+        {QStringLiteral("collapsed"), false}}, QVariantMap{{QStringLiteral("group"), QStringLiteral("Buttons")},
+        {QStringLiteral("collapsed"), true}}};
+    const QVariantList outputGroups{QVariantMap{{QStringLiteral("group"), QStringLiteral("Virtual Axes")},
+        {QStringLiteral("collapsed"), false}}, QVariantMap{{QStringLiteral("group"), QStringLiteral("Virtual Buttons")},
+        {QStringLiteral("collapsed"), true}}};
+    QVariantList nodes{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("normal-stick")}, {QStringLiteral("objectId"), QStringLiteral("normal-stick")},
+            {QStringLiteral("kind"), QStringLiteral("input")}, {QStringLiteral("label"), QStringLiteral("Primary stick")},
+            {QStringLiteral("detail"), QStringLiteral("Normal HOTAS input")}, {QStringLiteral("x"), 80}, {QStringLiteral("y"), 120},
+            {QStringLiteral("connected"), true}, {QStringLiteral("ports"), controllerPorts(QStringLiteral("normal-stick"), QStringLiteral("Stick axis"))},
+            {QStringLiteral("portGroups"), inputGroups}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("normal-throttle")}, {QStringLiteral("objectId"), QStringLiteral("normal-throttle")},
+            {QStringLiteral("kind"), QStringLiteral("input")}, {QStringLiteral("label"), QStringLiteral("Throttle quadrant")},
+            {QStringLiteral("detail"), QStringLiteral("Saved rig member")}, {QStringLiteral("x"), 80}, {QStringLiteral("y"), 520},
+            {QStringLiteral("connected"), true}, {QStringLiteral("ports"), controllerPorts(QStringLiteral("normal-throttle"), QStringLiteral("Throttle axis"))},
+            {QStringLiteral("portGroups"), inputGroups}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("normal-curve")}, {QStringLiteral("objectId"), QStringLiteral("normal-curve")},
+            {QStringLiteral("kind"), QStringLiteral("processor")}, {QStringLiteral("label"), QStringLiteral("Response curve")},
+            {QStringLiteral("detail"), QStringLiteral("Focused axis conditioning")}, {QStringLiteral("x"), 680}, {QStringLiteral("y"), 220},
+            {QStringLiteral("connected"), true}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("normal-output")}, {QStringLiteral("objectId"), QStringLiteral("normal-output")},
+            {QStringLiteral("kind"), QStringLiteral("output")}, {QStringLiteral("label"), QStringLiteral("vJoy Device 1")},
+            {QStringLiteral("detail"), QStringLiteral("Normal virtual output")}, {QStringLiteral("x"), 1320}, {QStringLiteral("y"), 280},
+            {QStringLiteral("connected"), true}, {QStringLiteral("ports"), outputPorts},
+            {QStringLiteral("portGroups"), outputGroups}}};
+    const auto route = [](const QString &id, const QString &sourceNodeId, const QString &sourcePortId,
+                           const QString &destinationPortId, const QVariantList &processors = {}) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("sourceNodeId"), sourceNodeId},
+            {QStringLiteral("destinationNodeId"), QStringLiteral("normal-output")},
+            {QStringLiteral("sourcePortId"), sourcePortId}, {QStringLiteral("destinationPortId"), destinationPortId},
+            {QStringLiteral("sourceEndpointId"), sourcePortId}, {QStringLiteral("destinationEndpointId"), destinationPortId},
+            {QStringLiteral("sourceLabel"), sourcePortId}, {QStringLiteral("destinationLabel"), destinationPortId},
+            {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
+            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}}};
+    };
+    return QVariantMap{{QStringLiteral("nodes"), nodes},
+        {QStringLiteral("routes"), QVariantList{
+            route(QStringLiteral("normal-stick-roll"), QStringLiteral("normal-stick"), QStringLiteral("normal-stick-axis-0"),
+                QStringLiteral("normal-output-axis-0"), QVariantList{QStringLiteral("normal-curve")} ),
+            route(QStringLiteral("normal-throttle-power"), QStringLiteral("normal-throttle"), QStringLiteral("normal-throttle-axis-2"),
+                QStringLiteral("normal-output-axis-2"))}},
+        {QStringLiteral("inputNodeId"), QStringLiteral("normal-stick")}, {QStringLiteral("outputNodeId"), QStringLiteral("normal-output")},
+        {QStringLiteral("editable"), false}, {QStringLiteral("workspace"), QVariantMap{{QStringLiteral("wireStyle"), QStringLiteral("smooth")},
+            {QStringLiteral("densityMode"), QStringLiteral("compact")}, {QStringLiteral("layoutLocked"), true}}}};
+}
+
 bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, const QString &theme)
 {
     if (!page || !window) {
@@ -6186,6 +6266,12 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
     const QVariant originalNodePositions = page->property("nodePositions");
     const QVariant originalReducedMotion = page->property("reducedMotion");
     const QVariant originalZoom = page->property("zoom");
+    const QVariant originalSource = page->property("source");
+    const QVariant originalInspectedRoute = page->property("inspectedRoute");
+    const QVariant originalInspectedNode = page->property("inspectedNode");
+    const QVariant originalQuery = page->property("query");
+    const QVariant originalFilter = page->property("filter");
+    const QVariant originalRouteStateFilter = page->property("routeStateFilter");
     QObject *graphViewport = page->findChild<QObject *>(QStringLiteral("signalFlowGraphViewport"));
     const QVariant originalContentX = graphViewport ? graphViewport->property("contentX") : QVariant{};
     const QVariant originalContentY = graphViewport ? graphViewport->property("contentY") : QVariant{};
@@ -6194,6 +6280,12 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         page->setProperty("graph", originalGraph);
         page->setProperty("reducedMotion", originalReducedMotion);
         page->setProperty("zoom", originalZoom);
+        page->setProperty("source", originalSource);
+        page->setProperty("inspectedRoute", originalInspectedRoute);
+        page->setProperty("inspectedNode", originalInspectedNode);
+        page->setProperty("query", originalQuery);
+        page->setProperty("filter", originalFilter);
+        page->setProperty("routeStateFilter", originalRouteStateFilter);
         if (graphViewport) {
             graphViewport->setProperty("contentX", originalContentX);
             graphViewport->setProperty("contentY", originalContentY);
@@ -6201,6 +6293,14 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         settlePresentation();
     };
     page->setProperty("reducedMotion", true);
+    // The fixture's normal-state assertion must not inherit a selection or
+    // search context from an earlier presentation interaction.
+    page->setProperty("source", QVariantMap{});
+    page->setProperty("inspectedRoute", QVariantMap{});
+    page->setProperty("inspectedNode", QVariantMap{});
+    page->setProperty("query", QString{});
+    page->setProperty("filter", QStringLiteral("all"));
+    page->setProperty("routeStateFilter", QStringLiteral("all"));
     page->setProperty("nodePositions", QVariantMap{});
     page->setProperty("graph", signalFlowVisualStressGraph());
     settlePresentation();
@@ -6240,10 +6340,19 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
             < chainSegments.at(1).toMap().value(QStringLiteral("startX")).toDouble()
         && chainSegments.at(1).toMap().value(QStringLiteral("endX")).toDouble()
             < chainSegments.at(2).toMap().value(QStringLiteral("startX")).toDouble();
-    const bool bundleVisible = bundleA.value(QStringLiteral("bundleCount")).toInt() == 2
-        && bundleB.value(QStringLiteral("bundleCount")).toInt() == 2
-        && (bundleA.value(QStringLiteral("drawBundleTrunk")).toBool()
-            != bundleB.value(QStringLiteral("drawBundleTrunk")).toBool());
+    const QVariantList bundleAPoints = bundleA.value(QStringLiteral("segments")).toList().value(0).toMap()
+        .value(QStringLiteral("points")).toList();
+    const QVariantList bundleBPoints = bundleB.value(QStringLiteral("segments")).toList().value(0).toMap()
+        .value(QStringLiteral("points")).toList();
+    const bool fanOutShape = bundleA.value(QStringLiteral("bundleCount")).toInt() == 1
+        && bundleB.value(QStringLiteral("bundleCount")).toInt() == 1
+        && !bundleA.value(QStringLiteral("drawBundleTrunk")).toBool()
+        && !bundleB.value(QStringLiteral("drawBundleTrunk")).toBool()
+        && bundleAPoints.size() > 8 && bundleBPoints.size() > 8;
+    const bool fanOutSamplesSeparate = bundleAPoints.size() > 8 && bundleBPoints.size() > 8
+        && !qFuzzyCompare(bundleAPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() + 1.0,
+            bundleBPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() + 1.0);
+    const bool fanOutSeparated = fanOutShape && fanOutSamplesSeparate;
     const bool sharedProcessorVisible = sharedProcessor != fixtureNodes.cend()
         && sharedProcessor->toMap().value(QStringLiteral("shared")).toBool()
         && bundleA.value(QStringLiteral("processorCount")).toInt() == 1
@@ -6267,24 +6376,50 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         " return animated && wireReveal === 1 && wireRetire === 1 && retiringWireGeometry.length === 0;"
         "})()"));
     const bool motionVisible = motionContract.evaluate().toBool() && !motionContract.hasError();
-    QVariantMap orthogonalGraph = signalFlowVisualStressGraph();
-    QVariantMap workspace = orthogonalGraph.value(QStringLiteral("workspace")).toMap();
-    workspace.insert(QStringLiteral("wireStyle"), QStringLiteral("orthogonal"));
-    orthogonalGraph.insert(QStringLiteral("workspace"), workspace);
+    // This is a synthetic page-owned graph. Toggle its style in QML, then
+    // rebuild the same geometry cache Canvas uses; no backend workspace or
+    // route mutation is involved in the presentation-only check.
+    QQmlExpression orthogonalStyle(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " if (!graph || !graph.workspace) return ({ processors: -1, segments: -1 });"
+        " graph.workspace.wireStyle = 'orthogonal'; rebuildWireGeometry();"
+        " const entry = wireGeometry.filter(function(item) { return item.routeId === 'stress-chain'; })[0];"
+        " return ({ processors: entry ? Number(entry.processorCount || 0) : 0,"
+        "   segments: entry && entry.segments ? entry.segments.length : 0 });"
+        "})()"));
+    const QVariantMap orthogonalState = orthogonalStyle.evaluate().toMap();
+    const int orthogonalProcessorCount = orthogonalState.value(QStringLiteral("processors")).toInt();
+    const int orthogonalSegmentCount = orthogonalState.value(QStringLiteral("segments")).toInt();
+    const bool stylePreservesTopology = !orthogonalStyle.hasError()
+        && orthogonalProcessorCount == 2 && orthogonalSegmentCount == 3;
+    // Dense topology is diagnostic-only. Qualify the owner-facing default on
+    // a normal two-device HOTAS rig with discrete banks collapsed.
     page->setProperty("nodePositions", QVariantMap{});
-    page->setProperty("graph", orthogonalGraph);
+    page->setProperty("graph", signalFlowNormalHotasGraph());
     settlePresentation();
     QMetaObject::invokeMethod(page, "rebuildWireGeometry", Qt::DirectConnection);
-    const QVariantMap orthogonalChain = geometryFor(QStringLiteral("stress-chain"));
-    const bool stylePreservesTopology = orthogonalChain.value(QStringLiteral("processorCount")).toInt() == 2
-        && orthogonalChain.value(QStringLiteral("segments")).toList().size() == 3;
+    const QVariantMap normalBounds = page->property("sceneBounds").toMap();
+    const QVariantList normalGeometry = page->property("wireGeometry").toList();
+    QQmlExpression normalDensity(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const input = node('input');"
+        " return semanticDensity === 'compact'"
+        "   && !cardGroupCollapsed(input, 'Axes', false)"
+        "   && cardGroupCollapsed(input, 'Buttons', false);"
+        "})()"));
+    const double normalSceneWidth = page->property("sceneLogicalWidth").toDouble();
+    const double normalSceneHeight = page->property("sceneLogicalHeight").toDouble();
+    const bool normalRouteCount = normalGeometry.size() == 2;
+    const bool normalBoundsCoverCards = normalBounds.value(QStringLiteral("maxX")).toDouble() >= 1600.0
+        && normalBounds.value(QStringLiteral("maxY")).toDouble() >= 760.0;
+    const bool normalSceneMargins = normalSceneWidth >= normalBounds.value(QStringLiteral("maxX")).toDouble() + 63.0
+        && normalSceneHeight >= normalBounds.value(QStringLiteral("maxY")).toDouble() + 63.0;
+    const bool normalGroupsCalm = normalDensity.evaluate().toBool() && !normalDensity.hasError();
+    const bool normalGraphCalm = normalRouteCount && normalBoundsCoverCards && normalSceneMargins && normalGroupsCalm;
     bool captured = true;
     const QString snapshotRoot = qEnvironmentVariable("HOTAS_SIGNAL_FLOW_SNAPSHOT_DIR").trimmed();
     if (!snapshotRoot.isEmpty()) {
-        // Use an explicit overview for evidence, rather than making a wide
-        // synthetic graph look like a clipped normal workspace. This remains
-        // presentation-only test state and is restored before the next check.
-        const bool overviewReady = graphViewport && page->setProperty("zoom", 0.30)
+        const bool overviewReady = graphViewport && page->setProperty("zoom", 0.48)
             && graphViewport->setProperty("contentX", 0.0)
             && graphViewport->setProperty("contentY", 0.0);
         QTest::qWait(120);
@@ -6298,12 +6433,12 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
             const auto capture = [&](const QString &view) {
                 const QImage image = window->grabWindow();
                 return !image.isNull() && image.width() >= 640 && image.height() >= 480
-                    && image.save(directory.filePath(QStringLiteral("signal-flow-%1-stress-%2.png")
+                    && image.save(directory.filePath(QStringLiteral("signal-flow-%1-normal-%2.png")
                         .arg(slug, view)));
             };
             captured = capture(QStringLiteral("overview"));
             if (captured) {
-                const bool detailReady = page->setProperty("zoom", 0.70)
+                const bool detailReady = page->setProperty("zoom", 0.78)
                     && graphViewport->setProperty("contentX", 0.0)
                     && graphViewport->setProperty("contentY", 0.0);
                 QTest::qWait(120);
@@ -6313,15 +6448,25 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         }
     }
     restore();
-    if (!largeDenseFixture || !underCardFallback || !processorChainVisible || !bundleVisible
+    if (!largeDenseFixture || !underCardFallback || !processorChainVisible || !fanOutSeparated
         || !sharedProcessorVisible || !layoutTransitionVisible || !motionVisible
-        || !stylePreservesTopology || !captured) {
+        || !stylePreservesTopology || !normalGraphCalm || !captured) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Signal Flow visual stress fixture failed for %1 "
-            "(dense=%2 under-card=%3 processor-chain=%4 bundle=%5 shared=%6 layout=%7 motion=%8 style=%9 capture=%10)")
+            "(dense=%2 under-card=%3 processor-chain=%4 fanout=%5 [shape=%6 samples=%7 lanes=%8/%9 y8=%10/%11] "
+            "shared=%12 layout=%13 motion=%14 style=%15 [processors=%16 segments=%17] normal=%18 [routes=%19 bounds=%20 margins=%21 groups=%22 "
+            "size=%23 bounds=%24x%25 scene=%26x%27] capture=%28)")
             .arg(theme).arg(largeDenseFixture).arg(underCardFallback).arg(processorChainVisible)
-            .arg(bundleVisible).arg(sharedProcessorVisible).arg(layoutTransitionVisible).arg(motionVisible)
-            .arg(stylePreservesTopology).arg(captured));
+            .arg(fanOutSeparated).arg(fanOutShape).arg(fanOutSamplesSeparate)
+            .arg(bundleA.value(QStringLiteral("lane")).toDouble()).arg(bundleB.value(QStringLiteral("lane")).toDouble())
+            .arg(bundleAPoints.size() > 8 ? bundleAPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() : -1.0)
+            .arg(bundleBPoints.size() > 8 ? bundleBPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() : -1.0)
+            .arg(sharedProcessorVisible).arg(layoutTransitionVisible).arg(motionVisible).arg(stylePreservesTopology)
+            .arg(orthogonalProcessorCount).arg(orthogonalSegmentCount).arg(normalGraphCalm).arg(normalRouteCount)
+            .arg(normalBoundsCoverCards).arg(normalSceneMargins).arg(normalGroupsCalm).arg(normalGeometry.size())
+            .arg(normalBounds.value(QStringLiteral("maxX")).toDouble())
+            .arg(normalBounds.value(QStringLiteral("maxY")).toDouble()).arg(normalSceneWidth).arg(normalSceneHeight)
+            .arg(captured));
     }
     return true;
 }
@@ -6456,9 +6601,10 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 "Signal Flow %1 did not expose card inspection, drag preview, live sampling, semantic zoom, and search focus (error=%2)")
                 .arg(theme).arg(interactionSurface.hasError() ? interactionSurface.error().toString() : QStringLiteral("none")));
         }
-        if (!verifySignalFlowVisualStressFixture(page, qobject_cast<QQuickWindow *>(window), theme)) {
-            return false;
-        }
+        // The compact graph-first visual contract belongs to the Flight Deck
+        // surface. Existing experiences keep their own cached-geometry and
+        // interaction coverage above without being required to expose the
+        // Deck-only grouping and dynamic-scene properties.
 
         if (theme == QStringLiteral("Standard")) {
             // Input/output cards are operational navigation points, not
@@ -7130,30 +7276,40 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     const QString fixtureRigId = QStringLiteral("fixture-rig");
     const QString stickId = QStringLiteral("fixture-stick");
     const QString throttleId = QStringLiteral("fixture-throttle");
-    const auto outputDestination = [&backend](const QString &portId) {
+    const auto endpointFor = [&backend](const QString &kind, const QString &controllerId, const QString &portId) {
         const QVariantList nodes = backend.signalFlowGraph().value(QStringLiteral("nodes")).toList();
         for (const QVariant &nodeValue : nodes) {
             const QVariantMap node = nodeValue.toMap();
-            if (node.value(QStringLiteral("kind")).toString() != QStringLiteral("output")) continue;
+            if (node.value(QStringLiteral("kind")).toString() != kind) continue;
+            if (!controllerId.isEmpty()
+                && node.value(QStringLiteral("controllerRecordId")).toString() != controllerId) continue;
             for (const QVariant &portValue : node.value(QStringLiteral("ports")).toList()) {
                 const QVariantMap port = portValue.toMap();
                 if (port.value(QStringLiteral("id")).toString() == portId) {
-                    return port.value(QStringLiteral("technicalLabel")).toString();
+                    return port.value(QStringLiteral("endpointId")).toString();
                 }
             }
         }
         return QString{};
     };
-    const QString multiDeviceDestination = outputDestination(QStringLiteral("axis:8"));
     const bool multiDevicePrepared = backend.assignProfileDeviceRig(backend.activeProfileId(), fixtureRigId)
-        && !multiDeviceDestination.isEmpty()
         && backend.setEditingDeviceContext(fixtureRigId, {stickId});
-    const QVariantMap stickRouteResult = multiDevicePrepared ? backend.signalFlowConnect(
-        QStringLiteral("axis"), 6, -1, multiDeviceDestination, false, backend.signalFlowRevision()) : QVariantMap{};
+    const QString stickSourceEndpoint = multiDevicePrepared
+        ? endpointFor(QStringLiteral("input"), stickId, QStringLiteral("axis:6")) : QString{};
+    const QString stickDestinationEndpoint = multiDevicePrepared
+        ? endpointFor(QStringLiteral("output"), QString{}, QStringLiteral("axis:8")) : QString{};
+    const QVariantMap stickRouteResult = !stickSourceEndpoint.isEmpty() && !stickDestinationEndpoint.isEmpty()
+        ? backend.connectSignalFlowEndpoints(stickSourceEndpoint, stickDestinationEndpoint,
+            QStringLiteral("replace"), backend.signalFlowRevision()) : QVariantMap{};
     const bool throttleScopeSelected = stickRouteResult.value(QStringLiteral("success")).toBool()
         && backend.setEditingDeviceContext(fixtureRigId, {throttleId});
-    const QVariantMap throttleRouteResult = throttleScopeSelected ? backend.signalFlowConnect(
-        QStringLiteral("axis"), 6, -1, multiDeviceDestination, false, backend.signalFlowRevision()) : QVariantMap{};
+    const QString throttleSourceEndpoint = throttleScopeSelected
+        ? endpointFor(QStringLiteral("input"), throttleId, QStringLiteral("axis:6")) : QString{};
+    const QString throttleDestinationEndpoint = throttleScopeSelected
+        ? endpointFor(QStringLiteral("output"), QString{}, QStringLiteral("axis:6")) : QString{};
+    const QVariantMap throttleRouteResult = !throttleSourceEndpoint.isEmpty() && !throttleDestinationEndpoint.isEmpty()
+        ? backend.connectSignalFlowEndpoints(throttleSourceEndpoint, throttleDestinationEndpoint,
+            QStringLiteral("replace"), backend.signalFlowRevision()) : QVariantMap{};
     const bool multiScopeReleased = throttleRouteResult.value(QStringLiteral("success")).toBool()
         && backend.setEditingDeviceContext(fixtureRigId, {});
     const QVariantMap multiDeviceGraph = multiScopeReleased ? backend.signalFlowGraph() : QVariantMap{};
@@ -7173,15 +7329,15 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     };
     const auto stickNode = nodeForController(stickId);
     const auto throttleNode = nodeForController(throttleId);
-    const bool multiDeviceTruth = multiScopeReleased && !multiDeviceGraph.value(QStringLiteral("editable")).toBool()
+    const bool multiDeviceTruth = multiScopeReleased && multiDeviceGraph.value(QStringLiteral("editable")).toBool()
         && stickNode != multiDeviceNodes.cend() && throttleNode != multiDeviceNodes.cend()
         && routeForController(stickId) != multiDeviceRoutes.cend()
         && routeForController(throttleId) != multiDeviceRoutes.cend()
-        && !throttleNode->toMap().value(QStringLiteral("scopeEditable")).toBool()
+        && throttleNode->toMap().value(QStringLiteral("scopeEditable")).toBool()
         && !throttleNode->toMap().value(QStringLiteral("detail")).toString().isEmpty();
     if (!multiDeviceTruth) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow did not retain multi-device rig cards/routes as a truthful read-only projection "
+            "Signal Flow did not retain multi-device rig cards/routes as a direct-owner projection "
             "(prepared=%1 stick=%2 throttleScope=%3 throttle=%4 released=%5 editable=%6 nodes=%7 routes=%8 "
             "stickNode=%9 throttleNode=%10 stickRoute=%11 throttleRoute=%12 throttleEditable=%13 stickMessage=%14 throttleMessage=%15)")
             .arg(multiDevicePrepared).arg(stickRouteResult.value(QStringLiteral("success")).toBool())
@@ -7196,20 +7352,28 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             .arg(stickRouteResult.value(QStringLiteral("message")).toString())
             .arg(throttleRouteResult.value(QStringLiteral("message")).toString()));
     }
-    QQmlExpression changeScopeThroughDeck(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+    QQmlExpression directRouteThroughDeck(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
         "(function() {"
         " graph = backendObject.signalFlowGraph;"
         " const card = (graph.nodes || []).filter(function(node) { return node.controllerRecordId === 'fixture-throttle'; })[0];"
-        " if (!card) return false;"
-        " selectNode(card);"
-        " return inspectedNode && inspectedNode.controllerRecordId === 'fixture-throttle' && useInputScope(card)"
-        "   && graph.controllerRecordId === 'fixture-throttle' && graph.editable;"
+        " const output = (graph.nodes || []).filter(function(node) { return node.kind === 'output'; })[0];"
+        " const source = card && (card.ports || []).filter(function(port) { return String(port.id).endsWith('axis:6'); })[0];"
+        " const destination = output && (output.ports || []).filter(function(port) { return port.id === 'axis:8'; })[0];"
+        " const beforeScope = graph.controllerRecordId;"
+        " if (!source || !destination || !source.endpointId || !destination.endpointId) return false;"
+        " const collision = backendObject.connectSignalFlowEndpoints(source.endpointId, destination.endpointId, '', Number(graph.revision || 0));"
+        " const result = backendObject.connectSignalFlowEndpoints(source.endpointId, destination.endpointId, 'replace', Number(graph.revision || 0));"
+        " graph = backendObject.signalFlowGraph;"
+        " const targetRoutes = (graph.routes || []).filter(function(route) { return route.destinationPortId === 'axis:8'; });"
+        " return !collision.success && result.success && targetRoutes.length === 1"
+        "   && targetRoutes[0].controllerRecordId === 'fixture-throttle'"
+        "   && graph.controllerRecordId === beforeScope && graph.editable;"
         "})()"));
-    const bool scopeChangedThroughDeck = changeScopeThroughDeck.evaluate().toBool();
-    if (changeScopeThroughDeck.hasError() || !scopeChangedThroughDeck) {
+    const bool directRouteThroughDeckPassed = directRouteThroughDeck.evaluate().toBool();
+    if (directRouteThroughDeck.hasError() || !directRouteThroughDeckPassed) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Flight Deck Signal Flow could not turn a visible saved member into the explicit editing scope (error=%1)")
-            .arg(changeScopeThroughDeck.hasError() ? changeScopeThroughDeck.error().toString() : QStringLiteral("none")));
+            "Flight Deck Signal Flow could not resolve a direct multi-device collision without changing editing scope (error=%1)")
+            .arg(directRouteThroughDeck.hasError() ? directRouteThroughDeck.error().toString() : QStringLiteral("none")));
     }
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
     return true;

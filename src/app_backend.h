@@ -744,6 +744,13 @@ public:
                                                        int sourceSubIndex, const QString &destination,
                                                        const QString &mixerMode,
                                                        qulonglong expectedRevision);
+    // The graph owns endpoint identity.  This direct-port command accepts
+    // projection-scoped opaque endpoint IDs rather than a visible editing
+    // scope, and resolves the physical controller owner internally.
+    Q_INVOKABLE QVariantMap connectSignalFlowEndpoints(const QString &sourceEndpointId,
+                                                        const QString &destinationEndpointId,
+                                                        const QString &collisionDecision,
+                                                        qulonglong expectedRevision);
     Q_INVOKABLE QVariantMap signalFlowDisconnect(const QString &routeId,
                                                  qulonglong expectedRevision);
     // These are deliberately control-plane helpers. They resolve an existing
@@ -969,7 +976,8 @@ private:
     QVariantMap signalFlowConnectInternal(const QString &sourceKind, int sourceIndex,
                                           int sourceSubIndex, const QString &destination,
                                           bool replaceConflicts, const QString &mixerMode,
-                                          qulonglong expectedRevision);
+                                          qulonglong expectedRevision,
+                                          const QString &sourceControllerRecordId = {});
     bool commitSignalFlowCommand(MapperConfiguration before, const QString &description);
     QString signalFlowWorkspaceKey() const;
     bool saveSignalFlowPresentation();
