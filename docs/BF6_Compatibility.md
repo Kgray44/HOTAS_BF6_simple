@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Battlefield 6 Compatibility
 
-**Current version: v2.5.4**
+**Current version: v2.5.5**
 
 ## Official / anticheat boundary
 

@@ -3022,6 +3022,75 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             != QStringLiteral("fault")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Devices state presentation is incomplete"));
     }
+    // Device Rigs are a native Flight Deck workflow. Opening one sets only
+    // the existing editing/view context; it must never select a runtime Rig
+    // by itself. The fixture also has one Required and one Optional member,
+    // which keeps that key resolver distinction visible in the real QML tree.
+    const QVariantList flightDeckRigs = backend.deviceRigs();
+    const QVariantMap flightDeckRig = flightDeckRigs.size() == 1
+        ? flightDeckRigs.front().toMap() : QVariantMap{};
+    const QString flightDeckRigId = flightDeckRig.value(QStringLiteral("id")).toString();
+    auto *devicesItem = qobject_cast<QQuickItem *>(devices);
+    auto *rigCard = findVisualItemByObjectName(devicesItem,
+        QStringLiteral("flightDeckDeviceRigCard_%1").arg(flightDeckRigId));
+    auto *openRig = findVisualItemByObjectName(devicesItem,
+        QStringLiteral("flightDeckOpenRig_%1").arg(flightDeckRigId));
+    auto *createRig = findVisualItemByObjectName(devicesItem,
+        QStringLiteral("flightDeckCreateRig"));
+    const QString activeRigBeforeViewing = backend.activeDeviceRigId();
+    if (flightDeckRigId.isEmpty() || flightDeckRig.value(QStringLiteral("members")).toList().size() != 2
+        || !rigCard || !openRig || !createRig
+        || !clickFlightDeckSettingsItem(window, devicesItem, openRig)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Device Rig section or its pointer entry was unavailable"));
+    }
+    QObject *rigDetails = devices->findChild<QObject *>(QStringLiteral("flightDeckRigDetailsDialog"));
+    if (!rigDetails || !rigDetails->property("visible").toBool()
+        || backend.editingDeviceRigId() != flightDeckRigId
+        || backend.activeDeviceRigId() != activeRigBeforeViewing
+        || !deviceValue(QStringLiteral("selectedRig().members[0].required")).toBool()
+        || deviceValue(QStringLiteral("selectedRig().members[1].required")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig details did not retain canonical Required/Optional or view-only state"));
+    }
+    QMetaObject::invokeMethod(rigDetails, "close");
+    settlePresentation();
+    if (!clickFlightDeckSettingsItem(window, devicesItem, createRig)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Create Rig pointer entry was unavailable"));
+    }
+    QObject *createRigDialog = devices->findChild<QObject *>(QStringLiteral("flightDeckCreateRigDialog"));
+    if (!createRigDialog || !createRigDialog->property("visible").toBool()
+        || !createRigDialog->findChild<QObject *>(QStringLiteral("flightDeckCreateRigName"))
+        || !createRigDialog->findChild<QObject *>(QStringLiteral("flightDeckCreateRigConfirm"))) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Create Rig workflow did not expose its canonical form"));
+    }
+    QMetaObject::invokeMethod(createRigDialog, "close");
+    settlePresentation();
+    // Profiles deep-link to this same Flight Deck Rig detail surface. The
+    // route carries selection only; neither the view nor the Detail dialog
+    // may activate a Rig while the user is inspecting a Profile relationship.
+    if (!selectPage(surface, 5)) return false;
+    QObject *profilesForRig = pageItem(surface, 5);
+    QQmlExpression openRigFromProfile(qmlContext(profilesForRig), profilesForRig,
+        QStringLiteral("navigateToDeviceRig('%1')").arg(flightDeckRigId));
+    openRigFromProfile.evaluate();
+    settlePresentation();
+    devices = pageItem(surface, 2);
+    rigDetails = devices ? devices->findChild<QObject *>(QStringLiteral("flightDeckRigDetailsDialog")) : nullptr;
+    if (openRigFromProfile.hasError() || surface->property("currentPage").toInt() != 2
+        || !rigDetails || !rigDetails->property("visible").toBool()
+        || backend.editingDeviceRigId() != flightDeckRigId
+        || backend.activeDeviceRigId() != activeRigBeforeViewing) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Profile Open Rig deep link changed activation or missed Rig Details"));
+    }
+    QMetaObject::invokeMethod(rigDetails, "close");
+    settlePresentation();
+    // Rig creation correctly associates previously unassigned profiles with
+    // the new Rig. Release this scoped fixture before the legacy-profile
+    // activation coverage below so that test continues to exercise the
+    // backward-compatible no-Rig route, rather than a disconnected Rig.
+    if (!backend.deleteDeviceRig(flightDeckRigId) || !backend.deviceRigs().isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Device Rig fixture was not released before Profile activation coverage"));
+    }
+    settlePresentation();
     // Calibration is controller-gated, but its Flight Deck entry and native
     // modal must remain available without fabricating a physical controller.
     // Opening and dismissing the modal cannot start capture or alter a route.
@@ -3275,6 +3344,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             {QStringLiteral("defaultProfileName"), QStringLiteral("Battlefield / Helicopter")},
             {QStringLiteral("lastActiveProfileId"), QStringLiteral("fixture-helicopter")},
             {QStringLiteral("lastActiveProfileName"), QStringLiteral("Battlefield / Helicopter")},
+            {QStringLiteral("profileIds"), QStringList{QStringLiteral("fixture-helicopter"),
+                QStringLiteral("fixture-aircraft"), QStringLiteral("fixture-infantry")}},
             {QStringLiteral("active"), true}, {QStringLiteral("enabled"), true},
             {QStringLiteral("restoreLastProfile"), true}, {QStringLiteral("adaptiveOverrideAxes"), 2},
             {QStringLiteral("executableRules"), QStringList{QStringLiteral("bf6.exe")}}},
@@ -3313,6 +3384,18 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(appearance));
     }
     settlePresentation();
+    // Category order is authoritative but a profile must render only once.
+    // QVariantMap wrappers from the backend are not identity-stable in QML,
+    // so this checks the ID-based deduplication used by the library and the
+    // category detail flow.
+    QQmlExpression profileFixtureDedup(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("profilesForCategory('fixture-battlefield').map(function(profile) { return profile.id; }).join(',')"));
+    const QString profileFixtureIds = profileFixtureDedup.evaluate().toString();
+    if (profileFixtureDedup.hasError()
+        || profileFixtureIds != QStringLiteral("fixture-helicopter,fixture-aircraft,fixture-infantry")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile library duplicated an ordered profile")
+            .arg(appearance));
+    }
     // Searching the Running list is presentation-only until the user presses
     // an existing ADD action. Exercise the actual text field so case-folded
     // display-name and executable matching cannot silently regress.
@@ -3549,13 +3632,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     auto *activateButton = findVisualItemByObjectName(profilesItem,
         QStringLiteral("flightDeckSelectedProfileActivate"));
-    if (!activateButton) {
+    if (!activateButton || !activateButton->property("enabled").toBool()
+        || !clickFlightDeckSettingsItem(window, profilesItem, activateButton)) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 did not expose explicit profile activation")
             .arg(appearance));
     }
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
-        activateButton->mapToScene(QPointF(activateButton->width() * 0.5, activateButton->height() * 0.5)).toPoint());
-    settlePresentation();
     if (backend.activeProfileId() != secondId) {
         const QVariantMap resolver = backend.activationResolverState();
         return failPresentationLifecycleTest(QStringLiteral(
@@ -6127,7 +6208,24 @@ int main(int argc, char *argv[])
 
     for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
         if (!verifyFlightDeckAxesQmlLoad(backend, themeManager)) return 1;
+        // Scope the canonical two-controller Rig to one visual pass. Creating
+        // a Rig intentionally establishes its profile association; releasing
+        // it inside verifyFlightDeckShell preserves the separate legacy
+        // profile-activation contract that follows in that same pass.
+        const QString flightDeckRigFixture = backend.createDeviceRig(
+            QStringLiteral("Flight Deck Rig Fixture"), {QStringLiteral("fixture-stick")});
+        if (flightDeckRigFixture.isEmpty()
+            || !backend.addDeviceRigMember(flightDeckRigFixture, QStringLiteral("fixture-throttle"), false)) {
+            failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck Device Rig fixture could not establish Required and Optional members"));
+            return 1;
+        }
         if (!verifyFlightDeckShell(backend, themeManager, appearance)) return 1;
+        if (!backend.deviceRigs().isEmpty()) {
+            failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck Device Rig fixture remained after its scoped visual pass"));
+            return 1;
+        }
         if (!verifyFlightDeckAdaptiveResponseInteraction(backend, themeManager, appearance)) return 1;
     }
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
