@@ -1367,22 +1367,36 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     // a bare backend bool or empty ID is not sufficient UI feedback.
     QObject *feedback = devices->findChild<QObject *>(QStringLiteral("deviceActionFeedback"));
     QQmlExpression transientRefresh(qmlContext(devices), devices,
-        QStringLiteral("showTransientActionFeedback({ success: true, title: 'Refreshing devices', message: 'Fixture refresh' }, '', '', 40)"));
+        QStringLiteral("showTransientActionFeedback({ success: true, title: 'Refreshing devices', message: 'Fixture refresh' }, '', '', 600)"));
     transientRefresh.evaluate();
     const bool transientVisible = feedback && !transientRefresh.hasError() && feedback->property("visible").toBool();
-    QTest::qWait(25);
+    QTest::qWait(200);
     QQmlExpression replacementRefresh(qmlContext(devices), devices,
-        QStringLiteral("showTransientActionFeedback({ success: true, title: 'Refresh complete', message: 'Replacement fixture' }, '', '', 70)"));
+        QStringLiteral("showTransientActionFeedback({ success: true, title: 'Refresh complete', message: 'Replacement fixture' }, '', '', 2200)"));
     replacementRefresh.evaluate();
-    QTest::qWait(45);
+    // Wait past the first timer's deadline but comfortably before the second
+    // one. This proves a replacement refresh reset the QML Timer without
+    // depending on sub-100-ms scheduler resolution on hosted Windows runners.
+    QTest::qWait(900);
     const bool replacementResetTimer = feedback && !replacementRefresh.hasError()
         && feedback->property("visible").toBool()
         && devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString()
                == QStringLiteral("Refresh complete");
-    QTest::qWait(55);
-    const bool transientDismissed = feedback && !feedback->property("visible").toBool();
+    const auto waitForFeedbackDismissal = [feedback] {
+        for (int attempt = 0; feedback && attempt < 200; ++attempt) {
+            if (!feedback->property("visible").toBool()) return true;
+            QTest::qWait(25);
+        }
+        return feedback && !feedback->property("visible").toBool();
+    };
+    const bool transientDismissed = waitForFeedbackDismissal();
     if (!transientVisible || !replacementResetTimer || !transientDismissed) {
-        return failPresentationLifecycleTest(QStringLiteral("Devices feedback did not expire or reset its lifecycle timer"));
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Devices feedback did not expire or reset its lifecycle timer "
+            "(initial=%1 replacement=%2 dismissed=%3 visible=%4 title=%5)")
+            .arg(transientVisible).arg(replacementResetTimer).arg(transientDismissed)
+            .arg(feedback && feedback->property("visible").toBool())
+            .arg(devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString()));
     }
     QQmlExpression invalidCreate(qmlContext(devices), devices,
         QStringLiteral("createRigWithInputs('Missing Input Fixture', [], '%1')").arg(outputId));
