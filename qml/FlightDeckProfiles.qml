@@ -1407,6 +1407,14 @@ Flickable {
                                 enabled: !root.usingPresentationFixture
                                 onClicked: backend.resumeAutomaticActivation()
                             }
+                            DeckButton {
+                                objectName: "flightDeckSwitchRecommendedConfiguration"
+                                visible: !!root.selectedCategoryActivation.higherPreferenceAvailable
+                                text: "SWITCH NOW"
+                                subdued: true
+                                enabled: !root.usingPresentationFixture
+                                onClicked: backend.activateRecommendedConfiguration(root.selectedCategoryId)
+                            }
                         }
                         Text {
                             text: String(root.selectedCategoryActivation.explanation || "Checking automatic configuration.")
@@ -1424,6 +1432,48 @@ Flickable {
                             font.pixelSize: 9
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
+                        }
+                        Repeater {
+                            model: root.selectedCategoryActivation.candidates || []
+                            delegate: ColumnLayout {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (modelData.selected ? "● " : modelData.current ? "○ " : "· ")
+                                        + String(modelData.profileName || "Profile") + " → "
+                                        + String(modelData.deviceRigName || "Device Rig") + " → "
+                                        + String(modelData.outputLayoutName || modelData.outputLayoutId || "Output") + "  ["
+                                        + String(modelData.mode || "preferred").toUpperCase() + "]"
+                                    color: modelData.selected ? deck.accent : modelData.eligible ? deck.textSecondary : deck.textMuted
+                                    font.family: deck.telemetryFont
+                                    font.pixelSize: 9
+                                    wrapMode: Text.WordWrap
+                                }
+                                Repeater {
+                                    model: modelData.blockers || []
+                                    delegate: Text {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        text: "  blocked: " + String(modelData)
+                                        color: deck.statusColor("attention")
+                                        font.pixelSize: 8
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                                Repeater {
+                                    model: modelData.warnings || []
+                                    delegate: Text {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        text: "  notice: " + String(modelData)
+                                        color: deck.textMuted
+                                        font.pixelSize: 8
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
                         }
                         Repeater {
                             model: root.selectedCategoryActivation.blockers || []

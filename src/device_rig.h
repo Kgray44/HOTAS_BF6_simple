@@ -22,6 +22,15 @@ struct DeviceRigStatus {
     QStringList connectedMemberIds;
     QStringList missingRequiredMemberIds;
     QStringList missingOptionalMemberIds;
+    // Required and optional identity/setup failures deliberately remain
+    // separate.  Optional hardware is a capability reduction, not a reason
+    // to reject an otherwise-safe automatic configuration.
+    QStringList ambiguousRequiredMemberIds;
+    QStringList ambiguousOptionalMemberIds;
+    QStringList needsVerificationRequiredMemberIds;
+    QStringList needsVerificationOptionalMemberIds;
+    // Compatibility summaries for older presentation consumers.  Resolver
+    // eligibility must use the required-only fields above.
     QStringList ambiguousMemberIds;
     // A durable member can be safely part of a rig before it has completed
     // setup.  Keep that recoverable readiness state separate from identity

@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonDocument>
 #include <QMetaObject>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
@@ -1485,22 +1486,15 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     QMetaObject::invokeMethod(setupDialog, "close");
 
     const bool rigStartedActive = backend.activeDeviceRigId() == rigId;
-    const QString firstActivationControl = rigStartedActive ? QStringLiteral("deactivateRigButton")
-                                                            : QStringLiteral("activateRigButton");
-    if (!triggerDevicesControl(firstActivationControl,
-                               rigStartedActive ? QStringLiteral("Deactivate") : QStringLiteral("Activate"))) return false;
-    settlePresentation();
-    if (backend.activeDeviceRigId() == (rigStartedActive ? rigId : QString{})
-        || devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
-        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not report its result"));
-    }
-    const QString restoreActivationControl = rigStartedActive ? QStringLiteral("activateRigButton")
-                                                               : QStringLiteral("deactivateRigButton");
-    if (!triggerDevicesControl(restoreActivationControl,
-                               rigStartedActive ? QStringLiteral("Restore activation") : QStringLiteral("Deactivate"))) return false;
-    settlePresentation();
-    if ((backend.activeDeviceRigId() == rigId) != rigStartedActive) {
-        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not restore the fixture state"));
+    // V2.5.4 forbids changing only activeDeviceRigId. A non-active rig may
+    // invoke the coordinated activation command; an already-active route has
+    // no standalone DEACTIVATE control at all.
+    if (!rigStartedActive) {
+        if (!triggerDevicesControl(QStringLiteral("activateRigButton"), QStringLiteral("Activate compatible route"))) return false;
+        settlePresentation();
+        if (devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral("Compatible Device Rig activation did not report its result"));
+        }
     }
 
     // Invoke the exact Devices-page helper that the EDIT THIS control calls.
@@ -3563,8 +3557,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         activateButton->mapToScene(QPointF(activateButton->width() * 0.5, activateButton->height() * 0.5)).toPoint());
     settlePresentation();
     if (backend.activeProfileId() != secondId) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 explicit activation did not commit through AppBackend")
-            .arg(appearance));
+        const QVariantMap resolver = backend.activationResolverState();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 explicit activation did not commit through AppBackend "
+            "(expected=%2 actual=%3 rig=%4 resolver=%5)")
+            .arg(appearance, secondId, backend.activeProfileId(), backend.activeDeviceRigId(),
+                 QString::fromUtf8(QJsonDocument::fromVariant(resolver).toJson(QJsonDocument::Compact))));
     }
     QQmlExpression openCategoryForBehavior(qmlContext(profilesPage), profilesPage,
         QStringLiteral("openCategory('%1')").arg(testCategoryId));

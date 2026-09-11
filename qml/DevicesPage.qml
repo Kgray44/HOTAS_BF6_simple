@@ -90,6 +90,7 @@ Page {
         return rigs.length > 0 ? rigs[0] : null
     }
     readonly property var selectedRig: rigFor(selectedRigId)
+    readonly property var configuredRig: rigFor(backendObject ? backendObject.activeDeviceRigId : "")
     function healthColor(key) {
         if (key === "ready") return readyColor
         if (key === "partial") return warningColor
@@ -419,9 +420,9 @@ Page {
                         Layout.fillWidth: true
                         ColumnLayout {
                             spacing: 2
-                            SmallLabel { text: "ACTIVE DEVICE RIG" }
+                            SmallLabel { text: configuredRig && configuredRig.inUse ? "MAPPING ROUTE IN USE" : "CONFIGURED MAPPING ROUTE" }
                             Text {
-                                text: backendObject ? backendObject.activeDeviceRigName : "No active Device Rig"
+                                text: configuredRig ? configuredRig.name : "No Device Rig configured"
                                 color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true
                             }
                         }
@@ -439,8 +440,8 @@ Page {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: selectedRig ? selectedRig.members.length + " inputs  →  " + selectedRig.outputs.length
-                              + (selectedRig.outputs.length === 1 ? " virtual output" : " virtual outputs")
+                        text: configuredRig ? configuredRig.members.length + " inputs  →  " + configuredRig.outputs.length
+                              + (configuredRig.outputs.length === 1 ? " virtual output" : " virtual outputs")
                                           : "Create a rig to keep a controller arrangement reusable across profiles."
                         color: themeTokens.text; font.pixelSize: 13
                     }
@@ -515,15 +516,11 @@ Page {
                             ThemedButton {
                                 objectName: "activateRigButton"
                                 theme: themeTokens
-                                visible: selectedRig && !selectedRig.active; text: "ACTIVATE"
+                                // Keep the header controls within the narrow Flight Deck viewport.
+                                // The action still resolves the whole profile/rig/output route atomically.
+                                visible: selectedRig && !selectedRig.configured; text: "ACTIVATE ROUTE"
                                 commandEnabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
-                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Device Rig activated", "This rig is now selected for mapping and setup.", "Device Rig could not be activated", "Check that the required controllers and output are available.") }
-                            }
-                            ThemedButton {
-                                objectName: "deactivateRigButton"
-                                theme: themeTokens; tone: "secondary"
-                                visible: selectedRig && selectedRig.active; text: "DEACTIVATE"
-                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.deactivateDeviceRig(rig.id), "Device Rig deactivated", "The rig is no longer selected for mapping.", "Device Rig could not be deactivated", "Refresh the Device Rig and try again.") }
+                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Compatible route activated", "Profile, Device Rig, and Virtual Output were selected together.", "Device Rig could not be activated", "Choose a compatible Profile and check its required controllers and output.") }
                             }
                             ThemedButton {
                                 objectName: "checkRigSetupButton"
@@ -1286,7 +1283,7 @@ Page {
                     visible: Boolean(outputDetailDialog.detail.managedVisibility && root.selectedRig)
                     text: outputDetailDialog.detail.hiddenFromGames ? "SHOW TO GAMES" : "HIDE FROM GAMES"
                     commandEnabled: outputDetailDialog.detail.hiddenFromGames || !root.selectedRig || !root.hasOutput(root.selectedRig, root.selectedOutputId)
-                                    || !root.selectedRig.active
+                                    || !(root.selectedRig.configured && root.selectedRig.inUse)
                     onTriggered: visibilityConfirmationDialog.openForOutputs(root.selectedRigId, [root.selectedOutputId], outputDetailDialog.detail.hiddenFromGames)
                 }
                 ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: root.reportBooleanAction(backendObject.openVjoyConfiguration(), "vJoy configuration opened", "Configure the requested Virtual Output, then return to Check Output.", "vJoy configuration could not open", "Install or repair the vJoy configuration tool, then try again.") }

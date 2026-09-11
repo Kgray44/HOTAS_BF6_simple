@@ -874,10 +874,10 @@ struct MapperConfiguration {
     // Detection is control-plane work sampled at a low frequency by
     // AppBackend. It is deliberately absent from RuntimeProfileCache.
     bool automaticGameDetection = true;
-    // An explicit user selection suspends resolver-driven switching until the
-    // user resumes Automatic Activation. This is configuration state, never
-    // report-path state, and an invalid target is still allowed to fall back
-    // safely through the resolver.
+    // Legacy candidate-schema input only.  V2.5.4 manual overrides are
+    // session-scoped AppBackend state and are intentionally never serialized.
+    // Retaining these fields lets an unreleased schema-25 candidate load
+    // safely, after which ConfigStore clears them.
     bool activationManualOverride = false;
     QString manualOverrideProfileId;
     std::vector<PersonalCurvePreset> personalCurvePresets;

@@ -865,6 +865,7 @@ private slots:
     void deviceRigDetectionUsesSavedPolicyAndRefusesTrueTie();
     void activationResolverSelectsSafelyAndExplainsFallbacks();
     void activationResolverPersistsPolicyAndMigratesV24();
+    void activationResolverStateMachineInvariants();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
     void vjoyAxisDescriptorSupersetsAreAccepted();
     void physicalAxisActivityRequiresCompletedCalibrationTravel();
@@ -4318,6 +4319,7 @@ void MappingCoreTests::activationResolverSelectsSafelyAndExplainsFallbacks()
 
     context.manualOverrideActive = true;
     context.manualOverrideProfileId = precisionProfileId();
+    context.manualOverrideCategoryId = context.matchedCategoryId;
     decision = resolveActivation(configuration, context);
     QVERIFY(decision.valid);
     QVERIFY(decision.manualOverride);
@@ -4326,9 +4328,8 @@ void MappingCoreTests::activationResolverSelectsSafelyAndExplainsFallbacks()
 
     context.matchedCategoryId.clear();
     decision = resolveActivation(configuration, context);
-    QVERIFY(decision.valid);
-    QVERIFY(decision.manualOverride);
-    QCOMPARE(decision.profileId, precisionProfileId());
+    QVERIFY(!decision.valid);
+    QCOMPARE(decision.reason, ActivationDecisionReason::ManualOverrideExpired);
 
     context.manualOverrideActive = false;
     context.matchedCategoryId = QStringLiteral("resolver-category");
@@ -4352,8 +4353,13 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
 
     QJsonObject json = ConfigStore::toJson(configuration);
     QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
-    QVERIFY(json.value(QStringLiteral("activationManualOverride")).toBool());
-    QCOMPARE(json.value(QStringLiteral("manualOverrideProfileId")).toString(), precision->id);
+    QVERIFY(!json.contains(QStringLiteral("activationManualOverride")));
+    QVERIFY(!json.contains(QStringLiteral("manualOverrideProfileId")));
+
+    // A brief candidate build wrote these keys at schema 25. They are input
+    // compatibility only: loading one must never resurrect a manual session.
+    json.insert(QStringLiteral("activationManualOverride"), true);
+    json.insert(QStringLiteral("manualOverrideProfileId"), precision->id);
 
     bool valid = false;
     MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -4362,8 +4368,8 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
              ProfileAutomaticSelectionMode::Fallback);
     QCOMPARE(findProfile(restored, precisionProfileId())->automaticSelectionMode,
              ProfileAutomaticSelectionMode::ManualOnly);
-    QVERIFY(restored.activationManualOverride);
-    QCOMPARE(restored.manualOverrideProfileId, precisionProfileId());
+    QVERIFY(!restored.activationManualOverride);
+    QVERIFY(restored.manualOverrideProfileId.isEmpty());
 
     json.insert(QStringLiteral("version"), 24);
     json.remove(QStringLiteral("activationManualOverride"));
@@ -4383,6 +4389,179 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
              ProfileAutomaticSelectionMode::Fallback);
     QVERIFY(!restored.activationManualOverride);
     QVERIFY(restored.manualOverrideProfileId.isEmpty());
+
+    // Every supported historical schema—and an already-current candidate
+    // file—must treat stale candidate-era manual fields as input only. This
+    // keeps migration from reviving a session-scoped choice after restart.
+    const QJsonObject fresh = ConfigStore::toJson(defaultConfiguration());
+    for (const int version : {14, 15, 23, 24, 25}) {
+        QJsonObject stale = ConfigStore::toJson(activationResolverFixture());
+        stale.insert(QStringLiteral("version"), version);
+        stale.insert(QStringLiteral("activationManualOverride"), true);
+        stale.insert(QStringLiteral("manualOverrideProfileId"), precisionProfileId());
+        if (version < 25) {
+            QJsonArray historicalProfiles = stale.value(QStringLiteral("profiles")).toArray();
+            for (int index = 0; index < historicalProfiles.size(); ++index) {
+                QJsonObject profile = historicalProfiles.at(index).toObject();
+                profile.remove(QStringLiteral("automaticSelectionMode"));
+                historicalProfiles.replace(index, profile);
+            }
+            stale.insert(QStringLiteral("profiles"), historicalProfiles);
+        }
+        restored = ConfigStore::fromJson(stale, &valid);
+        QVERIFY2(valid, qPrintable(QStringLiteral("schema %1 did not migrate").arg(version)));
+        QVERIFY(!restored.activationManualOverride);
+        QVERIFY(restored.manualOverrideProfileId.isEmpty());
+        const QJsonObject persisted = ConfigStore::toJson(restored);
+        QVERIFY(!persisted.contains(QStringLiteral("activationManualOverride")));
+        QVERIFY(!persisted.contains(QStringLiteral("manualOverrideProfileId")));
+    }
+    const MapperConfiguration freshRestored = ConfigStore::fromJson(fresh, &valid);
+    QVERIFY(valid);
+    QVERIFY(!freshRestored.activationManualOverride);
+    QVERIFY(freshRestored.manualOverrideProfileId.isEmpty());
+}
+
+void MappingCoreTests::activationResolverStateMachineInvariants()
+{
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString categoryId = QStringLiteral("resolver-category");
+    const QString preferredRigId = QStringLiteral("resolver-preferred-rig");
+    const QString fallbackRigId = QStringLiteral("resolver-fallback-rig");
+    ActivationContext context;
+    context.matchedCategoryId = categoryId;
+    context.rigStatuses = {readyResolverRigStatus(preferredRigId), readyResolverRigStatus(fallbackRigId)};
+    context.configurationGeneration = 11;
+    context.inventoryGeneration = 22;
+    context.gameContextGeneration = 33;
+
+    // Optional ambiguity/readiness is descriptive, not an automatic-route
+    // blocker. The required-only state is exercised separately below.
+    context.rigStatuses[0].ambiguousMemberIds = {QStringLiteral("optional")};
+    context.rigStatuses[0].ambiguousOptionalMemberIds = {QStringLiteral("optional")};
+    ActivationDecision decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, normalProfileId());
+    QCOMPARE(decision.configurationGeneration, quint64(11));
+    QCOMPARE(decision.inventoryGeneration, quint64(22));
+    QCOMPARE(decision.gameContextGeneration, quint64(33));
+    QCOMPARE(decision.candidates.size(), 2);
+
+    // Manual commands work while automatic detection is disabled, and a Rig
+    // command must resolve to a compatible Profile rather than changing just
+    // the active-rig id.
+    context.automaticActivationEnabled = false;
+    context.intent = ActivationIntent::ManualCategory;
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, normalProfileId());
+    context.intent = ActivationIntent::ManualRig;
+    context.requestedRigId = fallbackRigId;
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, precisionProfileId());
+    QCOMPARE(decision.deviceRigId, fallbackRigId);
+
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(precision);
+    precision->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+    context.intent = ActivationIntent::ManualProfile;
+    context.requestedProfileId = precisionProfileId();
+    context.requestedRigId.clear();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, precisionProfileId());
+    context.intent = ActivationIntent::Automatic;
+    decision = resolveActivation(configuration, context);
+    QVERIFY(!decision.valid);
+    QCOMPARE(decision.reason, ActivationDecisionReason::AutomaticActivationDisabled);
+
+    context.automaticActivationEnabled = true;
+    context.requestedProfileId.clear();
+    context.rigStatuses[0].ambiguousMemberIds.clear();
+    context.rigStatuses[0].ambiguousOptionalMemberIds.clear();
+    precision->automaticSelectionMode = ProfileAutomaticSelectionMode::Fallback;
+    context.activeCategoryId = categoryId;
+    context.activeProfileId = normalProfileId();
+    context.activeDeviceRigId = preferredRigId;
+    context.activeOutputLayoutId = defaultOutputLayoutId();
+    context.rigStatuses[0].complete = false;
+    context.requiredDisconnectGraceRigId = preferredRigId;
+    context.requiredDisconnectGraceProfileId = normalProfileId();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QVERIFY(decision.retainedCurrent);
+    QCOMPARE(decision.profileId, normalProfileId());
+
+    context.requiredDisconnectGraceRigId.clear();
+    context.requiredDisconnectGraceProfileId.clear();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, precisionProfileId());
+
+    context.rigStatuses[0].complete = true;
+    context.rigStatuses[0].ambiguousRequiredMemberIds = {QStringLiteral("required")};
+    context.rigStatuses[1].ambiguousRequiredMemberIds = {QStringLiteral("required")};
+    decision = resolveActivation(configuration, context);
+    QVERIFY(!decision.valid);
+    QCOMPARE(decision.reason, ActivationDecisionReason::NoEligibleCandidate);
+    context.rigStatuses[0].ambiguousRequiredMemberIds.clear();
+    context.rigStatuses[1].ambiguousRequiredMemberIds.clear();
+
+    context.knownVisibleManagedRecordIds = {QStringLiteral("resolver-controller")};
+    decision = resolveActivation(configuration, context);
+    QVERIFY(!decision.valid);
+    QCOMPARE(decision.reason, ActivationDecisionReason::IsolationBlocked);
+    context.knownVisibleManagedRecordIds.clear();
+
+    // The state-machine corpus varies only injected control-plane facts. It
+    // intentionally executes 25,000 deterministic transitions without ever
+    // touching DirectInput, HidHide, vJoy, or the mapping hot path.
+    for (int transition = 0; transition < 25000; ++transition) {
+        context.intent = static_cast<ActivationIntent>(transition % 5);
+        context.automaticActivationEnabled = (transition % 7) != 0;
+        context.requestedProfileId = context.intent == ActivationIntent::ManualProfile
+            ? normalProfileId() : QString{};
+        context.requestedRigId = context.intent == ActivationIntent::ManualRig
+            ? ((transition % 2) == 0 ? preferredRigId : fallbackRigId) : QString{};
+        context.configurationGeneration = static_cast<quint64>(transition + 1);
+        context.inventoryGeneration = static_cast<quint64>(transition + 101);
+        context.gameContextGeneration = static_cast<quint64>(transition + 1001);
+        context.activeCategoryId = (transition % 3) == 0 ? categoryId : QString{};
+        context.activeProfileId = (transition % 3) == 0 ? normalProfileId() : QString{};
+        context.activeDeviceRigId = (transition % 3) == 0 ? preferredRigId : QString{};
+        context.activeOutputLayoutId = (transition % 3) == 0 ? defaultOutputLayoutId() : QString{};
+        for (DeviceRigStatus &status : context.rigStatuses) {
+            status.complete = (transition % 11) != 0;
+            status.ambiguousRequiredMemberIds.clear();
+            status.needsVerificationRequiredMemberIds.clear();
+            status.ambiguousOptionalMemberIds.clear();
+            status.needsVerificationOptionalMemberIds.clear();
+            status.ambiguousMemberIds.clear();
+            status.needsVerificationMemberIds.clear();
+        }
+        if ((transition % 13) == 0) {
+            context.rigStatuses[0].ambiguousOptionalMemberIds = {QStringLiteral("optional")};
+            context.rigStatuses[0].ambiguousMemberIds = {QStringLiteral("optional")};
+        }
+        if ((transition % 17) == 0) context.rigStatuses[1].needsVerificationRequiredMemberIds = {QStringLiteral("required")};
+        context.knownVisibleManagedRecordIds = (transition % 19) == 0
+            ? QStringList{QStringLiteral("resolver-controller")} : QStringList{};
+        decision = resolveActivation(configuration, context);
+        QCOMPARE(decision.configurationGeneration, context.configurationGeneration);
+        QCOMPARE(decision.inventoryGeneration, context.inventoryGeneration);
+        QCOMPARE(decision.gameContextGeneration, context.gameContextGeneration);
+        if (!decision.valid) continue;
+        const ControllerProfile *profile = findProfile(configuration, decision.profileId);
+        const DeviceRig *rig = findDeviceRig(configuration, decision.deviceRigId);
+        QVERIFY(profile && rig);
+        QCOMPARE(profile->deviceRigId, rig->id);
+        QCOMPARE(profile->outputLayoutId, decision.outputLayoutId);
+        QVERIFY(compileDeviceRigRuntime(configuration, rig->id, profile->id).valid);
+        if (context.intent == ActivationIntent::Automatic) {
+            QVERIFY(profile->automaticSelectionMode != ProfileAutomaticSelectionMode::ManualOnly);
+        }
+    }
 }
 
 void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection()

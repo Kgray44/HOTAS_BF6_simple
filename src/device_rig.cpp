@@ -25,8 +25,17 @@ const DeviceRig *rigFor(const MapperConfiguration &configuration, const QString 
 
 bool isEligible(const DeviceRig &rig, const DeviceRigStatus &status)
 {
+    // This legacy selector is retained for explicit setup/manual contexts.
+    // Category/Profile automatic activation has its own visible ordering, but
+    // it must share the same required-vs-optional readiness rule.
+    const bool ambiguousRequired = !status.ambiguousRequiredMemberIds.isEmpty()
+        || (!status.ambiguousMemberIds.isEmpty()
+            && status.ambiguousOptionalMemberIds.isEmpty());
+    const bool unverifiedRequired = !status.needsVerificationRequiredMemberIds.isEmpty()
+        || (!status.needsVerificationMemberIds.isEmpty()
+            && status.needsVerificationOptionalMemberIds.isEmpty());
     return rig.enabled && rig.autoActivate && status.complete
-        && status.ambiguousMemberIds.isEmpty() && status.needsVerificationMemberIds.isEmpty();
+        && !ambiguousRequired && !unverifiedRequired;
 }
 
 const SavedControllerRecord *recordFor(const MapperConfiguration &configuration, const QString &id)
@@ -116,11 +125,15 @@ DeviceRigStatus evaluateDeviceRig(const DeviceRig &rig,
         }
         if (ambiguous) {
             result.ambiguousMemberIds.append(member.controllerRecordId);
+            if (member.required) result.ambiguousRequiredMemberIds.append(member.controllerRecordId);
+            else result.ambiguousOptionalMemberIds.append(member.controllerRecordId);
         } else if (connected) {
             result.connectedMemberIds.append(member.controllerRecordId);
             anyConnected = true;
             if (record->lastVerified.isEmpty()) {
                 result.needsVerificationMemberIds.append(member.controllerRecordId);
+                if (member.required) result.needsVerificationRequiredMemberIds.append(member.controllerRecordId);
+                else result.needsVerificationOptionalMemberIds.append(member.controllerRecordId);
             }
         } else if (member.required) {
             result.missingRequiredMemberIds.append(member.controllerRecordId);
@@ -129,12 +142,16 @@ DeviceRigStatus evaluateDeviceRig(const DeviceRig &rig,
         }
     }
 
-    result.complete = result.missingRequiredMemberIds.isEmpty() && result.ambiguousMemberIds.isEmpty();
-    if (!result.ambiguousMemberIds.isEmpty()) result.health = DeviceRigHealth::Conflict;
-    else if (result.complete && !result.needsVerificationMemberIds.isEmpty()) {
+    result.complete = result.missingRequiredMemberIds.isEmpty()
+        && result.ambiguousRequiredMemberIds.isEmpty()
+        && result.needsVerificationRequiredMemberIds.isEmpty();
+    if (!result.ambiguousRequiredMemberIds.isEmpty()) result.health = DeviceRigHealth::Conflict;
+    else if (!result.needsVerificationRequiredMemberIds.isEmpty()) {
         result.health = DeviceRigHealth::NeedsAttention;
     }
     else if (result.complete) result.health = result.missingOptionalMemberIds.isEmpty()
+        && result.ambiguousOptionalMemberIds.isEmpty()
+        && result.needsVerificationOptionalMemberIds.isEmpty()
         ? DeviceRigHealth::Ready : DeviceRigHealth::Partial;
     else result.health = anyConnected ? DeviceRigHealth::Partial : DeviceRigHealth::Offline;
     return result;

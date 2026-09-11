@@ -1628,8 +1628,6 @@ QJsonObject ConfigStore::toJson(const MapperConfiguration &configuration)
         {u"profiles"_qs, profiles},
         {u"profileCategories"_qs, profileCategories},
         {u"automaticGameDetection"_qs, configuration.automaticGameDetection},
-        {u"activationManualOverride"_qs, configuration.activationManualOverride},
-        {u"manualOverrideProfileId"_qs, configuration.manualOverrideProfileId},
         {u"personalCurvePresets"_qs, personalCurvePresets},
         {u"profileTriggers"_qs, profileTriggersToJson(configuration.profileTriggers)},
         {u"povProfileTriggers"_qs, povProfileTriggersToJson(configuration.povProfileTriggers)},
@@ -1817,16 +1815,12 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             namesByCategory.insert(scopedName);
         }
         configuration.automaticGameDetection = json.value(u"automaticGameDetection"_qs).toBool(true);
-        if (version >= 25) {
-            configuration.activationManualOverride = json.value(u"activationManualOverride"_qs).toBool(false);
-            configuration.manualOverrideProfileId = json.value(u"manualOverrideProfileId"_qs)
-                .toString().trimmed().left(96);
-            if (configuration.activationManualOverride
-                && !findProfile(configuration, configuration.manualOverrideProfileId)) {
-                configuration.activationManualOverride = false;
-                configuration.manualOverrideProfileId.clear();
-            }
-        }
+        // Early V2.5.4 candidate builds persisted a manual session override.
+        // Schema 25 is not released, so consume the fields only as harmless
+        // legacy input and always clear them before runtime configuration is
+        // returned.  Manual choice now lives only in AppBackend's session.
+        configuration.activationManualOverride = false;
+        configuration.manualOverrideProfileId.clear();
     } else {
         // v2.1.0 deliberately performs no name-based game inference. Every
         // existing profile enters the neutral General category unchanged.
