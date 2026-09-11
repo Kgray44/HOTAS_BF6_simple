@@ -521,7 +521,10 @@ if (BUILD_TESTING)
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
-    add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
+    # This test exercises the presentation/control-plane lifecycle.  Keep its
+    # process on the explicit smoke-safe backend boundary so a local CTest run
+    # cannot acquire the owner's DirectInput, vJoy, or active mapper.
+    add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_backend_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")

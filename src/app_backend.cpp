@@ -131,7 +131,11 @@ bool startupSmokeRequested()
     const QStringList arguments = QCoreApplication::arguments();
     return arguments.contains(u"--startup-smoke"_qs)
         || arguments.contains(u"--startup-smoke-isolated"_qs)
-        || arguments.contains(u"--isolated-presentation"_qs);
+        || arguments.contains(u"--isolated-presentation"_qs)
+        // The focused Signal Flow review surface is equally isolated.  It
+        // must render the ordinary QML event loop without acquiring DirectInput,
+        // vJoy, or the user's active mapper.
+        || arguments.contains(u"--isolated-presentation-signal-flow"_qs);
 }
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,

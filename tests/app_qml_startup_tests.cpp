@@ -6370,6 +6370,135 @@ QVariantMap signalFlowLiveDragGraph()
             {QStringLiteral("densityMode"), QStringLiteral("detailed")}, {QStringLiteral("layoutLocked"), true}}}};
 }
 
+QVariantMap signalFlowOwnerReviewGraph()
+{
+    QVariantMap graph = signalFlowLiveDragGraph();
+    QVariantList nodes = graph.value(QStringLiteral("nodes")).toList();
+    const auto port = [](const QString &id, const QString &ownerNodeId, const QString &label,
+                         const QString &group, const QString &direction) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("endpointId"), id},
+            {QStringLiteral("ownerNodeId"), ownerNodeId}, {QStringLiteral("label"), label},
+            {QStringLiteral("technicalLabel"), label}, {QStringLiteral("kind"), QStringLiteral("axis")},
+            {QStringLiteral("group"), group}, {QStringLiteral("direction"), direction},
+            {QStringLiteral("available"), true}, {QStringLiteral("mapped"), true}};
+    };
+    const QVariantList inputGroups{QVariantMap{{QStringLiteral("group"), QStringLiteral("Buttons")},
+        {QStringLiteral("collapsed"), true}}, QVariantMap{{QStringLiteral("group"), QStringLiteral("Axes")},
+        {QStringLiteral("collapsed"), false}}};
+    const QVariantList outputGroups{QVariantMap{{QStringLiteral("group"), QStringLiteral("Virtual Buttons")},
+        {QStringLiteral("collapsed"), true}}, QVariantMap{{QStringLiteral("group"), QStringLiteral("Virtual Axes")},
+        {QStringLiteral("collapsed"), false}}};
+    for (QVariant &entry : nodes) {
+        QVariantMap node = entry.toMap();
+        const QString id = node.value(QStringLiteral("id")).toString();
+        QVariantList ports = node.value(QStringLiteral("ports")).toList();
+        if (id == QStringLiteral("live-input-a")) {
+            node.insert(QStringLiteral("label"), QStringLiteral("Fixture STECS"));
+            node.insert(QStringLiteral("detail"), QStringLiteral("Fixture STECS physical input"));
+            ports.append(port(QStringLiteral("owner-stecs-throttle"), id, QStringLiteral("Throttle"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-stecs-rx"), id, QStringLiteral("Rotation X"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-stecs-ry"), id, QStringLiteral("Rotation Y"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-stecs-slider"), id, QStringLiteral("Additional axis"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-stecs-button"), id, QStringLiteral("Button 1"), QStringLiteral("Buttons"), QStringLiteral("source")));
+            node.insert(QStringLiteral("portGroups"), inputGroups);
+        } else if (id == QStringLiteral("live-input-b")) {
+            node.insert(QStringLiteral("label"), QStringLiteral("Fixture Gladiator"));
+            node.insert(QStringLiteral("detail"), QStringLiteral("Fixture Gladiator physical input"));
+            ports.append(port(QStringLiteral("owner-gladiator-pitch"), id, QStringLiteral("Pitch"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-gladiator-yaw"), id, QStringLiteral("Yaw"), QStringLiteral("Axes"), QStringLiteral("source")));
+            ports.append(port(QStringLiteral("owner-gladiator-button"), id, QStringLiteral("Trigger"), QStringLiteral("Buttons"), QStringLiteral("source")));
+            node.insert(QStringLiteral("portGroups"), inputGroups);
+        } else if (id == QStringLiteral("live-output")) {
+            node.insert(QStringLiteral("label"), QStringLiteral("BF6 Output"));
+            node.insert(QStringLiteral("detail"), QStringLiteral("BF6 virtual output"));
+            ports.append(port(QStringLiteral("owner-output-ry"), id, QStringLiteral("Ry"), QStringLiteral("Virtual Axes"), QStringLiteral("destination")));
+            ports.append(port(QStringLiteral("owner-output-rz"), id, QStringLiteral("Rz"), QStringLiteral("Virtual Axes"), QStringLiteral("destination")));
+            ports.append(port(QStringLiteral("owner-output-button"), id, QStringLiteral("Button 1"), QStringLiteral("Virtual Buttons"), QStringLiteral("destination")));
+            node.insert(QStringLiteral("portGroups"), outputGroups);
+        }
+        node.insert(QStringLiteral("ports"), ports);
+        entry = node;
+    }
+    QVariantList routes = graph.value(QStringLiteral("routes")).toList();
+    const auto route = [](const QString &id, const QString &sourceEndpointId, const QString &destinationEndpointId) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("sourceNodeId"), QStringLiteral("live-input-b")},
+            {QStringLiteral("destinationNodeId"), QStringLiteral("live-output")},
+            {QStringLiteral("sourcePortId"), sourceEndpointId}, {QStringLiteral("sourceEndpointId"), sourceEndpointId},
+            {QStringLiteral("destinationPortId"), destinationEndpointId}, {QStringLiteral("destinationEndpointId"), destinationEndpointId},
+            {QStringLiteral("sourceLabel"), sourceEndpointId}, {QStringLiteral("destinationLabel"), destinationEndpointId},
+            {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
+            {QStringLiteral("processors"), QVariantList{}}, {QStringLiteral("processorDetails"), QVariantList{}},
+            {QStringLiteral("segments"), signalFlowFixtureSegments(id, QStringLiteral("live-input-b"), sourceEndpointId,
+                QStringLiteral("live-output"), destinationEndpointId)}};
+    };
+    routes.append(route(QStringLiteral("owner-gladiator-pitch"), QStringLiteral("owner-gladiator-pitch"),
+        QStringLiteral("owner-output-ry")));
+    routes.append(route(QStringLiteral("owner-gladiator-yaw"), QStringLiteral("owner-gladiator-yaw"),
+        QStringLiteral("owner-output-rz")));
+    graph.insert(QStringLiteral("nodes"), nodes);
+    graph.insert(QStringLiteral("routes"), routes);
+    return graph;
+}
+
+bool verifyRenderedSignalFlowPortAnchors(QObject *page, const QString &stage)
+{
+    auto *scene = qobject_cast<QQuickItem *>(page ? page->findChild<QObject *>(QStringLiteral("signalFlowGraphScene")) : nullptr);
+    if (!page || !scene) {
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow endpoint verification has no graph scene at %1").arg(stage));
+    }
+    const QVariantList geometry = page->property("wireGeometry").toList();
+    int compared = 0;
+    qreal maxError = 0.0;
+    const auto checkEndpoint = [&](const QString &endpointId, qreal expectedX, qreal expectedY) {
+        QQuickItem *visual = findVisualItemByObjectName(scene,
+            QStringLiteral("signalFlowPortVisual:") + endpointId);
+        if (!visual) visual = findVisualItemByObjectName(scene,
+            QStringLiteral("signalFlowProcessorPortVisual:") + endpointId);
+        if (!visual) {
+            return failPresentationLifecycleTest(QStringLiteral("Signal Flow endpoint %1 has no rendered port at %2")
+                .arg(endpointId, stage));
+        }
+        const QPointF actual = visual->mapToItem(scene, QPointF(visual->width() * 0.5, visual->height() * 0.5));
+        const qreal error = std::hypot(actual.x() - expectedX, actual.y() - expectedY);
+        maxError = std::max(maxError, error);
+        ++compared;
+        if (error > 0.01) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow rendered endpoint mismatch at %1: endpoint=%2 expected=(%3,%4) actual=(%5,%6) error=%7")
+                    .arg(stage, endpointId).arg(expectedX, 0, 'f', 4).arg(expectedY, 0, 'f', 4)
+                    .arg(actual.x(), 0, 'f', 4).arg(actual.y(), 0, 'f', 4).arg(error, 0, 'f', 6));
+        }
+        return true;
+    };
+    for (const QVariant &entryValue : geometry) {
+        const QVariantMap entry = entryValue.toMap();
+        for (const QVariant &segmentValue : entry.value(QStringLiteral("segments")).toList()) {
+            const QVariantMap segment = segmentValue.toMap();
+            if (!checkEndpoint(segment.value(QStringLiteral("sourceEndpointId")).toString(),
+                    segment.value(QStringLiteral("startX")).toReal(), segment.value(QStringLiteral("startY")).toReal())
+                || !checkEndpoint(segment.value(QStringLiteral("destinationEndpointId")).toString(),
+                    segment.value(QStringLiteral("endX")).toReal(), segment.value(QStringLiteral("endY")).toReal())) return false;
+        }
+    }
+    QQmlExpression diagnostic(qmlContext(page), page, QStringLiteral("collectPortAnchorDiagnostics()"));
+    const QVariantMap result = diagnostic.evaluate().toMap();
+    const bool diagnosticPass = !diagnostic.hasError()
+        && result.value(QStringLiteral("samples")).toInt() >= compared
+        && result.value(QStringLiteral("failures")).toInt() == 0
+        && result.value(QStringLiteral("maxError")).toReal() <= 0.01;
+    if (compared == 0 || !diagnosticPass) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow diagnostic endpoint validation failed at %1 (compared=%2 samples=%3 failures=%4 max=%5 error=%6)")
+                .arg(stage).arg(compared).arg(result.value(QStringLiteral("samples")).toInt())
+                .arg(result.value(QStringLiteral("failures")).toInt())
+                .arg(result.value(QStringLiteral("maxError")).toReal(), 0, 'f', 6)
+                .arg(diagnostic.hasError() ? diagnostic.error().toString() : QStringLiteral("none")));
+    }
+    Q_UNUSED(maxError);
+    return true;
+}
+
 bool verifySignalFlowLiveNodeDragFixture(QObject *page)
 {
     if (!page) return failPresentationLifecycleTest(QStringLiteral("Signal Flow live-drag fixture needs a live page"));
@@ -6387,8 +6516,8 @@ bool verifySignalFlowLiveNodeDragFixture(QObject *page)
             "     const segments = wireGeometry[entryIndex].segments || [];"
             "     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
             "       const segment = segments[segmentIndex];"
-            "       const source = resolvedPortAnchor(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
-            "       const destination = resolvedPortAnchor(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
+            "       const source = currentGraphSpacePortCenter(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
+            "       const destination = currentGraphSpacePortCenter(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
             "       if (Math.abs(segment.startX - source.x) > 0.01 || Math.abs(segment.startY - source.y) > 0.01"
             "           || Math.abs(segment.endX - destination.x) > 0.01 || Math.abs(segment.endY - destination.y) > 0.01) return false;"
             "     }"
@@ -6454,8 +6583,8 @@ bool verifySignalFlowLiveNodeDragFixture(QObject *page)
         "     const segments = wireGeometry[entryIndex].segments || [];"
         "     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
         "       const segment = segments[segmentIndex];"
-        "       const source = resolvedPortAnchor(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
-        "       const destination = resolvedPortAnchor(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
+        "       const source = currentGraphSpacePortCenter(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
+        "       const destination = currentGraphSpacePortCenter(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
         "       if (Math.abs(segment.startX - source.x) > 0.01 || Math.abs(segment.startY - source.y) > 0.01"
         "           || Math.abs(segment.endX - destination.x) > 0.01 || Math.abs(segment.endY - destination.y) > 0.01) return false;"
         "     }"
@@ -6514,6 +6643,241 @@ bool verifySignalFlowLiveNodeDragFixture(QObject *page)
                 .arg(denseOne).arg(denseEight).arg(denseTwentyEight).arg(chainPass)
                 .arg(chain.hasError() ? chain.error().toString() : QStringLiteral("none")));
     }
+    return true;
+}
+
+bool verifySignalFlowOwnerReviewPortAnchorFixture(QObject *page, QQuickWindow *window)
+{
+    if (!page || !window) {
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow owner-review port fixture needs a live page and window"));
+    }
+    auto *scene = qobject_cast<QQuickItem *>(page->findChild<QObject *>(QStringLiteral("signalFlowGraphScene")));
+    if (!scene) {
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow owner-review port fixture has no graph scene"));
+    }
+    const QVariant originalGraph = page->property("graph");
+    const QVariant originalNodePositions = page->property("nodePositions");
+    const QVariant originalReducedMotion = page->property("reducedMotion");
+    const QVariant originalZoom = page->property("zoom");
+    const QVariant originalInspectedRoute = page->property("inspectedRoute");
+    const QVariant originalDiagnostics = page->property("portAnchorDiagnosticsEnabled");
+    QObject *viewport = page->findChild<QObject *>(QStringLiteral("signalFlowGraphViewport"));
+    const QVariant originalContentX = viewport ? viewport->property("contentX") : QVariant{};
+    const QVariant originalContentY = viewport ? viewport->property("contentY") : QVariant{};
+    const QSize originalWindowSize = window->size();
+    const auto restore = [&] {
+        page->setProperty("portAnchorDiagnosticsEnabled", originalDiagnostics);
+        page->setProperty("nodePositions", originalNodePositions);
+        page->setProperty("graph", originalGraph);
+        page->setProperty("reducedMotion", originalReducedMotion);
+        page->setProperty("zoom", originalZoom);
+        page->setProperty("inspectedRoute", originalInspectedRoute);
+        if (viewport) {
+            viewport->setProperty("contentX", originalContentX);
+            viewport->setProperty("contentY", originalContentY);
+        }
+        window->resize(originalWindowSize);
+        settlePresentation();
+    };
+    const auto requestAndVerify = [&](const QString &stage) {
+        QMetaObject::invokeMethod(page, "requestPortAnchorMeasurement", Qt::DirectConnection);
+        settlePresentation();
+        QMetaObject::invokeMethod(page, "rebuildWireGeometry", Qt::DirectConnection);
+        settlePresentation();
+        return verifyRenderedSignalFlowPortAnchors(page, stage);
+    };
+    const auto run = [page](const QString &script) {
+        QQmlExpression expression(qmlContext(page), page, script);
+        const bool result = expression.evaluate().toBool();
+        return result && !expression.hasError();
+    };
+    page->setProperty("reducedMotion", true);
+    page->setProperty("portAnchorDiagnosticsEnabled", true);
+    QMetaObject::invokeMethod(page, "resetPortAnchorDiagnostics", Qt::DirectConnection);
+    page->setProperty("nodePositions", QVariantMap{});
+    page->setProperty("graph", signalFlowOwnerReviewGraph());
+    settlePresentation();
+    const QVariantMap ownerGraph = page->property("graph").toMap();
+    const QVariantList ownerNodes = ownerGraph.value(QStringLiteral("nodes")).toList();
+    const auto hasLabel = [&ownerNodes](const QString &label) {
+        return std::any_of(ownerNodes.cbegin(), ownerNodes.cend(), [&label](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("label")).toString() == label;
+        });
+    };
+    if (ownerGraph.value(QStringLiteral("routes")).toList().size() != 6
+        || !hasLabel(QStringLiteral("Fixture STECS")) || !hasLabel(QStringLiteral("Fixture Gladiator"))
+        || !hasLabel(QStringLiteral("BF6 Output")) || !requestAndVerify(QStringLiteral("owner fixture initial"))) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow owner-review fixture did not expose the STECS, Gladiator, BF6, and six-route topology"));
+    }
+    const QVariantList initialGeometry = page->property("wireGeometry").toList();
+    const QVariantMap initialRoute = initialGeometry.isEmpty() ? QVariantMap{}
+        : initialGeometry.constFirst().toMap().value(QStringLiteral("route")).toMap();
+    const QVariantList initialSegments = initialGeometry.isEmpty() ? QVariantList{}
+        : initialGeometry.constFirst().toMap().value(QStringLiteral("segments")).toList();
+    const QString initialSegmentId = initialSegments.isEmpty() ? QString{}
+        : initialSegments.constFirst().toMap().value(QStringLiteral("routeSegmentId")).toString();
+    QQmlExpression blankHit(qmlContext(page), page, QStringLiteral("Boolean(hitWire(40, 36))"));
+    const bool emptyCanvasPoint = !blankHit.evaluate().toBool();
+    if (initialRoute.isEmpty() || initialSegmentId.isEmpty() || blankHit.hasError() || !emptyCanvasPoint) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow owner-review fixture has no empty canvas point for deselection"));
+    }
+    page->setProperty("inspectedRoute", initialRoute);
+    page->setProperty("selectedSegmentId", initialSegmentId);
+    page->setProperty("source", QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-source")}});
+    settlePresentation();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        scene->mapToScene(QPointF(40.0, 36.0)).toPoint());
+    settlePresentation();
+    if (page->property("inspectedRoute").toMap().value(QStringLiteral("id")).toString().size() > 0
+        || !page->property("selectedSegmentId").toString().isEmpty()
+        || page->property("inspectedNode").toMap().value(QStringLiteral("id")).toString().size() > 0
+        || !page->property("source").toMap().value(QStringLiteral("id")).toString().isEmpty()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow empty-canvas click did not clear the selected trace"));
+    }
+    const auto stage = [&](const QString &name, const QString &script) {
+        if (!run(script) || !requestAndVerify(name)) {
+            restore();
+            return false;
+        }
+        return true;
+    };
+    if (!stage(QStringLiteral("move STECS"), QStringLiteral("noteNodePosition('live-input-a', 126, 156, false); rebuildWireGeometry(); true"))
+        || !stage(QStringLiteral("move Gladiator"), QStringLiteral("noteNodePosition('live-input-b', 94, 544, false); rebuildWireGeometry(); true"))
+        || !stage(QStringLiteral("move BF6 Output"), QStringLiteral("noteNodePosition('live-output', 1148, 202, false); rebuildWireGeometry(); true"))
+        || !stage(QStringLiteral("move STECS again"), QStringLiteral("noteNodePosition('live-input-a', 176, 244, false); rebuildWireGeometry(); true"))) return false;
+
+    if (!run(QStringLiteral("(function() { const node = nodeForId('live-input-a'); beginLiveNodeDrag(node); updateLiveNodeDrag(node, 214, 272); return true; })()"))
+        || !requestAndVerify(QStringLiteral("live drag before release"))) {
+        restore();
+        return false;
+    }
+    const QVariantList beforeRelease = page->property("wireGeometry").toList();
+    if (!run(QStringLiteral("(function() { const node = nodeForId('live-input-a'); return finishLiveNodeDrag(node, 214, 272, false); })()"))
+        || !requestAndVerify(QStringLiteral("post-release stable"))) {
+        restore();
+        return false;
+    }
+    const QVariantList afterRelease = page->property("wireGeometry").toList();
+    const auto endpointMap = [](const QVariantList &geometry) {
+        QVariantMap result;
+        for (const QVariant &entry : geometry) {
+            for (const QVariant &segment : entry.toMap().value(QStringLiteral("segments")).toList()) {
+                const QVariantMap data = segment.toMap();
+                result.insert(data.value(QStringLiteral("routeSegmentId")).toString(), QVariantList{
+                    data.value(QStringLiteral("startX")), data.value(QStringLiteral("startY")),
+                    data.value(QStringLiteral("endX")), data.value(QStringLiteral("endY"))});
+            }
+        }
+        return result;
+    };
+    const QVariantMap beforeEndpoints = endpointMap(beforeRelease);
+    const QVariantMap afterEndpoints = endpointMap(afterRelease);
+    for (auto it = beforeEndpoints.cbegin(); it != beforeEndpoints.cend(); ++it) {
+        const QVariantList before = it.value().toList();
+        const QVariantList after = afterEndpoints.value(it.key()).toList();
+        if (after.size() != 4 || before.size() != 4
+            || std::abs(before.at(0).toReal() - after.at(0).toReal()) > 0.01
+            || std::abs(before.at(1).toReal() - after.at(1).toReal()) > 0.01
+            || std::abs(before.at(2).toReal() - after.at(2).toReal()) > 0.01
+            || std::abs(before.at(3).toReal() - after.at(3).toReal()) > 0.01) {
+            restore();
+            return failPresentationLifecycleTest(QStringLiteral("Signal Flow release changed a live endpoint before layout changed"));
+        }
+    }
+    if (!stage(QStringLiteral("fixture auto layout"), QStringLiteral(
+            "noteNodePosition('live-input-a', 80, 118, false); noteNodePosition('live-input-b', 80, 506, false);"
+            "noteNodePosition('live-curve', 504, 170, false); noteNodePosition('live-adaptive', 806, 242, false);"
+            "noteNodePosition('live-output', 1188, 176, false); rebuildWireGeometry(); true"))
+        || !stage(QStringLiteral("fit graph"), QStringLiteral("fitGraph(); true"))) return false;
+    window->resize(QSize(824, 618));
+    if (!requestAndVerify(QStringLiteral("resized graph"))) {
+        restore();
+        return false;
+    }
+    if (!stage(QStringLiteral("group and density relayout"), QStringLiteral(
+            "(function() { graph.nodes[0].portGroups[0].collapsed = false; graph.nodes[1].portGroups[0].collapsed = false;"
+            " graph.nodes[4].portGroups[0].collapsed = false; graph.workspace.densityMode = 'detailed';"
+            " graph = Object.assign({}, graph); return true; })()"))
+        || !stage(QStringLiteral("zoom and pan"), QStringLiteral(
+            "zoom = 0.62; graphViewport.contentX = 73; graphViewport.contentY = 41; true"))) return false;
+
+    // Every iteration ends only after delegate measurement, full stable
+    // geometry, Canvas-facing buckets, and direct visual-port comparison agree.
+    // The deterministic sequence includes node motion, group/density relayout,
+    // zoom/pan, Fit, an auto-layout-shaped placement, and route selection.
+    constexpr int tortureOperations = 3072;
+    for (int stepIndex = 0; stepIndex < tortureOperations; ++stepIndex) {
+        const QVariantMap currentGraph = page->property("graph").toMap();
+        const QVariantList currentNodes = currentGraph.value(QStringLiteral("nodes")).toList();
+        if (currentNodes.isEmpty()) {
+            restore();
+            return failPresentationLifecycleTest(QStringLiteral("Signal Flow torture fixture lost its graph"));
+        }
+        const QVariantMap movingNode = currentNodes.at(stepIndex % currentNodes.size()).toMap();
+        const QString nodeId = movingNode.value(QStringLiteral("objectId"), movingNode.value(QStringLiteral("id"))).toString();
+        QVariantMap positions = page->property("nodePositions").toMap();
+        const qreal x = 72.0 + ((stepIndex * 37) % 1140);
+        const qreal y = 96.0 + ((stepIndex * 53) % 560);
+        positions.insert(nodeId, QVariantMap{{QStringLiteral("x"), x}, {QStringLiteral("y"), y}});
+        if (stepIndex % 251 == 0) {
+            for (int nodeIndex = 0; nodeIndex < currentNodes.size(); ++nodeIndex) {
+                const QVariantMap node = currentNodes.at(nodeIndex).toMap();
+                const QString id = node.value(QStringLiteral("objectId"), node.value(QStringLiteral("id"))).toString();
+                positions.insert(id, QVariantMap{{QStringLiteral("x"), 72.0 + nodeIndex * 258.0},
+                    {QStringLiteral("y"), 110.0 + ((stepIndex / 251 + nodeIndex) % 3) * 186.0}});
+            }
+        }
+        page->setProperty("nodePositions", positions);
+        if (stepIndex % 97 == 0) {
+            QVariantMap mutated = currentGraph;
+            QVariantMap workspace = mutated.value(QStringLiteral("workspace")).toMap();
+            workspace.insert(QStringLiteral("densityMode"), stepIndex % 194 == 0 ? QStringLiteral("compact") : QStringLiteral("detailed"));
+            mutated.insert(QStringLiteral("workspace"), workspace);
+            QVariantList mutatedNodes = mutated.value(QStringLiteral("nodes")).toList();
+            for (int nodeIndex = 0; nodeIndex < mutatedNodes.size(); ++nodeIndex) {
+                QVariantMap node = mutatedNodes.at(nodeIndex).toMap();
+                QVariantList groups = node.value(QStringLiteral("portGroups")).toList();
+                if (!groups.isEmpty()) {
+                    QVariantMap group = groups.first().toMap();
+                    group.insert(QStringLiteral("collapsed"), (stepIndex / 97 + nodeIndex) % 2 == 0);
+                    groups[0] = group;
+                    node.insert(QStringLiteral("portGroups"), groups);
+                    mutatedNodes[nodeIndex] = node;
+                }
+            }
+            mutated.insert(QStringLiteral("nodes"), mutatedNodes);
+            page->setProperty("graph", mutated);
+        }
+        if (stepIndex % 43 == 0) page->setProperty("zoom", 0.62 + (stepIndex % 5) * 0.14);
+        if (viewport && stepIndex % 41 == 0) {
+            viewport->setProperty("contentX", static_cast<qreal>((stepIndex * 17) % 180));
+            viewport->setProperty("contentY", static_cast<qreal>((stepIndex * 11) % 120));
+        }
+        if (stepIndex % 503 == 0) QMetaObject::invokeMethod(page, "fitGraph", Qt::DirectConnection);
+        if (stepIndex % 79 == 0) {
+            const QVariantList routes = page->property("graph").toMap().value(QStringLiteral("routes")).toList();
+            if (!routes.isEmpty()) page->setProperty("inspectedRoute", routes.at(stepIndex % routes.size()));
+        }
+        if (!requestAndVerify(QStringLiteral("torture %1").arg(stepIndex))) {
+            restore();
+            return false;
+        }
+    }
+    const bool diagnosticsPass = page->property("portAnchorDiagnosticFailureCount").toInt() == 0
+        && page->property("portAnchorDiagnosticSampleCount").toInt() > tortureOperations;
+    if (!diagnosticsPass) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow deterministic torture accumulated endpoint-integrity failures"));
+    }
+    const QString diagnosticsLog = QStringLiteral("signal_flow_port_anchor_diagnostics operations=%1 samples=%2 max_error=%3")
+        .arg(tortureOperations).arg(page->property("portAnchorDiagnosticSampleCount").toInt())
+        .arg(page->property("portAnchorDiagnosticMaxError").toReal(), 0, 'f', 6);
+    qInfo().noquote() << diagnosticsLog;
+    std::fprintf(stderr, "%s\n", qPrintable(diagnosticsLog));
+    restore();
     return true;
 }
 
@@ -6653,6 +7017,10 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
     const bool stylePreservesTopology = !orthogonalStyle.hasError()
         && orthogonalProcessorCount == 2 && orthogonalSegmentCount == 3;
     if (!verifySignalFlowLiveNodeDragFixture(page)) {
+        restore();
+        return false;
+    }
+    if (!verifySignalFlowOwnerReviewPortAnchorFixture(page, window)) {
         restore();
         return false;
     }

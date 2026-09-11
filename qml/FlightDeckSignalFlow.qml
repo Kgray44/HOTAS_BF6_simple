@@ -54,6 +54,17 @@ Item {
     // The offset remains valid while its card moves, so a child delegate does
     // not need a synthetic x/y notification from a moving parent.
     property var portAnchorOffsets: ({})
+    // Incrementing this event-driven epoch asks every live port delegate to
+    // re-measure itself in scene logical coordinates.  It deliberately avoids
+    // retaining delegate objects or polling them across Repeater churn.
+    property int portAnchorMeasurementEpoch: 0
+    // Qualification-only state.  Nothing in product UI enables it and it
+    // never writes a log on a pointer frame.
+    property bool portAnchorDiagnosticsEnabled: false
+    property int portAnchorDiagnosticSampleCount: 0
+    property int portAnchorDiagnosticFailureCount: 0
+    property real portAnchorDiagnosticMaxError: 0
+    property var portAnchorDiagnosticRecords: ({})
     property string hoveredRouteId: ""
     property string hoveredSegmentId: ""
     // Diagnostic-only lifecycle counters.  They make event-driven rendering
@@ -454,6 +465,16 @@ Item {
         noticeError = false
         return true
     }
+    // A click in empty graph space is an explicit dismissal, not an ambiguous
+    // no-op.  Clear both the route object and its canonical segment identity:
+    // Canvas highlights individual segments, so leaving the latter behind
+    // would make a trace appear selected after its inspector was dismissed.
+    function clearGraphSelection() {
+        inspectedRoute = ({})
+        selectedSegmentId = ""
+        inspectedNode = ({})
+        source = ({})
+    }
     function useInputScope(nodeData) {
         if (!nodeData || nodeData.kind !== "input" || !nodeData.controllerRecordId || !graph.deviceRigId) return false
         const changed = backendObject.setEditingDeviceContext(String(graph.deviceRigId), [String(nodeData.controllerRecordId)])
@@ -627,6 +648,9 @@ Item {
         nodePositions = next
         if (scheduleGeometry !== false) wireGeometryTimer.restart()
     }
+    function requestPortAnchorMeasurement() {
+        portAnchorMeasurementEpoch += 1
+    }
     function portOwnerNodeId(port) {
         if (port && port.ownerNodeId) return String(port.ownerNodeId)
         const endpoint = String(port && (port.endpointId || port.id) || "")
@@ -661,7 +685,21 @@ Item {
         // A live card position plus the existing card-local offset is already
         // authoritative. Processor marker callbacks can therefore avoid
         // cloning the complete anchor cache for every pointer update.
-        if (liveDragNodeId && nodeMatchesId(nodeForId(ownerId), liveDragNodeId)) return
+        if (liveDragNodeId && nodeMatchesId(nodeForId(ownerId), liveDragNodeId)
+                && !portAnchorDiagnosticsEnabled) return
+        const endpointKey = String(port.endpointId || "")
+        const legacyKey = String(port.id || "")
+        const endpointAnchor = portAnchors[endpointKey]
+        const legacyAnchor = portAnchors[legacyKey]
+        const unchanged = function(anchor) {
+            return anchor && Math.abs(Number(anchor.x) - Number(x)) < 0.01
+                && Math.abs(Number(anchor.y) - Number(y)) < 0.01
+        }
+        // Qt Quick can deliver repeat geometry notifications while polishing a
+        // layout.  A point that has not moved must not reconstruct the wire
+        // cache or request another Canvas frame; otherwise harmless polish
+        // becomes a self-sustaining repaint/rebuild loop.
+        if ((!endpointKey || unchanged(endpointAnchor)) && (!legacyKey || unchanged(legacyAnchor))) return
         const next = ({})
         const offsets = ({})
         for (const key in portAnchors) next[key] = portAnchors[key]
@@ -672,9 +710,12 @@ Item {
         portAnchorOffsets = offsets
         wireGeometryTimer.restart()
     }
-    function resolvedPortAnchor(endpoint, legacy, nodeData, sourceSide) {
-        const endpointKey = String(endpoint || "")
-        const legacyKey = String(legacy || "")
+    // This is the sole endpoint resolver for Canvas geometry, its spatial hit
+    // buckets, live-drag replacement segments, and insertion preview.  Its
+    // result is always in the unscaled `scene` logical coordinate space.
+    function currentGraphSpacePortCenter(endpointId, legacyEndpointId, nodeData, sourceSide) {
+        const endpointKey = String(endpointId || "")
+        const legacyKey = String(legacyEndpointId || "")
         const offset = portAnchorOffsets[endpointKey] || portAnchorOffsets[legacyKey]
         if (offset && offset.ownerNodeId) {
             const owner = nodeForId(offset.ownerNodeId)
@@ -683,8 +724,12 @@ Item {
                 return ({ "x": Number(position.x) + Number(offset.x), "y": Number(position.y) + Number(offset.y) })
             }
         }
+        // A direct delegate measurement is better than synthetic geometry
+        // whenever an owner cannot be resolved (for example during creation).
+        const measured = portAnchors[endpointKey] || portAnchors[legacyKey]
+        if (measured) return ({ "x": Number(measured.x), "y": Number(measured.y) })
         const position = nodePosition(nodeData, Number(nodeData && nodeData.x || 0), Number(nodeData && nodeData.y || 0))
-        const fallback = sourceSide ? ({
+        return sourceSide ? ({
             "x": Number(position.x) + graphCardWidth(nodeData),
             "y": Number(position.y) + Math.min(graphCardHeight(nodeData) * 0.5,
                 48 + stableLane(endpointKey || legacyKey, 13) * 6)
@@ -693,12 +738,50 @@ Item {
             "y": Number(position.y) + Math.min(graphCardHeight(nodeData) * 0.5,
                 48 + stableLane(endpointKey || legacyKey, 13) * 6)
         })
-        return portAnchors[endpointKey] || portAnchors[legacyKey] || fallback
     }
-    function registeredPortAnchor(route, sourceSide, nodeData) {
-        const endpoint = sourceSide ? route.sourceEndpointId : route.destinationEndpointId
-        const legacy = sourceSide ? route.sourcePortId : route.destinationPortId
-        return resolvedPortAnchor(endpoint, legacy, nodeData, sourceSide)
+    function resetPortAnchorDiagnostics() {
+        portAnchorDiagnosticSampleCount = 0
+        portAnchorDiagnosticFailureCount = 0
+        portAnchorDiagnosticMaxError = 0
+        portAnchorDiagnosticRecords = ({})
+    }
+    function collectPortAnchorDiagnostics() {
+        if (!portAnchorDiagnosticsEnabled) return ({ "samples": 0, "failures": 0, "maxError": 0 })
+        const records = ({})
+        let samples = 0
+        let failures = 0
+        let maxError = 0
+        const tolerance = 0.01
+        const add = function(endpointId, nodeId, routeId, expected) {
+            const actual = portAnchors[String(endpointId || "")]
+            if (!actual) return
+            const dx = Number(expected.x) - Number(actual.x)
+            const dy = Number(expected.y) - Number(actual.y)
+            const error = Math.hypot(dx, dy)
+            const key = String(endpointId || "")
+            records[key] = ({ "endpointId": key, "nodeId": String(nodeId || ""), "routeId": String(routeId || ""),
+                "expected": ({ "x": Number(expected.x), "y": Number(expected.y) }),
+                "actual": ({ "x": Number(actual.x), "y": Number(actual.y) }), "error": error })
+            ++samples
+            if (error > tolerance) ++failures
+            maxError = Math.max(maxError, error)
+        }
+        for (let entryIndex = 0; entryIndex < wireGeometry.length; ++entryIndex) {
+            const entry = wireGeometry[entryIndex]
+            const segments = entry && entry.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex]
+                add(segment.sourceEndpointId, segment.sourceNodeId, entry.routeId,
+                    ({ "x": segment.startX, "y": segment.startY }))
+                add(segment.destinationEndpointId, segment.destinationNodeId, entry.routeId,
+                    ({ "x": segment.endX, "y": segment.endY }))
+            }
+        }
+        portAnchorDiagnosticSampleCount += samples
+        portAnchorDiagnosticFailureCount += failures
+        portAnchorDiagnosticMaxError = Math.max(portAnchorDiagnosticMaxError, maxError)
+        portAnchorDiagnosticRecords = records
+        return ({ "samples": samples, "failures": failures, "maxError": maxError, "records": records })
     }
     function wirePoints(segment, lane) {
         const points = []
@@ -847,8 +930,8 @@ Item {
         nodeSegmentRefs[key].push({ "entryIndex": entryIndex, "segmentIndex": segmentIndex })
     }
     function geometryForCanonicalSegment(routeId, canonical, sourceNode, destinationNode, lane, dragSimplified) {
-        const sourceAnchor = resolvedPortAnchor(canonical.sourceEndpointId, "", sourceNode, true)
-        const destinationAnchor = resolvedPortAnchor(canonical.destinationEndpointId, "", destinationNode, false)
+        const sourceAnchor = currentGraphSpacePortCenter(canonical.sourceEndpointId, "", sourceNode, true)
+        const destinationAnchor = currentGraphSpacePortCenter(canonical.destinationEndpointId, "", destinationNode, false)
         const excludedIds = ({})
         excludedIds[nodeIdentity(sourceNode)] = true
         excludedIds[nodeIdentity(destinationNode)] = true
@@ -938,6 +1021,7 @@ Item {
         wireSegmentBucketKeys = segmentBucketKeys
         wireNodeSegmentRefs = nodeSegmentRefs
         if (diagram) diagram.requestPaint()
+        if (portAnchorDiagnosticsEnabled) collectPortAnchorDiagnostics()
     }
     function refreshLiveDragGeometry(nodeId) {
         const movedNode = nodeForId(nodeId)
@@ -1024,6 +1108,9 @@ Item {
         const storedId = nodeStorageIdentity(nodeData)
         if (storedId) next[storedId] = position
         liveNodePositions = next
+        // Test-only measurement can choose to observe each drag sample without
+        // adding visual-anchor work to the product pointer path.
+        if (portAnchorDiagnosticsEnabled) requestPortAnchorMeasurement()
         return refreshLiveDragGeometry(id)
     }
     function finishLiveNodeDrag(nodeData, x, y, persist) {
@@ -1545,7 +1632,11 @@ Item {
         liveDragNodeId = ""
         portAnchors = ({})
         portAnchorOffsets = ({})
-        rebuildWireGeometry()
+        // Repeater delegates report their measured centers on the following
+        // geometry turn.  Their reports restart the wire timer, so a stable
+        // graph never retains this provisional fallback geometry.
+        requestPortAnchorMeasurement()
+        wireGeometryTimer.restart()
         restartWireMotion()
     }
     onPresentationStateChanged: {
@@ -1788,21 +1879,37 @@ Item {
         property var port: ({})
         property bool destination: false
         property bool compatibleTarget: root.compatible(port)
+        readonly property string endpointKey: String(port && (port.endpointId || port.id) || "")
         implicitHeight: 28
         Accessible.name: (destination ? "Destination " : "Source ") + String(port.label || "port")
         Accessible.description: destination
             ? "Click or drop a compatible source here to create a canonical route."
             : "Click or drag from this physical endpoint to route it."
         function updateAnchor() {
-            if (!port || !port.id || !scene) return
+            if (!port || !endpointKey || !scene || !visible) return
             const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
             root.notePortAnchor(port, point.x, point.y)
         }
-        onXChanged: Qt.callLater(updateAnchor)
-        onYChanged: Qt.callLater(updateAnchor)
-        onWidthChanged: Qt.callLater(updateAnchor)
-        onHeightChanged: Qt.callLater(updateAnchor)
-        Component.onCompleted: Qt.callLater(updateAnchor)
+        function queueAnchorMeasurement() { anchorMeasurementTimer.restart() }
+        onXChanged: queueAnchorMeasurement()
+        onYChanged: queueAnchorMeasurement()
+        onWidthChanged: queueAnchorMeasurement()
+        onHeightChanged: queueAnchorMeasurement()
+        onVisibleChanged: queueAnchorMeasurement()
+        Component.onCompleted: queueAnchorMeasurement()
+        // A Timer belongs to this delegate and is cancelled with it.  This is
+        // safe during Repeater destruction, unlike a deferred JS callback
+        // which can outlive the row that scheduled it.
+        Timer {
+            id: anchorMeasurementTimer
+            interval: 0
+            repeat: false
+            onTriggered: graphPortRow.updateAnchor()
+        }
+        Connections {
+            target: root
+            function onPortAnchorMeasurementEpochChanged() { graphPortRow.queueAnchorMeasurement() }
+        }
         RowLayout {
             anchors.fill: parent
             spacing: deck.space6
@@ -1812,6 +1919,7 @@ Item {
                 visible: graphPortRow.destination
                 Rectangle {
                     id: destinationDot
+                    objectName: "signalFlowPortVisual:" + graphPortRow.endpointKey
                     anchors.centerIn: parent
                     width: 10; height: 10; radius: 5
                     color: !graphPortRow.port.available ? deck.disabled
@@ -1838,6 +1946,7 @@ Item {
                 visible: !graphPortRow.destination
                 Rectangle {
                     id: sourceDot
+                    objectName: "signalFlowPortVisual:" + graphPortRow.endpointKey
                     anchors.centerIn: parent
                     width: 10; height: 10; radius: 5
                     color: !graphPortRow.port.available ? deck.disabled
@@ -1850,6 +1959,7 @@ Item {
         }
         Item {
             id: hitTarget
+            objectName: "signalFlowPortHitTarget:" + graphPortRow.endpointKey
             width: 30; height: 30
             x: destination ? 0 : parent.width - width
             y: -1
@@ -2075,6 +2185,7 @@ Item {
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                         Item {
                             id: scene
+                            objectName: "signalFlowGraphScene"
                             width: root.sceneLogicalWidth
                             height: root.sceneLogicalHeight
                         scale: root.zoom
@@ -2215,10 +2326,13 @@ Item {
                                     }
                                 }
                                 if (root.dragWire && root.dragWire.active) {
-                                    const sourceId = String(root.dragWire.source && root.dragWire.source.id || "")
-                                    const registered = root.portAnchors[String(root.dragWire.source && (root.dragWire.source.endpointId || root.dragWire.source.id) || "")]
-                                    const startX = registered ? registered.x : 310
-                                    const startY = registered ? registered.y : 202 + root.stableLane(sourceId, 13) * 6
+                                    const sourcePort = root.dragWire.source || ({})
+                                    const sourceId = String(sourcePort.id || "")
+                                    const sourceEndpoint = String(sourcePort.endpointId || sourcePort.id || "")
+                                    const sourceNode = root.nodeForId(root.portOwnerNodeId(sourcePort))
+                                    const start = root.currentGraphSpacePortCenter(sourceEndpoint, sourceId, sourceNode, true)
+                                    const startX = Number(start.x)
+                                    const startY = Number(start.y)
                                     drawWire(context, startX, startY, Number(root.dragWire.x || startX),
                                         Number(root.dragWire.y || startY), deck.attention, 2.5, 0.94, 0, true,
                                         1, false, 0, false)
@@ -2236,6 +2350,7 @@ Item {
                         // Cards sit above it, so endpoint hit areas always take precedence.
                         MouseArea {
                             id: wireInteractionLayer
+                            objectName: "signalFlowWireInteractionLayer"
                             anchors.fill: parent
                             z: 1
                             hoverEnabled: true
@@ -2245,7 +2360,7 @@ Item {
                             onClicked: function(mouse) {
                                 const hit = root.hitWire(mouse.x, mouse.y)
                                 if (!hit || !hit.route) {
-                                    if (mouse.button === Qt.LeftButton) { root.inspectedRoute = ({}); root.inspectedNode = ({}) }
+                                    if (mouse.button === Qt.LeftButton) root.clearGraphSelection()
                                     return
                                 }
                                 root.inspectedRoute = hit.route
@@ -2419,10 +2534,10 @@ Item {
                                     // port remains compact.
                                     model: modelData.ports || []
                                     delegate: Rectangle {
+                                        id: processorPortMarker
                                         required property var modelData
                                         readonly property bool inputPort: String(modelData.direction || "") === "input"
-                                        readonly property real sceneX: processorNode.x + x + width / 2
-                                        readonly property real sceneY: processorNode.y + y + height / 2
+                                        objectName: "signalFlowProcessorPortVisual:" + String(modelData.endpointId || modelData.id || "")
                                         width: 10; height: 10; radius: 5
                                         x: inputPort ? -width / 2 : processorNode.width - width / 2
                                         y: 34 + Math.floor(index / 2) * 18
@@ -2432,10 +2547,20 @@ Item {
                                         border.width: 2
                                         Accessible.name: String(modelData.label || (inputPort ? "Processor input" : "Processor output"))
                                         Accessible.description: String(modelData.accessibleDescription || "Canonical Signal Flow processor port")
-                                        function registerAnchor() { root.notePortAnchor(modelData, sceneX, sceneY) }
+                                        function registerAnchor() {
+                                            if (!scene || !visible) return
+                                            const point = mapToItem(scene, width * 0.5, height * 0.5)
+                                            root.notePortAnchor(modelData, point.x, point.y)
+                                        }
                                         Component.onCompleted: registerAnchor()
-                                        onSceneXChanged: registerAnchor()
-                                        onSceneYChanged: registerAnchor()
+                                        onXChanged: registerAnchor()
+                                        onYChanged: registerAnchor()
+                                        onWidthChanged: registerAnchor()
+                                        onHeightChanged: registerAnchor()
+                                        Connections {
+                                            target: root
+                                            function onPortAnchorMeasurementEpochChanged() { processorPortMarker.registerAnchor() }
+                                        }
                                         MouseArea {
                                             anchors.centerIn: parent
                                             width: 30; height: 30

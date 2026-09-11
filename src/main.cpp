@@ -62,6 +62,9 @@ int main(int argc, char *argv[])
     // enters the normal event loop for native pointer review.
     const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation")
         || hasArgument(argc, argv, "--isolated-presentation-signal-flow");
+    // Development-only idle probe. It is intentionally a distinct argument
+    // from interactive isolated presentation, which always remains open.
+    const bool signalFlowIdleProbe = hasArgument(argc, argv, "--signal-flow-idle-probe");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
     if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established
@@ -129,6 +132,17 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return -1;
     if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
         backend.attachMainWindow(window);
+    }
+    if (signalFlowIdleProbe) {
+        QTimer::singleShot(4000, &application, [&application, &engine] {
+            QObject *signalFlow = engine.rootObjects().isEmpty() ? nullptr
+                : engine.rootObjects().constFirst()->findChild<QObject *>(QStringLiteral("flightDeckSignalFlow"));
+            const int paints = signalFlow ? signalFlow->property("canvasPaintCount").toInt() : -1;
+            const int rebuilds = signalFlow ? signalFlow->property("geometryRebuildCount").toInt() : -1;
+            const int anchors = signalFlow ? signalFlow->property("portAnchorMeasurementEpoch").toInt() : -1;
+            std::fprintf(stderr, "signal-flow-idle-probe paints=%d rebuilds=%d anchorEpoch=%d\n", paints, rebuilds, anchors);
+            application.quit();
+        });
     }
     // A normal interactive launch must offer recovery after an abnormal exit.
     // The explicit startup-smoke route instead needs to initialize and close
