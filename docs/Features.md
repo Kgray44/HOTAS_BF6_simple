@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current version: v2.5.5**
+**Current version: v2.6.0**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -10,22 +10,23 @@ This document is the authoritative sectioned catalog of user-visible and enginee
 
 1. Real-Time Mapping Runtime
 2. Axis Routing and Processing
-3. Mapping Safety Controls
-4. Button Mapping
-5. POV / Hat Support
-6. Profiles and Profile Library
-7. Response Curves
-8. Automation Engine
-9. Automation Editor UX
-10. Universal Controller Management
-11. Diagnostics and Observability
-12. User Interface and Themes
-13. vJoy Integration
-14. HidHide and Dependency Bootstrap
-15. HOTAS Setup & Verification
-16. Launcher, Installer, and Updates
-17. Configuration and Migration
-18. Build, Test, and Release Engineering
+3. Signal Flow
+4. Mapping Safety Controls
+5. Button Mapping
+6. POV / Hat Support
+7. Profiles and Profile Library
+8. Response Curves
+9. Automation Engine
+10. Automation Editor UX
+11. Universal Controller Management
+12. Diagnostics and Observability
+13. User Interface and Themes
+14. vJoy Integration
+15. HidHide and Dependency Bootstrap
+16. HOTAS Setup & Verification
+17. Launcher, Installer, and Updates
+18. Configuration and Migration
+19. Build, Test, and Release Engineering
 
 ## Real-Time Mapping Runtime
 
@@ -41,7 +42,7 @@ A dedicated DirectInput-to-vJoy worker owns bounded single-device and Device Rig
 
 ## Axis Routing and Processing
 
-Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
+Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms, labels, and explicit collision choices.
 
 - Runtime discovery of vJoy X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 targets.
 - Per-profile axis routing with conflict prevention and selected-layout unsupported-target handling.
@@ -55,6 +56,16 @@ Physical DirectInput axes can be routed only to the selected profile layout's av
 - Control-plane Learn Input and Quick Map observe existing published input snapshots, use a stability re-arm between axis steps, reject ambiguous axis travel, and apply through shared route-conflict checks.
 - Axis Name and Game Output Name keep stable local drafts while live telemetry refreshes; physical names and virtual aliases remain separate persisted concepts.
 - Global Disabled Axis Value from -100.0% to +100.0% for parked unclaimed outputs.
+
+## Signal Flow
+
+A durable, editable canonical signal graph exposes the same mapper configuration used by focused editors without adding graph traversal, UI work, or allocation to the report path.
+
+- Stable route, endpoint, processor, mixer, and workspace identities persist with the profile configuration; Legacy, Standard, Top Gun, Day Ops, and Flight Deck remain projections of the same state.
+- Direct manipulation surfaces show signal wires, inspector context, processor stages, undo/redo, and explicit graph errors while preserving existing focused Axes, Buttons, POV, Curve, Automation, and Adaptive Response workflows.
+- Analog destination collisions never create hidden fan-in: Replace, Average, Sum Clamped, and Highest Magnitude are explicit, documented mixer decisions with deterministic bounded runtime semantics.
+- Shared processors and mixer edits validate topology and revision before committing; a failed or stale command cannot overwrite newer focused-editor configuration.
+- Canonical topology compiles ahead of mapping into bounded runtime tables, so the DirectInput-to-vJoy report loop remains allocation-free and does not traverse QML or graph objects.
 
 ## Mapping Safety Controls
 
@@ -190,12 +201,13 @@ The application exposes physical input, transformed output, capacity, readiness,
 
 ## User Interface and Themes
 
-The app provides four persistent visual systems without allowing presentation state to alter mapping semantics.
+The app provides five persistent visual systems without allowing presentation state to alter mapping semantics.
 
 - Legacy theme preserving the v1.6.3 presentation.
 - Standard theme as the modern general-purpose interface.
 - Top Gun theme with naval-instrument surfaces, aviation-orange actions, brass/ivory/cyan telemetry accents, fighter artwork, wing badge, technical stripes, and themed footer/header treatments.
 - Day Ops is a dedicated bright naval-aviation theme: carrier-deck gray/aluminum surfaces, navy technical lettering, steel framing, safety-orange controls, and dark inset instrumentation graphs rather than generic light mode.
+- Flight Deck is a native, persisted fifth experience with its own navigation, workspace hierarchy, Light/Dark semantics, and Signal Flow surface rather than a recolored Standard page.
 - Instant theme switching with theme state stored separately from mapper configuration.
 - Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
 - Adaptive Response page and Flight Deck Response Lab with per-axis preset strip, Global/Category/Profile scope selection, three primary everyday-flight controls, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
@@ -271,6 +283,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 - Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.
 - Schema 24 and Adaptive Response schema 2 persist Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity across global, category, profile, device, custom-preset, and portable-profile resolution while missing fields inherit conservative Balanced values.
 - Schema 25 persists Profile automatic-selection policy only; Manual Override is runtime/session scoped and is never serialized. Schema-24-and-earlier categories migrate their saved default (or first profile) to Preferred and the remaining profiles to deterministic Fallback order.
+- Schema 28 persists canonical Signal Flow routes, processors, mixers, stable identities, and presentation metadata while preserving implicit focused-editor defaults during migration and portable-profile round trips.
 - Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.
 - Automation schema defaults new temporal fields deterministically.
 - Profile IDs remain stable for controls and readable summaries use profile names.

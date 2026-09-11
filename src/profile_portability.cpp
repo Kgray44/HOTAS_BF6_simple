@@ -3,6 +3,7 @@
 #include "adaptive_response.h"
 #include "config_store.h"
 #include "profile_model.h"
+#include "signal_flow_model.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -25,8 +26,8 @@ constexpr qsizetype kMaximumPortableFileBytes = 5 * 1024 * 1024;
 // Profile and Pack schemas deliberately advance independently.  They happen
 // to start at the same revision, but a future Pack addition must not make a
 // standalone Profile unreadable (or vice versa).
-constexpr int kPortableProfileSchemaVersion = 1;
-constexpr int kPortablePackSchemaVersion = 1;
+constexpr int kPortableProfileSchemaVersion = 2;
+constexpr int kPortablePackSchemaVersion = 2;
 
 QString localPath(const QString &fileName)
 {
@@ -413,6 +414,8 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
         }
     }
 
+    QStringList resolvedProfileList = resolvedProfileIds.values();
+    resolvedProfileList.sort(Qt::CaseSensitive);
     QJsonObject payload{
         {u"categories"_qs, categories},
         {u"profiles"_qs, profiles},
@@ -422,6 +425,8 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
         {u"outputLayouts"_qs, layouts},
         {u"profileTriggers"_qs, ConfigStore::portableProfileTriggersToJson(profileTriggers)},
         {u"povProfileTriggers"_qs, ConfigStore::portablePovProfileTriggersToJson(povProfileTriggers)},
+        {u"signalFlow"_qs, ConfigStore::portableSignalFlowTopologyToJson(
+            configuration.signalFlow, resolvedProfileList)},
     };
     if (kind == PortableConfigurationKind::Pack) {
         payload.insert(u"adaptiveResponseGlobal"_qs,
@@ -456,6 +461,7 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
                                        {u"includesGameDetection"_qs, includeGameDetection},
                                        {u"includesAdaptiveResponseGlobal"_qs,
                                         kind == PortableConfigurationKind::Pack},
+                                       {u"includesSignalFlowTopology"_qs, true},
                                        {u"profileCount"_qs, static_cast<int>(resolvedProfileIds.size())},
                                        {u"categoryCount"_qs, static_cast<int>(selectedCategoryIds.size())},
                                        {u"sourceController"_qs, sourceController
@@ -603,7 +609,7 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     const int expectedSchema = kind == PortableConfigurationKind::Profile
         ? kPortableProfileSchemaVersion : kPortablePackSchemaVersion;
     const int suppliedSchema = root.value(u"schemaVersion"_qs).toInt();
-    if (suppliedSchema != expectedSchema) {
+    if (suppliedSchema != 1 && suppliedSchema != expectedSchema) {
         const QString label = kind == PortableConfigurationKind::Profile ? u"Profile"_qs : u"Pack"_qs;
         setError(error, suppliedSchema > expectedSchema
             ? QString(u"This %1 was created with a newer unsupported format. Update HOTAS BF6 to import it."_qs).arg(label)
@@ -634,6 +640,13 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     parsed.includesDevices = manifest.value(u"includesDevices"_qs).toBool(false);
     parsed.includesCalibration = parsed.includesDevices && manifest.value(u"includesCalibration"_qs).toBool(false);
     parsed.includesAdaptiveResponseGlobal = manifest.value(u"includesAdaptiveResponseGlobal"_qs).toBool(false);
+    parsed.includesSignalFlowTopology = suppliedSchema >= 2;
+    if (parsed.includesSignalFlowTopology
+        && (!manifest.value(u"includesSignalFlowTopology"_qs).toBool(false)
+            || !ConfigStore::portableSignalFlowTopologyFromJson(payload.value(u"signalFlow"_qs),
+                                                                  &parsed.signalFlow))) {
+        setError(error, u"The portable configuration has invalid Signal Flow topology"_qs); return false;
+    }
     if (parsed.includesAdaptiveResponseGlobal
         && !ConfigStore::portableAdaptiveResponseLayerFromJson(payload.value(u"adaptiveResponseGlobal"_qs),
                                                                 &parsed.adaptiveResponseGlobal)) {
@@ -667,6 +680,32 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
                 [&profileId](const ControllerProfile &candidate) { return candidate.id == profileId; });
             if (profile == parsed.profiles.cend() || profile->categoryId != category.id) {
                 setError(error, u"The portable configuration has an invalid category membership"_qs); return false;
+            }
+        }
+    }
+    if (parsed.includesSignalFlowTopology) {
+        const auto scopeAvailable = [&parsed, &profileIds](const QString &profileId,
+                                                            const QString &controllerRecordId) {
+            if (!profileIds.contains(profileId)) return false;
+            const auto profile = std::find_if(parsed.profiles.cbegin(), parsed.profiles.cend(),
+                [&profileId](const ControllerProfile &candidate) { return candidate.id == profileId; });
+            if (profile == parsed.profiles.cend()) return false;
+            if (controllerRecordId.isEmpty()) return profile->deviceMappings.empty();
+            return findDeviceProfileMapping(*profile, controllerRecordId) != nullptr;
+        };
+        for (const SignalFlowRoute &route : parsed.signalFlow.routes) {
+            if (!scopeAvailable(route.profileId, route.controllerRecordId)) {
+                setError(error, u"A Signal Flow route references a missing portable profile scope"_qs); return false;
+            }
+        }
+        for (const SignalFlowMixer &mixer : parsed.signalFlow.mixers) {
+            if (!scopeAvailable(mixer.profileId, mixer.controllerRecordId)) {
+                setError(error, u"A Signal Flow mixer references a missing portable profile scope"_qs); return false;
+            }
+        }
+        for (const SignalFlowSharedProcessor &processor : parsed.signalFlow.sharedProcessors) {
+            if (!scopeAvailable(processor.profileId, processor.controllerRecordId)) {
+                setError(error, u"A shared Signal Flow processor references a missing portable profile scope"_qs); return false;
             }
         }
     }
@@ -1050,6 +1089,77 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
         ProfileCategory *category = findProfileCategory(candidate, destinationCategoryId);
         category->profileIds.push_back(candidate.profiles.back().id);
         if (category->defaultProfileId.isEmpty()) category->defaultProfileId = candidate.profiles.back().id;
+    }
+
+    if (bundle.includesSignalFlowTopology) {
+        const SignalFlowState &sourceTopology = bundle.signalFlow;
+        SignalFlowState &destinationTopology = candidate.signalFlow;
+        if (destinationTopology.routes.size() + sourceTopology.routes.size() > kMaximumSignalFlowRoutes
+            || destinationTopology.mixers.size() + sourceTopology.mixers.size() > kMaximumSignalFlowMixers
+            || destinationTopology.sharedProcessors.size() + sourceTopology.sharedProcessors.size()
+                > kMaximumSignalFlowSharedProcessors) {
+            setError(error, u"The portable configuration exceeds the bounded Signal Flow topology limits"_qs);
+            return false;
+        }
+        const auto routeKind = [](SignalFlowPortKind kind) {
+            switch (kind) {
+            case SignalFlowPortKind::Axis: return u"axis"_qs;
+            case SignalFlowPortKind::Button: return u"button"_qs;
+            case SignalFlowPortKind::PovDirection: return u"pov"_qs;
+            case SignalFlowPortKind::NativePov: return u"native-pov"_qs;
+            }
+            return QString{};
+        };
+        for (SignalFlowRoute route : sourceTopology.routes) {
+            const QString importedProfileId = profileIds.value(route.profileId);
+            ControllerProfile *importedProfile = findProfile(candidate, importedProfileId);
+            if (!importedProfile) {
+                setError(error, u"A Signal Flow route could not be remapped to its imported profile"_qs);
+                return false;
+            }
+            route.profileId = importedProfileId;
+            route.id.clear();
+            route.processorPath.clear();
+            route.identityKey = route.primaryProjection
+                ? signalFlowRouteIdentityKey(*importedProfile, route.controllerRecordId,
+                    routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex)
+                : signalFlowFanoutRouteIdentityKey(*importedProfile, route.controllerRecordId,
+                    routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex,
+                    route.destinationKind, route.destinationIndex, route.destinationSubIndex);
+            destinationTopology.routes.push_back(std::move(route));
+        }
+        for (SignalFlowMixer mixer : sourceTopology.mixers) {
+            const QString importedProfileId = profileIds.value(mixer.profileId);
+            ControllerProfile *importedProfile = findProfile(candidate, importedProfileId);
+            if (!importedProfile) {
+                setError(error, u"A Signal Flow mixer could not be remapped to its imported profile"_qs);
+                return false;
+            }
+            mixer.profileId = importedProfileId;
+            mixer.id.clear();
+            mixer.identityKey = signalFlowMixerIdentityKey(*importedProfile,
+                                                           mixer.controllerRecordId,
+                                                           mixer.destinationAxis);
+            destinationTopology.mixers.push_back(std::move(mixer));
+        }
+        for (SignalFlowSharedProcessor processor : sourceTopology.sharedProcessors) {
+            const QString importedProfileId = profileIds.value(processor.profileId);
+            ControllerProfile *importedProfile = findProfile(candidate, importedProfileId);
+            if (!importedProfile) {
+                setError(error, u"A shared Signal Flow processor could not be remapped to its imported profile"_qs);
+                return false;
+            }
+            processor.profileId = importedProfileId;
+            processor.id.clear();
+            processor.identityKey = signalFlowSharedProcessorIdentityKey(*importedProfile,
+                processor.controllerRecordId, processor.kind, processor.ownerAxis);
+            destinationTopology.sharedProcessors.push_back(std::move(processor));
+        }
+        destinationTopology.topologyVersion = std::max(destinationTopology.topologyVersion, 1);
+        if (warnings && (!sourceTopology.routes.empty() || !sourceTopology.mixers.empty()
+                         || !sourceTopology.sharedProcessors.empty())) {
+            warnings->append(u"Imported canonical Signal Flow routes with fresh local identity lifecycle records"_qs);
+        }
     }
 
     for (const AutomationDefinition &source : bundle.automations) {

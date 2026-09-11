@@ -55,8 +55,14 @@ int main(int argc, char *argv[])
         return *repairExit;
     }
     const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
+    // Manual qualification needs the real interactive QML surface without
+    // attaching to the owner's active mapper or persisted settings.  This is
+    // intentionally distinct from startup smoke: it isolates QSettings and
+    // asks AppBackend to keep its smoke-safe hardware boundary, but still
+    // enters the normal event loop for native pointer review.
+    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
-    if (isolatedStartupSmoke) {
+    if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established
         // QSettings location. CI upgrade acceptance intentionally uses the
         // ordinary smoke argument so it can verify the seeded migration.

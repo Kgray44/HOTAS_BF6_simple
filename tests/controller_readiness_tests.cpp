@@ -325,6 +325,7 @@ private slots:
     void diagnosticsAreScopedSanitizedAndCopyable();
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
+    void canonicalSignalFlowFanOutContributesOutputRequirements();
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisCapabilitySupersetIsReady();
     void vjoyShortSliderAliasesRemainReady();
@@ -807,6 +808,43 @@ void ControllerReadinessTests::requirementsCoverProfilesAutomationAndExtendedAxe
     const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(configuration);
     QVERIFY(requirements.axes[static_cast<int>(VirtualAxis::Slider1)]);
     QCOMPARE(requirements.buttons, 64);
+}
+
+void ControllerReadinessTests::canonicalSignalFlowFanOutContributesOutputRequirements()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    const QString profileId = configuration.profiles.front().id;
+    configuration.signalFlow.topologyVersion = 1;
+    SignalFlowRoute axis;
+    axis.profileId = profileId;
+    axis.sourceKind = SignalFlowPortKind::Axis;
+    axis.sourceIndex = 0;
+    axis.destinationKind = SignalFlowPortKind::Axis;
+    axis.destinationIndex = static_cast<int>(VirtualAxis::Slider1);
+    SignalFlowRoute button;
+    button.profileId = profileId;
+    button.sourceKind = SignalFlowPortKind::Button;
+    button.sourceIndex = 0;
+    button.destinationKind = SignalFlowPortKind::Button;
+    button.destinationIndex = 47;
+    SignalFlowRoute continuousPov;
+    continuousPov.profileId = profileId;
+    continuousPov.sourceKind = SignalFlowPortKind::NativePov;
+    continuousPov.sourceIndex = 0;
+    continuousPov.destinationKind = SignalFlowPortKind::NativePov;
+    continuousPov.destinationIndex = 1;
+    continuousPov.destinationSubIndex = static_cast<int>(NativePovTargetType::Continuous);
+    SignalFlowRoute discretePov = continuousPov;
+    discretePov.destinationIndex = 2;
+    discretePov.destinationSubIndex = static_cast<int>(NativePovTargetType::Discrete);
+    configuration.signalFlow.routes = {axis, button, continuousPov, discretePov};
+
+    const MapperOutputRequirements requirements = ControllerReadinessService::requirementsFor(configuration);
+    QVERIFY(requirements.axes[static_cast<int>(VirtualAxis::Slider1)]);
+    QCOMPARE(requirements.buttons, 47);
+    QCOMPARE(requirements.continuousPovs, 1);
+    QCOMPARE(requirements.discretePovs, 2);
+    QVERIFY(requirements.incompatiblePovMix);
 }
 
 void ControllerReadinessTests::buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout()

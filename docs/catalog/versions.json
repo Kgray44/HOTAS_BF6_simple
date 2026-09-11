@@ -655,5 +655,17 @@
       "Rig editing continues to feed the canonical Profile and Activation Resolver state immediately. Optional offline controllers remain non-blocking; required unavailable, ambiguous, or unverified controllers remain ineligible according to backend policy.",
       "Flight Deck Rig forms, details, confirmations, transient feedback, and supported-width QML lifecycle coverage keep controls reachable and acknowledge normal actions without leaving permanent banners over the page."
     ]
+  },
+  {
+    "version": "2.6.0",
+    "title": "Signal Flow",
+    "summary": "Adds a canonical editable Signal Flow workspace while preserving the bounded DirectInput-to-vJoy mapping runtime and the established focused editors.",
+    "highlights": [
+      "Stable canonical routes, endpoints, processors, mixers, and workspace metadata persist with profile configuration. Existing Axes, Buttons, POV, Curve, Automation, and Adaptive Response editors remain projections of that same state rather than parallel configuration stores.",
+      "Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude choice. Mixer behavior is deterministic and bounded; no hidden analog fan-in can be created by a focused editor or the graph.",
+      "Signal Flow provides direct manipulation, visible wire routing, contextual inspection, and revision-aware undo/redo across Legacy, Standard, Top Gun, Day Ops, and a native Flight Deck surface. Flight Deck remains its own presentation architecture, not a recolored Standard workspace.",
+      "Schema 28 migrates canonical topology and preserves implicit focused-editor button defaults through persistence, focused-editor edits, and portable-profile round trips.",
+      "Qualification covers topology/migration, collision semantics, focused-editor projection, QML lifecycle/source contracts, isolated snapshot capture, and the synthetic zero-allocation mapping benchmark. Physical controller-to-vJoy, installer interaction, signing, and public-release claims require their separate release evidence."
+    ]
   }
 ]

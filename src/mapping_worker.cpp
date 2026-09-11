@@ -1087,6 +1087,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     VirtualButtonStates lastVirtualButtonStates{};
     std::array<int, kMaximumPhysicalPovs> lastNativePovValues{};
     lastNativePovValues.fill(-2); // -1 is a valid centered output value.
+    std::array<int, kMaximumRuntimeSignalFlowNativePovRoutes> lastSignalFlowNativePovValues{};
+    lastSignalFlowNativePovValues.fill(-2); // -1 is a valid centered output value.
     int vjoyButtonCapacity = 0;
     int vjoyContinuousPovCapacity = 0;
     int vjoyDiscretePovCapacity = 0;
@@ -1200,6 +1202,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         // the normal button diff loop releases/asserts changed routes.
         lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         lastNativePovValues.fill(-2);
+        lastSignalFlowNativePovValues.fill(-2);
         clearVirtualAxisSnapshot();
         for (AxisHysteresisState &state : hysteresisStates) state = {};
         for (AxisCenterResolverState &state : centerResolverStates) state = {};
@@ -1237,6 +1240,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         lastActualVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
         axisTransitions.clear();
         lastNativePovValues.fill(-1);
+        lastSignalFlowNativePovValues.fill(-1);
         clearVirtualButtonSnapshot();
         for (std::atomic<float> &value : m_runtime.virtualValues) value = 0.0F;
         for (AxisHysteresisState &state : hysteresisStates) state = {};
@@ -1390,6 +1394,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.vjoyContinuousPovCount = vjoyContinuousPovCapacity;
             m_runtime.vjoyDiscretePovCount = vjoyDiscretePovCapacity;
             lastNativePovValues.fill(-2);
+            lastSignalFlowNativePovValues.fill(-2);
             emit hardwareStateChanged();
         }
         suggestDefaultButtonsIfNeeded();
@@ -1462,6 +1467,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         clearVirtualAxisSnapshot();
         rebuildButtonTargets();
         lastNativePovValues.fill(-2);
+        lastSignalFlowNativePovValues.fill(-2);
         if (configuration.vjoyDeviceId != previousVjoyDeviceId && m_runtime.mappingActive.load()) {
             quiesceVirtualController();
             vjoy.release();
@@ -1897,14 +1903,12 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         // work outside this real-time path.
         std::array<bool, kPhysicalAxisCount> routableAxes{};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            const int target = static_cast<int>(activeMapping->axes[static_cast<size_t>(index)].profile.target);
             routableAxes[static_cast<size_t>(index)] = availableAxes[static_cast<size_t>(index)]
-                && !fixedAxes[static_cast<size_t>(index)]
-                && target > 0 && target < kVirtualAxisSlotCount
-                && outputLayoutAxes[static_cast<size_t>(target)];
+                && !fixedAxes[static_cast<size_t>(index)];
         }
         const VirtualAxisOutputPlan axisOutputPlan = buildVirtualAxisOutputPlan(
-            *activeMapping, routableAxes, transformedAxes, configuration.disabledAxisValue);
+            *activeMapping, routableAxes, transformedAxes, outputLayoutAxes,
+            configuration.disabledAxisValue);
         std::array<float, kVirtualAxisSlotCount> output = axisOutputPlan.values;
         virtualAxisSources = axisOutputPlan.sourceIndexes;
         const std::uint64_t transitionNowUs = static_cast<std::uint64_t>(
@@ -1972,6 +1976,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 quiesceVirtualController();
                 lastVirtualValues.fill(std::numeric_limits<float>::quiet_NaN());
                 lastNativePovValues.fill(-2);
+                lastSignalFlowNativePovValues.fill(-2);
                 m_runtime.mappingActive = true;
                 m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Active);
                 m_runtime.outputNeutralized = false;
@@ -2011,10 +2016,15 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 }
             }
 
-            VirtualButtonStates desiredButtons = mapButtonStates(
-                latestPhysicalButtons, runtimeButtonTargets, vjoyButtonCapacity);
-            mapPovStates(desiredButtons, latestPovValues, m_runtime.povCount.load(),
-                         runtimePovTargets, vjoyButtonCapacity);
+            VirtualButtonStates desiredButtons = activeMapping->signalFlowTopologyCompiled
+                ? mapSignalFlowDigitalStates(latestPhysicalButtons, latestPovValues,
+                    m_runtime.povCount.load(), *activeMapping, runtimeButtonTargets,
+                    runtimePovTargets, vjoyButtonCapacity)
+                : mapButtonStates(latestPhysicalButtons, runtimeButtonTargets, vjoyButtonCapacity);
+            if (!activeMapping->signalFlowTopologyCompiled) {
+                mapPovStates(desiredButtons, latestPovValues, m_runtime.povCount.load(),
+                             runtimePovTargets, vjoyButtonCapacity);
+            }
             if (automationEffects) {
                 for (int target = 1; target <= vjoyButtonCapacity; ++target) {
                     desiredButtons[static_cast<size_t>(target)] = desiredButtons[static_cast<size_t>(target)]
@@ -2033,23 +2043,50 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                     outputChanged = true;
                 }
             }
-            // Native POV passthrough is deliberately a separate path from
-            // direction-to-button and profile-control handling. It preserves
-            // a continuous DirectInput angle whenever vJoy exposes one.
+            // Native POV passthrough is deliberately separate from
+            // direction-to-button/profile-control handling. Canonical Signal
+            // Flow supports one physical hat fanning out to multiple vJoy POV
+            // endpoints; legacy configurations retain their compact binding
+            // loop until topology reconciliation has occurred.
             const int nativePovHats = std::min(m_runtime.povCount.load(), kMaximumPhysicalPovs);
-            for (int hat = 0; hat < nativePovHats; ++hat) {
-                const NativePovBinding &binding = activeProfileCache->nativePovBindings[static_cast<size_t>(hat)];
-                const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
-                    ? binding.targetIndex <= vjoyContinuousPovCapacity
-                    : binding.targetType == NativePovTargetType::Discrete
-                        && binding.targetIndex <= vjoyDiscretePovCapacity;
-                if (!binding.enabled || !targetAvailable) continue;
-                const int desired = latestPovValues[static_cast<size_t>(hat)];
-                if (desired == lastNativePovValues[static_cast<size_t>(hat)]) continue;
-                if (vjoy.setPov(binding, desired)) {
-                    lastNativePovValues[static_cast<size_t>(hat)] = desired;
-                    ++m_runtime.vjoyWrites;
-                    outputChanged = true;
+            if (activeMapping->signalFlowTopologyCompiled) {
+                const int routeCount = std::clamp(activeMapping->signalFlowNativePovRouteCount, 0,
+                                                   kMaximumRuntimeSignalFlowNativePovRoutes);
+                for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                    const RuntimeSignalFlowNativePovRoute &route = activeMapping->signalFlowNativePovRoutes[
+                        static_cast<size_t>(routeIndex)];
+                    const int source = route.sourcePov;
+                    const int target = route.destinationIndex;
+                    const NativePovTargetType type = static_cast<NativePovTargetType>(route.destinationType);
+                    const bool targetAvailable = type == NativePovTargetType::Continuous
+                        ? target >= 1 && target <= vjoyContinuousPovCapacity
+                        : type == NativePovTargetType::Discrete
+                            && target >= 1 && target <= vjoyDiscretePovCapacity;
+                    if (source < 0 || source >= nativePovHats || !targetAvailable) continue;
+                    const int desired = latestPovValues[static_cast<size_t>(source)];
+                    if (desired == lastSignalFlowNativePovValues[static_cast<size_t>(routeIndex)]) continue;
+                    const NativePovBinding binding{true, type, target};
+                    if (vjoy.setPov(binding, desired)) {
+                        lastSignalFlowNativePovValues[static_cast<size_t>(routeIndex)] = desired;
+                        ++m_runtime.vjoyWrites;
+                        outputChanged = true;
+                    }
+                }
+            } else {
+                for (int hat = 0; hat < nativePovHats; ++hat) {
+                    const NativePovBinding &binding = activeProfileCache->nativePovBindings[static_cast<size_t>(hat)];
+                    const bool targetAvailable = binding.targetType == NativePovTargetType::Continuous
+                        ? binding.targetIndex <= vjoyContinuousPovCapacity
+                        : binding.targetType == NativePovTargetType::Discrete
+                            && binding.targetIndex <= vjoyDiscretePovCapacity;
+                    if (!binding.enabled || !targetAvailable) continue;
+                    const int desired = latestPovValues[static_cast<size_t>(hat)];
+                    if (desired == lastNativePovValues[static_cast<size_t>(hat)]) continue;
+                    if (vjoy.setPov(binding, desired)) {
+                        lastNativePovValues[static_cast<size_t>(hat)] = desired;
+                        ++m_runtime.vjoyWrites;
+                        outputChanged = true;
+                    }
                 }
             }
             if (outputChanged && latestMeaningfulInputSequence > lastPublishedMeaningfulInputSequence) {
@@ -2134,6 +2171,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         std::array<bool, kVirtualAxisSlotCount> axes{};
         std::array<float, kVirtualAxisSlotCount> lastAxes{};
         VirtualButtonStates lastButtons{};
+        std::array<std::array<int, kMaximumPhysicalPovs + 1>, 3> lastNativePovs{};
         int buttonCapacity = 0;
         int continuousPovCapacity = 0;
         int discretePovCapacity = 0;
@@ -2141,7 +2179,11 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         bool acquired = false;
         std::chrono::steady_clock::time_point nextCheck{};
 
-        OutputSession() { lastAxes.fill(std::numeric_limits<float>::quiet_NaN()); }
+        OutputSession()
+        {
+            lastAxes.fill(std::numeric_limits<float>::quiet_NaN());
+            for (auto &values : lastNativePovs) values.fill(-2);
+        }
     };
 
     std::array<InputSession, kMaximumDeviceRigMembers> inputs{};
@@ -2207,6 +2249,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         output.acquired = false;
         output.lastAxes.fill(std::numeric_limits<float>::quiet_NaN());
         output.lastButtons.fill(false);
+        for (auto &values : output.lastNativePovs) values.fill(-2);
     };
     const auto quiesceOutput = [this, &outputs](OutputSession &output) {
         const auto outputIndex = static_cast<size_t>(&output - outputs.data());
@@ -2238,6 +2281,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         }
         output.lastAxes.fill(0.0F);
         output.lastButtons.fill(false);
+        for (auto &values : output.lastNativePovs) values.fill(-1);
     };
     const auto refreshOutput = [this](OutputSession &output, QString *status) {
         if (!output.configured) return false;
@@ -2618,23 +2662,32 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         InputSession &input = inputs[static_cast<size_t>(memberIndex)];
                         if (!input.connected || input.member->outputIndex != outputIndex) continue;
                         mappedInputSequence = std::max(mappedInputSequence, input.latestMeaningfulInputSequence);
+                        std::array<bool, kPhysicalAxisCount> routableAxes = input.availableAxes;
                         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                            const int target = static_cast<int>(input.member->mapping.axes[static_cast<size_t>(axis)].profile.target);
-                            if (input.availableAxes[static_cast<size_t>(axis)]
-                                && !input.member->fixedAxes[static_cast<size_t>(axis)]
-                                && target > 0 && target < kVirtualAxisSlotCount
-                                && output.axes[static_cast<size_t>(target)]) {
-                                desiredAxes[static_cast<size_t>(target)] = input.transformed[static_cast<size_t>(axis)];
+                            routableAxes[static_cast<size_t>(axis)] = routableAxes[static_cast<size_t>(axis)]
+                                && !input.member->fixedAxes[static_cast<size_t>(axis)];
+                        }
+                        const VirtualAxisOutputPlan localAxisPlan = buildVirtualAxisOutputPlan(
+                            input.member->mapping, routableAxes, input.transformed, output.axes,
+                            configuration.disabledAxisValue);
+                        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+                            if (output.axes[static_cast<size_t>(axis)]) {
+                                desiredAxes[static_cast<size_t>(axis)] = localAxisPlan.values[static_cast<size_t>(axis)];
                             }
                         }
                         const RuntimeButtonTargets buttonTargets = buildRuntimeButtonTargets(
                             input.member->mapping.buttons, output.buttonCapacity);
-                        VirtualButtonStates localButtons = mapButtonStates(input.monitor.snapshot().buttons,
-                            buttonTargets, output.buttonCapacity);
                         const RuntimePovTargets povTargets = buildRuntimePovTargets(
                             input.member->mapping.povs, output.buttonCapacity);
-                        mapPovStates(localButtons, input.monitor.snapshot().povs, input.povCount,
-                                     povTargets, output.buttonCapacity);
+                        const PhysicalInputSnapshot &snapshot = input.monitor.snapshot();
+                        VirtualButtonStates localButtons = input.member->mapping.signalFlowTopologyCompiled
+                            ? mapSignalFlowDigitalStates(snapshot.buttons, snapshot.povs, input.povCount,
+                                input.member->mapping, buttonTargets, povTargets, output.buttonCapacity)
+                            : mapButtonStates(snapshot.buttons, buttonTargets, output.buttonCapacity);
+                        if (!input.member->mapping.signalFlowTopologyCompiled) {
+                            mapPovStates(localButtons, snapshot.povs, input.povCount,
+                                         povTargets, output.buttonCapacity);
+                        }
                         for (int button = 1; button <= output.buttonCapacity; ++button) {
                             desiredButtons[static_cast<size_t>(button)] = desiredButtons[static_cast<size_t>(button)]
                                 || localButtons[static_cast<size_t>(button)]
@@ -2642,20 +2695,49 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                 || input.automationEffects.toggledButtons[static_cast<size_t>(button)]
                                 || input.automationEffects.pulsedButtons[static_cast<size_t>(button)];
                         }
-                        for (int pov = 0; pov < input.povCount && pov < kMaximumPhysicalPovs; ++pov) {
-                            const NativePovBinding &binding = input.member->nativePovBindings[static_cast<size_t>(pov)];
-                            const bool available = binding.targetType == NativePovTargetType::Continuous
-                                ? binding.targetIndex <= output.continuousPovCapacity
-                                : binding.targetType == NativePovTargetType::Discrete
-                                    && binding.targetIndex <= output.discretePovCapacity;
-                            const int desired = input.monitor.snapshot().povs[static_cast<size_t>(pov)];
-                            if (binding.enabled && available
-                                && desired != input.lastNativePovs[static_cast<size_t>(pov)]
-                                && output.vjoy.setPov(binding, desired)) {
-                                input.lastNativePovs[static_cast<size_t>(pov)] = desired;
-                                ++m_runtime.vjoyWrites;
-                                ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
-                                outputChanged = true;
+                        if (input.member->mapping.signalFlowTopologyCompiled) {
+                            const int routeCount = std::clamp(
+                                input.member->mapping.signalFlowNativePovRouteCount, 0,
+                                kMaximumRuntimeSignalFlowNativePovRoutes);
+                            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                                const RuntimeSignalFlowNativePovRoute &route =
+                                    input.member->mapping.signalFlowNativePovRoutes[static_cast<size_t>(routeIndex)];
+                                const int source = route.sourcePov;
+                                const int target = route.destinationIndex;
+                                const NativePovTargetType type = static_cast<NativePovTargetType>(route.destinationType);
+                                const bool available = type == NativePovTargetType::Continuous
+                                    ? target >= 1 && target <= output.continuousPovCapacity
+                                    : type == NativePovTargetType::Discrete
+                                        && target >= 1 && target <= output.discretePovCapacity;
+                                if (source < 0 || source >= input.povCount || !available) continue;
+                                const size_t typeIndex = static_cast<size_t>(type);
+                                const int desired = snapshot.povs[static_cast<size_t>(source)];
+                                if (desired == output.lastNativePovs[typeIndex][static_cast<size_t>(target)]) continue;
+                                const NativePovBinding binding{true, type, target};
+                                if (output.vjoy.setPov(binding, desired)) {
+                                    output.lastNativePovs[typeIndex][static_cast<size_t>(target)] = desired;
+                                    ++m_runtime.vjoyWrites;
+                                    ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                                    outputChanged = true;
+                                }
+                            }
+                        } else {
+                            for (int pov = 0; pov < input.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+                                const NativePovBinding &binding = input.member->nativePovBindings[static_cast<size_t>(pov)];
+                                const bool available = binding.targetType == NativePovTargetType::Continuous
+                                    ? binding.targetIndex <= output.continuousPovCapacity
+                                    : binding.targetType == NativePovTargetType::Discrete
+                                        && binding.targetIndex <= output.discretePovCapacity;
+                                if (!binding.enabled || !available) continue;
+                                const size_t typeIndex = static_cast<size_t>(binding.targetType);
+                                const int desired = snapshot.povs[static_cast<size_t>(pov)];
+                                if (desired == output.lastNativePovs[typeIndex][static_cast<size_t>(binding.targetIndex)]) continue;
+                                if (output.vjoy.setPov(binding, desired)) {
+                                    output.lastNativePovs[typeIndex][static_cast<size_t>(binding.targetIndex)] = desired;
+                                    ++m_runtime.vjoyWrites;
+                                    ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
+                                    outputChanged = true;
+                                }
                             }
                         }
                     }

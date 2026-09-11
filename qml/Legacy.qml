@@ -26,7 +26,9 @@ Page {
         control: "#10171b", controlDisabled: "#0c1013", controlPressed: "#29414a",
         controlHover: "#142128", buttonSurface: "#324f5a", buttonHover: "#456c78", buttonSecondary: "#222c32", buttonSecondaryHover: "#303d44",
         tooltip: "#151e23", selection: "#315a66", selectionCurrent: "#244650", orange: "#78aab9", cyan: "#8fc8c0",
-        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9"
+        warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9",
+        graphBackground: "#091116", graphGrid: "#294a55", graphInput: "#d0e1e2", graphOutput: "#8fc8c0",
+        graphPreview: "#5e9caf", graphLabel: "#8ba5ad", graphFrame: "#52717c"
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
@@ -43,10 +45,17 @@ Page {
     readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var nativePovTargetChoices: backend.nativePovTargetChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
+    readonly property var emptyAxisInfo: ({
+        index: -1, label: "", fixed: false, activityLabel: "", activityDetail: "", detail: "",
+        target: "Disabled", calibrated: 0, virtualRouted: false, virtualValid: false,
+        customName: "", hardwareLabel: "", rangeMode: "centered", outputAlias: "",
+        targetAvailable: false, inverted: false, deadzone: 0, hysteresis: 0, unipolar: false,
+        outputMinimum: -1, outputMaximum: 1, curveSummary: "Linear"
+    })
     // Repeater and selection transitions can briefly leave the chosen axis
     // absent. Keep bound panels concrete while separately preserving whether
     // an actual selection exists.
-    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex) || ({})
+    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex) || root.emptyAxisInfo
     readonly property bool hasSelectedAxis: Boolean(root.axisAt(backend.selectedAxisIndex))
     readonly property int loadedPageCount: (overviewPageLoader.item ? 1 : 0)
         + (settingsPageLoader.item ? 1 : 0)
@@ -57,6 +66,7 @@ Page {
         + (diagnosticsPageLoader.item ? 1 : 0)
         + (curveEditorLoader.item ? 1 : 0)
         + (automationPageLoader.item ? 1 : 0)
+        + (signalFlowPageLoader.item ? 1 : 0)
         + (adaptiveResponsePageLoader.item ? 1 : 0)
         + (devicesPageLoader.item ? 1 : 0)
 
@@ -70,6 +80,7 @@ Page {
         case 5: return profileLibraryLoader.item
         case 6: return curveEditorLoader.item
         case 7: return automationPageLoader.item
+        case 11: return signalFlowPageLoader.item
         case 8: return overviewPageLoader.item
         case 9: return adaptiveResponsePageLoader.item
         case 10: return devicesPageLoader.item
@@ -89,7 +100,9 @@ Page {
         })
     }
 
-    function axisAt(index) { return allAxes[index] }
+    function axisAt(index) {
+        return Number.isInteger(index) && index >= 0 && index < allAxes.length ? allAxes[index] : null
+    }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
     function axisSelectorModel() {
         const choices = []
@@ -1175,9 +1188,13 @@ Page {
                 MouseArea { id: updateIndicatorMouse; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor; onClicked: backend.handoffToLauncher() }
                 ToolTip { visible: updateIndicatorMouse.containsMouse; delay: 350
-                    text: "HOTAS BF6 " + backend.updateAvailableVersion + " is available"
+                    text: "HOTAS BF6 " + (backend.updateAvailableVersion || "") + " is available"
                     background: Panel { color: "#151e23"; border.color: "#52717c" }
-                    contentItem: Text { text: parent.text; color: "#dce7e8"; font.pixelSize: 10 } }
+                    contentItem: Text {
+                        text: "HOTAS BF6 " + (backend.updateAvailableVersion || "") + " is available"
+                        color: "#dce7e8"
+                        font.pixelSize: 10
+                    } }
             }
             Rectangle {
                 id: globalMappingControl
@@ -1265,7 +1282,7 @@ Page {
                 model: [
                     { label: "OVERVIEW", page: 8, future: false }, { label: "DEVICES", page: 10, future: false }, { label: "AXES", page: 0, future: false }, { label: "BUTTONS", page: 1, future: false },
                     { label: "PROFILES", page: 5, future: false }, { label: "CURVE EDITOR", page: 6, future: false },
-                    { label: "AUTOMATION", page: 7, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
+                    { label: "AUTOMATION", page: 7, future: false }, { label: "SIGNAL FLOW", page: 11, future: false }, { label: "ADAPTIVE RESPONSE", page: 9, future: false }, { label: "CALIBRATION", page: 2, future: false },
                     { label: "DIAGNOSTICS", page: 3, future: false }, { label: "SETTINGS", page: 4, future: false }
                 ]
                 delegate: Item {
@@ -1445,7 +1462,7 @@ Page {
                             Layout.alignment: Qt.AlignTop
                             spacing: 14
                             Panel { id: axisIdentityPanel; Layout.fillWidth: true; Layout.preferredHeight: 144
-                                property var info: root.selectedAxisInfo
+                                property var info: root.selectedAxisInfo || root.emptyAxisInfo
                                 color: "#e61a282e"; border.color: "#4b70818a"
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
                                     RowLayout { Layout.fillWidth: true
@@ -1468,7 +1485,7 @@ Page {
                                 }
                             }
                             Panel { id: liveTelemetryPanel; Layout.fillWidth: true; Layout.preferredHeight: 122
-                                property var info: root.selectedAxisInfo
+                                property var info: root.selectedAxisInfo || root.emptyAxisInfo
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
                                         Text { text: "CALIBRATED INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
@@ -1487,7 +1504,7 @@ Page {
                         }
                         Panel {
                             id: processingPanel
-                            property var info: root.selectedAxisInfo
+                            property var info: root.selectedAxisInfo || root.emptyAxisInfo
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignTop
                             // Processing controls grow with their content so the
@@ -2119,6 +2136,20 @@ Page {
             }
         }
         Loader {
+            id: signalFlowPageLoader
+            anchors.fill: parent
+            active: root.currentPage === 11
+            sourceComponent: Component {
+                SignalFlow {
+                    anchors.fill: parent
+                    visible: root.currentPage === 11
+                    backendObject: backend
+                    themeTokens: root.adaptiveThemeTokens
+                    legacy: true
+                }
+            }
+        }
+        Loader {
             id: adaptiveResponsePageLoader
             anchors.fill: parent
             active: root.currentPage === 9
@@ -2131,6 +2162,7 @@ Page {
     Dialog {
         id: legacyDeviceActionDialog
         modal: true
+        width: 420
         property string action: ""
         title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget all saved controllers?" : "Reset active-controller calibration?"
         standardButtons: Dialog.Cancel
@@ -2295,8 +2327,9 @@ Page {
         function onInputLearningChanged() {
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
             if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
-            if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()
-            if (!backend.inputLearning.active) inputLearningDialog.close()
+            if (backend.inputLearning.active && backend.inputLearning.kind !== "signal-flow"
+                    && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()
+            if (!backend.inputLearning.active || backend.inputLearning.kind === "signal-flow") inputLearningDialog.close()
         }
     }
     Dialog {
@@ -2308,7 +2341,8 @@ Page {
         title: "LEARN INPUT"
         standardButtons: Dialog.NoButton
         header: Item { implicitHeight: 0 }
-        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
+        onClosed: if (backend.inputLearning.active && backend.inputLearning.kind !== "signal-flow"
+                       && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
         contentItem: Column { width: 368; spacing: 12
             Text { width: parent.width; text: "LEARN INPUT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 11; font.bold: true }
@@ -2553,6 +2587,19 @@ Page {
  anchors.centerIn: parent
  modal: true
  width: 390
+ property string resolutionNotice: ""
+ function resolveConflict(decision) {
+     const result = backend.resolveAxisMappingConflict(root.conflictingAxis,
+                                                       root.conflictingTarget,
+                                                       decision,
+                                                       backend.signalFlowRevision)
+     if (result.success) {
+         resolutionNotice = ""
+         close()
+     } else {
+         resolutionNotice = String(result.message || "The route decision could not be applied.")
+     }
+ }
         title: "AXIS ROUTE CONFLICT"
  standardButtons: Dialog.NoButton
  header: Item { implicitHeight: 0 }
@@ -2560,14 +2607,17 @@ Page {
  spacing: 14
             Text { text: "AXIS ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width
- text: "This vJoy axis already has a source. Allowing it keeps both configured routes; the established row-order output policy resolves a shared live target."
+ text: "This vJoy axis already has a source. Replace it, or choose an explicit visible mixer. Signal Flow never creates a hidden analog merge."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
  font.pixelSize: 12 }
+            Text { width: parent.width; visible: axisConflictDialog.resolutionNotice.length > 0
+ text: axisConflictDialog.resolutionNotice; wrapMode: Text.WordWrap
+ color: "#ff8d94"; font.pixelSize: 11 }
             Row { spacing: 8
-            CommandButton { label: "ALLOW"
- onTriggered: { backend.setMapping(root.conflictingAxis, root.conflictingTarget, true)
- axisConflictDialog.close() } }
+            CommandButton { label: "REPLACE"; onTriggered: axisConflictDialog.resolveConflict("replace") }
+            CommandButton { label: "AVERAGE"; onTriggered: axisConflictDialog.resolveConflict("average") }
+            CommandButton { label: "HIGHEST"; onTriggered: axisConflictDialog.resolveConflict("highest-magnitude") }
             CommandButton { label: "CANCEL"; subdued: true; onTriggered: axisConflictDialog.close() }
             }
         }

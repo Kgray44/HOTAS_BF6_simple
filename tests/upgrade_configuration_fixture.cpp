@@ -18,7 +18,7 @@ namespace {
 using namespace Qt::StringLiterals;
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kExpectedPersistedSchemaVersion = 25;
+constexpr int kExpectedPersistedSchemaVersion = 28;
 
 QString settingsFilePath()
 {
@@ -100,7 +100,7 @@ bool assertMigratedFixture()
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
     if (!document.isObject()
         || document.object().value(QStringLiteral("version")).toInt() != kExpectedPersistedSchemaVersion) {
-        std::cerr << "Expected the installed mapper to persist schema 25.\n";
+        std::cerr << "Expected the installed mapper to persist schema 28.\n";
         return false;
     }
 
@@ -111,8 +111,9 @@ bool assertMigratedFixture()
         || configuration.automations.size() != 1
         || configuration.automations.front().name != QStringLiteral("Upgrade Automation")
         || configuration.profiles.empty() || configuration.outputLayouts.size() != 1
+        || configuration.signalFlow.topologyVersion < 1 || configuration.signalFlow.routes.empty()
         || !hasBundledBattlefieldHelicopterStarter(configuration)) {
-        std::cerr << "Migrated fixture lost application settings, profiles, or automation.\n";
+        std::cerr << "Migrated fixture lost application settings, profiles, automation, or signal flow.\n";
         return false;
     }
 
@@ -161,9 +162,9 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-fresh-v25"))) return assertFreshStarter() ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v25"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-fresh-v28"))) return assertFreshStarter() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v28"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v25, or --assert-v25 (optionally with --test-mode).\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v28, or --assert-v28 (optionally with --test-mode).\n";
     return 2;
 }

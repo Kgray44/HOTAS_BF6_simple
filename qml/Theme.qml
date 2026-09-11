@@ -6,10 +6,15 @@ import QtQuick 6.5
 QtObject {
     id: theme
 
-    readonly property bool topGun: themeManager.topGun
-    readonly property bool dayOps: themeManager.dayOps
+    // Shared visual primitives can be constructed in an isolated QML test or
+    // preview before Main.qml installs its context object.  Fall back to the
+    // Standard token family for that presentation-only interval rather than
+    // emitting repeated ReferenceErrors from every panel binding.
+    readonly property var manager: typeof themeManager !== "undefined" ? themeManager : null
+    readonly property bool topGun: manager ? manager.topGun : false
+    readonly property bool dayOps: manager ? manager.dayOps : false
     readonly property bool legacy: false
-    readonly property string name: themeManager.currentTheme
+    readonly property string name: manager ? manager.currentTheme : "Standard"
     readonly property string displayFont: topGun ? "Arial Narrow" : "Segoe UI Variable"
     readonly property string telemetryFont: topGun ? "Consolas" : "Consolas"
     readonly property int panelRadius: topGun ? 2 : dayOps ? 4 : 6

@@ -19,6 +19,7 @@ Flickable {
     property string routeNotice: ""
     property int conflictAxis: -1
     property string conflictTarget: ""
+    property string conflictNotice: ""
     signal navigateToPage(int page)
     signal requestAxisLearning(string target)
     signal requestQuickMap()
@@ -130,6 +131,22 @@ Flickable {
             routeNoticeAxis = axisIndex;
             routeNotice = "The requested route is not exposed by the current vJoy device. Open setup to review output availability.";
         }
+        return false;
+    }
+
+    function resolveMappingConflict(decision) {
+        const result = backend.resolveAxisMappingConflict(conflictAxis, conflictTarget, decision,
+                                                          backend.signalFlowRevision);
+        if (result.success) {
+            conflictNotice = "";
+            routeNoticeAxis = -1;
+            routeNotice = "";
+            routeConflictDialog.close();
+            return true;
+        }
+        conflictNotice = String(result.message || "The route decision could not be applied.");
+        routeNoticeAxis = conflictAxis;
+        routeNotice = conflictNotice;
         return false;
     }
 
@@ -1077,15 +1094,23 @@ Flickable {
             width: routeConflictDialog.availableWidth
             spacing: deck.space12
             Text {
-                text: "The requested output may already be used, or it is not currently exposed by vJoy."
+                text: "This vJoy axis already has a source. Replace it, or choose an explicit visible mixer."
                 color: deck.textPrimary
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
             Text {
-                text: "Use this route anyway only when duplicate routing is intentional. Otherwise open setup or choose another output."
+                text: "Signal Flow never creates a hidden analog merge. The chosen mixer remains visible and inspectable on the route."
                 color: deck.textMuted
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Text {
+                visible: root.conflictNotice.length > 0
+                text: root.conflictNotice
+                color: deck.fault
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
@@ -1102,12 +1127,19 @@ Flickable {
                     onClicked: routeConflictDialog.close()
                 }
                 DeckButton {
-                    text: "USE ANYWAY"
-                    Layout.preferredWidth: 102
-                    onClicked: {
-                        root.requestMapping(root.conflictAxis, root.conflictTarget, true);
-                        routeConflictDialog.close();
-                    }
+                    text: "REPLACE"
+                    Layout.preferredWidth: 88
+                    onClicked: root.resolveMappingConflict("replace")
+                }
+                DeckButton {
+                    text: "AVERAGE"
+                    Layout.preferredWidth: 88
+                    onClicked: root.resolveMappingConflict("average")
+                }
+                DeckButton {
+                    text: "HIGHEST"
+                    Layout.preferredWidth: 88
+                    onClicked: root.resolveMappingConflict("highest-magnitude")
                 }
             }
         }

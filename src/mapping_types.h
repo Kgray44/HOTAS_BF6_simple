@@ -831,6 +831,147 @@ struct CalibrationHistoryEntry {
     std::array<Calibration, kPhysicalAxisCount> calibration{};
 };
 
+// Signal Flow is the canonical topology layer. Existing focused editors retain
+// their axis/button/POV settings as the configuration surface for transforms,
+// but their route fields are a compatibility projection of this topology. The
+// mapper receives a bounded compilation of these records, never QML objects or
+// dynamic graph traversal.
+//
+// Keys are stable canonical endpoint/processor descriptors, while IDs are
+// durable opaque references used by the graph, diagnostics, undo, and deep
+// links. A retained inactive record is a tombstone: recreating a deleted route
+// receives a new lifecycle generation rather than borrowing the old identity.
+constexpr int kMaximumSignalFlowIdentityRecords = 4096;
+constexpr int kMaximumSignalFlowRoutes = 4096;
+constexpr int kMaximumSignalFlowMixers = 512;
+// A shared conditioner is a first-class topology object rather than a copy of
+// a card in the scene.  Keep it bounded with its actual source-axis membership
+// so compilation and migration remain predictably small.
+constexpr int kMaximumSignalFlowSharedProcessors = 512;
+constexpr int kMaximumSignalFlowProcessorPath = 16;
+constexpr int kMaximumSignalFlowWorkspaces = 128;
+constexpr int kMaximumSignalFlowNodeLayouts = 2048;
+constexpr int kMaximumSignalFlowPortGroupStates = 2048;
+
+enum class SignalFlowPortKind : int {
+    Axis = 0,
+    Button,
+    PovDirection,
+    NativePov,
+};
+
+// Analog fan-in is always explicit. The initial shipping mixer modes are
+// intentionally small, deterministic, allocation-free, and testable in the
+// compiled mapper. Additional modes must extend this enum and its compiler;
+// they may not appear as graph-only labels.
+enum class SignalFlowMixerMode : int {
+    Disabled = 0,
+    Average,
+    SumClamped,
+    HighestMagnitude,
+};
+
+struct SignalFlowIdentityRecord {
+    QString key;
+    QString id;
+    std::uint32_t generation = 0;
+    bool active = false;
+};
+
+struct SignalFlowRoute {
+    // identityKey resolves through routeIdentities. `id` is persisted as an
+    // integrity check and direct deep-link payload, and is reconciled to that
+    // identity record on load/mutation.
+    QString identityKey;
+    QString id;
+    QString profileId;
+    QString controllerRecordId;
+    SignalFlowPortKind sourceKind = SignalFlowPortKind::Axis;
+    int sourceIndex = -1;
+    int sourceSubIndex = -1;
+    SignalFlowPortKind destinationKind = SignalFlowPortKind::Axis;
+    int destinationIndex = -1;
+    int destinationSubIndex = -1;
+    // Exactly one route per legacy source slot is the focused-editor
+    // projection. Additional route records are native Signal Flow fan-out and
+    // remain visible rather than being folded into an ambiguous target field.
+    bool primaryProjection = false;
+    // Compatibility imports retain whether the focused editor considered a
+    // one-to-one digital binding an untouched default.  This is canonical
+    // route metadata, not a presentation hint: projecting the graph back to
+    // legacy controls must preserve the same explicit/default semantics.
+    bool implicitDefault = false;
+    bool enabled = true;
+    QStringList processorPath;
+};
+
+struct SignalFlowMixer {
+    QString identityKey;
+    QString id;
+    QString profileId;
+    QString controllerRecordId;
+    int destinationAxis = -1;
+    SignalFlowMixerMode mode = SignalFlowMixerMode::Disabled;
+    bool enabled = true;
+};
+
+// Several routed physical axes can deliberately refer to one conditioning
+// object.  The owner carries the focused-editor settings; reconciliation
+// mirrors that processor's durable settings to the member axes so the existing
+// fixed-size runtime compiler continues to execute the same signal chain.
+// This record is the authoritative sharing relation, not presentation state.
+struct SignalFlowSharedProcessor {
+    QString identityKey;
+    QString id;
+    QString profileId;
+    QString controllerRecordId;
+    QString kind;
+    int ownerAxis = -1;
+    std::vector<int> sourceAxes;
+    bool enabled = true;
+};
+
+struct SignalFlowWorkspaceState {
+    QString key;
+    float panX = 0.0F;
+    float panY = 0.0F;
+    float zoom = 1.0F;
+    QString wireStyle = u"smooth"_qs;
+    QString densityMode = u"detailed"_qs;
+    int inspectorWidth = 360;
+    bool layoutLocked = false;
+};
+
+struct SignalFlowNodeLayout {
+    QString workspaceKey;
+    QString objectId;
+    float x = 0.0F;
+    float y = 0.0F;
+    bool pinned = false;
+};
+
+struct SignalFlowPortGroupState {
+    QString workspaceKey;
+    QString cardId;
+    QString group;
+    bool collapsed = false;
+};
+
+struct SignalFlowState {
+    // `topologyVersion == 0` means a pre-topology (schema 26) state. The
+    // reconciler deterministically imports legacy profile/device routes once,
+    // preserving the identity records already backfilled by V2.6 phase 0.
+    int topologyVersion = 0;
+    std::vector<SignalFlowRoute> routes;
+    std::vector<SignalFlowMixer> mixers;
+    std::vector<SignalFlowSharedProcessor> sharedProcessors;
+    std::vector<SignalFlowIdentityRecord> routeIdentities;
+    std::vector<SignalFlowIdentityRecord> processorIdentities;
+    std::vector<SignalFlowWorkspaceState> workspaces;
+    std::vector<SignalFlowNodeLayout> nodeLayouts;
+    std::vector<SignalFlowPortGroupState> portGroups;
+};
+
 struct MapperConfiguration {
     QString preferredDeviceId;
     std::vector<SavedControllerRecord> savedControllers;
@@ -898,6 +1039,10 @@ struct MapperConfiguration {
     // absent field migrates to this ON/empty state, preserving v1.7 behavior.
     bool automationEnabled = true;
     std::vector<AutomationDefinition> automations;
+    // V2.6.0 canonical graph identity and presentation metadata.  Mapping
+    // semantics remain in profiles/device mappings until the Signal Flow
+    // compiler projects them; the worker never reads this field per report.
+    SignalFlowState signalFlow;
     QString activeProfileId;
 };
 
@@ -946,6 +1091,49 @@ inline VirtualOutputLayout *findOutputLayout(MapperConfiguration &configuration,
     return found == configuration.outputLayouts.end() ? nullptr : &*found;
 }
 
+constexpr int kMaximumRuntimeSignalFlowAxisRoutes = kPhysicalAxisCount
+    * (kVirtualAxisSlotCount - 1);
+// A canonical topology can contain a large number of digital fan-out legs.
+// Keep every compiled record in a fixed report-path table; configuration caps
+// the total route corpus at kMaximumSignalFlowRoutes, while source buckets
+// make an idle input report pay only for pressed/active sources.
+constexpr int kRuntimeSignalFlowDigitalSourceCount = kMaximumPhysicalButtons
+    + kMaximumPhysicalPovs * kPovDirectionCount;
+constexpr int kMaximumRuntimeSignalFlowDigitalRoutes = kMaximumSignalFlowRoutes;
+// vJoy exposes at most four continuous and four discrete POV targets. A
+// physical hat may deliberately fan out to each distinct target, so this
+// covers the complete source/destination space without a heap table.
+constexpr int kMaximumRuntimeSignalFlowNativePovRoutes = kMaximumPhysicalPovs
+    * kMaximumPhysicalPovs * 2;
+
+constexpr int signalFlowDigitalSourceSlot(SignalFlowPortKind kind, int index, int subIndex)
+{
+    if (kind == SignalFlowPortKind::Button) {
+        return index >= 0 && index < kMaximumPhysicalButtons ? index : -1;
+    }
+    if (kind == SignalFlowPortKind::PovDirection
+        && index >= 0 && index < kMaximumPhysicalPovs
+        && subIndex >= 0 && subIndex < kPovDirectionCount) {
+        return kMaximumPhysicalButtons + index * kPovDirectionCount + subIndex;
+    }
+    return -1;
+}
+
+struct RuntimeSignalFlowAxisRoute {
+    std::uint8_t sourceAxis = 0;
+    std::uint8_t destinationAxis = 0;
+};
+
+struct RuntimeSignalFlowDigitalRoute {
+    std::uint8_t destinationButton = 0;
+};
+
+struct RuntimeSignalFlowNativePovRoute {
+    std::uint8_t sourcePov = 0;
+    std::uint8_t destinationIndex = 0;
+    std::uint8_t destinationType = static_cast<std::uint8_t>(NativePovTargetType::Disabled);
+};
+
 // This is the complete, allocation-ready mapping payload compiled once when
 // configuration changes. The mapping loop only consumes this structure.
 struct RuntimeMappingConfiguration {
@@ -953,6 +1141,20 @@ struct RuntimeMappingConfiguration {
     ButtonBindings buttons;
     PovBindings povs;
     CurveTransitionSmoothingSettings curveTransitionSmoothing;
+    // Canonical graph topology compiled into fixed report-path tables. The
+    // fixed route tables preserve complete analog, digital, and native-POV
+    // fan-out without graph traversal or allocation on a DirectInput report.
+    std::array<RuntimeSignalFlowAxisRoute, kMaximumRuntimeSignalFlowAxisRoutes> signalFlowAxisRoutes{};
+    int signalFlowAxisRouteCount = 0;
+    std::array<RuntimeSignalFlowDigitalRoute, kMaximumRuntimeSignalFlowDigitalRoutes> signalFlowDigitalRoutes{};
+    std::array<std::uint16_t, kRuntimeSignalFlowDigitalSourceCount> signalFlowDigitalRouteOffsets{};
+    std::array<std::uint16_t, kRuntimeSignalFlowDigitalSourceCount> signalFlowDigitalRouteCounts{};
+    int signalFlowDigitalRouteCount = 0;
+    std::array<RuntimeSignalFlowNativePovRoute, kMaximumRuntimeSignalFlowNativePovRoutes>
+        signalFlowNativePovRoutes{};
+    int signalFlowNativePovRouteCount = 0;
+    bool signalFlowTopologyCompiled = false;
+    std::array<SignalFlowMixerMode, kVirtualAxisSlotCount> signalFlowAxisMixers{};
 };
 
 // A complete, immutable profile cache. All curve compilation happens while

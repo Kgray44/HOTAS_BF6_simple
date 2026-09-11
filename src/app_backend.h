@@ -215,6 +215,18 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantMap inputLearning READ inputLearning NOTIFY inputLearningChanged)
     Q_PROPERTY(QVariantList quickAssignAxisTargets READ quickAssignAxisTargets NOTIFY stateChanged)
     Q_PROPERTY(QVariantList quickMapButtonTargets READ quickMapButtonTargets NOTIFY stateChanged)
+    // Signal Flow is a low-frequency projection of the same persisted route
+    // fields used by Axes and Buttons/POVs. It is intentionally notified only
+    // at control-plane boundaries, never by DirectInput report telemetry.
+    Q_PROPERTY(QVariantMap signalFlowGraph READ signalFlowGraph NOTIFY signalFlowChanged)
+    Q_PROPERTY(qulonglong signalFlowRevision READ signalFlowRevision NOTIFY signalFlowChanged)
+    Q_PROPERTY(bool signalFlowCanUndo READ signalFlowCanUndo NOTIFY signalFlowChanged)
+    Q_PROPERTY(bool signalFlowCanRedo READ signalFlowCanRedo NOTIFY signalFlowChanged)
+    Q_PROPERTY(QString signalFlowActionFeedback READ signalFlowActionFeedback NOTIFY signalFlowChanged)
+    // A health/setup navigation target is identity-only state.  It lets the
+    // presentation restore the exact route or processor after the shell has
+    // navigated to Signal Flow without creating graph-local configuration.
+    Q_PROPERTY(QString signalFlowFocusObjectId READ signalFlowFocusObjectId NOTIFY signalFlowChanged)
 
 public:
     explicit AppBackend(QObject *parent = nullptr);
@@ -411,6 +423,12 @@ public:
     QVariantMap inputLearning() const;
     QVariantList quickAssignAxisTargets() const;
     QVariantList quickMapButtonTargets() const;
+    QVariantMap signalFlowGraph() const;
+    qulonglong signalFlowRevision() const { return m_configurationGeneration; }
+    bool signalFlowCanUndo() const;
+    bool signalFlowCanRedo() const;
+    QString signalFlowActionFeedback() const { return m_signalFlowActionFeedback; }
+    QString signalFlowFocusObjectId() const { return m_signalFlowFocusObjectId; }
     bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
     QVariantMap activationResolverState() const;
     bool manualActivationOverride() const { return m_manualActivationOverride; }
@@ -425,12 +443,23 @@ public:
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
     Q_INVOKABLE bool setMapping(int physicalAxis, const QString &target, bool explicitOverride = false);
+    // Focused axis editors use this deliberate conflict transaction instead
+    // of retaining the historic implicit row-order collision. `replace`
+    // removes competing analog sources; the supported mixer values create a
+    // durable, visible Signal Flow mixer before the configuration is applied.
+    Q_INVOKABLE QVariantMap resolveAxisMappingConflict(int physicalAxis, const QString &target,
+                                                        const QString &decision,
+                                                        qulonglong expectedRevision);
     Q_INVOKABLE void setAxisCustomName(int physicalAxis, const QString &name);
     Q_INVOKABLE void setAxisRangeMode(int physicalAxis, const QString &mode);
     Q_INVOKABLE void setVirtualAxisAlias(const QString &target, const QString &alias);
     Q_INVOKABLE bool startAxisLearning(const QString &target);
     Q_INVOKABLE bool startButtonLearning(int virtualButton);
     Q_INVOKABLE bool startPovLearning(int virtualButton);
+    // Source-first Signal Flow learning identifies one deliberate physical
+    // endpoint but deliberately does not create a route. QML then selects the
+    // canonical source port and presents only compatible virtual destinations.
+    Q_INVOKABLE bool startSignalFlowInputLearning();
     Q_INVOKABLE void retryInputLearning();
     Q_INVOKABLE void cancelInputLearning();
     Q_INVOKABLE bool resolveInputLearningConflict(const QString &resolution);
@@ -702,6 +731,50 @@ public:
     Q_INVOKABLE bool applyEditingAxisBatch(int physicalAxis, const QString &property,
                                            const QVariant &value, const QString &mode);
     Q_INVOKABLE bool deleteDeviceRig(const QString &rigId);
+    // Structured graph commands carry the caller's canonical revision. A
+    // gesture rendered against stale state is rejected before mutation rather
+    // than blindly replaying an obsolete preview over focused-editor work.
+    Q_INVOKABLE QVariantMap signalFlowConnect(const QString &sourceKind, int sourceIndex,
+                                              int sourceSubIndex, const QString &destination,
+                                              bool replaceConflicts, qulonglong expectedRevision);
+    // Analog fan-in is a separate intentional command.  Keeping it distinct
+    // from ordinary Connect makes an accidental merge impossible at the UI
+    // boundary and leaves the chosen runtime mixer mode in durable topology.
+    Q_INVOKABLE QVariantMap signalFlowConnectWithMixer(const QString &sourceKind, int sourceIndex,
+                                                       int sourceSubIndex, const QString &destination,
+                                                       const QString &mixerMode,
+                                                       qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowDisconnect(const QString &routeId,
+                                                 qulonglong expectedRevision);
+    // These are deliberately control-plane helpers. They resolve an existing
+    // canonical route into a beginner-readable explanation, a bounded latest
+    // snapshot for Live/Signal Focus, and atomic source-owned processor edits.
+    // None is called by MappingWorker's DirectInput report path.
+    Q_INVOKABLE QVariantMap signalFlowExplainRoute(const QString &routeId) const;
+    Q_INVOKABLE QVariantMap signalFlowLiveTelemetry() const;
+    Q_INVOKABLE QVariantMap signalFlowToggleProcessor(const QString &routeId,
+                                                       const QString &processorKind, bool enabled,
+                                                       qulonglong expectedRevision);
+    // A shared processor is a canonical, source-owned relation. The first
+    // route is its owner; later selected axis routes receive the same durable
+    // focused setting at the next configuration boundary.
+    Q_INVOKABLE QVariantMap signalFlowShareProcessor(const QStringList &routeIds,
+                                                      const QString &processorKind,
+                                                      qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowSplitSharedProcessor(const QString &routeId,
+                                                           const QString &processorKind,
+                                                           qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowDefaultPreview(const QString &mode) const;
+    Q_INVOKABLE QVariantMap signalFlowApplyDefaults(const QString &mode,
+                                                    qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowUndo(qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowRedo(qulonglong expectedRevision);
+    Q_INVOKABLE bool signalFlowSaveWorkspace(const QVariantMap &workspace);
+    Q_INVOKABLE bool signalFlowSaveNodeLayout(const QString &objectId, double x, double y,
+                                              bool pinned = false);
+    Q_INVOKABLE QVariantMap signalFlowSetPortGroupCollapsed(const QString &cardId,
+                                                             const QString &group, bool collapsed);
+    Q_INVOKABLE QVariantMap signalFlowAutoLayout();
     Q_INVOKABLE bool setActiveController(const QString &recordId);
     Q_INVOKABLE bool selectNewController(const QString &directInputId);
     Q_INVOKABLE bool forgetController(const QString &recordId);
@@ -731,6 +804,7 @@ signals:
     void eventLogChanged();
     void presentationStateChanged();
     void inputLearningChanged();
+    void signalFlowChanged();
     // Setup presentation must keep the discovered controller identity instead
     // of inferring a target from whichever controller is currently active.
     void controllerSetupRequested(const QStringList &targetDirectInputIds);
@@ -750,7 +824,7 @@ private:
         TrayHidden,
     };
 
-    enum class InputLearningKind { None, Axis, Button, Pov };
+    enum class InputLearningKind { None, Axis, Button, Pov, SignalFlowSource };
     enum class InputLearningPhase { Idle, Arming, Waiting, Ambiguous, Conflict, Assigned };
 
     struct InputLearningState {
@@ -774,6 +848,14 @@ private:
             values.fill(-1);
             return values;
         }()};
+    };
+
+    struct SignalFlowCommand {
+        MapperConfiguration before;
+        MapperConfiguration after;
+        quint64 undoRevision = 0;
+        quint64 redoRevision = 0;
+        QString description;
     };
 
     // UI-thread-only bounded history. The mapper publishes atomics; this
@@ -875,6 +957,22 @@ private:
     };
 
     void persistAndApply();
+    // A focused edit to the owner of a shared Signal Flow conditioner remains
+    // one configuration edit for every linked channel. A member edit is left
+    // independent so reconciliation can surface it as an explicit split.
+    void persistAxisProcessorEdit(const QString &kind, int physicalAxis);
+    void persistSelectedAxisProcessorEdit(const QString &kind);
+    void propagateProfileAdaptiveResponseIfShared(const QString &scope, const QString &targetId,
+                                                  int physicalAxis);
+    QVariantMap signalFlowActionResult(bool success, const QString &title, const QString &message,
+                                       const QString &objectId = {}) const;
+    QVariantMap signalFlowConnectInternal(const QString &sourceKind, int sourceIndex,
+                                          int sourceSubIndex, const QString &destination,
+                                          bool replaceConflicts, const QString &mixerMode,
+                                          qulonglong expectedRevision);
+    bool commitSignalFlowCommand(MapperConfiguration before, const QString &description);
+    QString signalFlowWorkspaceKey() const;
+    bool saveSignalFlowPresentation();
     void sampleAdaptiveResponseHistory();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
     void advanceAdaptiveResponseSimulator(float manualInput, const QString &scope,
@@ -991,6 +1089,11 @@ private:
     };
 
     MapperConfiguration m_configuration;
+    std::vector<SignalFlowCommand> m_signalFlowUndo;
+    std::vector<SignalFlowCommand> m_signalFlowRedo;
+    QString m_signalFlowActionFeedback;
+    QString m_signalFlowFocusObjectId;
+    bool m_signalFlowCommandInFlight = false;
     MappingWorker m_worker;
     // Canonical GUI-side desired Mapping state. It is updated synchronously
     // for every user click and reconciled from worker-side Automation changes.

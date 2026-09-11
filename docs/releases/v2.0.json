@@ -431,16 +431,163 @@
     "releaseTitle": "v2.3.2",
     "title": "Battlefield 6 Helicopter starter profile",
     "summary": "Adds a ready-to-customize Battlefield 6 / Helicopter starter profile derived from the project's working helicopter configuration.",
-    "status": "current",
-    "replacement": null,
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release. The governed tag workflow supplies the installer, checksum, update manifest, and public updater validation; controller compatibility remains dependent on each user's configured hardware and setup.",
+    "statusNote": "Historical stable release. The governed tag workflow supplied its installer, checksum, update manifest, and public updater validation; use v2.6.0 or newer for a new installation, and retain controller compatibility as a hardware- and setup-specific boundary.",
     "highlights": [
       "New installations receive the Battlefield 6 / Helicopter starter alongside the existing General / Normal and General / Precision profiles.",
       "Schema 22 adds the starter once during a safe upgrade, preserving existing profiles, active selection, controller configuration, calibration, curves, Automation, and unrelated categories.",
       "The starter is an ordinary editable profile: later changes and deletion persist, and user-created name collisions are never overwritten.",
       "The portable bundled resource preserves the tested mapping semantics and excludes local paths, DirectInput runtime handles, HidHide instance state, and calibration data.",
       "No Adaptive Response behavior or DirectInput-to-vJoy report-path work changed."
+    ]
+  },
+  {
+    "version": "2.4.0",
+    "tag": "v2.4.0",
+    "releaseTitle": "v2.4.0",
+    "title": "Device Rigs, simultaneous inputs, and Day Ops",
+    "summary": "Introduced reusable hardware Device Rigs that combine explicit DirectInput sources into one or more vJoy outputs while preserving bounded mapper processing and existing profile behavior.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Schema 23 migrates a safely resolved controller into a one-member Device Rig without treating offline or unverified state as an identity failure.",
+      "The mapper compiles fixed-size member/output topology outside report processing, handles explicit multi-input routing, and neutralizes configured affected outputs safely on disconnect.",
+      "The Devices workspace and one themed Setup & Verification system cover Physical Devices, Device Rigs, Virtual Outputs, identity, readiness, visibility, and live evidence without a parallel verifier.",
+      "Day Ops adds the fourth persisted presentation system with carrier-deck visual language while leaving mapper semantics unchanged."
+    ]
+  },
+  {
+    "version": "2.4.1",
+    "tag": "v2.4.1",
+    "releaseTitle": "v2.4.1",
+    "title": "Device setup reliability",
+    "summary": "Made saved-controller setup deterministic and diagnosable when a known HOTAS is present but DirectInput acquisition cannot complete.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Guided setup requests acquisition of the exact saved controller before verification begins and preserves a specific failure for an explicit retry.",
+      "Controller-readiness reporting separates saved identity, discovery, acquisition, verification, virtual-output, visibility, and live-route blockers.",
+      "Focused QML/backend contracts cover the Device Rigs workspace and setup transitions while the report path remains unchanged."
+    ]
+  },
+  {
+    "version": "2.5.0",
+    "tag": "v2.5.0",
+    "releaseTitle": "v2.5.0",
+    "title": "Flight Deck",
+    "summary": "Added Flight Deck as a complete persisted fifth presentation experience while preserving existing mapper configuration and the DirectInput-to-vJoy runtime.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Flight Deck presents the complete native workspace suite over existing backend commands and state, while profile browsing remains distinct from runtime activation.",
+      "The selector lists Legacy, Standard, Top Gun, Day Ops, and Flight Deck; Flight Deck keeps its own Light/Dark appearance state.",
+      "Qualification added native Light/Dark review, containment fixtures, scale checks, full CTest coverage, package smoke coverage, and a synthetic zero-allocation benchmark."
+    ]
+  },
+  {
+    "version": "2.5.1",
+    "tag": "v2.5.1",
+    "releaseTitle": "v2.5.1",
+    "title": "Flight Deck hardening and runtime bundle repair",
+    "summary": "Refined Flight Deck's shared navigation and device context while correcting the Windows package runtime required to initialize Qt outside a developer shell.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Flight Deck owns shared page title, Controller, Appearance, and selected-device context controls across primary workspaces.",
+      "Curve Editor, Profiles, and Adaptive Response receive Flight Deck hierarchy while retaining existing graph, profile, and predictor behavior.",
+      "Release staging verifies and includes the x64 Microsoft C++ runtime needed by the Qt Windows platform plugin."
+    ]
+  },
+  {
+    "version": "2.5.2",
+    "tag": "v2.5.2",
+    "releaseTitle": "v2.5.2",
+    "title": "Adaptive response authority overhaul",
+    "summary": "Improved Adaptive Response for ordinary deliberate flight-stick movement while retaining safety envelopes, bounded mapper architecture, and established presentation systems.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity independently tune everyday and maneuver authority while safety protections remain authoritative.",
+      "Schema 24 and Adaptive Response schema 2 preserve the controls across resolution layers, portability, and custom presets with conservative legacy defaults.",
+      "Flight Deck Response Lab exposes the controls and telemetry without changing predictor mathematics or the report path."
+    ]
+  },
+  {
+    "version": "2.5.3",
+    "tag": "v2.5.3",
+    "releaseTitle": "v2.5.3",
+    "title": "Flight Deck shared-surface polish",
+    "summary": "Aligned persistent Flight Deck control surfaces across routes and appearance modes without changing mapper behavior, device identity, curve mathematics, or the DirectInput-to-vJoy report path.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "The selected-device selector is shared across Flight Deck pages and continues to invoke the authoritative device-context command.",
+      "Flight Deck Light/Dark graph semantics and native tray palettes remain separate from Legacy, Standard, Top Gun, and Day Ops.",
+      "Hosted QML lifecycle coverage protects selector visibility and theme-routing contracts."
+    ]
+  },
+  {
+    "version": "2.5.4",
+    "tag": "v2.5.4",
+    "releaseTitle": "v2.5.4",
+    "title": "Hardware-aware Activation Resolver",
+    "summary": "Introduced one explainable low-frequency authority for automatic configuration selection without changing the DirectInput-to-vJoy mapping report path.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "One resolver evaluates Game/Application category, ordered profile policy, verified Device Rig, and available virtual output while retaining a valid active pair stably.",
+      "Schema 25 adds Preferred, Fallback, and Manual Only automatic-selection policy plus runtime-only Manual Override.",
+      "Flight Deck Profiles, Overview, Diagnostics, and Devices show resolver reasons, blockers, readiness, ordering, and the physical-visibility boundary."
+    ]
+  },
+  {
+    "version": "2.5.5",
+    "tag": "v2.5.5",
+    "releaseTitle": "v2.5.5",
+    "title": "Flight Deck Device Rig management",
+    "summary": "Completed the canonical Device Rig workflow inside Flight Deck while preserving the Activation Resolver and allocation-free mapper report path.",
+    "status": "historical-stable",
+    "replacement": "v2.6.0",
+    "syncToGitHubRelease": true,
+    "statusNote": "Historical published release. Use v2.6.0 or newer for a new installation; physical-controller, driver, and game acceptance remain environment-specific.",
+    "highlights": [
+      "Flight Deck Devices adds a first-class Device Rigs section with readiness, configured/in-use state, controller summaries, Virtual Output assignment, and safe actions.",
+      "Create and detail workflows reuse AppBackend's existing Device Rig commands; no Flight-Deck-specific Rig model or persistence store is introduced.",
+      "Profile-to-Rig deep links set viewing/editing context only and never activate a Rig merely by inspection."
+    ]
+  },
+  {
+    "version": "2.6.0",
+    "tag": "v2.6.0",
+    "releaseTitle": "v2.6.0",
+    "title": "Signal Flow",
+    "summary": "Adds a canonical editable Signal Flow workspace while preserving bounded DirectInput-to-vJoy mapping and the established focused editors.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "statusNote": "Current recommended release. The governed tag workflow supplies the installer, checksum, update manifest, and public updater validation; controller compatibility remains dependent on each user's configured hardware and setup.",
+    "highlights": [
+      "Stable canonical routes, endpoints, processors, mixers, and workspace metadata persist with profile configuration; existing focused editors project that same state rather than maintain parallel stores.",
+      "Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude choice. Mixer behavior is deterministic and bounded, and hidden analog fan-in is not created.",
+      "Signal Flow direct manipulation, visible wire routing, contextual inspection, and revision-aware undo/redo span Legacy, Standard, Top Gun, Day Ops, and a native Flight Deck surface rather than a recolored Standard workspace.",
+      "Schema 28 migrates canonical topology and preserves implicit focused-editor button defaults through persistence, focused-editor edits, and portable-profile round trips.",
+      "Qualification covers topology/migration, collision semantics, focused-editor projection, QML lifecycle/source contracts, isolated snapshot capture, and the synthetic zero-allocation mapping benchmark; physical controller-to-vJoy and signing claims retain their separate evidence boundaries."
     ]
   }
 ]

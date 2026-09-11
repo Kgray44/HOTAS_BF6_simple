@@ -20,17 +20,25 @@ Item {
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
     property var learningDialog: null
+    // Holds only the transient Signal Flow viewport/selection while one of
+    // Flight Deck's authoritative focused editors is shown.
+    property var signalFlowPresentationState: ({})
     readonly property int loadedPageCount: currentPage === 7
-        ? (automationPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
+        ? (automationPageLoader.item ? 1 : 0)
+        : currentPage === 11 ? (signalFlowPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
 
     function pageItem(page) {
         if (page === 7)
             return automationPageLoader.item;
+        if (page === 11)
+            return signalFlowPageLoader.item;
         return standardPageHost.pageItem(page);
     }
     function loadedPage(page) {
         if (page === 7)
             return automationPageLoader.item !== null;
+        if (page === 11)
+            return signalFlowPageLoader.item !== null;
         return standardPageHost.loadedPage(page);
     }
     function navigateTo(page) {
@@ -60,6 +68,8 @@ Item {
             return "Overview";
         case 9:
             return "Adaptive Response";
+        case 11:
+            return "Signal Flow";
         }
         return "Overview";
     }
@@ -67,7 +77,7 @@ Item {
         id: readinessModel
     }
     onCurrentPageChanged: {
-        standardPageHost.currentPage = currentPage === 7 ? -1 : currentPage;
+        standardPageHost.currentPage = currentPage === 7 || currentPage === 11 ? -1 : currentPage;
         if (currentPage === 1 && flightDeckButtonContext > 0)
             buttonContextTimer.restart();
     }
@@ -193,6 +203,7 @@ Item {
                                 { label: "Profiles", page: 5 },
                                 { label: "Adaptive Response", page: 9 },
                                 { label: "Automation", page: 7 },
+                                { label: "Signal Flow", page: 11 },
                                 { label: "Diagnostics", page: 3 },
                                 { label: "Settings", page: 4 }
                             ]
@@ -352,7 +363,7 @@ Item {
                         onCurrentPageChanged: {
                             if (currentPage === 7 && flightDeckAutomationContext.length > 0)
                                 root.flightDeckAutomationContext = flightDeckAutomationContext;
-                            if (root.currentPage !== 7 && root.currentPage !== currentPage)
+                            if (root.currentPage !== 7 && root.currentPage !== 11 && root.currentPage !== currentPage)
                                 root.currentPage = currentPage;
                         }
                     }
@@ -386,6 +397,26 @@ Item {
                             function onNavigateToButton(buttonIndex) {
                                 root.flightDeckButtonContext = buttonIndex;
                                 root.currentPage = 1;
+                            }
+                        }
+                    }
+                    Loader {
+                        id: signalFlowPageLoader
+                        objectName: "flightDeckSignalFlowLoader"
+                        anchors.fill: parent
+                        active: root.currentPage === 11
+                        visible: active
+                        enabled: active
+                        sourceComponent: Component {
+                            FlightDeckSignalFlow {
+                                anchors.fill: parent
+                                backendObject: backend
+                                presentationState: root.signalFlowPresentationState
+                                onNavigateRequested: function(page, axis, state) {
+                                    root.signalFlowPresentationState = state
+                                    if (axis >= 0) backend.setSelectedAxis(axis)
+                                    root.currentPage = page
+                                }
                             }
                         }
                     }

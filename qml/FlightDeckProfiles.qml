@@ -94,7 +94,7 @@ Flickable {
         if (profileDetailPresentationOverride && profileDetailPresentationOverride[String(id)] !== undefined) {
             return profileDetailPresentationOverride[String(id)];
         }
-        return backend.profileDetail(String(id));
+        return backend.profileDetail(String(id)) || ({});
     }
     function profilesForCategory(id) {
         const result = [];
@@ -964,7 +964,7 @@ Flickable {
                                 Text { text: root.selectedProfileId.length ? String(root.selectedDetail.name || "Profile") : String((root.selectedCategory || {}).name || "Select a profile"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 20; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Text { text: root.selectedProfileId.length ? String(root.selectedDetail.category || "General") + " · " + (root.selectedDetail.active ? "ACTIVE AT RUNTIME" : "VIEWING ONLY") : "Choose a profile in the library to review its configuration."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
-                            SummaryChip { visible: root.selectedProfileId.length && root.selectedDetail.active; label: "ACTIVE NOW"; tone: "healthy" }
+                            SummaryChip { visible: root.selectedProfileId.length > 0 && !!root.selectedDetail.active; label: "ACTIVE NOW"; tone: "healthy" }
                         }
                         Text { visible: root.selectedProfileId.length; text: root.selectedDetail.active ? "This is the profile currently used by HOTAS BF6." : "Viewing a profile never activates it."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         GridLayout {

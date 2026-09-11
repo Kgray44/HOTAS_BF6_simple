@@ -354,7 +354,7 @@ Item {
                         Text {
                             visible: editor.flightDeck
                             text: "CURVE EDITOR"
-                            color: theme.textPrimary
+                            color: theme && theme.textPrimary !== undefined ? theme.textPrimary : "#f3f7f7"
                             font.family: theme.displayFont
                             font.pixelSize: 20
                             font.bold: true

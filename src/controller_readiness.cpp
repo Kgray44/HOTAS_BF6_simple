@@ -363,6 +363,35 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
             requirements.discretePovs = std::max(requirements.discretePovs, binding.targetIndex);
         }
     }
+    // Canonical Signal Flow can retain fan-out legs which intentionally do
+    // not fit in the historical one-target compatibility projections.  The
+    // active output contract must therefore derive its capability floor from
+    // every enabled canonical sink in profiles that share this output layout.
+    // This also makes imported topology safe when an older layout descriptor
+    // did not yet record a secondary button, axis, or native POV endpoint.
+    if (configuration.signalFlow.topologyVersion >= 1) {
+        for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+            if (!route.enabled) continue;
+            const ControllerProfile *routeProfile = findProfile(configuration, route.profileId);
+            if (!routeProfile || (layout && routeProfile->outputLayoutId != layout->id)) continue;
+            if (route.destinationKind == SignalFlowPortKind::Axis
+                && route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount) {
+                requirements.axes[static_cast<size_t>(route.destinationIndex)] = true;
+            } else if (route.destinationKind == SignalFlowPortKind::Button
+                       && route.destinationIndex > 0) {
+                requirements.buttons = std::max(requirements.buttons, route.destinationIndex);
+            } else if (route.destinationKind == SignalFlowPortKind::NativePov
+                       && route.destinationIndex > 0) {
+                if (route.destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)) {
+                    requirements.continuousPovs = std::max(requirements.continuousPovs,
+                                                           route.destinationIndex);
+                } else if (route.destinationSubIndex == static_cast<int>(NativePovTargetType::Discrete)) {
+                    requirements.discretePovs = std::max(requirements.discretePovs,
+                                                         route.destinationIndex);
+                }
+            }
+        }
+    }
     for (const AutomationDefinition &automation : configuration.automations) {
         if (!automation.enabled) continue;
         for (const AutomationActionDefinition &action : automation.actions) {

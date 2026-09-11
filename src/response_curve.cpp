@@ -931,6 +931,124 @@ bool personalCurvePresetNameAvailable(const std::vector<PersonalCurvePreset> &pr
     });
 }
 
+namespace {
+
+void compileSignalFlowTopology(const MapperConfiguration &configuration,
+                               const ControllerProfile &profile,
+                               const QString &controllerRecordId,
+                               RuntimeMappingConfiguration *runtime)
+{
+    if (!runtime) return;
+    runtime->signalFlowAxisRouteCount = 0;
+    runtime->signalFlowDigitalRouteCount = 0;
+    runtime->signalFlowDigitalRouteOffsets.fill(0);
+    runtime->signalFlowDigitalRouteCounts.fill(0);
+    runtime->signalFlowNativePovRouteCount = 0;
+    runtime->signalFlowTopologyCompiled = configuration.signalFlow.topologyVersion >= 1;
+    runtime->signalFlowAxisMixers.fill(SignalFlowMixerMode::Disabled);
+    // A configuration that has not crossed the canonical-topology reconciliation point
+    // retains the established one-target mapping behavior. Every reconciled
+    // configuration instead compiles only the canonical route records below.
+    if (configuration.signalFlow.topologyVersion < 1) {
+        for (int source = 0; source < kPhysicalAxisCount; ++source) {
+            const int destination = static_cast<int>(runtime->axes[static_cast<size_t>(source)].profile.target);
+            if (destination <= 0 || destination >= kVirtualAxisSlotCount) continue;
+            runtime->signalFlowAxisRoutes[static_cast<size_t>(runtime->signalFlowAxisRouteCount++)] = {
+                static_cast<std::uint8_t>(source), static_cast<std::uint8_t>(destination)};
+        }
+        return;
+    }
+    for (const SignalFlowMixer &mixer : configuration.signalFlow.mixers) {
+        if (!mixer.enabled || mixer.profileId != profile.id
+            || mixer.controllerRecordId != controllerRecordId
+            || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount) continue;
+        runtime->signalFlowAxisMixers[static_cast<size_t>(mixer.destinationAxis)] = mixer.mode;
+    }
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        if (!route.enabled || route.profileId != profile.id
+            || route.controllerRecordId != controllerRecordId
+            || route.sourceKind != SignalFlowPortKind::Axis
+            || route.destinationKind != SignalFlowPortKind::Axis
+            || route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount
+            || route.destinationIndex <= 0 || route.destinationIndex >= kVirtualAxisSlotCount) {
+            continue;
+        }
+        if (runtime->signalFlowAxisRouteCount >= kMaximumRuntimeSignalFlowAxisRoutes) break;
+        runtime->signalFlowAxisRoutes[static_cast<size_t>(runtime->signalFlowAxisRouteCount++)] = {
+            static_cast<std::uint8_t>(route.sourceIndex),
+            static_cast<std::uint8_t>(route.destinationIndex)};
+    }
+
+    // Digital routes use source buckets rather than a per-report graph scan.
+    // A held button visits only its own fan-out legs; an inactive POV visits
+    // none. The layout is built once with the immutable profile cache.
+    std::array<int, kRuntimeSignalFlowDigitalSourceCount> digitalCounts{};
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        if (!route.enabled || route.profileId != profile.id
+            || route.controllerRecordId != controllerRecordId
+            || route.destinationKind != SignalFlowPortKind::Button
+            || route.destinationIndex < 1 || route.destinationIndex > kMaximumVirtualButtons) {
+            continue;
+        }
+        const int sourceSlot = signalFlowDigitalSourceSlot(route.sourceKind, route.sourceIndex,
+                                                            route.sourceSubIndex);
+        if (sourceSlot >= 0) ++digitalCounts[static_cast<size_t>(sourceSlot)];
+    }
+    int digitalOffset = 0;
+    for (int sourceSlot = 0; sourceSlot < kRuntimeSignalFlowDigitalSourceCount; ++sourceSlot) {
+        const int count = std::min(digitalCounts[static_cast<size_t>(sourceSlot)],
+                                   kMaximumRuntimeSignalFlowDigitalRoutes - digitalOffset);
+        runtime->signalFlowDigitalRouteOffsets[static_cast<size_t>(sourceSlot)] =
+            static_cast<std::uint16_t>(digitalOffset);
+        runtime->signalFlowDigitalRouteCounts[static_cast<size_t>(sourceSlot)] =
+            static_cast<std::uint16_t>(count);
+        digitalOffset += count;
+    }
+    std::array<int, kRuntimeSignalFlowDigitalSourceCount> digitalCursors{};
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        if (!route.enabled || route.profileId != profile.id
+            || route.controllerRecordId != controllerRecordId
+            || route.destinationKind != SignalFlowPortKind::Button
+            || route.destinationIndex < 1 || route.destinationIndex > kMaximumVirtualButtons) {
+            continue;
+        }
+        const int sourceSlot = signalFlowDigitalSourceSlot(route.sourceKind, route.sourceIndex,
+                                                            route.sourceSubIndex);
+        if (sourceSlot < 0) continue;
+        const size_t slot = static_cast<size_t>(sourceSlot);
+        const int cursor = digitalCursors[slot]++;
+        if (cursor >= runtime->signalFlowDigitalRouteCounts[slot]) continue;
+        const int destination = static_cast<int>(runtime->signalFlowDigitalRouteOffsets[slot]) + cursor;
+        runtime->signalFlowDigitalRoutes[static_cast<size_t>(destination)] = {
+            static_cast<std::uint8_t>(route.destinationIndex)};
+    }
+    runtime->signalFlowDigitalRouteCount = digitalOffset;
+
+    // Native POV fan-out is likewise compiled into a small fixed list. The
+    // vJoy capability model supports four continuous and four discrete POVs;
+    // invalid saved targets remain visible in Signal Flow but never reach the
+    // report path.
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        if (!route.enabled || route.profileId != profile.id
+            || route.controllerRecordId != controllerRecordId
+            || route.sourceKind != SignalFlowPortKind::NativePov
+            || route.destinationKind != SignalFlowPortKind::NativePov
+            || route.sourceIndex < 0 || route.sourceIndex >= kMaximumPhysicalPovs
+            || route.destinationIndex < 1 || route.destinationIndex > kMaximumPhysicalPovs
+            || (route.destinationSubIndex != static_cast<int>(NativePovTargetType::Continuous)
+                && route.destinationSubIndex != static_cast<int>(NativePovTargetType::Discrete))) {
+            continue;
+        }
+        if (runtime->signalFlowNativePovRouteCount >= kMaximumRuntimeSignalFlowNativePovRoutes) break;
+        runtime->signalFlowNativePovRoutes[static_cast<size_t>(runtime->signalFlowNativePovRouteCount++)] = {
+            static_cast<std::uint8_t>(route.sourceIndex),
+            static_cast<std::uint8_t>(route.destinationIndex),
+            static_cast<std::uint8_t>(route.destinationSubIndex)};
+    }
+}
+
+} // namespace
+
 RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &configuration)
 {
     const ControllerProfile &profile = activeProfile(configuration);
@@ -948,6 +1066,7 @@ RuntimeMappingConfiguration compileActiveProfile(const MapperConfiguration &conf
     runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
         profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                  : configuration.curveTransitionSmoothing);
+    compileSignalFlowTopology(configuration, profile, {}, &runtime);
     return runtime;
 }
 
@@ -972,6 +1091,7 @@ RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguratio
     runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
         profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                  : configuration.curveTransitionSmoothing);
+    compileSignalFlowTopology(configuration, profile, deviceMapping.controllerRecordId, &runtime);
     return runtime;
 }
 
@@ -1014,6 +1134,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
         runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
             profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                      : configuration.curveTransitionSmoothing);
+        compileSignalFlowTopology(configuration, profile, {}, &runtime);
         const VirtualOutputLayout *layout = findOutputLayout(configuration, profile.outputLayoutId);
         cache.profileVjoyDeviceIds.push_back(layout ? layout->requirements.deviceId
                                                     : configuration.vjoyDeviceId);

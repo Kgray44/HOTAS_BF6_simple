@@ -24,7 +24,6 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
-#include <QSettings>
 #include <QStringList>
 #include <QStandardPaths>
 #include <QTest>
@@ -556,13 +555,25 @@ bool verifyAxisRouteTransactionAndPresentation(hotas::AppBackend &backend, QObje
         || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")) {
         return failPresentationLifecycleTest(QStringLiteral("Axis conflict cancel changed an authoritative route"));
     }
-    // An explicit Allow retains the earlier Y mapping and applies A -> Y on
-    // its first accepted attempt. The row-order policy is separately tested
-    // in mapping_core_tests without a vJoy device.
-    if (!backend.setMapping(0, QStringLiteral("Y"), true)
+    // A second analog source now requires a named mixer decision. The
+    // focused Axes surface and the Signal Flow surface must produce the same
+    // canonical, inspectable topology rather than retaining a hidden
+    // row-order collision.
+    const QVariantMap axisConflictResolution = backend.resolveAxisMappingConflict(
+        0, QStringLiteral("Y"), QStringLiteral("highest-magnitude"), backend.signalFlowRevision());
+    const QVariantList axisConflictNodes = backend.signalFlowGraph().value(QStringLiteral("nodes")).toList();
+    const bool visibleHighestMagnitudeMixer = std::any_of(axisConflictNodes.cbegin(), axisConflictNodes.cend(),
+        [](const QVariant &entry) {
+            const QVariantMap node = entry.toMap();
+            return node.value(QStringLiteral("semantic")).toString() == QStringLiteral("mixer")
+                && node.value(QStringLiteral("mixerMode")).toString() == QStringLiteral("Highest Magnitude");
+        });
+    if (!axisConflictResolution.value(QStringLiteral("success")).toBool()
         || targetForAxis(backend.axes(), 0) != QStringLiteral("Y")
-        || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")) {
-        return failPresentationLifecycleTest(QStringLiteral("Axis conflict allow did not retain both configured Y routes"));
+        || targetForAxis(backend.axes(), 1) != QStringLiteral("Y")
+        || !visibleHighestMagnitudeMixer) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Axis conflict decision did not retain both routes through a visible Highest Magnitude mixer"));
     }
 
     if (!backend.setMapping(0, QStringLiteral("Y"), true)
@@ -1068,6 +1079,14 @@ bool verifyAdaptiveSetupAssistantScenarios(hotas::AppBackend &backend)
             && !summary.value(QStringLiteral("secondaryMessage")).toString().contains(QStringLiteral("optional and currently offline"))) {
             backend.setSetupAssistantFactsForTest({});
             return failPresentationLifecycleTest(QStringLiteral("Optional offline controller was not presented as a non-blocking note"));
+        }
+        if ((scenario.code == QStringLiteral("RoutingConflict")
+                || scenario.code == QStringLiteral("NoMappedControl"))
+            && primary.value(QStringLiteral("navigationTarget")).toMap()
+                   .value(QStringLiteral("page")).toInt() != 11) {
+            backend.setSetupAssistantFactsForTest({});
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Setup Assistant routing action did not open the Signal Flow context: %1").arg(scenario.label));
         }
         if (scenario.state == QStringLiteral("READY")
             && std::any_of(steps.cbegin(), steps.cend(), [](const QVariant &entry) {
@@ -6060,6 +6079,1128 @@ bool verifyFlightDeckAutomationInteraction(hotas::AppBackend &backend, hotas::Th
     return true;
 }
 
+QVariantList signalFlowStressPorts(const QString &prefix)
+{
+    QVariantList ports;
+    ports.reserve(64);
+    for (int index = 0; index < 64; ++index) {
+        ports.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("%1:%2").arg(prefix).arg(index)},
+                                 {QStringLiteral("kind"), QStringLiteral("axis")},
+                                 {QStringLiteral("index"), index},
+                                 {QStringLiteral("group"), QStringLiteral("Stress ports")},
+                                 {QStringLiteral("label"), QStringLiteral("Stress %1").arg(index + 1)},
+                                 {QStringLiteral("technicalLabel"), QStringLiteral("Stress %1").arg(index + 1)},
+                                 {QStringLiteral("mapped"), false},
+                                 {QStringLiteral("available"), true}});
+    }
+    return ports;
+}
+
+QVariantMap signalFlowVisualStressGraph()
+{
+    const QVariantList sourcePorts = signalFlowStressPorts(QStringLiteral("stress-input"));
+    const QVariantList destinationPorts = signalFlowStressPorts(QStringLiteral("stress-output"));
+    const auto endpoint = [](const QString &id, const QString &kind, const QString &label, int x, int y,
+                             const QVariantList &ports = {}) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("objectId"), id},
+            {QStringLiteral("kind"), kind}, {QStringLiteral("label"), label},
+            {QStringLiteral("detail"), QStringLiteral("Synthetic visual-stress fixture")},
+            {QStringLiteral("x"), x}, {QStringLiteral("y"), y},
+            {QStringLiteral("connected"), true}, {QStringLiteral("ports"), ports},
+            {QStringLiteral("portGroups"), QVariantList{}}};
+    };
+    QVariantList nodes{
+        endpoint(QStringLiteral("stress-input"), QStringLiteral("input"), QStringLiteral("Dense input"), 50, 160, sourcePorts),
+        endpoint(QStringLiteral("stress-output"), QStringLiteral("output"), QStringLiteral("Dense output"), 1340, 160, destinationPorts),
+        endpoint(QStringLiteral("stress-blocker-a"), QStringLiteral("processor"), QStringLiteral("Obstacle A"), 390, 160),
+        endpoint(QStringLiteral("stress-blocker-b"), QStringLiteral("processor"), QStringLiteral("Obstacle B"), 680, 160),
+        endpoint(QStringLiteral("stress-blocker-c"), QStringLiteral("processor"), QStringLiteral("Obstacle C"), 970, 160),
+        endpoint(QStringLiteral("stress-chain-a"), QStringLiteral("processor"), QStringLiteral("Curve"), 500, 380),
+        endpoint(QStringLiteral("stress-chain-b"), QStringLiteral("processor"), QStringLiteral("Adaptive Response"), 860, 410),
+        endpoint(QStringLiteral("stress-shared"), QStringLiteral("processor"), QStringLiteral("Shared Curve"), 690, 620)};
+    for (QVariant &node : nodes) {
+        QVariantMap value = node.toMap();
+        if (value.value(QStringLiteral("id")).toString() == QStringLiteral("stress-shared")) {
+            value.insert(QStringLiteral("shared"), true);
+            value.insert(QStringLiteral("sharedChannelCount"), 2);
+        }
+        node = value;
+    }
+    const auto route = [](const QString &id, const QString &sourcePortId, const QString &destinationPortId,
+                          const QVariantList &processors = {}) {
+        return QVariantMap{{QStringLiteral("id"), id},
+            {QStringLiteral("sourceNodeId"), QStringLiteral("stress-input")},
+            {QStringLiteral("destinationNodeId"), QStringLiteral("stress-output")},
+            {QStringLiteral("sourcePortId"), sourcePortId},
+            {QStringLiteral("destinationPortId"), destinationPortId},
+            {QStringLiteral("sourceLabel"), sourcePortId}, {QStringLiteral("destinationLabel"), destinationPortId},
+            {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
+            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}}};
+    };
+    QVariantList routes{
+        route(QStringLiteral("stress-under-card"), QStringLiteral("stress-input:0"), QStringLiteral("stress-output:0")),
+        route(QStringLiteral("stress-chain"), QStringLiteral("stress-input:1"), QStringLiteral("stress-output:1"),
+            QVariantList{QStringLiteral("stress-chain-a"), QStringLiteral("stress-chain-b")} ),
+        route(QStringLiteral("stress-bundle-a"), QStringLiteral("stress-input:2"), QStringLiteral("stress-output:2"),
+            QVariantList{QStringLiteral("stress-shared")} ),
+        route(QStringLiteral("stress-bundle-b"), QStringLiteral("stress-input:2"), QStringLiteral("stress-output:3"),
+            QVariantList{QStringLiteral("stress-shared")} )};
+    // Keep the fixture deliberately broader than the visible card cap. This
+    // gives layout, culling, and wire cache code a repeatable dense graph
+    // without relying on a physical device with unusually many endpoints.
+    for (int index = 4; index < 28; ++index) {
+        routes.append(route(QStringLiteral("stress-dense-%1").arg(index),
+            QStringLiteral("stress-input:%1").arg(index),
+            QStringLiteral("stress-output:%1").arg(index)));
+    }
+    return QVariantMap{{QStringLiteral("nodes"), nodes}, {QStringLiteral("routes"), routes},
+        {QStringLiteral("inputNodeId"), QStringLiteral("stress-input")},
+        {QStringLiteral("outputNodeId"), QStringLiteral("stress-output")},
+        {QStringLiteral("editable"), false},
+        {QStringLiteral("workspace"), QVariantMap{{QStringLiteral("wireStyle"), QStringLiteral("smooth")},
+            {QStringLiteral("densityMode"), QStringLiteral("detailed")},
+            {QStringLiteral("layoutLocked"), true}}}};
+}
+
+bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, const QString &theme)
+{
+    if (!page || !window) {
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow visual stress fixture needs a live page and window"));
+    }
+    const QVariant originalGraph = page->property("graph");
+    const QVariant originalNodePositions = page->property("nodePositions");
+    const QVariant originalReducedMotion = page->property("reducedMotion");
+    const QVariant originalZoom = page->property("zoom");
+    QObject *graphViewport = page->findChild<QObject *>(QStringLiteral("signalFlowGraphViewport"));
+    const QVariant originalContentX = graphViewport ? graphViewport->property("contentX") : QVariant{};
+    const QVariant originalContentY = graphViewport ? graphViewport->property("contentY") : QVariant{};
+    const auto restore = [&] {
+        page->setProperty("nodePositions", originalNodePositions);
+        page->setProperty("graph", originalGraph);
+        page->setProperty("reducedMotion", originalReducedMotion);
+        page->setProperty("zoom", originalZoom);
+        if (graphViewport) {
+            graphViewport->setProperty("contentX", originalContentX);
+            graphViewport->setProperty("contentY", originalContentY);
+        }
+        settlePresentation();
+    };
+    page->setProperty("reducedMotion", true);
+    page->setProperty("nodePositions", QVariantMap{});
+    page->setProperty("graph", signalFlowVisualStressGraph());
+    settlePresentation();
+    if (!QMetaObject::invokeMethod(page, "rebuildWireGeometry", Qt::DirectConnection)) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow visual stress fixture could not rebuild cached geometry"));
+    }
+    const auto geometryFor = [page](const QString &id) {
+        const QVariantList geometry = page->property("wireGeometry").toList();
+        const auto it = std::find_if(geometry.cbegin(), geometry.cend(), [&id](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("routeId")).toString() == id;
+        });
+        return it == geometry.cend() ? QVariantMap{} : it->toMap();
+    };
+    const QVariantMap underCard = geometryFor(QStringLiteral("stress-under-card"));
+    const QVariantMap chain = geometryFor(QStringLiteral("stress-chain"));
+    const QVariantMap bundleA = geometryFor(QStringLiteral("stress-bundle-a"));
+    const QVariantMap bundleB = geometryFor(QStringLiteral("stress-bundle-b"));
+    const QVariantMap renderedFixture = page->property("graph").toMap();
+    const QVariantList fixtureNodes = renderedFixture.value(QStringLiteral("nodes")).toList();
+    const auto fixtureInput = std::find_if(fixtureNodes.cbegin(), fixtureNodes.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("stress-input");
+    });
+    const auto sharedProcessor = std::find_if(fixtureNodes.cbegin(), fixtureNodes.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("stress-shared");
+    });
+    const bool largeDenseFixture = renderedFixture.value(QStringLiteral("routes")).toList().size() >= 28
+        && fixtureInput != fixtureNodes.cend()
+        && fixtureInput->toMap().value(QStringLiteral("ports")).toList().size() == 64;
+    const QVariantList underCardSegments = underCard.value(QStringLiteral("segments")).toList();
+    const QVariantList chainSegments = chain.value(QStringLiteral("segments")).toList();
+    const bool underCardFallback = underCardSegments.size() == 1
+        && underCardSegments.constFirst().toMap().value(QStringLiteral("underCard")).toBool();
+    const bool processorChainVisible = chain.value(QStringLiteral("processorCount")).toInt() == 2
+        && chainSegments.size() == 3
+        && chainSegments.at(0).toMap().value(QStringLiteral("endX")).toDouble()
+            < chainSegments.at(1).toMap().value(QStringLiteral("startX")).toDouble()
+        && chainSegments.at(1).toMap().value(QStringLiteral("endX")).toDouble()
+            < chainSegments.at(2).toMap().value(QStringLiteral("startX")).toDouble();
+    const bool bundleVisible = bundleA.value(QStringLiteral("bundleCount")).toInt() == 2
+        && bundleB.value(QStringLiteral("bundleCount")).toInt() == 2
+        && (bundleA.value(QStringLiteral("drawBundleTrunk")).toBool()
+            != bundleB.value(QStringLiteral("drawBundleTrunk")).toBool());
+    const bool sharedProcessorVisible = sharedProcessor != fixtureNodes.cend()
+        && sharedProcessor->toMap().value(QStringLiteral("shared")).toBool()
+        && bundleA.value(QStringLiteral("processorCount")).toInt() == 1
+        && bundleB.value(QStringLiteral("processorCount")).toInt() == 1;
+    QQmlExpression layoutTransition(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const before = wireGeometry.filter(function(entry) { return entry.routeId === 'stress-chain'; })[0];"
+        " if (!before) return false;"
+        " const x = before.segments[0].endX;"
+        " noteNodePosition('stress-chain-a', 620, 320); rebuildWireGeometry();"
+        " const after = wireGeometry.filter(function(entry) { return entry.routeId === 'stress-chain'; })[0];"
+        " return after && after.segments.length === 3 && after.segments[0].endX !== x;"
+        "})()"));
+    const bool layoutTransitionVisible = layoutTransition.evaluate().toBool() && !layoutTransition.hasError();
+    QQmlExpression motionContract(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " reducedMotion = false; wireReveal = 1; wireRetire = 1;"
+        " retiringWireGeometry = [wireGeometry[0]]; restartWireMotion();"
+        " const animated = wireReveal === 0 && wireRetire === 0;"
+        " reducedMotion = true; restartWireMotion();"
+        " return animated && wireReveal === 1 && wireRetire === 1 && retiringWireGeometry.length === 0;"
+        "})()"));
+    const bool motionVisible = motionContract.evaluate().toBool() && !motionContract.hasError();
+    QVariantMap orthogonalGraph = signalFlowVisualStressGraph();
+    QVariantMap workspace = orthogonalGraph.value(QStringLiteral("workspace")).toMap();
+    workspace.insert(QStringLiteral("wireStyle"), QStringLiteral("orthogonal"));
+    orthogonalGraph.insert(QStringLiteral("workspace"), workspace);
+    page->setProperty("nodePositions", QVariantMap{});
+    page->setProperty("graph", orthogonalGraph);
+    settlePresentation();
+    QMetaObject::invokeMethod(page, "rebuildWireGeometry", Qt::DirectConnection);
+    const QVariantMap orthogonalChain = geometryFor(QStringLiteral("stress-chain"));
+    const bool stylePreservesTopology = orthogonalChain.value(QStringLiteral("processorCount")).toInt() == 2
+        && orthogonalChain.value(QStringLiteral("segments")).toList().size() == 3;
+    bool captured = true;
+    const QString snapshotRoot = qEnvironmentVariable("HOTAS_SIGNAL_FLOW_SNAPSHOT_DIR").trimmed();
+    if (!snapshotRoot.isEmpty()) {
+        // Use an explicit overview for evidence, rather than making a wide
+        // synthetic graph look like a clipped normal workspace. This remains
+        // presentation-only test state and is restored before the next check.
+        const bool overviewReady = graphViewport && page->setProperty("zoom", 0.30)
+            && graphViewport->setProperty("contentX", 0.0)
+            && graphViewport->setProperty("contentY", 0.0);
+        QTest::qWait(120);
+        settlePresentation();
+        QDir directory(snapshotRoot);
+        if (!overviewReady || (!directory.exists() && !QDir().mkpath(directory.absolutePath()))) {
+            captured = false;
+        } else {
+            QString slug = theme.toLower();
+            slug.replace(u' ', u'-');
+            const auto capture = [&](const QString &view) {
+                const QImage image = window->grabWindow();
+                return !image.isNull() && image.width() >= 640 && image.height() >= 480
+                    && image.save(directory.filePath(QStringLiteral("signal-flow-%1-stress-%2.png")
+                        .arg(slug, view)));
+            };
+            captured = capture(QStringLiteral("overview"));
+            if (captured) {
+                const bool detailReady = page->setProperty("zoom", 0.70)
+                    && graphViewport->setProperty("contentX", 0.0)
+                    && graphViewport->setProperty("contentY", 0.0);
+                QTest::qWait(120);
+                settlePresentation();
+                captured = detailReady && capture(QStringLiteral("detail"));
+            }
+        }
+    }
+    restore();
+    if (!largeDenseFixture || !underCardFallback || !processorChainVisible || !bundleVisible
+        || !sharedProcessorVisible || !layoutTransitionVisible || !motionVisible
+        || !stylePreservesTopology || !captured) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow visual stress fixture failed for %1 "
+            "(dense=%2 under-card=%3 processor-chain=%4 bundle=%5 shared=%6 layout=%7 motion=%8 style=%9 capture=%10)")
+            .arg(theme).arg(largeDenseFixture).arg(underCardFallback).arg(processorChainVisible)
+            .arg(bundleVisible).arg(sharedProcessorVisible).arg(layoutTransitionVisible).arg(motionVisible)
+            .arg(stylePreservesTopology).arg(captured));
+    }
+    return true;
+}
+
+bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    // This compact harness is intentionally separate from the broad visual
+    // matrix below. It instantiates all five production experiences and
+    // exercises a route through the QML-owned click-click command function,
+    // while retaining the real AppBackend/configuration authority.
+    backend.setVirtualAxisAvailabilityForTest(true);
+    const auto signalFlowWarnings = [](QStringList warnings) {
+        warnings.erase(std::remove_if(warnings.begin(), warnings.end(), [](const QString &warning) {
+            return !warning.contains(QStringLiteral("SignalFlow.qml"));
+        }), warnings.end());
+        return warnings;
+    };
+    const auto loadExistingExperience = [&backend, &themeManager, &signalFlowWarnings](const QString &theme) {
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        themeManager.setCurrentTheme(theme);
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        QObject::connect(&engine, &QQmlApplicationEngine::warnings, &engine,
+            [&warnings](const QList<QQmlError> &items) {
+                for (const QQmlError &item : items) warnings.push_back(item.toString());
+            });
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+        engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+        auto *window = engine.rootObjects().isEmpty()
+            ? nullptr : qobject_cast<QWindow *>(engine.rootObjects().constFirst());
+        QObject *presentation = window ? window->findChild<QObject *>(QStringLiteral("presentationLoader")) : nullptr;
+        QObject *surface = presentation ? qvariant_cast<QObject *>(presentation->property("item")) : nullptr;
+        settlePresentation();
+        if (!window || !surface || !selectPage(surface, 11)) {
+            return failPresentationLifecycleTest(QStringLiteral("Signal Flow %1 surface did not load").arg(theme));
+        }
+        QObject *page = pageItem(surface, 11);
+        const QStringList pageWarnings = signalFlowWarnings(warnings);
+        if (!page || page->objectName() != QStringLiteral("signalFlowPage")
+            || backend.signalFlowGraph().value(QStringLiteral("routes")).toList().isEmpty()
+            || !pageWarnings.isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose its canonical graph page (page=%2 routes=%3 warnings=%4)")
+                .arg(theme).arg(page ? page->objectName() : QStringLiteral("missing"))
+                .arg(backend.signalFlowGraph().value(QStringLiteral("routes")).toList().size())
+                .arg(pageWarnings.join(u" | "_qs)));
+        }
+        const QVariantMap scopeGraph = backend.signalFlowGraph();
+        if (scopeGraph.value(QStringLiteral("deviceRigName")).toString().trimmed().isEmpty()
+            || scopeGraph.value(QStringLiteral("profileName")).toString().trimmed().isEmpty()
+            || scopeGraph.value(QStringLiteral("effectiveProfileName")).toString().trimmed().isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose its explicit editing and effective-profile context").arg(theme));
+        }
+        const QVariantList scopeNodes = scopeGraph.value(QStringLiteral("nodes")).toList();
+        const auto inputNode = std::find_if(scopeNodes.cbegin(), scopeNodes.cend(), [](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("input");
+        });
+        const bool identitySpecificInputState = inputNode != scopeNodes.cend()
+            && !inputNode->toMap().value(QStringLiteral("capabilitySummary")).toString().isEmpty()
+            && inputNode->toMap().contains(QStringLiteral("routeCount"))
+            && (scopeGraph.value(QStringLiteral("controllerRecordId")).toString().isEmpty()
+                || inputNode->toMap().value(QStringLiteral("connected")).toBool()
+                    == backend.physicalDeviceDetail(scopeGraph.value(QStringLiteral("controllerRecordId")).toString())
+                        .value(QStringLiteral("connected")).toBool());
+        if (!identitySpecificInputState) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not keep the input card's durable identity and readiness distinct from global acquisition").arg(theme));
+        }
+        QQmlExpression learnSurface(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const learned = sourcePortFromLearning({ kind: 'signal-flow', sourcePortId: 'axis:6' });"
+            " const sourceApi = typeof startSignalFlowSourceLearning === 'function'"
+            "   && typeof sourcePortFromLearning === 'function'"
+            "   && typeof acceptSignalFlowLearnedSource === 'function';"
+            " return sourceApi && learned && learned.id === 'axis:6';"
+            "})()"));
+        const bool learnSurfaceReady = learnSurface.evaluate().toBool();
+        QObject *routeMenu = page->findChild<QObject *>(QStringLiteral("signalFlowRouteContextMenu"));
+        QObject *sourceLearnDialog = window->findChild<QObject *>(QStringLiteral("signalFlowLearnInputDialog"));
+        if (learnSurface.hasError() || !learnSurfaceReady || !sourceLearnDialog || !routeMenu) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose source-first learning or a wire processing context menu (error=%2)")
+                .arg(theme)
+                .arg(learnSurface.hasError() ? learnSurface.error().toString() : QStringLiteral("none")));
+        }
+
+        // The dense-graph renderer keeps route identity in the canonical
+        // graph, while geometry is a low-frequency presentation cache. A live
+        // sample must repaint styling without replacing that cache.
+        QQmlExpression cachedGeometry(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " rebuildWireGeometry();"
+            " const prepared = wireGeometry;"
+            " if (!prepared || prepared.length === 0) return false;"
+            " liveTelemetry = { routes: [] };"
+            " if (wireGeometry !== prepared) return false;"
+            " xrayMode = true; routeStateFilter = 'problems';"
+            " const supported = typeof keyboardAction === 'function'"
+            "   && typeof routeVisualAlpha === 'function';"
+            " xrayMode = false; routeStateFilter = 'all';"
+            " return supported;"
+            "})()"));
+        const bool geometryCached = cachedGeometry.evaluate().toBool();
+        if (cachedGeometry.hasError() || !geometryCached) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not preserve cached geometry across a live sample (error=%2)")
+                .arg(theme)
+                .arg(cachedGeometry.hasError() ? cachedGeometry.error().toString() : QStringLiteral("none")));
+        }
+
+        QQmlExpression interactionSurface(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const source = inputPorts().filter(function(port) { return port.id === 'axis:6'; })[0];"
+            " const destination = outputPorts().filter(function(port) { return port.id === 'axis:8'; })[0];"
+            " if (!source || !destination) return false;"
+            " selectNode(nodeFor('input'));"
+            " const cardInspectable = selectedNode && selectedNode.kind === 'input';"
+            " beginSourceDrag(source, { x: 220, y: 180 });"
+            " previewDestination(destination);"
+            " const dragVisible = dragWire && dragWire.active && connectionPreview && connectionPreview.compatible;"
+            " endSourceDrag();"
+            " const liveOn = keyboardAction('live'); const liveOff = keyboardAction('live');"
+            " const baseZoom = zoom; zoom = 0.60; const overview = semanticDensity === 'overview'; zoom = baseZoom;"
+            " searchText = 'axis'; const focused = focusSearchResult(); searchText = ''; clearSelection();"
+            " return cardInspectable && dragVisible && liveOn && liveOff && overview && focused;"
+            "})()"));
+        const bool interactionSurfaceReady = interactionSurface.evaluate().toBool();
+        if (interactionSurface.hasError() || !interactionSurfaceReady) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose card inspection, drag preview, live sampling, semantic zoom, and search focus (error=%2)")
+                .arg(theme).arg(interactionSurface.hasError() ? interactionSurface.error().toString() : QStringLiteral("none")));
+        }
+        if (!verifySignalFlowVisualStressFixture(page, qobject_cast<QQuickWindow *>(window), theme)) {
+            return false;
+        }
+
+        if (theme == QStringLiteral("Standard")) {
+            // Input/output cards are operational navigation points, not
+            // decorative graph scenery. Their setup hand-off must retain the
+            // exact inspected card when the operator returns.
+            QQmlExpression openInputCardSettings(qmlContext(page), page, QStringLiteral(
+                "(function() { const input = nodeFor('input'); selectNode(input); return openCardSettings(input); })()"));
+            const bool inputCardSettingsOpened = openInputCardSettings.evaluate().toBool();
+            settlePresentation();
+            if (openInputCardSettings.hasError() || !inputCardSettingsOpened
+                || surface->property("currentPage").toInt() != 10 || !selectPage(surface, 11)) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow input card did not hand off to Devices & setup (error=%1 page=%2)")
+                    .arg(openInputCardSettings.hasError() ? openInputCardSettings.error().toString()
+                                                          : QStringLiteral("none"))
+                    .arg(surface->property("currentPage").toInt()));
+            }
+            settlePresentation();
+            page = pageItem(surface, 11);
+            const QVariantMap restoredInputCard = page ? page->property("selectedNode").toMap()
+                                                       : QVariantMap{};
+            if (!page || restoredInputCard.value(QStringLiteral("kind")).toString() != QStringLiteral("input")) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow input card return did not restore its graph context"));
+            }
+            // Source axis 7 and Slider 1 are unused by the default fixture.
+            // Execute the page's own click-click functions rather than
+            // bypassing QML with a direct backend invocation.
+            QQmlExpression routeThroughPage(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " const source = inputPorts().filter(function(port) { return port.id === 'axis:6'; })[0];"
+                " const destination = outputPorts().filter(function(port) { return port.id === 'axis:8'; })[0];"
+                " if (!source || !destination) return false;"
+                " chooseSource(source); chooseOutput(destination);"
+                " return selectedSource && selectedSource.kind ? false : true;"
+                "})()"));
+            const bool routed = routeThroughPage.evaluate().toBool();
+            settlePresentation();
+            const QVariantMap changedGraph = backend.signalFlowGraph();
+            const QVariantList changedRoutes = changedGraph.value(QStringLiteral("routes")).toList();
+            const auto directRoute = std::find_if(changedRoutes.cbegin(), changedRoutes.cend(), [](const QVariant &entry) {
+                const QVariantMap route = entry.toMap();
+                return route.value(QStringLiteral("sourcePortId")).toString() == QStringLiteral("axis:6")
+                    && route.value(QStringLiteral("destinationPortId")).toString() == QStringLiteral("axis:8");
+            });
+            const bool routePresent = directRoute != changedRoutes.cend();
+            if (routeThroughPage.hasError() || !routed || !routePresent || !backend.signalFlowCanUndo()) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow click-click routing did not commit canonical state (error=%1 routed=%2 route=%3 undo=%4)")
+                    .arg(routeThroughPage.hasError() ? routeThroughPage.error().toString() : QStringLiteral("none"))
+                    .arg(routed).arg(routePresent).arg(backend.signalFlowCanUndo()));
+            }
+            // A physical button may drive several virtual buttons. Exercise
+            // the visible click-click command twice, then roll both gestures
+            // back so the later axis/processor lifecycle retains its fixture.
+            QQmlExpression digitalFanOutThroughPage(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " const source = inputPorts().filter(function(port) { return port.id === 'button:0'; })[0];"
+                " const first = outputPorts().filter(function(port) { return port.id === 'button:31'; })[0];"
+                " const second = outputPorts().filter(function(port) { return port.id === 'button:32'; })[0];"
+                " if (!source || !first || !second) return false;"
+                " chooseSource(source); chooseOutput(first);"
+                " chooseSource(source); chooseOutput(second);"
+                " return !selectedSource || !selectedSource.kind;"
+                "})()"));
+            const bool digitalFanOutRouted = digitalFanOutThroughPage.evaluate().toBool();
+            settlePresentation();
+            const QVariantList digitalFanOutRoutes = backend.signalFlowGraph()
+                .value(QStringLiteral("routes")).toList();
+            const auto findDigitalFanOut = [&digitalFanOutRoutes](const QString &destination) {
+                return std::find_if(digitalFanOutRoutes.cbegin(), digitalFanOutRoutes.cend(),
+                    [&destination](const QVariant &entry) {
+                        const QVariantMap route = entry.toMap();
+                        return route.value(QStringLiteral("sourcePortId")).toString() == QStringLiteral("button:0")
+                            && route.value(QStringLiteral("destinationPortId")).toString() == destination;
+                    });
+            };
+            const bool digitalFanOutPresent = findDigitalFanOut(QStringLiteral("button:31"))
+                    != digitalFanOutRoutes.cend()
+                && findDigitalFanOut(QStringLiteral("button:32")) != digitalFanOutRoutes.cend();
+            const QVariantMap undoDigitalSecond = backend.signalFlowUndo(backend.signalFlowRevision());
+            const QVariantMap undoDigitalFirst = backend.signalFlowUndo(backend.signalFlowRevision());
+            settlePresentation();
+            if (digitalFanOutThroughPage.hasError() || !digitalFanOutRouted || !digitalFanOutPresent
+                || !undoDigitalSecond.value(QStringLiteral("success")).toBool()
+                || !undoDigitalFirst.value(QStringLiteral("success")).toBool()) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow digital fan-out did not commit two durable click-click routes (error=%1 routed=%2 fanout=%3 rollback=%4/%5)")
+                    .arg(digitalFanOutThroughPage.hasError() ? digitalFanOutThroughPage.error().toString()
+                                                              : QStringLiteral("none"))
+                    .arg(digitalFanOutRouted).arg(digitalFanOutPresent)
+                    .arg(undoDigitalSecond.value(QStringLiteral("success")).toBool())
+                    .arg(undoDigitalFirst.value(QStringLiteral("success")).toBool()));
+            }
+            // Virtual endpoints are sinks in this runtime. Both a direct
+            // virtual-input proposal and an attempted chained vJoy leg must
+            // fail before commit, with neither an override nor a topology
+            // mutation available through the public graph command surface.
+            const QVariantList routesBeforeCycles = backend.signalFlowGraph().value(QStringLiteral("routes")).toList();
+            const qulonglong cycleRevision = backend.signalFlowRevision();
+            const QVariantMap directCycle = backend.signalFlowConnect(
+                QStringLiteral("virtual-axis"), 0, -1, QStringLiteral("X"), false, cycleRevision);
+            const QVariantMap indirectCycle = backend.signalFlowConnectWithMixer(
+                QStringLiteral("vjoy-axis"), 0, -1, QStringLiteral("Y"), QStringLiteral("average"), cycleRevision);
+            const QVariantMap compactVirtualCycle = backend.signalFlowConnect(
+                QStringLiteral("virtualaxis"), 0, -1, QStringLiteral("Z"), false, cycleRevision);
+            const QVariantMap compactVjoyCycle = backend.signalFlowConnectWithMixer(
+                QStringLiteral("vjoyaxis"), 0, -1, QStringLiteral("Rx"), QStringLiteral("average"), cycleRevision);
+            const QVariantList routesAfterCycles = backend.signalFlowGraph().value(QStringLiteral("routes")).toList();
+            const bool cyclesBlocked = !directCycle.value(QStringLiteral("success")).toBool()
+                && !indirectCycle.value(QStringLiteral("success")).toBool()
+                && !compactVirtualCycle.value(QStringLiteral("success")).toBool()
+                && !compactVjoyCycle.value(QStringLiteral("success")).toBool()
+                && directCycle.value(QStringLiteral("message")).toString().contains(QStringLiteral("cycle"), Qt::CaseInsensitive)
+                && indirectCycle.value(QStringLiteral("message")).toString().contains(QStringLiteral("cycle"), Qt::CaseInsensitive)
+                && compactVirtualCycle.value(QStringLiteral("message")).toString().contains(QStringLiteral("cycle"), Qt::CaseInsensitive)
+                && compactVjoyCycle.value(QStringLiteral("message")).toString().contains(QStringLiteral("cycle"), Qt::CaseInsensitive)
+                && routesBeforeCycles == routesAfterCycles && backend.signalFlowRevision() == cycleRevision;
+            if (!cyclesBlocked) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow virtual feedback proposals were not rejected atomically before commit"));
+            }
+            QQmlExpression presentationControls(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " const overview = setDensityMode('overview');"
+                " const densitySaved = graph.workspace && graph.workspace.densityMode === 'overview';"
+                " const locked = toggleLayoutLocked();"
+                " const lockSaved = graph.workspace && graph.workspace.layoutLocked;"
+                " const unlocked = toggleLayoutLocked();"
+                " const unlockSaved = graph.workspace && !graph.workspace.layoutLocked;"
+                " const fit = keyboardAction('fit');"
+                " const focus = keyboardAction('focus');"
+                " const restored = setDensityMode('detailed');"
+                " return { overview: overview, densitySaved: densitySaved, locked: locked,"
+                "   lockSaved: lockSaved, unlocked: unlocked, unlockSaved: unlockSaved,"
+                "   fit: fit, focus: focus, restored: restored };"
+                "})()"));
+            const QVariantMap presentationControlState = presentationControls.evaluate().toMap();
+            const bool presentationControlsSafe = presentationControlState.value(QStringLiteral("overview")).toBool()
+                && presentationControlState.value(QStringLiteral("densitySaved")).toBool()
+                && presentationControlState.value(QStringLiteral("locked")).toBool()
+                && presentationControlState.value(QStringLiteral("lockSaved")).toBool()
+                && presentationControlState.value(QStringLiteral("unlocked")).toBool()
+                && presentationControlState.value(QStringLiteral("unlockSaved")).toBool()
+                && presentationControlState.value(QStringLiteral("fit")).toBool()
+                && presentationControlState.value(QStringLiteral("focus")).toBool()
+                && presentationControlState.value(QStringLiteral("restored")).toBool();
+            if (presentationControls.hasError() || !presentationControlsSafe) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow presentation controls did not persist density/lock or accept keyboard actions "
+                    "(error=%1 overview=%2 density=%3 locked=%4 lockSaved=%5 unlocked=%6 unlockSaved=%7 fit=%8 focus=%9 restored=%10)")
+                    .arg(presentationControls.hasError() ? presentationControls.error().toString()
+                                                         : QStringLiteral("none"))
+                    .arg(presentationControlState.value(QStringLiteral("overview")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("densitySaved")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("locked")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("lockSaved")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("unlocked")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("unlockSaved")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("fit")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("focus")).toBool())
+                    .arg(presentationControlState.value(QStringLiteral("restored")).toBool()));
+            }
+            const QString routeId = directRoute->toMap().value(QStringLiteral("id")).toString();
+            const QVariantMap explanation = backend.signalFlowExplainRoute(routeId);
+            const QVariantMap liveTelemetry = backend.signalFlowLiveTelemetry();
+            const QVariantList liveRoutes = liveTelemetry.value(QStringLiteral("routes")).toList();
+            const bool directExplanation = explanation.value(QStringLiteral("success")).toBool()
+                && explanation.value(QStringLiteral("steps")).toList().size() == 2;
+            const bool liveRoutePresent = std::any_of(liveRoutes.cbegin(), liveRoutes.cend(),
+                [&routeId](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == routeId;
+                });
+            if (!directExplanation || liveTelemetry.value(QStringLiteral("axes")).toList().size()
+                != hotas::kPhysicalAxisCount
+                || !liveRoutePresent) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow direct-route explanation or bounded live telemetry did not reflect canonical state"));
+            }
+            const QVariantMap addedProcessor = backend.signalFlowToggleProcessor(
+                routeId, QStringLiteral("curve"), true, backend.signalFlowRevision());
+            const QVariantMap processedGraph = backend.signalFlowGraph();
+            const QVariantList processedRoutes = processedGraph.value(QStringLiteral("routes")).toList();
+            const auto processedRoute = std::find_if(processedRoutes.cbegin(), processedRoutes.cend(),
+                [&routeId](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == routeId;
+                });
+            const QVariantList processorDetails = processedRoute == processedRoutes.cend()
+                ? QVariantList{} : processedRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const bool curveVisible = processedRoute != processedRoutes.cend()
+                && std::any_of(processorDetails.cbegin(), processorDetails.cend(), [](const QVariant &entry) {
+                        return entry.toMap().value(QStringLiteral("semantic")).toString() == QStringLiteral("curve");
+                    });
+            if (!addedProcessor.value(QStringLiteral("success")).toBool() || !curveVisible
+                || !backend.focusIssueTarget(QStringLiteral("signalFlowRoute"), routeId)) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow processor insertion or exact App Health route focus did not preserve canonical identity"));
+            }
+            settlePresentation();
+            const QVariantMap focusedRoute = page->property("selectedRoute").toMap();
+            if (focusedRoute.value(QStringLiteral("id")).toString() != routeId) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow did not restore the App Health route selection in the themed page"));
+            }
+            QQmlExpression curveTopology(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " rebuildWireGeometry();"
+                " const entry = wireGeometry.filter(function(item) { return item.routeId === '%1'; })[0];"
+                " return entry && entry.processorCount === 1 && entry.segments && entry.segments.length === 2;"
+                "})()"
+            ).arg(routeId));
+            const bool curveTopologyVisible = curveTopology.evaluate().toBool();
+            if (curveTopology.hasError() || !curveTopologyVisible) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow Curve insertion did not split the rendered canonical route (error=%1)")
+                    .arg(curveTopology.hasError() ? curveTopology.error().toString() : QStringLiteral("none")));
+            }
+            // Curve cards must open the existing full editor with the route's
+            // source axis selected, then return to this exact graph context.
+            // Exercise the QML-owned command rather than navigating directly
+            // through the host so the presentation hand-off stays covered.
+            QQmlExpression openCurveSettings(qmlContext(page), page, QStringLiteral(
+                "openFullSettings('curve', graph.routes.filter(function(route) { return route.id === '%1'; })[0])"
+            ).arg(routeId));
+            const bool curveSettingsOpened = openCurveSettings.evaluate().toBool();
+            settlePresentation();
+            if (openCurveSettings.hasError() || !curveSettingsOpened
+                || surface->property("currentPage").toInt() != 6
+                || backend.selectedAxisIndex() != 6
+                || !selectPage(surface, 11)) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow Curve full-settings deep link did not select its source axis or route through the host (error=%1 page=%2 axis=%3)")
+                    .arg(openCurveSettings.hasError() ? openCurveSettings.error().toString() : QStringLiteral("none"))
+                    .arg(surface->property("currentPage").toInt()).arg(backend.selectedAxisIndex()));
+            }
+            settlePresentation();
+            page = pageItem(surface, 11);
+            const QVariantMap restoredRoute = page ? page->property("selectedRoute").toMap() : QVariantMap{};
+            if (!page || restoredRoute.value(QStringLiteral("id")).toString() != routeId) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow Curve full-settings return did not restore its graph route context"));
+            }
+            const QVariantMap addedAdaptive = backend.signalFlowToggleProcessor(
+                routeId, QStringLiteral("adaptive-response"), true, backend.signalFlowRevision());
+            settlePresentation();
+            const QVariantList adaptiveRoutes = backend.signalFlowGraph().value(QStringLiteral("routes")).toList();
+            const auto adaptiveRoute = std::find_if(adaptiveRoutes.cbegin(), adaptiveRoutes.cend(),
+                [&routeId](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == routeId;
+                });
+            const QVariantList adaptiveDetails = adaptiveRoute == adaptiveRoutes.cend() ? QVariantList{}
+                : adaptiveRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const auto adaptiveDetail = std::find_if(adaptiveDetails.cbegin(), adaptiveDetails.cend(),
+                [](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("semantic")).toString()
+                        == QStringLiteral("adaptive-response");
+                });
+            const bool adaptiveSummaryVisible = adaptiveDetail != adaptiveDetails.cend()
+                && !adaptiveDetail->toMap().value(QStringLiteral("settingsSummary")).toString().isEmpty()
+                && adaptiveDetail->toMap().value(QStringLiteral("settingsPage")).toInt() == 9
+                && adaptiveDetail->toMap().value(QStringLiteral("sourceAxis")).toInt() == 6;
+            QQmlExpression adaptiveTopology(qmlContext(page), page, QStringLiteral(
+                "(function() {"
+                " rebuildWireGeometry();"
+                " const entry = wireGeometry.filter(function(item) { return item.routeId === '%1'; })[0];"
+                " return entry && entry.processorCount === 2 && entry.segments && entry.segments.length === 3;"
+                "})()"
+            ).arg(routeId));
+            const bool adaptiveTopologyVisible = adaptiveTopology.evaluate().toBool();
+            QQmlExpression openAdaptiveSettings(qmlContext(page), page, QStringLiteral(
+                "openFullSettings('adaptive-response', graph.routes.filter(function(route) { return route.id === '%1'; })[0])"
+            ).arg(routeId));
+            const bool adaptiveSettingsOpened = openAdaptiveSettings.evaluate().toBool();
+            settlePresentation();
+            if (!addedAdaptive.value(QStringLiteral("success")).toBool() || !adaptiveSummaryVisible
+                || adaptiveTopology.hasError() || !adaptiveTopologyVisible
+                || openAdaptiveSettings.hasError() || !adaptiveSettingsOpened
+                || surface->property("currentPage").toInt() != 9 || backend.selectedAxisIndex() != 6
+                || !selectPage(surface, 11)) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow Adaptive Response did not surface truthful settings or preserve full-settings context (error=%1 page=%2 axis=%3 summary=%4)")
+                    .arg(openAdaptiveSettings.hasError() ? openAdaptiveSettings.error().toString()
+                                                         : QStringLiteral("none"))
+                    .arg(surface->property("currentPage").toInt()).arg(backend.selectedAxisIndex())
+                    .arg(adaptiveSummaryVisible));
+            }
+            settlePresentation();
+            page = pageItem(surface, 11);
+            const QVariantMap adaptiveRestoredRoute = page ? page->property("selectedRoute").toMap()
+                                                            : QVariantMap{};
+            if (!page || adaptiveRestoredRoute.value(QStringLiteral("id")).toString() != routeId) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow Adaptive Response return did not restore its graph route context"));
+            }
+            const QVariantMap shareGraphBefore = backend.signalFlowGraph();
+            const QVariantList shareRoutesBefore = shareGraphBefore.value(QStringLiteral("routes")).toList();
+            const auto companionRoute = std::find_if(shareRoutesBefore.cbegin(), shareRoutesBefore.cend(),
+                [&routeId](const QVariant &entry) {
+                    const QVariantMap route = entry.toMap();
+                    return route.value(QStringLiteral("kind")).toString() == QStringLiteral("axis")
+                        && route.value(QStringLiteral("sourcePortId")).toString() == QStringLiteral("axis:0")
+                        && route.value(QStringLiteral("id")).toString() != routeId;
+                });
+            if (companionRoute == shareRoutesBefore.cend()) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow shared-processor fixture could not find a second axis route"));
+            }
+            const QString companionRouteId = companionRoute->toMap().value(QStringLiteral("id")).toString();
+            QQmlExpression openShareDialog(qmlContext(page), page, QStringLiteral(
+                "selectedRoute = graph.routes.filter(function(route) { return route.id === '%1'; })[0];"
+                "openShareProcessorDialog();"
+                "true"
+            ).arg(routeId));
+            const bool shareDialogInvoked = openShareDialog.evaluate().toBool();
+            settlePresentation();
+            QObject *shareDialog = page->findChild<QObject *>(QStringLiteral("signalFlowShareProcessorDialog"));
+            const bool shareDialogOpened = shareDialogInvoked && shareDialog
+                && shareDialog->property("visible").toBool();
+            int companionChoiceIndex = -1;
+            if (shareDialog) {
+                const QVariantList choices = shareDialog->property("choices").toList();
+                for (qsizetype index = 0; index < choices.size(); ++index) {
+                    if (choices.at(index).toMap().value(QStringLiteral("id")).toString() == companionRouteId) {
+                        companionChoiceIndex = static_cast<int>(index);
+                        break;
+                    }
+                }
+            }
+            QQmlExpression selectShareCompanion(qmlContext(shareDialog), shareDialog,
+                QStringLiteral("setChoice(%1, true); true").arg(companionChoiceIndex));
+            const bool companionSelected = shareDialog && companionChoiceIndex >= 0
+                && selectShareCompanion.evaluate().toBool() && !selectShareCompanion.hasError();
+            settlePresentation();
+            const bool shareActionInvoked = shareDialog && QMetaObject::invokeMethod(
+                shareDialog, "applyShare", Qt::DirectConnection);
+            settlePresentation();
+            const QVariantMap shareGraph = backend.signalFlowGraph();
+            const QVariantList shareRoutes = shareGraph.value(QStringLiteral("routes")).toList();
+            const auto findRoute = [&shareRoutes](const QString &id) {
+                return std::find_if(shareRoutes.cbegin(), shareRoutes.cend(), [&id](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == id;
+                });
+            };
+            const auto sharedRoute = findRoute(routeId);
+            const auto sharedCompanion = findRoute(companionRouteId);
+            const auto sharedCurve = [](const QVariantList &details) {
+                return std::find_if(details.cbegin(), details.cend(), [](const QVariant &entry) {
+                    const QVariantMap detail = entry.toMap();
+                    return detail.value(QStringLiteral("semantic")).toString() == QStringLiteral("curve")
+                        && detail.value(QStringLiteral("shared")).toBool();
+                });
+            };
+            const QVariantList sharedDetails = sharedRoute == shareRoutes.cend() ? QVariantList{}
+                : sharedRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const QVariantList companionDetails = sharedCompanion == shareRoutes.cend() ? QVariantList{}
+                : sharedCompanion->toMap().value(QStringLiteral("processorDetails")).toList();
+            const auto sharedCurveDetail = sharedCurve(sharedDetails);
+            const auto companionCurveDetail = sharedCurve(companionDetails);
+            const QVariantList sharedNodes = shareGraph.value(QStringLiteral("nodes")).toList();
+            const bool sharedNodePresent = std::any_of(sharedNodes.cbegin(), sharedNodes.cend(), [](const QVariant &entry) {
+                return entry.toMap().value(QStringLiteral("shared")).toBool()
+                    && entry.toMap().value(QStringLiteral("semantic")).toString() == QStringLiteral("curve")
+                    && entry.toMap().value(QStringLiteral("sharedChannelCount")).toInt() == 2;
+            });
+            if (openShareDialog.hasError() || !shareDialogOpened || !companionSelected
+                || !shareActionInvoked
+                || sharedCurveDetail == sharedDetails.cend()
+                || companionCurveDetail == companionDetails.cend()
+                || sharedCurveDetail->toMap().value(QStringLiteral("id"))
+                    != companionCurveDetail->toMap().value(QStringLiteral("id"))
+                || !sharedNodePresent) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow shared processor did not create one durable, visible conditioner across both routes "
+                    "(dialog=%1 companionSelected=%2 share=%3 message=%4 route=%5 companion=%6 node=%7 error=%8)")
+                    .arg(shareDialogOpened)
+                    .arg(companionSelected)
+                    .arg(shareActionInvoked)
+                    .arg(page->property("feedback").toString())
+                    .arg(sharedCurveDetail != sharedDetails.cend())
+                    .arg(companionCurveDetail != companionDetails.cend())
+                    .arg(sharedNodePresent)
+                    .arg(openShareDialog.hasError() ? openShareDialog.error().toString() : QStringLiteral("none")));
+            }
+            // The owner remains editable from the existing focused curve
+            // surface. That edit must update the linked channel rather than
+            // silently creating two values behind a single shared card.
+            const int selectedAxisBeforeSharedEdit = backend.selectedAxisIndex();
+            backend.setSelectedAxis(6);
+            backend.setCurveStrength(0.74);
+            backend.setSelectedAxis(0);
+            settlePresentation();
+            const QVariantMap ownerEditGraph = backend.signalFlowGraph();
+            const QVariantList ownerEditRoutes = ownerEditGraph.value(QStringLiteral("routes")).toList();
+            const auto ownerEditRoute = std::find_if(ownerEditRoutes.cbegin(), ownerEditRoutes.cend(),
+                [&routeId](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == routeId;
+                });
+            const auto ownerEditCompanion = std::find_if(ownerEditRoutes.cbegin(), ownerEditRoutes.cend(),
+                [&companionRouteId](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("id")).toString() == companionRouteId;
+                });
+            const QVariantList ownerEditDetails = ownerEditRoute == ownerEditRoutes.cend() ? QVariantList{}
+                : ownerEditRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const QVariantList ownerEditCompanionDetails = ownerEditCompanion == ownerEditRoutes.cend()
+                ? QVariantList{} : ownerEditCompanion->toMap().value(QStringLiteral("processorDetails")).toList();
+            const auto ownerEditCurve = sharedCurve(ownerEditDetails);
+            const auto ownerEditCompanionCurve = sharedCurve(ownerEditCompanionDetails);
+            const bool ownerEditPropagated = std::abs(
+                backend.curveEditorState().value(QStringLiteral("strength")).toDouble() - 0.74) < 0.0001
+                && ownerEditCurve != ownerEditDetails.cend()
+                && ownerEditCompanionCurve != ownerEditCompanionDetails.cend()
+                && ownerEditCurve->toMap().value(QStringLiteral("id"))
+                    == ownerEditCompanionCurve->toMap().value(QStringLiteral("id"));
+            backend.setSelectedAxis(selectedAxisBeforeSharedEdit);
+            if (!ownerEditPropagated) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow shared owner edit did not propagate through the focused curve authority"));
+            }
+            QQmlExpression splitThroughPage(qmlContext(page), page, QStringLiteral(
+                "selectedRoute = graph.routes.filter(function(route) { return route.id === '%1'; })[0];"
+                "toggleProcessor('curve'); true"
+            ).arg(routeId));
+            const bool splitInvoked = splitThroughPage.evaluate().toBool();
+            if (splitThroughPage.hasError() || !splitInvoked) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow shared-processor split control did not invoke the native page command"));
+            }
+            settlePresentation();
+            const QVariantList splitDetails = backend.signalFlowGraph().value(QStringLiteral("routes")).toList();
+            const auto splitRoute = std::find_if(splitDetails.cbegin(), splitDetails.cend(), [&routeId](const QVariant &entry) {
+                return entry.toMap().value(QStringLiteral("id")).toString() == routeId;
+            });
+            const QVariantList splitProcessorDetails = splitRoute == splitDetails.cend() ? QVariantList{}
+                : splitRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const bool routeSplit = splitRoute != splitDetails.cend()
+                && std::none_of(splitProcessorDetails.cbegin(), splitProcessorDetails.cend(),
+                    [](const QVariant &entry) { return entry.toMap().value(QStringLiteral("shared")).toBool(); });
+            if (!routeSplit) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Signal Flow shared-processor split did not leave the selected route locally editable"));
+            }
+            const QVariantMap undoSplit = backend.signalFlowUndo(backend.signalFlowRevision());
+            const QVariantMap undoShare = backend.signalFlowUndo(backend.signalFlowRevision());
+            const QVariantMap undoAdaptive = backend.signalFlowUndo(backend.signalFlowRevision());
+            const QVariantMap undoProcessor = backend.signalFlowUndo(backend.signalFlowRevision());
+            const QVariantMap undoRoute = backend.signalFlowUndo(backend.signalFlowRevision());
+            if (!undoSplit.value(QStringLiteral("success")).toBool()
+                || !undoShare.value(QStringLiteral("success")).toBool()
+                || !undoAdaptive.value(QStringLiteral("success")).toBool()
+                || !undoProcessor.value(QStringLiteral("success")).toBool()
+                || !undoRoute.value(QStringLiteral("success")).toBool()) {
+                return failPresentationLifecycleTest(QStringLiteral("Signal Flow undo did not restore the prior topology"));
+            }
+        }
+        return true;
+    };
+
+    for (const QString &theme : {QStringLiteral("Legacy"), QStringLiteral("Standard"),
+                                 QStringLiteral("Top Gun"), QStringLiteral("Day Ops")}) {
+        if (!loadExistingExperience(theme)) return false;
+    }
+
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    QQmlApplicationEngine flightDeckEngine;
+    QStringList flightDeckWarnings;
+    QObject::connect(&flightDeckEngine, &QQmlApplicationEngine::warnings, &flightDeckEngine,
+        [&flightDeckWarnings](const QList<QQmlError> &items) {
+            for (const QQmlError &item : items) flightDeckWarnings.push_back(item.toString());
+        });
+    flightDeckEngine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    flightDeckEngine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    flightDeckEngine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *flightDeckWindow = flightDeckEngine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QWindow *>(flightDeckEngine.rootObjects().constFirst());
+    QObject *flightDeckPresentation = flightDeckWindow
+        ? flightDeckWindow->findChild<QObject *>(QStringLiteral("presentationLoader")) : nullptr;
+    QObject *flightDeckSurface = flightDeckPresentation
+        ? qvariant_cast<QObject *>(flightDeckPresentation->property("item")) : nullptr;
+    settlePresentation();
+    if (!flightDeckWindow || !flightDeckSurface || !selectPage(flightDeckSurface, 11)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Signal Flow surface did not load"));
+    }
+    QObject *flightDeckPage = pageItem(flightDeckSurface, 11);
+    const QStringList deckWarnings = signalFlowWarnings(flightDeckWarnings);
+    if (!flightDeckPage || flightDeckPage->objectName() != QStringLiteral("flightDeckSignalFlow")
+        || !flightDeckSurface->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowLoader"))
+        || !deckWarnings.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow did not use its native page (page=%1 warnings=%2)")
+                .arg(flightDeckPage ? flightDeckPage->objectName() : QStringLiteral("missing"))
+                .arg(deckWarnings.join(u" | "_qs)));
+    }
+    const QVariantMap deckScopeGraph = backend.signalFlowGraph();
+    QQmlExpression deckLearnSurface(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " const learned = sourcePortFromLearning({ kind: 'signal-flow', sourcePortId: 'axis:6' });"
+        " const sourceApi = typeof startSignalFlowSourceLearning === 'function'"
+        "   && typeof sourcePortFromLearning === 'function'"
+        "   && typeof acceptSignalFlowLearnedSource === 'function';"
+        " return sourceApi && learned && learned.id === 'axis:6';"
+        "})()"));
+    const bool deckLearnReady = deckLearnSurface.evaluate().toBool();
+    QObject *deckSourceLearnDialog = flightDeckWindow->findChild<QObject *>(
+        QStringLiteral("flightDeckSignalFlowLearnInputDialog"));
+    QObject *deckRouteMenu = flightDeckPage->findChild<QObject *>(
+        QStringLiteral("flightDeckSignalFlowRouteContextMenu"));
+    if (deckScopeGraph.value(QStringLiteral("deviceRigName")).toString().trimmed().isEmpty()
+        || deckScopeGraph.value(QStringLiteral("profileName")).toString().trimmed().isEmpty()
+        || deckScopeGraph.value(QStringLiteral("effectiveProfileName")).toString().trimmed().isEmpty()
+        || deckLearnSurface.hasError() || !deckLearnReady || !deckSourceLearnDialog || !deckRouteMenu) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow did not expose native rig/profile context, source-first learning, or wire processing actions (error=%1)")
+            .arg(deckLearnSurface.hasError() ? deckLearnSurface.error().toString() : QStringLiteral("none")));
+    }
+    QQmlExpression deckInteractionSurface(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " const sourcePort = sourcePorts().filter(function(port) { return port.id === 'axis:6'; })[0];"
+        " const destinationPort = destinationPorts().filter(function(port) { return port.id === 'axis:8'; })[0];"
+        " if (!sourcePort || !destinationPort) return false;"
+        " selectNode(node('input'));"
+        " const cardInspectable = inspectedNode && inspectedNode.kind === 'input';"
+        " beginSourceDrag(sourcePort, { x: 210, y: 175 }); previewDestination(destinationPort);"
+        " const dragVisible = dragWire && dragWire.active && connectionPreview && connectionPreview.compatible;"
+        " endSourceDrag();"
+        " const liveOn = keyboardAction('live'); const liveOff = keyboardAction('live');"
+        " const baseZoom = zoom; zoom = 0.60; const overview = semanticDensity === 'overview'; zoom = baseZoom;"
+        " query = 'axis'; const focused = focusSearchResult(); query = ''; source = ({}); inspectedRoute = ({}); inspectedNode = ({});"
+        " return cardInspectable && dragVisible && liveOn && liveOff && overview && focused;"
+        "})()"));
+    const bool deckInteractionReady = deckInteractionSurface.evaluate().toBool();
+    if (deckInteractionSurface.hasError() || !deckInteractionReady) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow did not retain parity for card inspection, drag preview, live sampling, semantic zoom, and search focus (error=%1)")
+            .arg(deckInteractionSurface.hasError() ? deckInteractionSurface.error().toString() : QStringLiteral("none")));
+    }
+    if (!verifySignalFlowVisualStressFixture(flightDeckPage, qobject_cast<QQuickWindow *>(flightDeckWindow),
+            QStringLiteral("Flight Deck"))) {
+        return false;
+    }
+    QQmlExpression openDeckInputCardSettings(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() { const input = node('input'); selectNode(input); return openCardSettings(input); })()"));
+    const bool deckInputCardSettingsOpened = openDeckInputCardSettings.evaluate().toBool();
+    settlePresentation();
+    if (openDeckInputCardSettings.hasError() || !deckInputCardSettingsOpened
+        || flightDeckSurface->property("currentPage").toInt() != 2
+        || !selectPage(flightDeckSurface, 11)) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow input card did not hand off to native Devices & setup (error=%1 page=%2)")
+            .arg(openDeckInputCardSettings.hasError() ? openDeckInputCardSettings.error().toString()
+                                                      : QStringLiteral("none"))
+            .arg(flightDeckSurface->property("currentPage").toInt()));
+    }
+    settlePresentation();
+    flightDeckPage = pageItem(flightDeckSurface, 11);
+    const QVariantMap restoredDeckInputCard = flightDeckPage
+        ? flightDeckPage->property("inspectedNode").toMap() : QVariantMap{};
+    if (!flightDeckPage
+        || restoredDeckInputCard.value(QStringLiteral("kind")).toString() != QStringLiteral("input")) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow input card return did not restore its native graph context"));
+    }
+    QQmlExpression deckPresentationControls(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " rebuildWireGeometry();"
+        " const prepared = wireGeometry;"
+        " if (!prepared || prepared.length === 0) return false;"
+        " liveTelemetry = { routes: [] };"
+        " if (wireGeometry !== prepared) return false;"
+        " const overview = setDensityMode('overview');"
+        " const densitySaved = graph.workspace && graph.workspace.densityMode === 'overview';"
+        " const locked = toggleLayoutLocked();"
+        " const lockSaved = graph.workspace && graph.workspace.layoutLocked;"
+        " const unlocked = toggleLayoutLocked();"
+        " const unlockSaved = graph.workspace && !graph.workspace.layoutLocked;"
+        " const fit = keyboardAction('fit');"
+        " xrayMode = true; const xray = xrayMode; xrayMode = false;"
+        " const restored = setDensityMode('detailed');"
+        " return overview && densitySaved && locked && lockSaved && unlocked && unlockSaved"
+        "     && fit && xray && restored;"
+        "})()"));
+    const bool deckPresentationSafe = deckPresentationControls.evaluate().toBool();
+    if (deckPresentationControls.hasError() || !deckPresentationSafe) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow presentation controls did not preserve native cached/layout behavior (error=%1)")
+            .arg(deckPresentationControls.hasError() ? deckPresentationControls.error().toString()
+                                                      : QStringLiteral("none")));
+    }
+    // Exercise the Flight Deck page's own conflict-to-mixer path. Axis 7 is
+    // intentionally unassigned by the fixture, while X already has a source.
+    // This proves the visual surface reaches the canonical command rather
+    // than merely changing a selector or drawing a speculative wire.
+    QQmlExpression mixerThroughFlightDeck(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " const sourcePort = sourcePorts().filter(function(port) { return port.id === 'axis:6'; })[0];"
+        " const destinationPort = destinationPorts().filter(function(port) { return port.id === 'axis:1'; })[0];"
+        " if (!sourcePort || !destinationPort) return false;"
+        " selectSource(sourcePort); connect(destinationPort, false);"
+        " connectWithMixer('average');"
+        " return !source || !source.kind;"
+        "})()"));
+    const bool mixedThroughFlightDeck = mixerThroughFlightDeck.evaluate().toBool();
+    settlePresentation();
+    const QVariantMap mixedGraph = backend.signalFlowGraph();
+    const QVariantList mixedRoutes = mixedGraph.value(QStringLiteral("routes")).toList();
+    const auto mixerRoute = std::find_if(mixedRoutes.cbegin(), mixedRoutes.cend(), [](const QVariant &entry) {
+        const QVariantMap route = entry.toMap();
+        return route.value(QStringLiteral("sourcePortId")).toString() == QStringLiteral("axis:6")
+            && route.value(QStringLiteral("destinationPortId")).toString() == QStringLiteral("axis:1")
+            && !route.value(QStringLiteral("viaNodeId")).toString().isEmpty();
+    });
+    const QVariantList mixedNodes = mixedGraph.value(QStringLiteral("nodes")).toList();
+    const bool mixerNodePresent = std::any_of(mixedNodes.cbegin(), mixedNodes.cend(), [](const QVariant &entry) {
+        const QVariantMap node = entry.toMap();
+        return node.value(QStringLiteral("semantic")).toString() == QStringLiteral("mixer")
+            && node.value(QStringLiteral("mixerMode")).toString() == QStringLiteral("Average");
+    });
+    if (mixerThroughFlightDeck.hasError() || !mixedThroughFlightDeck
+        || mixerRoute == mixedRoutes.cend() || !mixerNodePresent) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow did not commit the explicit mixer path (error=%1 routed=%2 mixerNode=%3)"
+        ).arg(mixerThroughFlightDeck.hasError() ? mixerThroughFlightDeck.error().toString()
+                                                : QStringLiteral("none"))
+         .arg(mixedThroughFlightDeck).arg(mixerNodePresent));
+    }
+    const QString deckRouteId = mixerRoute->toMap().value(QStringLiteral("id")).toString();
+    const QVariantMap deckCurve = backend.signalFlowToggleProcessor(
+        deckRouteId, QStringLiteral("curve"), true, backend.signalFlowRevision());
+    settlePresentation();
+    QQmlExpression deckProcessorTopology(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " rebuildWireGeometry();"
+        " const entry = wireGeometry.filter(function(item) { return item.routeId === '%1'; })[0];"
+        " return entry && entry.processorCount === 2 && entry.segments && entry.segments.length === 3;"
+        "})()"
+    ).arg(deckRouteId));
+    const bool deckProcessorTopologyVisible = deckProcessorTopology.evaluate().toBool();
+    QQmlExpression openDeckCurveSettings(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "openFullSettings('curve', graph.routes.filter(function(route) { return route.id === '%1'; })[0])"
+    ).arg(deckRouteId));
+    const bool deckCurveSettingsOpened = openDeckCurveSettings.evaluate().toBool();
+    settlePresentation();
+    if (!deckCurve.value(QStringLiteral("success")).toBool() || deckProcessorTopology.hasError()
+        || !deckProcessorTopologyVisible || openDeckCurveSettings.hasError()
+        || !deckCurveSettingsOpened || flightDeckSurface->property("currentPage").toInt() != 6
+        || backend.selectedAxisIndex() != 6 || !selectPage(flightDeckSurface, 11)) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow Curve deep link did not select its source axis or route through the native host (error=%1 page=%2 axis=%3)")
+            .arg(openDeckCurveSettings.hasError() ? openDeckCurveSettings.error().toString() : QStringLiteral("none"))
+            .arg(flightDeckSurface->property("currentPage").toInt()).arg(backend.selectedAxisIndex()));
+    }
+    settlePresentation();
+    flightDeckPage = pageItem(flightDeckSurface, 11);
+    const QVariantMap restoredDeckRoute = flightDeckPage
+        ? flightDeckPage->property("inspectedRoute").toMap() : QVariantMap{};
+    if (!flightDeckPage || restoredDeckRoute.value(QStringLiteral("id")).toString() != deckRouteId) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow Curve full-settings return did not restore its graph route context"));
+    }
+    const QVariantMap disconnectMixerRoute = backend.signalFlowDisconnect(
+        deckRouteId, backend.signalFlowRevision());
+    if (!disconnectMixerRoute.value(QStringLiteral("success")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Signal Flow could not remove the explicit mixer route"));
+    }
+    // A rig remains a rig in Signal Flow even when no member is currently the
+    // editing scope. Build one canonical route for each saved fixture member,
+    // then verify the graph preserves both cards/routes and requires an
+    // explicit card-to-scope transition before edits can resume.
+    const QString fixtureRigId = QStringLiteral("fixture-rig");
+    const QString stickId = QStringLiteral("fixture-stick");
+    const QString throttleId = QStringLiteral("fixture-throttle");
+    const auto outputDestination = [&backend](const QString &portId) {
+        const QVariantList nodes = backend.signalFlowGraph().value(QStringLiteral("nodes")).toList();
+        for (const QVariant &nodeValue : nodes) {
+            const QVariantMap node = nodeValue.toMap();
+            if (node.value(QStringLiteral("kind")).toString() != QStringLiteral("output")) continue;
+            for (const QVariant &portValue : node.value(QStringLiteral("ports")).toList()) {
+                const QVariantMap port = portValue.toMap();
+                if (port.value(QStringLiteral("id")).toString() == portId) {
+                    return port.value(QStringLiteral("technicalLabel")).toString();
+                }
+            }
+        }
+        return QString{};
+    };
+    const QString multiDeviceDestination = outputDestination(QStringLiteral("axis:8"));
+    const bool multiDevicePrepared = backend.assignProfileDeviceRig(backend.activeProfileId(), fixtureRigId)
+        && !multiDeviceDestination.isEmpty()
+        && backend.setEditingDeviceContext(fixtureRigId, {stickId});
+    const QVariantMap stickRouteResult = multiDevicePrepared ? backend.signalFlowConnect(
+        QStringLiteral("axis"), 6, -1, multiDeviceDestination, false, backend.signalFlowRevision()) : QVariantMap{};
+    const bool throttleScopeSelected = stickRouteResult.value(QStringLiteral("success")).toBool()
+        && backend.setEditingDeviceContext(fixtureRigId, {throttleId});
+    const QVariantMap throttleRouteResult = throttleScopeSelected ? backend.signalFlowConnect(
+        QStringLiteral("axis"), 6, -1, multiDeviceDestination, false, backend.signalFlowRevision()) : QVariantMap{};
+    const bool multiScopeReleased = throttleRouteResult.value(QStringLiteral("success")).toBool()
+        && backend.setEditingDeviceContext(fixtureRigId, {});
+    const QVariantMap multiDeviceGraph = multiScopeReleased ? backend.signalFlowGraph() : QVariantMap{};
+    const QVariantList multiDeviceNodes = multiDeviceGraph.value(QStringLiteral("nodes")).toList();
+    const QVariantList multiDeviceRoutes = multiDeviceGraph.value(QStringLiteral("routes")).toList();
+    const auto nodeForController = [&multiDeviceNodes](const QString &controllerId) {
+        return std::find_if(multiDeviceNodes.cbegin(), multiDeviceNodes.cend(), [&controllerId](const QVariant &entry) {
+            const QVariantMap node = entry.toMap();
+            return node.value(QStringLiteral("kind")).toString() == QStringLiteral("input")
+                && node.value(QStringLiteral("controllerRecordId")).toString() == controllerId;
+        });
+    };
+    const auto routeForController = [&multiDeviceRoutes](const QString &controllerId) {
+        return std::find_if(multiDeviceRoutes.cbegin(), multiDeviceRoutes.cend(), [&controllerId](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("controllerRecordId")).toString() == controllerId;
+        });
+    };
+    const auto stickNode = nodeForController(stickId);
+    const auto throttleNode = nodeForController(throttleId);
+    const bool multiDeviceTruth = multiScopeReleased && !multiDeviceGraph.value(QStringLiteral("editable")).toBool()
+        && stickNode != multiDeviceNodes.cend() && throttleNode != multiDeviceNodes.cend()
+        && routeForController(stickId) != multiDeviceRoutes.cend()
+        && routeForController(throttleId) != multiDeviceRoutes.cend()
+        && !throttleNode->toMap().value(QStringLiteral("scopeEditable")).toBool()
+        && !throttleNode->toMap().value(QStringLiteral("detail")).toString().isEmpty();
+    if (!multiDeviceTruth) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow did not retain multi-device rig cards/routes as a truthful read-only projection "
+            "(prepared=%1 stick=%2 throttleScope=%3 throttle=%4 released=%5 editable=%6 nodes=%7 routes=%8 "
+            "stickNode=%9 throttleNode=%10 stickRoute=%11 throttleRoute=%12 throttleEditable=%13 stickMessage=%14 throttleMessage=%15)")
+            .arg(multiDevicePrepared).arg(stickRouteResult.value(QStringLiteral("success")).toBool())
+            .arg(throttleScopeSelected).arg(throttleRouteResult.value(QStringLiteral("success")).toBool())
+            .arg(multiScopeReleased).arg(multiDeviceGraph.value(QStringLiteral("editable")).toBool())
+            .arg(multiDeviceNodes.size()).arg(multiDeviceRoutes.size())
+            .arg(stickNode != multiDeviceNodes.cend()).arg(throttleNode != multiDeviceNodes.cend())
+            .arg(routeForController(stickId) != multiDeviceRoutes.cend())
+            .arg(routeForController(throttleId) != multiDeviceRoutes.cend())
+            .arg(throttleNode != multiDeviceNodes.cend()
+                 && throttleNode->toMap().value(QStringLiteral("scopeEditable")).toBool())
+            .arg(stickRouteResult.value(QStringLiteral("message")).toString())
+            .arg(throttleRouteResult.value(QStringLiteral("message")).toString()));
+    }
+    QQmlExpression changeScopeThroughDeck(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " graph = backendObject.signalFlowGraph;"
+        " const card = (graph.nodes || []).filter(function(node) { return node.controllerRecordId === 'fixture-throttle'; })[0];"
+        " if (!card) return false;"
+        " selectNode(card);"
+        " return inspectedNode && inspectedNode.controllerRecordId === 'fixture-throttle' && useInputScope(card)"
+        "   && graph.controllerRecordId === 'fixture-throttle' && graph.editable;"
+        "})()"));
+    const bool scopeChangedThroughDeck = changeScopeThroughDeck.evaluate().toBool();
+    if (changeScopeThroughDeck.hasError() || !scopeChangedThroughDeck) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow could not turn a visible saved member into the explicit editing scope (error=%1)")
+            .arg(changeScopeThroughDeck.hasError() ? changeScopeThroughDeck.error().toString() : QStringLiteral("none")));
+    }
+    themeManager.setCurrentExperience(QStringLiteral("Existing"));
+    return true;
+}
+
 }
 
 int main(int argc, char *argv[])
@@ -6075,9 +7216,6 @@ int main(int argc, char *argv[])
     // QSettings' default location. The lifecycle test creates persisted
     // Automation drafts, so remove that test-only INI before AppBackend loads
     // it and a prior run can exhaust the rule cap.
-    QSettings testSettings;
-    testSettings.clear();
-    testSettings.sync();
     QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
         + QStringLiteral("/settings.ini"));
     if (!seedDeviceRigFixture()) return 1;
@@ -6100,6 +7238,7 @@ int main(int argc, char *argv[])
     // fresh, inspectable screenshots after shared presentation changes.
     const bool flightDeckVisualOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_VISUAL_ONLY");
+    const bool signalFlowOnly = qEnvironmentVariableIsSet("HOTAS_QML_SIGNAL_FLOW_ONLY");
     if (adaptiveChoiceGeometryOnly || containmentGeometryOnly) {
         const bool geometrySafe = (!containmentGeometryOnly
                 || (verifyFlightDeckNavigationRailGeometry(backend, themeManager, QStringLiteral("Dark"))
@@ -6135,6 +7274,11 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return visualSafe ? 0 : 1;
+    }
+    if (signalFlowOnly) {
+        const bool signalFlowSafe = verifySignalFlowQmlSurface(backend, themeManager);
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return signalFlowSafe ? 0 : 1;
     }
     QStringList themes{
         QStringLiteral("Legacy"),

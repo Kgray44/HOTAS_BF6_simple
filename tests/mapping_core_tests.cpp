@@ -14,6 +14,7 @@
 #include "profile_portability.h"
 #include "profile_trigger_runtime.h"
 #include "response_curve.h"
+#include "signal_flow_model.h"
 
 #include <QtTest>
 
@@ -847,7 +848,13 @@ private slots:
     void implicitButtonsDefaultToMatchingVjoyTargets();
     void inputLearningSelectsDeliberateAxisWithoutGuessing();
     void inputLearningSelectsAReleasedThenPressedButton();
+    void signalFlowSourceLearningSelectsOneDeliberateEndpoint();
     void configurationRoundTrips();
+    void signalFlowIdentityMigrationRoundTripAndLifecycle();
+    void signalFlowTopologySupportsFanOutAndExplicitMixers();
+    void signalFlowDigitalAndNativePovFanOutCompileToFixedTables();
+    void signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSettings();
+    void signalFlowMixerRuntimeModesAreDeterministic();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void v24MigrationPreservesVerifiedSavedActiveController();
@@ -1815,7 +1822,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -3736,6 +3743,402 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
 }
 
+void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    reconcileSignalFlowState(&configuration);
+
+    const QString routeKey = signalFlowRouteIdentityKey(profile, {}, QStringLiteral("axis"),
+        static_cast<int>(PhysicalAxis::X));
+    const SignalFlowIdentityRecord *initial = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(initial);
+    QVERIFY(initial->active);
+    QCOMPARE(initial->generation, std::uint32_t{1});
+    const QString initialId = initial->id;
+    QVERIFY(!initialId.isEmpty());
+
+    // Changing the destination does not make a new logical route.  The
+    // identity belongs to the canonical source endpoint/lifecycle, not a
+    // transient selected output label.
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::Ry;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *retargeted = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(retargeted);
+    QVERIFY(retargeted->active);
+    QCOMPARE(retargeted->generation, std::uint32_t{1});
+    QCOMPARE(retargeted->id, initialId);
+
+    // A deleted and later recreated route cannot revive stale selection,
+    // undo, or deep-link identity from the old lifecycle.
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::Disabled;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *deleted = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(deleted);
+    QVERIFY(!deleted->active);
+    QCOMPARE(deleted->id, initialId);
+
+    profile.axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::X;
+    reconcileSignalFlowState(&configuration);
+    const SignalFlowIdentityRecord *recreated = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, routeKey);
+    QVERIFY(recreated);
+    QVERIFY(recreated->active);
+    QCOMPARE(recreated->generation, std::uint32_t{2});
+    QVERIFY(recreated->id != initialId);
+
+    SignalFlowWorkspaceState workspace;
+    workspace.key = QStringLiteral("signal-flow:profile-normal:no-rig:legacy-source");
+    workspace.panX = 142.0F;
+    workspace.panY = 78.0F;
+    workspace.zoom = 1.2F;
+    workspace.wireStyle = QStringLiteral("orthogonal");
+    workspace.densityMode = QStringLiteral("compact");
+    workspace.layoutLocked = true;
+    configuration.signalFlow.workspaces.push_back(workspace);
+    configuration.signalFlow.nodeLayouts.push_back({workspace.key, recreated->id, 420.0F, 180.0F, true});
+
+    bool valid = false;
+    const QJsonObject serialized = ConfigStore::toJson(configuration);
+    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 28);
+    QVERIFY(serialized.value(QStringLiteral("signalFlow")).isObject());
+    const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
+    QVERIFY(valid);
+    const SignalFlowIdentityRecord *persisted = findSignalFlowIdentity(
+        restored.signalFlow.routeIdentities, routeKey);
+    QVERIFY(persisted);
+    QVERIFY(persisted->active);
+    QCOMPARE(persisted->generation, std::uint32_t{2});
+    QCOMPARE(persisted->id, recreated->id);
+    QCOMPARE(restored.signalFlow.workspaces.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.nodeLayouts.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.workspaces.front().wireStyle, QStringLiteral("orthogonal"));
+    QVERIFY(restored.signalFlow.workspaces.front().layoutLocked);
+
+    // v2.5 configuration has no Signal Flow JSON.  Loading it is a pure,
+    // deterministic migration: mapping semantics do not change and identity
+    // is backfilled from the same canonical route fields.
+    QJsonObject v25 = serialized;
+    v25.insert(QStringLiteral("version"), 25);
+    v25.remove(QStringLiteral("signalFlow"));
+    const MapperConfiguration migrated = ConfigStore::fromJson(v25, &valid);
+    QVERIFY(valid);
+    const SignalFlowIdentityRecord *migratedRoute = findSignalFlowIdentity(
+        migrated.signalFlow.routeIdentities, routeKey);
+    QVERIFY(migratedRoute);
+    QVERIFY(migratedRoute->active);
+    QCOMPARE(activeProfile(migrated).axes[static_cast<int>(PhysicalAxis::X)].target, VirtualAxis::X);
+}
+
+void MappingCoreTests::signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSettings()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.axes[0].curve = standardCurveDefinition(CurveFamily::SCurve, 0.67F);
+    profile.axes[1].curve = linearCurveDefinition();
+    reconcileSignalFlowState(&configuration);
+
+    SignalFlowSharedProcessor shared;
+    shared.profileId = profile.id;
+    shared.kind = QStringLiteral("curve");
+    shared.ownerAxis = 0;
+    shared.sourceAxes = {0, 1};
+    shared.enabled = true;
+    shared.identityKey = signalFlowSharedProcessorIdentityKey(profile, {}, shared.kind, shared.ownerAxis);
+    configuration.signalFlow.sharedProcessors.push_back(shared);
+    reconcileSignalFlowState(&configuration);
+
+    QCOMPARE(configuration.signalFlow.sharedProcessors.size(), size_t{1});
+    const SignalFlowSharedProcessor &reconciled = configuration.signalFlow.sharedProcessors.front();
+    QVERIFY(!reconciled.id.isEmpty());
+    QCOMPARE(profile.axes[1].curve.family, CurveFamily::SCurve);
+    QCOMPARE(profile.axes[1].curve.strength, 0.67F);
+    const SignalFlowIdentityRecord *sharedIdentity = findSignalFlowIdentity(
+        configuration.signalFlow.processorIdentities, reconciled.identityKey);
+    QVERIFY(sharedIdentity);
+    QVERIFY(sharedIdentity->active);
+    QCOMPARE(sharedIdentity->id, reconciled.id);
+
+    const auto routeForAxis = [](const MapperConfiguration &candidate, int axis) {
+        const auto found = std::find_if(candidate.signalFlow.routes.cbegin(),
+            candidate.signalFlow.routes.cend(), [axis](const SignalFlowRoute &route) {
+                return route.enabled && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.sourceIndex == axis;
+            });
+        return found == candidate.signalFlow.routes.cend() ? nullptr : &*found;
+    };
+    const SignalFlowRoute *axis0 = routeForAxis(configuration, 0);
+    const SignalFlowRoute *axis1 = routeForAxis(configuration, 1);
+    QVERIFY(axis0);
+    QVERIFY(axis1);
+    QVERIFY(axis0->processorPath.contains(reconciled.id));
+    QVERIFY(axis1->processorPath.contains(reconciled.id));
+
+    // An edit through the shared object's owner updates every linked source
+    // at the same configuration boundary, rather than creating copied graph
+    // settings or leaving stale members behind.
+    profile.axes[0].curve.strength = 0.74F;
+    QVERIFY(signalFlowPropagateSharedProcessorSettings(&configuration, profile.id, {},
+                                                        QStringLiteral("curve"), 0));
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.sharedProcessors.size(), size_t{1});
+    QCOMPARE(profile.axes[1].curve.strength, 0.74F);
+
+    bool valid = false;
+    const QJsonObject json = ConfigStore::toJson(configuration);
+    QVERIFY(json.value(QStringLiteral("signalFlow")).toObject()
+                .value(QStringLiteral("sharedProcessors")).isArray());
+    MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.signalFlow.sharedProcessors.size(), size_t{1});
+    const QString sharedId = restored.signalFlow.sharedProcessors.front().id;
+    QVERIFY(!sharedId.isEmpty());
+    QVERIFY(routeForAxis(restored, 0)->processorPath.contains(sharedId));
+    QVERIFY(routeForAxis(restored, 1)->processorPath.contains(sharedId));
+
+    // A non-owner focused-editor change is an explicit divergence. It must
+    // split instead of being silently overwritten by the shared owner.
+    ControllerProfile &restoredProfileForEdit = activeProfile(restored);
+    restoredProfileForEdit.axes[1].curve = standardCurveDefinition(CurveFamily::JCurve, 0.41F);
+    reconcileSignalFlowState(&restored);
+    QCOMPARE(restored.signalFlow.sharedProcessors.size(), size_t{0});
+    const SignalFlowRoute *splitAxis0 = routeForAxis(restored, 0);
+    const SignalFlowRoute *splitAxis1 = routeForAxis(restored, 1);
+    QVERIFY(splitAxis0);
+    QVERIFY(splitAxis1);
+    QVERIFY(!splitAxis0->processorPath.contains(sharedId));
+    QVERIFY(!splitAxis1->processorPath.contains(sharedId));
+    const ControllerProfile &restoredProfile = activeProfile(restored);
+    QCOMPARE(restoredProfile.axes[0].curve.strength, 0.74F);
+    QCOMPARE(restoredProfile.axes[1].curve.family, CurveFamily::JCurve);
+    QCOMPARE(restoredProfile.axes[1].curve.strength, 0.41F);
+    const SignalFlowIdentityRecord *axis0Curve = findSignalFlowIdentity(
+        restored.signalFlow.processorIdentities,
+        signalFlowAxisProcessorIdentityKey(restoredProfile, {}, 0, QStringLiteral("curve")));
+    const SignalFlowIdentityRecord *axis1Curve = findSignalFlowIdentity(
+        restored.signalFlow.processorIdentities,
+        signalFlowAxisProcessorIdentityKey(restoredProfile, {}, 1, QStringLiteral("curve")));
+    QVERIFY(axis0Curve && axis0Curve->active);
+    QVERIFY(axis1Curve && axis1Curve->active);
+    QVERIFY(splitAxis0->processorPath.contains(axis0Curve->id));
+    QVERIFY(splitAxis1->processorPath.contains(axis1Curve->id));
+    QVERIFY(axis0Curve->id != axis1Curve->id);
+}
+
+void MappingCoreTests::signalFlowTopologySupportsFanOutAndExplicitMixers()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    for (AxisMapping &axis : profile.axes) axis.target = VirtualAxis::Disabled;
+    profile.axes[0].target = VirtualAxis::X;
+    profile.axes[1].target = VirtualAxis::Y;
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.topologyVersion, 1);
+
+    const QString primaryKey = signalFlowRouteIdentityKey(profile, {}, QStringLiteral("axis"), 0);
+    const SignalFlowIdentityRecord *primaryIdentity = findSignalFlowIdentity(
+        configuration.signalFlow.routeIdentities, primaryKey);
+    QVERIFY(primaryIdentity);
+    const SignalFlowRoute *primary = findSignalFlowRouteById(configuration.signalFlow, primaryIdentity->id);
+    QVERIFY(primary);
+    QCOMPARE(primary->destinationIndex, static_cast<int>(VirtualAxis::X));
+
+    SignalFlowRoute fanout = *primary;
+    fanout.identityKey = signalFlowFanoutRouteIdentityKey(profile, {}, QStringLiteral("axis"),
+        0, -1, SignalFlowPortKind::Axis, static_cast<int>(VirtualAxis::Z));
+    fanout.id.clear();
+    fanout.destinationIndex = static_cast<int>(VirtualAxis::Z);
+    fanout.primaryProjection = false;
+    configuration.signalFlow.routes.push_back(fanout);
+    reconcileSignalFlowState(&configuration);
+
+    const RuntimeMappingConfiguration fanoutRuntime = compileActiveProfile(configuration);
+    QVERIFY(fanoutRuntime.signalFlowTopologyCompiled);
+    QCOMPARE(fanoutRuntime.signalFlowAxisRouteCount, 3);
+    std::array<bool, kPhysicalAxisCount> available{};
+    available.fill(true);
+    std::array<float, kPhysicalAxisCount> transformed{};
+    transformed[0] = 0.70F;
+    transformed[1] = -0.20F;
+    std::array<bool, kVirtualAxisSlotCount> targets{};
+    targets.fill(true);
+    targets[0] = false;
+    const VirtualAxisOutputPlan fanoutPlan = buildVirtualAxisOutputPlan(
+        fanoutRuntime, available, transformed, targets, 0.0F);
+    QCOMPARE(fanoutPlan.values[static_cast<int>(VirtualAxis::X)], 0.70F);
+    QCOMPARE(fanoutPlan.values[static_cast<int>(VirtualAxis::Z)], 0.70F);
+    QCOMPARE(fanoutPlan.values[static_cast<int>(VirtualAxis::Y)], -0.20F);
+
+    SignalFlowRoute mergeInput;
+    mergeInput.profileId = profile.id;
+    mergeInput.sourceKind = SignalFlowPortKind::Axis;
+    mergeInput.sourceIndex = 1;
+    mergeInput.destinationKind = SignalFlowPortKind::Axis;
+    mergeInput.destinationIndex = static_cast<int>(VirtualAxis::X);
+    mergeInput.primaryProjection = false;
+    mergeInput.enabled = true;
+    mergeInput.identityKey = signalFlowFanoutRouteIdentityKey(profile, {}, QStringLiteral("axis"),
+        1, -1, SignalFlowPortKind::Axis, static_cast<int>(VirtualAxis::X));
+    configuration.signalFlow.routes.push_back(mergeInput);
+    reconcileSignalFlowState(&configuration);
+    const auto rejectedMerge = std::find_if(configuration.signalFlow.routes.cbegin(),
+        configuration.signalFlow.routes.cend(), [&mergeInput](const SignalFlowRoute &route) {
+            return route.identityKey == mergeInput.identityKey;
+        });
+    QVERIFY(rejectedMerge != configuration.signalFlow.routes.cend());
+    QVERIFY(!rejectedMerge->enabled);
+
+    SignalFlowMixer mixer;
+    mixer.profileId = profile.id;
+    mixer.destinationAxis = static_cast<int>(VirtualAxis::X);
+    mixer.mode = SignalFlowMixerMode::Average;
+    mixer.enabled = true;
+    mixer.identityKey = signalFlowMixerIdentityKey(profile, {}, mixer.destinationAxis);
+    configuration.signalFlow.mixers.push_back(mixer);
+    auto reenabledMerge = std::find_if(configuration.signalFlow.routes.begin(),
+        configuration.signalFlow.routes.end(), [&mergeInput](const SignalFlowRoute &route) {
+            return route.identityKey == mergeInput.identityKey;
+        });
+    QVERIFY(reenabledMerge != configuration.signalFlow.routes.end());
+    reenabledMerge->enabled = true;
+    reconcileSignalFlowState(&configuration);
+
+    const RuntimeMappingConfiguration mixedRuntime = compileActiveProfile(configuration);
+    QCOMPARE(mixedRuntime.signalFlowAxisMixers[static_cast<int>(VirtualAxis::X)],
+             SignalFlowMixerMode::Average);
+    const VirtualAxisOutputPlan mixedPlan = buildVirtualAxisOutputPlan(
+        mixedRuntime, available, transformed, targets, 0.0F);
+    QCOMPARE(mixedPlan.values[static_cast<int>(VirtualAxis::X)], 0.25F);
+    QCOMPARE(mixedPlan.sourceIndexes[static_cast<int>(VirtualAxis::X)], -1);
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(restored.signalFlow.topologyVersion, 1);
+    QCOMPARE(restored.signalFlow.mixers.size(), size_t{1});
+    QCOMPARE(compileActiveProfile(restored).signalFlowAxisRouteCount,
+             mixedRuntime.signalFlowAxisRouteCount);
+}
+
+void MappingCoreTests::signalFlowDigitalAndNativePovFanOutCompileToFixedTables()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.buttons.resize(1);
+    profile.buttons[0] = {ButtonActionType::VirtualButton, 3, true};
+    profile.povs.resize(1);
+    profile.povs[0][0] = {ButtonActionType::VirtualButton, 5, true}; // POV 1 Up
+    configuration.nativePovBindings.resize(1);
+    configuration.nativePovBindings[0] = {true, NativePovTargetType::Continuous, 1};
+    reconcileSignalFlowState(&configuration);
+
+    const auto primaryRoute = [&configuration, &profile](SignalFlowPortKind kind, int index, int subIndex) {
+        return std::find_if(configuration.signalFlow.routes.cbegin(), configuration.signalFlow.routes.cend(),
+            [&profile, kind, index, subIndex](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id && route.sourceKind == kind
+                    && route.sourceIndex == index && route.sourceSubIndex == subIndex
+                    && route.primaryProjection;
+            });
+    };
+    const auto buttonPrimary = primaryRoute(SignalFlowPortKind::Button, 0, -1);
+    const auto povPrimary = primaryRoute(SignalFlowPortKind::PovDirection, 0, 0);
+    const auto nativePrimary = primaryRoute(SignalFlowPortKind::NativePov, 0, -1);
+    QVERIFY(buttonPrimary != configuration.signalFlow.routes.cend());
+    QVERIFY(povPrimary != configuration.signalFlow.routes.cend());
+    QVERIFY(nativePrimary != configuration.signalFlow.routes.cend());
+
+    SignalFlowRoute buttonFanOut = *buttonPrimary;
+    buttonFanOut.destinationIndex = 6;
+    buttonFanOut.primaryProjection = false;
+    buttonFanOut.id.clear();
+    buttonFanOut.identityKey = signalFlowFanoutRouteIdentityKey(profile, {}, QStringLiteral("button"),
+        0, -1, SignalFlowPortKind::Button, 6);
+    SignalFlowRoute povFanOut = *povPrimary;
+    povFanOut.destinationIndex = 7;
+    povFanOut.primaryProjection = false;
+    povFanOut.id.clear();
+    povFanOut.identityKey = signalFlowFanoutRouteIdentityKey(profile, {}, QStringLiteral("pov"),
+        0, 0, SignalFlowPortKind::Button, 7);
+    SignalFlowRoute nativeFanOut = *nativePrimary;
+    nativeFanOut.destinationKind = SignalFlowPortKind::NativePov;
+    nativeFanOut.destinationIndex = 1;
+    nativeFanOut.destinationSubIndex = static_cast<int>(NativePovTargetType::Discrete);
+    nativeFanOut.primaryProjection = false;
+    nativeFanOut.id.clear();
+    nativeFanOut.identityKey = signalFlowFanoutRouteIdentityKey(profile, {}, QStringLiteral("native-pov"),
+        0, -1, SignalFlowPortKind::NativePov, 1,
+        static_cast<int>(NativePovTargetType::Discrete));
+    configuration.signalFlow.routes.push_back(buttonFanOut);
+    configuration.signalFlow.routes.push_back(povFanOut);
+    configuration.signalFlow.routes.push_back(nativeFanOut);
+    reconcileSignalFlowState(&configuration);
+
+    const RuntimeMappingConfiguration runtime = compileActiveProfile(configuration);
+    QVERIFY(runtime.signalFlowTopologyCompiled);
+    QVERIFY(runtime.signalFlowDigitalRouteCount >= 4);
+    QCOMPARE(runtime.signalFlowNativePovRouteCount, 2);
+
+    PhysicalButtonStates buttons{};
+    buttons[0] = true;
+    PhysicalPovValues povs{};
+    povs.fill(-1);
+    povs[0] = 0; // Up
+    const RuntimeButtonTargets buttonOwnership = buildRuntimeButtonTargets(runtime.buttons, 16);
+    const RuntimePovTargets povOwnership = buildRuntimePovTargets(runtime.povs, 16);
+    const VirtualButtonStates outputs = mapSignalFlowDigitalStates(buttons, povs, 1, runtime,
+        buttonOwnership, povOwnership, 16);
+    QVERIFY(outputs[3]);
+    QVERIFY(outputs[5]);
+    QVERIFY(outputs[6]);
+    QVERIFY(outputs[7]);
+
+    bool continuous = false;
+    bool discrete = false;
+    for (int index = 0; index < runtime.signalFlowNativePovRouteCount; ++index) {
+        const RuntimeSignalFlowNativePovRoute &route = runtime.signalFlowNativePovRoutes[
+            static_cast<size_t>(index)];
+        continuous = continuous || (route.sourcePov == 0 && route.destinationIndex == 1
+            && route.destinationType == static_cast<std::uint8_t>(NativePovTargetType::Continuous));
+        discrete = discrete || (route.sourcePov == 0 && route.destinationIndex == 1
+            && route.destinationType == static_cast<std::uint8_t>(NativePovTargetType::Discrete));
+    }
+    QVERIFY(continuous);
+    QVERIFY(discrete);
+}
+
+void MappingCoreTests::signalFlowMixerRuntimeModesAreDeterministic()
+{
+    RuntimeMappingConfiguration mapping;
+    mapping.signalFlowTopologyCompiled = true;
+    mapping.signalFlowAxisRouteCount = 2;
+    mapping.signalFlowAxisRoutes[0] = {0, static_cast<std::uint8_t>(VirtualAxis::X)};
+    mapping.signalFlowAxisRoutes[1] = {1, static_cast<std::uint8_t>(VirtualAxis::X)};
+    std::array<bool, kPhysicalAxisCount> available{};
+    available.fill(true);
+    std::array<float, kPhysicalAxisCount> transformed{};
+    transformed[0] = 0.75F;
+    transformed[1] = -0.25F;
+    std::array<bool, kVirtualAxisSlotCount> targets{};
+    targets.fill(true);
+    targets[0] = false;
+
+    mapping.signalFlowAxisMixers[static_cast<int>(VirtualAxis::X)] = SignalFlowMixerMode::Average;
+    QCOMPARE(buildVirtualAxisOutputPlan(mapping, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.25F);
+    mapping.signalFlowAxisMixers[static_cast<int>(VirtualAxis::X)] = SignalFlowMixerMode::SumClamped;
+    QCOMPARE(buildVirtualAxisOutputPlan(mapping, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.50F);
+    mapping.signalFlowAxisMixers[static_cast<int>(VirtualAxis::X)] = SignalFlowMixerMode::HighestMagnitude;
+    QCOMPARE(buildVirtualAxisOutputPlan(mapping, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.75F);
+    mapping.signalFlowAxisMixers[static_cast<int>(VirtualAxis::X)] = SignalFlowMixerMode::Disabled;
+    QCOMPARE(buildVirtualAxisOutputPlan(mapping, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.75F);
+}
+
 void MappingCoreTests::outputLimitsRoundTripAcrossDomainsAndSchemaMigration()
 {
     AxisMapping mapping;
@@ -4352,7 +4755,7 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
     configuration.manualOverrideProfileId = precision->id;
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
     QVERIFY(!json.contains(QStringLiteral("activationManualOverride")));
     QVERIFY(!json.contains(QStringLiteral("manualOverrideProfileId")));
 
@@ -4721,6 +5124,9 @@ void MappingCoreTests::disabledAxisValueClampsSafely()
 void MappingCoreTests::disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMappedAxes()
 {
     MapperConfiguration configuration = defaultConfiguration();
+    activeProfile(configuration).axes[static_cast<size_t>(PhysicalAxis::X)].target =
+        VirtualAxis::Disabled;
+    reconcileSignalFlowState(&configuration);
     RuntimeMappingConfiguration mapping = compileActiveProfile(configuration);
     std::array<bool, kPhysicalAxisCount> available{};
     std::array<float, kPhysicalAxisCount> transformed{};
@@ -4732,7 +5138,6 @@ void MappingCoreTests::disabledAxisOutputPlanParksUnusedTargetsWithoutChangingMa
 
     // Roll has no active route. Its physical input must not leak onto a
     // virtual axis, and its former target remains safely parked.
-    mapping.axes[static_cast<size_t>(PhysicalAxis::X)].profile.target = VirtualAxis::Disabled;
     const VirtualAxisOutputPlan plan = buildVirtualAxisOutputPlan(mapping, available, transformed, -0.25F);
     QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::X)], -0.25F);
     QCOMPARE(plan.values[static_cast<size_t>(VirtualAxis::Y)], -0.40F);
@@ -5229,6 +5634,56 @@ void MappingCoreTests::inputLearningSelectsAReleasedThenPressedButton()
     QCOMPARE(selectLearnedButton(baseline, current, available), 0);
 }
 
+void MappingCoreTests::signalFlowSourceLearningSelectsOneDeliberateEndpoint()
+{
+    std::array<float, kPhysicalAxisCount> axisBaseline{};
+    std::array<float, kPhysicalAxisCount> axisCurrent{};
+    std::array<bool, kPhysicalAxisCount> axisAvailable{};
+    std::array<PhysicalAxisActivity, kPhysicalAxisCount> axisActivity{};
+    std::array<bool, kMaximumPhysicalButtons> buttonBaseline{};
+    std::array<bool, kMaximumPhysicalButtons> buttonCurrent{};
+    std::array<bool, kMaximumPhysicalButtons> buttonAvailable{};
+    std::array<int, kMaximumPhysicalPovs> povBaseline{};
+    std::array<int, kMaximumPhysicalPovs> povCurrent{};
+    axisAvailable.fill(true);
+    axisActivity.fill(PhysicalAxisActivity::Active);
+    buttonAvailable.fill(true);
+    povBaseline.fill(-1);
+    povCurrent.fill(-1);
+
+    axisCurrent[3] = 0.48F;
+    SignalFlowInputSelection selection = selectSignalFlowInput(axisBaseline, axisCurrent,
+        axisAvailable, axisActivity, buttonBaseline, buttonCurrent, buttonAvailable,
+        povBaseline, povCurrent, 2);
+    QCOMPARE(selection.result, SignalFlowInputSelectionResult::Candidate);
+    QCOMPARE(selection.kind, SignalFlowInputSourceKind::Axis);
+    QCOMPARE(selection.index, 3);
+    QCOMPARE(selection.subIndex, -1);
+
+    axisCurrent.fill(0.0F);
+    buttonCurrent[17] = true;
+    selection = selectSignalFlowInput(axisBaseline, axisCurrent, axisAvailable, axisActivity,
+        buttonBaseline, buttonCurrent, buttonAvailable, povBaseline, povCurrent, 2);
+    QCOMPARE(selection.result, SignalFlowInputSelectionResult::Candidate);
+    QCOMPARE(selection.kind, SignalFlowInputSourceKind::Button);
+    QCOMPARE(selection.index, 17);
+
+    buttonCurrent.fill(false);
+    povCurrent[1] = 9000;
+    selection = selectSignalFlowInput(axisBaseline, axisCurrent, axisAvailable, axisActivity,
+        buttonBaseline, buttonCurrent, buttonAvailable, povBaseline, povCurrent, 2);
+    QCOMPARE(selection.result, SignalFlowInputSelectionResult::Candidate);
+    QCOMPARE(selection.kind, SignalFlowInputSourceKind::Pov);
+    QCOMPARE(selection.index, 1);
+    QCOMPARE(selection.subIndex, povDirectionIndex(PovDirection::Right));
+
+    axisCurrent[0] = 0.40F;
+    selection = selectSignalFlowInput(axisBaseline, axisCurrent, axisAvailable, axisActivity,
+        buttonBaseline, buttonCurrent, buttonAvailable, povBaseline, povCurrent, 2);
+    QCOMPARE(selection.result, SignalFlowInputSelectionResult::Ambiguous);
+    QCOMPARE(selection.kind, SignalFlowInputSourceKind::None);
+}
+
 void MappingCoreTests::physicalMonitorPublishesWhenMappingIsStoppedAndVJoyIsUnavailable()
 {
     // PhysicalInputMonitor intentionally has no mapping/vJoy dependency. The
@@ -5475,6 +5930,58 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QVERIFY(sourceLayout);
     sourceLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\SOURCE-MACHINE-ONLY");
     sourceLayout->hidhideManaged = true;
+    // Make the portable profile exercise topology that the old focused fields
+    // cannot express: fan-out, an explicit analog mixer, and one shared
+    // curve object. These must survive profile-ID remapping without leaking
+    // source-machine opaque identities into the destination configuration.
+    for (AxisMapping &axis : sourceProfile->axes) axis.target = VirtualAxis::Disabled;
+    sourceProfile->axes[0].target = VirtualAxis::X;
+    sourceProfile->axes[1].target = VirtualAxis::Y;
+    sourceProfile->axes[0].curve = standardCurveDefinition(CurveFamily::SCurve, 0.58F);
+    reconcileSignalFlowState(&source);
+    const auto sourceAxis0 = std::find_if(source.signalFlow.routes.cbegin(),
+        source.signalFlow.routes.cend(), [&profileId](const SignalFlowRoute &route) {
+            return route.profileId == profileId && route.sourceKind == SignalFlowPortKind::Axis
+                && route.sourceIndex == 0 && route.destinationKind == SignalFlowPortKind::Axis;
+        });
+    QVERIFY(sourceAxis0 != source.signalFlow.routes.cend());
+    SignalFlowRoute fanout = *sourceAxis0;
+    fanout.id.clear();
+    fanout.destinationIndex = static_cast<int>(VirtualAxis::Z);
+    fanout.primaryProjection = false;
+    fanout.identityKey = signalFlowFanoutRouteIdentityKey(*sourceProfile, {}, QStringLiteral("axis"),
+        0, -1, SignalFlowPortKind::Axis, static_cast<int>(VirtualAxis::Z));
+    source.signalFlow.routes.push_back(fanout);
+    SignalFlowRoute mixerInput;
+    mixerInput.profileId = profileId;
+    mixerInput.sourceKind = SignalFlowPortKind::Axis;
+    mixerInput.sourceIndex = 2;
+    mixerInput.destinationKind = SignalFlowPortKind::Axis;
+    mixerInput.destinationIndex = static_cast<int>(VirtualAxis::X);
+    mixerInput.primaryProjection = true;
+    mixerInput.enabled = true;
+    mixerInput.identityKey = signalFlowRouteIdentityKey(*sourceProfile, {}, QStringLiteral("axis"), 2);
+    source.signalFlow.routes.push_back(mixerInput);
+    sourceProfile->axes[2].target = VirtualAxis::X;
+    SignalFlowMixer mixer;
+    mixer.profileId = profileId;
+    mixer.destinationAxis = static_cast<int>(VirtualAxis::X);
+    mixer.mode = SignalFlowMixerMode::Average;
+    mixer.enabled = true;
+    mixer.identityKey = signalFlowMixerIdentityKey(*sourceProfile, {}, mixer.destinationAxis);
+    source.signalFlow.mixers.push_back(mixer);
+    SignalFlowSharedProcessor sharedCurve;
+    sharedCurve.profileId = profileId;
+    sharedCurve.kind = QStringLiteral("curve");
+    sharedCurve.ownerAxis = 0;
+    sharedCurve.sourceAxes = {0, 1};
+    sharedCurve.enabled = true;
+    sharedCurve.identityKey = signalFlowSharedProcessorIdentityKey(*sourceProfile, {}, sharedCurve.kind, 0);
+    source.signalFlow.sharedProcessors.push_back(sharedCurve);
+    reconcileSignalFlowState(&source);
+    QCOMPARE(source.signalFlow.sharedProcessors.size(), size_t{1});
+    const QString sourceSharedId = source.signalFlow.sharedProcessors.front().id;
+    QVERIFY(!sourceSharedId.isEmpty());
     const QString fileName = temporary.filePath(QStringLiteral("helicopter.hbf6profile"));
     QString error;
     QVERIFY2(ProfilePortability::exportProfile(source, profileId, fileName, &error), qPrintable(error));
@@ -5488,6 +5995,10 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QCOMPARE(bundle.outputLayouts.size(), size_t{1});
     QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
     QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
+    QVERIFY(bundle.includesSignalFlowTopology);
+    QCOMPARE(bundle.signalFlow.routes.size(), size_t{4});
+    QCOMPARE(bundle.signalFlow.mixers.size(), size_t{1});
+    QCOMPARE(bundle.signalFlow.sharedProcessors.size(), size_t{1});
     MapperConfiguration target = defaultConfiguration();
     SavedControllerRecord destinationController = legacyMigrationRecord(
         QStringLiteral("destination-machine-controller"), QStringLiteral("{DESTINATION-MACHINE-CONTROLLER}"), true);
@@ -5516,6 +6027,23 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QCOMPARE(imported->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.21F);
     QCOMPARE(imported->automaticSelectionMode, ProfileAutomaticSelectionMode::ManualOnly);
     QVERIFY(imported->deviceRigId.isEmpty());
+    const auto importedRouteCount = std::count_if(target.signalFlow.routes.cbegin(),
+        target.signalFlow.routes.cend(), [&imported](const SignalFlowRoute &route) {
+            return route.profileId == imported->id;
+        });
+    QCOMPARE(importedRouteCount, 4);
+    const auto importedMixer = std::find_if(target.signalFlow.mixers.cbegin(),
+        target.signalFlow.mixers.cend(), [&imported](const SignalFlowMixer &item) {
+            return item.profileId == imported->id && item.mode == SignalFlowMixerMode::Average;
+        });
+    QVERIFY(importedMixer != target.signalFlow.mixers.cend());
+    const auto importedShared = std::find_if(target.signalFlow.sharedProcessors.cbegin(),
+        target.signalFlow.sharedProcessors.cend(), [&imported](const SignalFlowSharedProcessor &item) {
+            return item.profileId == imported->id && item.kind == QStringLiteral("curve")
+                && item.sourceAxes == std::vector<int>{0, 1};
+        });
+    QVERIFY(importedShared != target.signalFlow.sharedProcessors.cend());
+    QVERIFY(importedShared->id != sourceSharedId);
     QVERIFY(std::any_of(warnings.cbegin(), warnings.cend(), [](const QString &warning) {
         return warning.contains(QStringLiteral("Device Rig assignment required"));
     }));
@@ -5578,8 +6106,9 @@ void MappingCoreTests::bundledBattlefieldHelicopterStarterProfileMigratesSafely(
     QCOMPARE(fresh.activeProfileId, normalProfileId());
     QCOMPARE(ConfigStore::portableCategoryToJson(*starterCategory),
              ConfigStore::portableCategoryToJson(bundle.categories.front()));
-    QCOMPARE(ConfigStore::portableProfileToJson(*starterProfile),
-             ConfigStore::portableProfileToJson(bundle.profiles.front()));
+    const QJsonObject migratedStarterJson = ConfigStore::portableProfileToJson(*starterProfile);
+    const QJsonObject bundledStarterJson = ConfigStore::portableProfileToJson(bundle.profiles.front());
+    QCOMPARE(migratedStarterJson, bundledStarterJson);
 
     MapperConfiguration importTarget = defaultConfiguration();
     QStringList warnings;
@@ -5971,7 +6500,7 @@ void MappingCoreTests::portableFormatValidationRejectsFutureAndInvalidDependenci
     QVERIFY(file.open(QIODevice::ReadOnly));
     QJsonObject document = QJsonDocument::fromJson(file.readAll()).object();
     file.close();
-    document.insert(QStringLiteral("schemaVersion"), 2);
+    document.insert(QStringLiteral("schemaVersion"), 3);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(QJsonDocument(document).toJson());
     file.close();
@@ -6208,7 +6737,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -6451,7 +6980,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 25);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

@@ -31,7 +31,8 @@ private slots:
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
-    void installerUpgradeAcceptanceTracksSchema25();
+    void axisConflictsRequireExplicitSignalFlowDecisions();
+    void installerUpgradeAcceptanceTracksSchema28();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -354,7 +355,7 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(readiness.contains(QStringLiteral("validateManagedVirtualOutputIdentity")));
     QVERIFY(readiness.contains(QStringLiteral("VID_1234&PID_BEAD")));
     QVERIFY(worker.contains(QStringLiteral("outputLayoutAxes")));
-    QVERIFY(worker.contains(QStringLiteral("&& outputLayoutAxes[static_cast<size_t>(target)]")));
+    QVERIFY(worker.contains(QStringLiteral("|| !outputLayoutAxes[static_cast<size_t>(target)]) continue;")));
     QVERIFY(settings.contains(QStringLiteral("Virtual Outputs")));
     QVERIFY(settings.contains(QStringLiteral("CREATE 5-AXIS OUTPUT")));
     QVERIFY(settings.contains(QStringLiteral("PREPARE VISIBILITY")));
@@ -837,23 +838,43 @@ void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSig
     QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema25()
+void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QStringList editors = {
+        sourceFile(QStringLiteral("qml/Standard.qml")),
+        sourceFile(QStringLiteral("qml/Legacy.qml")),
+        sourceFile(QStringLiteral("qml/FlightDeckAxes.qml")),
+    };
+    QVERIFY(backend.contains(QStringLiteral("QVariantMap AppBackend::resolveAxisMappingConflict")));
+    QVERIFY(backend.contains(QStringLiteral("SignalFlowMixerMode::HighestMagnitude")));
+    QVERIFY(backend.contains(QStringLiteral("commitSignalFlowCommand")));
+    for (const QString &editor : editors) {
+        QVERIFY(editor.contains(QStringLiteral("resolveAxisMappingConflict")));
+        QVERIFY(editor.contains(QStringLiteral("REPLACE")));
+        QVERIFY(editor.contains(QStringLiteral("AVERAGE")));
+        QVERIFY(editor.contains(QStringLiteral("HIGHEST")));
+        QVERIFY(!editor.contains(QStringLiteral("row-order output policy")));
+    }
+}
+
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema28()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 25")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v25")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v25")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 28")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v28")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v28")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v25")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v25")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v28")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v28")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v25")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v28")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 

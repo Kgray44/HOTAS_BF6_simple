@@ -86,6 +86,14 @@ RuntimeButtonTargets buildRuntimeButtonTargets(const ButtonBindings &bindings,
 VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
                                     const RuntimeButtonTargets &targets,
                                     int vjoyButtonCapacity);
+// Executes canonical Signal Flow button/POV fan-out from the fixed compiled
+// source buckets. Compatibility targets are supplied solely as the existing
+// control-plane ownership mask: profile triggers and Mapping controls still
+// consume their source before it can drive a virtual button.
+VirtualButtonStates mapSignalFlowDigitalStates(
+    const PhysicalButtonStates &physical, const PhysicalPovValues &rawValues, int povCount,
+    const RuntimeMappingConfiguration &mapping, const RuntimeButtonTargets &buttonOwnership,
+    const RuntimePovTargets &povOwnership, int vjoyButtonCapacity);
 RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity);
 RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity,
                                          const RuntimePovProfileTriggers &profileTriggers);

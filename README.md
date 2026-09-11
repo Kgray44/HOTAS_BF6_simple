@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current version: v2.5.5**
+**Current version: v2.6.0**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. V2.5.5 completes canonical Device Rig management in Flight Deck: users can create, inspect, edit, activate, verify, and safely delete the same Rigs used by Profiles and the hardware-aware Activation Resolver. It retains V2.5.4's single resolver authority, V2.5.3 Flight Deck shared-surface polish, V2.5.2 Adaptive Response authority, V2.5.1 Flight Deck hardening, V2.5.0 Flight Deck, V2.4.0 Device Rigs, simultaneous multi-device and multi-output routing, and all established Legacy, Standard, Top Gun, and Day Ops selections. Device topology, verification, themes, and Flight Deck presentation remain outside the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. V2.6.0 adds a durable canonical Signal Flow workspace: routes, processors, mixers, and graph presentation remain one configuration while Legacy, Standard, Top Gun, Day Ops, and the native Flight Deck provide focused projections and editing surfaces. Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude decision; no hidden fan-in is introduced. The Signal Flow control plane, device topology, verification, themes, and Flight Deck presentation remain outside the allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 
@@ -61,7 +61,8 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 ## Main capabilities
 
 - **Real-Time Mapping Runtime** — A dedicated DirectInput-to-vJoy worker owns bounded single-device and Device Rig report processing so controller output is not scheduled by the UI.
-- **Axis Routing and Processing** — Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms and labels.
+- **Axis Routing and Processing** — Physical DirectInput axes can be routed only to the selected profile layout's available vJoy axes with profile-owned transforms, labels, and explicit collision choices.
+- **Signal Flow** — A durable, editable canonical signal graph exposes the same mapper configuration used by focused editors without adding graph traversal, UI work, or allocation to the report path.
 - **Mapping Safety Controls** — Mapping state can be controlled without tearing down the physical device, while virtual outputs are forced to deliberate neutral states.
 - **Button Mapping** — Physical buttons are discovered from the active controller and routed to available vJoy buttons with explicit, user-confirmed ownership or shared-output fan-in.
 - **POV / Hat Support** — DirectInput POV hats can act as discrete logical directions, profile controls, or native vJoy POV outputs.
@@ -71,7 +72,7 @@ Installed dependencies are inspected first. Any automatic vJoy/HidHide repair is
 - **Automation Editor UX** — Automation is edited as readable full-page rules rather than raw condition/action arrays.
 - **Universal Controller Management** — HOTAS BF6 discovers and remembers physical DirectInput controllers as durable, explicit inputs and groups them into reusable Device Rigs outside report processing.
 - **Diagnostics and Observability** — The application exposes physical input, transformed output, capacity, readiness, and runtime state without making diagnostics part of the output path.
-- **User Interface and Themes** — The app provides four persistent visual systems without allowing presentation state to alter mapping semantics.
+- **User Interface and Themes** — The app provides five persistent visual systems without allowing presentation state to alter mapping semantics.
 - **vJoy Integration** — vJoy is dynamically loaded and queried so the application enforces the selected virtual-output layout configured on the machine.
 - **HidHide and Dependency Bootstrap** — The application helps establish the surrounding controller stack while keeping privileged configuration explicit, minimal, and reversible.
 - **HOTAS Setup & Verification** — One shared Device Rig setup and verification system explains a single controller or a full multi-device chain without moving setup work into real-time mapping.
