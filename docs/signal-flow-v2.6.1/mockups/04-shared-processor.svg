@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">V2.6.1 Flight Deck Signal Flow — shared processor</title>
+  <desc id="desc">A proposed shared Adaptive Response processor exposing three real channel input and output port pairs connected to physical and virtual device cards.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b1721"/><stop offset="1" stop-color="#071017"/></linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M 48 0 L 0 0 0 48" fill="none" stroke="#244354" stroke-width="1"/></pattern>
+    <style>
+      .label { fill:#eaf6fb; font-family:'Segoe UI',Arial,sans-serif; }
+      .muted { fill:#89a5b5; font-family:'Segoe UI',Arial,sans-serif; }
+      .tech { fill:#75cfe5; font-family:Consolas,monospace; font-size:11px; font-weight:700; letter-spacing:1px; }
+      .card { fill:#162b3a; stroke:#356078; stroke-width:1.5; }
+      .proc { fill:#183443; stroke:#61ca92; stroke-width:2; }
+      .wire { fill:none; stroke:#65ca98; stroke-width:3.5; }
+      .port { fill:#61ca92; stroke:#e2fff0; stroke-width:2; }
+      .in { fill:#77d8ed; stroke:#e2fbff; stroke-width:2; }
+      .row { fill:#102735; stroke:#2c576a; stroke-width:1; }
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="34" y="28" width="1532" height="78" rx="22" fill="#112433" stroke="#355a70"/>
+  <text x="65" y="64" class="label" font-size="28" font-weight="700">Signal Flow</text>
+  <text x="65" y="87" class="muted" font-size="13">PROPOSED V2.6.1 · SHARED PROCESSOR WITH THREE REAL CHANNEL PAIRS</text>
+  <text x="1178" y="72" class="tech">SHARED ID · ONE SETTINGS OWNER · THREE CHANNELS</text>
+  <rect x="34" y="128" width="1532" height="736" rx="24" fill="#0b1a24" stroke="#31586d"/>
+  <rect x="58" y="152" width="1484" height="688" rx="18" fill="url(#grid)" stroke="#27495c"/>
+
+  <rect x="122" y="265" width="285" height="386" rx="18" class="card"/>
+  <text x="150" y="305" class="label" font-size="19" font-weight="700">Flight Controls</text>
+  <text x="150" y="331" class="tech">CONNECTED · 3 ROUTED AXES</text>
+  <rect x="150" y="365" width="225" height="54" rx="10" class="row"/><text x="168" y="399" class="label" font-size="15">Roll</text><circle cx="407" cy="392" r="11" class="port"/>
+  <rect x="150" y="449" width="225" height="54" rx="10" class="row"/><text x="168" y="483" class="label" font-size="15">Pitch</text><circle cx="407" cy="476" r="11" class="port"/>
+  <rect x="150" y="533" width="225" height="54" rx="10" class="row"/><text x="168" y="567" class="label" font-size="15">Yaw</text><circle cx="407" cy="560" r="11" class="port"/>
+
+  <path d="M 418 392 C 505 392, 556 392, 639 392" class="wire"/>
+  <path d="M 418 476 C 510 476, 560 476, 639 476" class="wire"/>
+  <path d="M 418 560 C 505 560, 556 560, 639 560" class="wire"/>
+  <path d="M 945 392 C 1025 392, 1076 392, 1164 392" class="wire"/>
+  <path d="M 945 476 C 1034 476, 1080 476, 1164 476" class="wire"/>
+  <path d="M 945 560 C 1025 560, 1076 560, 1164 560" class="wire"/>
+
+  <rect x="639" y="244" width="306" height="456" rx="20" class="proc"/>
+  <text x="670" y="285" class="label" font-size="20" font-weight="700">Adaptive Response</text>
+  <text x="670" y="311" class="tech">SHARED · 3 CHANNELS · OWNER: ROLL</text>
+  <text x="670" y="338" class="muted" font-size="13">All ports below are real topological endpoints.</text>
+  <rect x="668" y="366" width="248" height="55" rx="10" class="row"/><circle cx="639" cy="392" r="11" class="in"/><text x="688" y="398" class="label" font-size="14">CH 1 · Roll</text><circle cx="945" cy="392" r="11" class="port"/>
+  <rect x="668" y="450" width="248" height="55" rx="10" class="row"/><circle cx="639" cy="476" r="11" class="in"/><text x="688" y="482" class="label" font-size="14">CH 2 · Pitch</text><circle cx="945" cy="476" r="11" class="port"/>
+  <rect x="668" y="534" width="248" height="55" rx="10" class="row"/><circle cx="639" cy="560" r="11" class="in"/><text x="688" y="566" class="label" font-size="14">CH 3 · Yaw</text><circle cx="945" cy="560" r="11" class="port"/>
+  <text x="668" y="642" class="tech">SPLIT CHANNEL  ·  OPEN SETTINGS  ·  REMOVE</text>
+
+  <rect x="1166" y="265" width="288" height="386" rx="18" class="card"/>
+  <text x="1194" y="305" class="label" font-size="19" font-weight="700">vJoy Device 1</text>
+  <text x="1194" y="331" class="tech">READY · OUTPUT</text>
+  <rect x="1194" y="365" width="224" height="54" rx="10" class="row"/><circle cx="1164" cy="392" r="11" class="in"/><text x="1212" y="399" class="label" font-size="15">X</text>
+  <rect x="1194" y="449" width="224" height="54" rx="10" class="row"/><circle cx="1164" cy="476" r="11" class="in"/><text x="1212" y="483" class="label" font-size="15">Y</text>
+  <rect x="1194" y="533" width="224" height="54" rx="10" class="row"/><circle cx="1164" cy="560" r="11" class="in"/><text x="1212" y="567" class="label" font-size="15">Rz</text>
+
+  <rect x="451" y="748" width="698" height="58" rx="16" fill="#163844" stroke="#61ca92"/>
+  <text x="479" y="783" class="label" font-size="15">Adding or splitting a channel visibly grows or separates this card; no decorative channel summary replaces topology.</text>
+</svg>

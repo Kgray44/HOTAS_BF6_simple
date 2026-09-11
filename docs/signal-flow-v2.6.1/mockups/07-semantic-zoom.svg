@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">V2.6.1 Flight Deck Signal Flow — semantic zoom states</title>
+  <desc id="desc">A proposed comparison of detailed, compact, and overview semantic zoom states with the same graph ownership and direct interaction model.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b1721"/><stop offset="1" stop-color="#071017"/></linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M 36 0 L 0 0 0 36" fill="none" stroke="#244354" stroke-width="1"/></pattern>
+    <style>
+      .label { fill:#eaf6fb; font-family:'Segoe UI',Arial,sans-serif; }
+      .muted { fill:#89a5b5; font-family:'Segoe UI',Arial,sans-serif; }
+      .tech { fill:#75cfe5; font-family:Consolas,monospace; font-size:10px; font-weight:700; letter-spacing:.7px; }
+      .card { fill:#162b3a; stroke:#356078; stroke-width:1.3; }
+      .wire { fill:none; stroke:#65ca98; stroke-width:3; }
+      .port { fill:#61ca92; stroke:#e2fff0; stroke-width:1.6; }
+      .in { fill:#77d8ed; stroke:#e2fbff; stroke-width:1.6; }
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="34" y="28" width="1532" height="78" rx="22" fill="#112433" stroke="#355a70"/>
+  <text x="65" y="64" class="label" font-size="28" font-weight="700">Signal Flow</text>
+  <text x="65" y="87" class="muted" font-size="13">PROPOSED V2.6.1 · SEMANTIC ZOOM PRESERVES OWNERSHIP AND INTERACTION</text>
+
+  <rect x="45" y="138" width="480" height="678" rx="20" fill="url(#grid)" stroke="#31586d"/>
+  <rect x="560" y="138" width="480" height="678" rx="20" fill="url(#grid)" stroke="#31586d"/>
+  <rect x="1075" y="138" width="480" height="678" rx="20" fill="url(#grid)" stroke="#31586d"/>
+  <text x="72" y="176" class="label" font-size="20" font-weight="700">Detailed</text><text x="72" y="198" class="tech">PORT ROWS · FULL LABELS · 1.00X</text>
+  <text x="587" y="176" class="label" font-size="20" font-weight="700">Compact</text><text x="587" y="198" class="tech">ACTIVE PORTS · COUNTS · 0.74X</text>
+  <text x="1102" y="176" class="label" font-size="20" font-weight="700">Overview</text><text x="1102" y="198" class="tech">GROUP ANCHORS · DENSITY · 0.52X</text>
+
+  <rect x="82" y="284" width="164" height="250" rx="15" class="card"/>
+  <text x="101" y="315" class="label" font-size="15" font-weight="700">Joystick</text><text x="101" y="337" class="tech">AXES</text>
+  <text x="101" y="376" class="label" font-size="13">Roll</text><circle cx="246" cy="371" r="9" class="port"/>
+  <text x="101" y="416" class="label" font-size="13">Pitch</text><circle cx="246" cy="411" r="9" class="port"/>
+  <text x="101" y="456" class="label" font-size="13">Throttle</text><circle cx="246" cy="451" r="9" class="port"/>
+  <path d="M 255 371 C 320 371, 345 371, 395 371" class="wire"/><path d="M 255 411 C 320 411, 345 411, 395 411" class="wire"/><path d="M 255 451 C 320 451, 345 451, 395 451" class="wire"/>
+  <rect x="395" y="284" width="90" height="250" rx="15" class="card"/><text x="412" y="315" class="label" font-size="14" font-weight="700">vJoy</text>
+  <circle cx="395" cy="371" r="9" class="in"/><text x="421" y="376" class="label" font-size="13">X</text>
+  <circle cx="395" cy="411" r="9" class="in"/><text x="421" y="416" class="label" font-size="13">Y</text>
+  <circle cx="395" cy="451" r="9" class="in"/><text x="421" y="456" class="label" font-size="13">S</text>
+  <text x="82" y="591" class="muted" font-size="12">Ports have labeled rows and 28 dp magnetic targets.</text>
+
+  <rect x="615" y="319" width="144" height="175" rx="15" class="card"/>
+  <text x="634" y="350" class="label" font-size="14" font-weight="700">Joystick</text><text x="634" y="372" class="tech">3 AXES</text>
+  <circle cx="759" cy="405" r="10" class="port"/><text x="634" y="410" class="label" font-size="12">Roll</text>
+  <circle cx="759" cy="448" r="10" class="port"/><text x="634" y="453" class="label" font-size="12">Pitch +1</text>
+  <path d="M 769 405 C 830 405, 840 405, 885 405" class="wire"/><path d="M 769 448 C 830 448, 840 448, 885 448" class="wire"/>
+  <rect x="885" y="319" width="104" height="175" rx="15" class="card"/><text x="901" y="350" class="label" font-size="13" font-weight="700">vJoy</text>
+  <circle cx="885" cy="405" r="10" class="in"/><text x="911" y="410" class="label" font-size="12">X</text>
+  <circle cx="885" cy="448" r="10" class="in"/><text x="911" y="453" class="label" font-size="12">Y</text>
+  <text x="587" y="591" class="muted" font-size="12">Selected/active ports stay actionable; dormant detail collapses.</text>
+
+  <rect x="1124" y="361" width="130" height="88" rx="14" class="card"/>
+  <text x="1143" y="394" class="label" font-size="14" font-weight="700">Joystick</text><text x="1143" y="416" class="tech">3 ROUTES</text>
+  <circle cx="1254" cy="405" r="12" class="port"/>
+  <path d="M 1266 405 C 1322 405, 1342 405, 1390 405" class="wire"/>
+  <rect x="1390" y="361" width="116" height="88" rx="14" class="card"/><circle cx="1390" cy="405" r="12" class="in"/>
+  <text x="1413" y="394" class="label" font-size="14" font-weight="700">vJoy</text><text x="1413" y="416" class="tech">3 IN</text>
+  <text x="1102" y="591" class="muted" font-size="12">A group anchor preserves route target and density; detail expands on focus.</text>
+
+  <rect x="296" y="704" width="1008" height="54" rx="16" fill="#173646" stroke="#4dc5df"/>
+  <text x="328" y="738" class="label" font-size="15">Semantic zoom changes information density, never where a route is owned or whether the visible wire is the interaction target.</text>
+</svg>
