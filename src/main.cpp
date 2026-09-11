@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
     // A normal interactive launch must offer recovery after an abnormal exit.
     // The explicit startup-smoke route instead needs to initialize and close
     // deterministically in an off-screen package/upgrade acceptance run.
-    if (!startupSmoke && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
+    if (!startupSmoke && !isolatedPresentation && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
         QTimer::singleShot(0, &application, [] {
             QMessageBox recovery;
             recovery.setWindowTitle(QStringLiteral("HOTAS BF6 recovery"));

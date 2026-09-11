@@ -45,19 +45,35 @@ Item {
     property bool xrayMode: false
     property var wireGeometry: []
     property var wireBuckets: ({})
+    // A bucket index lets a live drag replace only the affected route segments,
+    // including their Canvas hit targets, instead of reconstructing the graph.
+    property var wireSegmentBucketKeys: ({})
+    property var wireNodeSegmentRefs: ({})
     property var portAnchors: ({})
+    // Each rendered port reports a graph-space center and a card-local offset.
+    // The offset remains valid while its card moves, so a child delegate does
+    // not need a synthetic x/y notification from a moving parent.
+    property var portAnchorOffsets: ({})
     property string hoveredRouteId: ""
     property string hoveredSegmentId: ""
     // Diagnostic-only lifecycle counters.  They make event-driven rendering
     // observable in tests without adding product logging.
     property int canvasPaintCount: 0
     property int geometryRebuildCount: 0
+    property int liveDragGeometryUpdates: 0
+    property int liveDragAffectedSegments: 0
+    property int nodePlacementWriteCount: 0
     property int pointerHitCandidateCount: 0
     property int liveSampleCount: 0
     property var retiringWireGeometry: []
     property real wireReveal: 1.0
     property real wireRetire: 1.0
     property var nodePositions: ({})
+    // Transient positions exist only for a pointer drag.  They are never
+    // serialized or sent to AppBackend; the final position is committed once
+    // when the pointer is released.
+    property var liveNodePositions: ({})
+    property string liveDragNodeId: ""
     // Presentation-only continuity for source-first learning. The canonical
     // graph remains owned by AppBackend.
     property string learnedSourcePortId: ""
@@ -568,14 +584,39 @@ Item {
         for (let i = 0; i < text.length; ++i) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0
         return Math.abs(hash) % Math.max(1, count || 1)
     }
+    function nodeIdentity(nodeData) {
+        return String(nodeData && (nodeData.id || nodeData.objectId) || "")
+    }
+    function nodeStorageIdentity(nodeData) {
+        return String(nodeData && (nodeData.objectId || nodeData.id) || "")
+    }
+    function nodeForId(id) {
+        const wanted = String(id || "")
+        const nodes = graph.nodes || []
+        for (let index = 0; index < nodes.length; ++index) {
+            const candidate = nodes[index]
+            if (String(candidate.id || "") === wanted || String(candidate.objectId || "") === wanted)
+                return candidate
+        }
+        return ({})
+    }
+    function nodeMatchesId(nodeData, id) {
+        const wanted = String(id || "")
+        return String(nodeData && nodeData.id || "") === wanted
+            || String(nodeData && nodeData.objectId || "") === wanted
+    }
     function nodePosition(nodeData, fallbackX, fallbackY) {
         if (!nodeData) return ({ "x": fallbackX, "y": fallbackY })
+        const livePosition = liveNodePositions[String(nodeData.id || "")]
+            || liveNodePositions[String(nodeData.objectId || "")]
+        if (livePosition) return livePosition
         const saved = nodePositions[String(nodeData.objectId || nodeData.id || "")]
+            || nodePositions[String(nodeData.id || "")]
         if (saved) return saved
         return ({ "x": Number(nodeData.x === undefined ? fallbackX : nodeData.x),
                   "y": Number(nodeData.y === undefined ? fallbackY : nodeData.y) })
     }
-    function noteNodePosition(objectId, x, y) {
+    function noteNodePosition(objectId, x, y, scheduleGeometry) {
         const id = String(objectId || "")
         if (!id || !isFinite(x) || !isFinite(y)) return
         const current = nodePositions[id]
@@ -584,24 +625,80 @@ Item {
         for (const key in nodePositions) next[key] = nodePositions[key]
         next[id] = ({ "x": Number(x), "y": Number(y) })
         nodePositions = next
-        wireGeometryTimer.restart()
+        if (scheduleGeometry !== false) wireGeometryTimer.restart()
+    }
+    function portOwnerNodeId(port) {
+        if (port && port.ownerNodeId) return String(port.ownerNodeId)
+        const endpoint = String(port && (port.endpointId || port.id) || "")
+        if (!endpoint) return ""
+        const nodes = graph.nodes || []
+        for (let nodeIndex = 0; nodeIndex < nodes.length; ++nodeIndex) {
+            const ports = nodes[nodeIndex].ports || []
+            for (let portIndex = 0; portIndex < ports.length; ++portIndex) {
+                const candidate = ports[portIndex]
+                if (String(candidate.endpointId || candidate.id || "") === endpoint)
+                    return nodeIdentity(nodes[nodeIndex])
+            }
+        }
+        return ""
+    }
+    function rememberPortAnchor(port, key, x, y, anchors, offsets) {
+        if (!key) return
+        anchors[key] = ({ "x": Number(x), "y": Number(y) })
+        const ownerId = portOwnerNodeId(port)
+        const owner = nodeForId(ownerId)
+        if (!owner || !nodeIdentity(owner)) return
+        const position = nodePosition(owner, Number(owner.x || 0), Number(owner.y || 0))
+        offsets[key] = ({ "ownerNodeId": nodeIdentity(owner),
+            "x": Number(x) - Number(position.x), "y": Number(y) - Number(position.y) })
     }
     // The rendered port dot is the single source of truth for its wire
-    // endpoint.  Card delegates register their own scene-space center; the
-    // geometry cache never estimates a row from a label hash or card formula.
+    // endpoint.  Its recorded card-local offset keeps that truth attached to
+    // the card for every transient drag frame.
     function notePortAnchor(port, x, y) {
         if (!port || !isFinite(x) || !isFinite(y)) return
+        const ownerId = portOwnerNodeId(port)
+        // A live card position plus the existing card-local offset is already
+        // authoritative. Processor marker callbacks can therefore avoid
+        // cloning the complete anchor cache for every pointer update.
+        if (liveDragNodeId && nodeMatchesId(nodeForId(ownerId), liveDragNodeId)) return
         const next = ({})
+        const offsets = ({})
         for (const key in portAnchors) next[key] = portAnchors[key]
-        if (port.endpointId) next[String(port.endpointId)] = ({ "x": Number(x), "y": Number(y) })
-        if (port.id) next[String(port.id)] = ({ "x": Number(x), "y": Number(y) })
+        for (const key in portAnchorOffsets) offsets[key] = portAnchorOffsets[key]
+        if (port.endpointId) rememberPortAnchor(port, String(port.endpointId), x, y, next, offsets)
+        if (port.id) rememberPortAnchor(port, String(port.id), x, y, next, offsets)
         portAnchors = next
+        portAnchorOffsets = offsets
         wireGeometryTimer.restart()
     }
-    function registeredPortAnchor(route, sourceSide, fallback) {
+    function resolvedPortAnchor(endpoint, legacy, nodeData, sourceSide) {
+        const endpointKey = String(endpoint || "")
+        const legacyKey = String(legacy || "")
+        const offset = portAnchorOffsets[endpointKey] || portAnchorOffsets[legacyKey]
+        if (offset && offset.ownerNodeId) {
+            const owner = nodeForId(offset.ownerNodeId)
+            if (owner && nodeIdentity(owner)) {
+                const position = nodePosition(owner, Number(owner.x || 0), Number(owner.y || 0))
+                return ({ "x": Number(position.x) + Number(offset.x), "y": Number(position.y) + Number(offset.y) })
+            }
+        }
+        const position = nodePosition(nodeData, Number(nodeData && nodeData.x || 0), Number(nodeData && nodeData.y || 0))
+        const fallback = sourceSide ? ({
+            "x": Number(position.x) + graphCardWidth(nodeData),
+            "y": Number(position.y) + Math.min(graphCardHeight(nodeData) * 0.5,
+                48 + stableLane(endpointKey || legacyKey, 13) * 6)
+        }) : ({
+            "x": Number(position.x),
+            "y": Number(position.y) + Math.min(graphCardHeight(nodeData) * 0.5,
+                48 + stableLane(endpointKey || legacyKey, 13) * 6)
+        })
+        return portAnchors[endpointKey] || portAnchors[legacyKey] || fallback
+    }
+    function registeredPortAnchor(route, sourceSide, nodeData) {
         const endpoint = sourceSide ? route.sourceEndpointId : route.destinationEndpointId
         const legacy = sourceSide ? route.sourcePortId : route.destinationPortId
-        return portAnchors[String(endpoint || "")] || portAnchors[String(legacy || "")] || fallback
+        return resolvedPortAnchor(endpoint, legacy, nodeData, sourceSide)
     }
     function wirePoints(segment, lane) {
         const points = []
@@ -710,6 +807,82 @@ Item {
         }
         return ({ "hasDetour": blockers > 0, "underCard": false, "detourY": detourY })
     }
+    function routeSegmentCacheKey(routeId, segment) {
+        return String(routeId || "") + "|" + String(segment && segment.routeSegmentId || "")
+    }
+    function decorateWireSegment(segment, lane) {
+        segment.points = wirePoints(segment, lane)
+        let minX = Number.POSITIVE_INFINITY
+        let minY = Number.POSITIVE_INFINITY
+        let maxX = Number.NEGATIVE_INFINITY
+        let maxY = Number.NEGATIVE_INFINITY
+        for (let pointIndex = 0; pointIndex < segment.points.length; ++pointIndex) {
+            const point = segment.points[pointIndex]
+            minX = Math.min(minX, point.x); minY = Math.min(minY, point.y)
+            maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y)
+        }
+        segment.bounds = ({ "left": minX - 12, "top": minY - 12, "right": maxX + 12, "bottom": maxY + 12 })
+        return segment
+    }
+    function addSegmentToBuckets(buckets, segmentBucketKeys, route, routeId, segment) {
+        const cell = 96
+        const cacheKey = routeSegmentCacheKey(routeId, segment)
+        const keys = []
+        segment.cacheKey = cacheKey
+        for (let bx = Math.floor(segment.bounds.left / cell); bx <= Math.floor(segment.bounds.right / cell); ++bx) {
+            for (let by = Math.floor(segment.bounds.top / cell); by <= Math.floor(segment.bounds.bottom / cell); ++by) {
+                const key = bx + ":" + by
+                if (!buckets[key]) buckets[key] = []
+                buckets[key].push({ "route": route, "routeId": routeId,
+                    "routeSegmentId": segment.routeSegmentId, "cacheKey": cacheKey, "points": segment.points })
+                keys.push(key)
+            }
+        }
+        segmentBucketKeys[cacheKey] = keys
+    }
+    function addNodeSegmentRef(nodeSegmentRefs, nodeId, entryIndex, segmentIndex) {
+        const key = String(nodeId || "")
+        if (!key) return
+        if (!nodeSegmentRefs[key]) nodeSegmentRefs[key] = []
+        nodeSegmentRefs[key].push({ "entryIndex": entryIndex, "segmentIndex": segmentIndex })
+    }
+    function geometryForCanonicalSegment(routeId, canonical, sourceNode, destinationNode, lane, dragSimplified) {
+        const sourceAnchor = resolvedPortAnchor(canonical.sourceEndpointId, "", sourceNode, true)
+        const destinationAnchor = resolvedPortAnchor(canonical.destinationEndpointId, "", destinationNode, false)
+        const excludedIds = ({})
+        excludedIds[nodeIdentity(sourceNode)] = true
+        excludedIds[nodeIdentity(destinationNode)] = true
+        const obstacle = dragSimplified ? ({ "hasDetour": false, "detourY": 0, "underCard": false })
+            : obstaclePlan(sourceAnchor.x, sourceAnchor.y, destinationAnchor.x, destinationAnchor.y, excludedIds)
+        return decorateWireSegment({ "id": String(canonical.id || ""), "routeSegmentId": String(canonical.id || ""),
+            "sourceNodeId": nodeIdentity(sourceNode), "destinationNodeId": nodeIdentity(destinationNode),
+            "sourceEndpointId": String(canonical.sourceEndpointId || ""),
+            "destinationEndpointId": String(canonical.destinationEndpointId || ""),
+            "startX": sourceAnchor.x, "startY": sourceAnchor.y,
+            "endX": destinationAnchor.x, "endY": destinationAnchor.y,
+            "hasDetour": obstacle.hasDetour, "detourY": obstacle.detourY,
+            "underCard": obstacle.underCard }, lane)
+    }
+    function routeGeometryEntry(route, segments, lane) {
+        const input = nodeForId(route.sourceNodeId)
+        const inputPosition = nodePosition(input, 50, 150)
+        const sourceAnchor = ({ "x": segments[0].startX, "y": segments[0].startY })
+        const finalX = segments[segments.length - 1].endX
+        const finalY = segments[segments.length - 1].endY
+        const focusSegment = segments[Math.floor(segments.length * 0.5)]
+        return ({
+            "route": route,
+            "routeId": String(route.id || ""),
+            "routeSegmentId": String(segments[0].routeSegmentId || route.id || ""),
+            "startX": sourceAnchor.x, "startY": sourceAnchor.y, "endX": finalX, "endY": finalY,
+            "segments": segments,
+            "focusX": focusSegment ? (focusSegment.startX + focusSegment.endX) * 0.5 : finalX,
+            "focusY": focusSegment ? (focusSegment.startY + focusSegment.endY) * 0.5 : finalY,
+            "bundleCount": 1, "drawBundleTrunk": false,
+            "bundleX": inputPosition.x + graphCardWidth(input),
+            "processorCount": Math.max(0, segments.length - 1), "lane": lane
+        })
+    }
     function rebuildWireGeometry() {
         geometryRebuildCount += 1
         const routes = graph.routes || []
@@ -718,9 +891,13 @@ Item {
         const fanOutGroups = ({})
         const fanOutLanes = ({})
         const buckets = ({})
-        const cell = 96
+        const segmentBucketKeys = ({})
+        const nodeSegmentRefs = ({})
         const next = []
-        for (let i = 0; i < nodes.length; ++i) nodeById[String(nodes[i].id || "")] = nodes[i]
+        for (let i = 0; i < nodes.length; ++i) {
+            nodeById[String(nodes[i].id || "")] = nodes[i]
+            nodeById[String(nodes[i].objectId || "")] = nodes[i]
+        }
         for (let i = 0; i < routes.length; ++i) {
             const route = routes[i]
             const key = String(route.sourceEndpointId || route.sourcePortId || route.id || i)
@@ -737,91 +914,153 @@ Item {
             const route = routes[i]
             const input = nodeById[String(route.sourceNodeId || "")]
             const output = nodeById[String(route.destinationNodeId || "")]
-            if (!input || !output) continue
-            const inputPosition = nodePosition(input, 50, 150)
-            const outputPosition = nodePosition(output, 1190, 150)
             const canonicalSegments = route.segments || []
-            if (canonicalSegments.length === 0) continue
+            if (!input || !output || canonicalSegments.length === 0) continue
+            const lane = Number(fanOutLanes[String(route.id || i)] || 0)
             const segments = []
             for (let segmentIndex = 0; segmentIndex < canonicalSegments.length; ++segmentIndex) {
                 const canonical = canonicalSegments[segmentIndex]
                 const sourceNode = nodeById[String(canonical.sourceNodeId || "")] || input
                 const destinationNode = nodeById[String(canonical.destinationNodeId || "")] || output
-                const sourcePosition = nodePosition(sourceNode, inputPosition.x, inputPosition.y)
-                const destinationPosition = nodePosition(destinationNode, outputPosition.x, outputPosition.y)
-                const sourceEndpoint = String(canonical.sourceEndpointId || "")
-                const destinationEndpoint = String(canonical.destinationEndpointId || "")
-                // Port anchors are recorded by the real card delegates.  The
-                // fallback only covers the one layout pass before those
-                // delegates report their geometry.
-                const sourceAnchor = portAnchors[sourceEndpoint] || ({
-                    "x": sourcePosition.x + graphCardWidth(sourceNode),
-                    "y": sourcePosition.y + Math.min(graphCardHeight(sourceNode) * 0.5,
-                        48 + stableLane(sourceEndpoint, 13) * 6) })
-                const destinationAnchor = portAnchors[destinationEndpoint] || ({
-                    "x": destinationPosition.x,
-                    "y": destinationPosition.y + Math.min(graphCardHeight(destinationNode) * 0.5,
-                        48 + stableLane(destinationEndpoint, 13) * 6) })
-                const excludedIds = ({})
-                excludedIds[String(sourceNode.id || "")] = true
-                excludedIds[String(destinationNode.id || "")] = true
-                const obstacle = obstaclePlan(sourceAnchor.x, sourceAnchor.y, destinationAnchor.x,
-                    destinationAnchor.y, excludedIds)
-                segments.push({ "id": String(canonical.id || ""), "routeSegmentId": String(canonical.id || ""),
-                    "startX": sourceAnchor.x, "startY": sourceAnchor.y,
-                    "endX": destinationAnchor.x, "endY": destinationAnchor.y,
-                    "hasDetour": obstacle.hasDetour, "detourY": obstacle.detourY,
-                    "underCard": obstacle.underCard })
+                segments.push(geometryForCanonicalSegment(route.id, canonical, sourceNode, destinationNode, lane, false))
             }
-            const sourceAnchor = ({ "x": segments[0].startX, "y": segments[0].startY })
-            const finalX = segments[segments.length - 1].endX
-            const finalY = segments[segments.length - 1].endY
-            const focusSegment = segments[Math.floor(segments.length * 0.5)]
-            const lane = Number(fanOutLanes[String(route.id || i)] || 0)
-            const entry = {
-                "route": route,
-                "routeId": String(route.id || ""),
-                "routeSegmentId": String(canonicalSegments[0].id || route.id || ""),
-                "startX": sourceAnchor.x,
-                "startY": sourceAnchor.y,
-                "endX": finalX,
-                "endY": finalY,
-                "segments": segments,
-                "focusX": focusSegment ? (focusSegment.startX + focusSegment.endX) * 0.5 : finalX,
-                "focusY": focusSegment ? (focusSegment.startY + focusSegment.endY) * 0.5 : finalY,
-                "bundleCount": 1,
-                "drawBundleTrunk": false,
-                "bundleX": inputPosition.x + graphCardWidth(input),
-                "processorCount": Math.max(0, canonicalSegments.length - 1),
-                "lane": lane
-            }
+            const entry = routeGeometryEntry(route, segments, lane)
+            const entryIndex = next.length
             for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
-                const segment = segments[segmentIndex]
-                segment.points = wirePoints(segment, lane)
-                let minX = Number.POSITIVE_INFINITY
-                let minY = Number.POSITIVE_INFINITY
-                let maxX = Number.NEGATIVE_INFINITY
-                let maxY = Number.NEGATIVE_INFINITY
-                for (let pointIndex = 0; pointIndex < segment.points.length; ++pointIndex) {
-                    const point = segment.points[pointIndex]
-                    minX = Math.min(minX, point.x); minY = Math.min(minY, point.y)
-                    maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y)
-                }
-                segment.bounds = ({ "left": minX - 12, "top": minY - 12, "right": maxX + 12, "bottom": maxY + 12 })
-                for (let bx = Math.floor(segment.bounds.left / cell); bx <= Math.floor(segment.bounds.right / cell); ++bx) {
-                    for (let by = Math.floor(segment.bounds.top / cell); by <= Math.floor(segment.bounds.bottom / cell); ++by) {
-                        const key = bx + ":" + by
-                        if (!buckets[key]) buckets[key] = []
-                        buckets[key].push({ "route": route, "routeId": entry.routeId,
-                            "routeSegmentId": segment.routeSegmentId, "points": segment.points })
-                    }
-                }
+                addSegmentToBuckets(buckets, segmentBucketKeys, route, entry.routeId, segments[segmentIndex])
+                addNodeSegmentRef(nodeSegmentRefs, segments[segmentIndex].sourceNodeId, entryIndex, segmentIndex)
+                addNodeSegmentRef(nodeSegmentRefs, segments[segmentIndex].destinationNodeId, entryIndex, segmentIndex)
             }
             next.push(entry)
         }
         wireGeometry = next
         wireBuckets = buckets
+        wireSegmentBucketKeys = segmentBucketKeys
+        wireNodeSegmentRefs = nodeSegmentRefs
         if (diagram) diagram.requestPaint()
+    }
+    function refreshLiveDragGeometry(nodeId) {
+        const movedNode = nodeForId(nodeId)
+        if (!movedNode || !nodeIdentity(movedNode)) return 0
+        const refs = wireNodeSegmentRefs[String(nodeId || "")]
+            || wireNodeSegmentRefs[nodeIdentity(movedNode)]
+            || wireNodeSegmentRefs[nodeStorageIdentity(movedNode)] || []
+        if (refs.length === 0) return 0
+        // Preserve all unrelated route entries by reference. Only incident
+        // routes receive a replacement segments array.
+        const next = wireGeometry
+        const changedRoutes = ({})
+        const changed = []
+        for (let refIndex = 0; refIndex < refs.length; ++refIndex) {
+            const ref = refs[refIndex]
+            const entry = next[ref.entryIndex]
+            if (!entry) continue
+            let replacement = changedRoutes[String(ref.entryIndex)]
+            if (!replacement) {
+                replacement = ({ "route": entry.route || ({}), "routeId": entry.routeId,
+                    "lane": Number(entry.lane || 0), "segments": (entry.segments || []).slice() })
+                changedRoutes[String(ref.entryIndex)] = replacement
+            }
+            const oldSegment = replacement.segments[ref.segmentIndex]
+            if (!oldSegment) continue
+            const sourceNode = nodeForId(oldSegment.sourceNodeId)
+            const destinationNode = nodeForId(oldSegment.destinationNodeId)
+            const canonical = ({ "id": oldSegment.routeSegmentId,
+                "sourceNodeId": oldSegment.sourceNodeId, "destinationNodeId": oldSegment.destinationNodeId,
+                "sourceEndpointId": oldSegment.sourceEndpointId,
+                "destinationEndpointId": oldSegment.destinationEndpointId })
+            const updated = geometryForCanonicalSegment(replacement.routeId, canonical, sourceNode, destinationNode,
+                replacement.lane, true)
+            replacement.segments[ref.segmentIndex] = updated
+            changed.push({ "route": replacement.route, "routeId": replacement.routeId, "segment": updated,
+                "oldCacheKey": oldSegment.cacheKey || routeSegmentCacheKey(replacement.routeId, oldSegment) })
+        }
+        for (const entryIndex in changedRoutes) {
+            const replacement = changedRoutes[entryIndex]
+            next[Number(entryIndex)] = routeGeometryEntry(replacement.route, replacement.segments, replacement.lane)
+        }
+        if (changed.length === 0) return 0
+        // These maps are presentation caches. Mutating only the bucket keys
+        // belonging to affected segments avoids copying or rebuilding the
+        // complete spatial index for an otherwise local drag.
+        const buckets = wireBuckets
+        const segmentBucketKeys = wireSegmentBucketKeys
+        for (let changedIndex = 0; changedIndex < changed.length; ++changedIndex) {
+            const previous = changed[changedIndex]
+            const oldKeys = segmentBucketKeys[previous.oldCacheKey] || []
+            for (let keyIndex = 0; keyIndex < oldKeys.length; ++keyIndex) {
+                const bucketKey = oldKeys[keyIndex]
+                const bucket = buckets[bucketKey] || []
+                const remaining = bucket.filter(function(candidate) { return candidate.cacheKey !== previous.oldCacheKey })
+                if (remaining.length > 0) buckets[bucketKey] = remaining
+                else delete buckets[bucketKey]
+            }
+            delete segmentBucketKeys[previous.oldCacheKey]
+            addSegmentToBuckets(buckets, segmentBucketKeys, previous.route, previous.routeId, previous.segment)
+        }
+        wireGeometry = next
+        liveDragGeometryUpdates += 1
+        liveDragAffectedSegments += changed.length
+        if (diagram) diagram.requestPaint()
+        return changed.length
+    }
+    function beginLiveNodeDrag(nodeData) {
+        const id = nodeIdentity(nodeData)
+        if (!id) return false
+        liveDragNodeId = id
+        return true
+    }
+    function isLiveNodeDrag(nodeData) {
+        return Boolean(liveDragNodeId) && nodeMatchesId(nodeData, liveDragNodeId)
+    }
+    function updateLiveNodeDrag(nodeData, x, y) {
+        const id = nodeIdentity(nodeData)
+        if (!id || !isFinite(x) || !isFinite(y)) return 0
+        if (!liveDragNodeId) liveDragNodeId = id
+        const next = ({})
+        for (const key in liveNodePositions) next[key] = liveNodePositions[key]
+        const position = ({ "x": Number(x), "y": Number(y) })
+        next[id] = position
+        const storedId = nodeStorageIdentity(nodeData)
+        if (storedId) next[storedId] = position
+        liveNodePositions = next
+        return refreshLiveDragGeometry(id)
+    }
+    function finishLiveNodeDrag(nodeData, x, y, persist) {
+        const id = nodeIdentity(nodeData)
+        if (!id) return false
+        updateLiveNodeDrag(nodeData, x, y)
+        noteNodePosition(nodeStorageIdentity(nodeData), x, y, false)
+        const next = ({})
+        for (const key in liveNodePositions) {
+            if (key !== id && key !== nodeStorageIdentity(nodeData)) next[key] = liveNodePositions[key]
+        }
+        liveNodePositions = next
+        liveDragNodeId = ""
+        // A fixture can deliberately skip persistence; it still receives one
+        // complete obstacle pass on release. The product path gets that same
+        // one pass from onGraphChanged after the single layout save, avoiding
+        // a redundant pre-save rebuild.
+        if (persist === false) {
+            rebuildWireGeometry()
+            return true
+        }
+        const saved = saveNodePlacement(nodeData, x, y, Boolean(nodeData.pinned))
+        if (!saved) rebuildWireGeometry()
+        if (saved) nodePlacementWriteCount += 1
+        return saved
+    }
+    function cancelLiveNodeDrag(nodeData) {
+        if (!isLiveNodeDrag(nodeData)) return
+        const id = nodeIdentity(nodeData)
+        const storedId = nodeStorageIdentity(nodeData)
+        const next = ({})
+        for (const key in liveNodePositions) {
+            if (key !== id && key !== storedId) next[key] = liveNodePositions[key]
+        }
+        liveNodePositions = next
+        liveDragNodeId = ""
+        rebuildWireGeometry()
     }
     function restartWireMotion() {
         if (reducedMotion) {
@@ -1302,6 +1541,10 @@ Item {
             return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
         })
         nodePositions = ({})
+        liveNodePositions = ({})
+        liveDragNodeId = ""
+        portAnchors = ({})
+        portAnchorOffsets = ({})
         rebuildWireGeometry()
         restartWireMotion()
     }
@@ -1380,7 +1623,9 @@ Item {
 
     Timer {
         id: wireGeometryTimer
-        interval: 16
+        // Layout/port changes coalesce to the next event turn. Pointer drags
+        // bypass this timer and update connected geometry synchronously.
+        interval: 0
         repeat: false
         onTriggered: root.rebuildWireGeometry()
     }
@@ -1556,6 +1801,7 @@ Item {
         onXChanged: Qt.callLater(updateAnchor)
         onYChanged: Qt.callLater(updateAnchor)
         onWidthChanged: Qt.callLater(updateAnchor)
+        onHeightChanged: Qt.callLater(updateAnchor)
         Component.onCompleted: Qt.callLater(updateAnchor)
         RowLayout {
             anchors.fill: parent
@@ -2052,8 +2298,8 @@ Item {
                             readonly property var nodeData: root.node("input")
                             x: Number(root.nodePosition(nodeData, 80, 120).x)
                             y: Number(root.nodePosition(nodeData, 80, 120).y)
-                            Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), inputCardContent.implicitHeight + contentPadding * 2)
                             z: 2
@@ -2073,15 +2319,14 @@ Item {
                                 z: -1
                                 drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? inputNode : null
                                 drag.axis: Drag.XAndYAxis
+                                onPressed: root.beginLiveNodeDrag(inputNode.nodeData)
                                 onPositionChanged: function(mouse) {
-                                    if (drag.active) root.noteNodePosition(inputNode.nodeData.objectId, inputNode.x, inputNode.y)
+                                    if (drag.active) root.updateLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
                                 }
                                 onReleased: {
                                     if (drag.active) {
-                                        root.noteNodePosition(inputNode.nodeData.objectId, inputNode.x, inputNode.y)
-                                        root.saveNodePlacement(inputNode.nodeData, inputNode.x, inputNode.y, Boolean(inputNode.nodeData.pinned))
-                                    }
-                                    saveTimer.restart()
+                                        root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
+                                    } else root.cancelLiveNodeDrag(inputNode.nodeData)
                                 }
                                 onClicked: function(mouse) { if (!drag.active) root.selectNode(inputNode.nodeData) }
                                 onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(inputNode.nodeData) }
@@ -2098,8 +2343,8 @@ Item {
                                 tokens: deck
                                 x: Number(root.nodePosition(modelData, 80, 120).x)
                                 y: Number(root.nodePosition(modelData, 80, 120).y)
-                                Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: Math.max(root.graphCardHeight(modelData), secondaryCardContent.implicitHeight + contentPadding * 2)
                                 z: 2
@@ -2119,15 +2364,14 @@ Item {
                                     z: -1
                                     drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? secondaryInputNode : null
                                     drag.axis: Drag.XAndYAxis
+                                    onPressed: root.beginLiveNodeDrag(modelData)
                                     onPositionChanged: function(mouse) {
-                                        if (drag.active) root.noteNodePosition(modelData.objectId, secondaryInputNode.x, secondaryInputNode.y)
+                                        if (drag.active) root.updateLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
                                     }
                                     onReleased: {
                                         if (drag.active) {
-                                            root.noteNodePosition(modelData.objectId, secondaryInputNode.x, secondaryInputNode.y)
-                                            root.saveNodePlacement(modelData, secondaryInputNode.x, secondaryInputNode.y, Boolean(modelData.pinned))
-                                        }
-                                        saveTimer.restart()
+                                            root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
+                                        } else root.cancelLiveNodeDrag(modelData)
                                     }
                                     onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
                                     onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(modelData) }
@@ -2143,8 +2387,8 @@ Item {
                                 tokens: deck
                                 x: Number(root.nodePosition(modelData, 680, 120).x)
                                 y: Number(root.nodePosition(modelData, 680, 120).y)
-                                Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: root.graphCardHeight(modelData)
                                 z: 2
@@ -2208,15 +2452,14 @@ Item {
                                     anchors.fill: parent
                                     drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? processorNode : null
                                     drag.axis: Drag.XAndYAxis
+                                    onPressed: root.beginLiveNodeDrag(modelData)
                                     onPositionChanged: function(mouse) {
-                                        if (drag.active) root.noteNodePosition(modelData.objectId, processorNode.x, processorNode.y)
+                                        if (drag.active) root.updateLiveNodeDrag(modelData, processorNode.x, processorNode.y)
                                     }
                                     onReleased: {
                                         if (drag.active) {
-                                            root.noteNodePosition(modelData.objectId, processorNode.x, processorNode.y)
-                                            root.saveNodePlacement(modelData, processorNode.x, processorNode.y, Boolean(modelData.pinned))
-                                        }
-                                        saveTimer.restart()
+                                            root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y)
+                                        } else root.cancelLiveNodeDrag(modelData)
                                     }
                                     onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
                                     onDoubleClicked: function(mouse) { if (!drag.active) root.openNodeSettings(modelData) }
@@ -2230,8 +2473,8 @@ Item {
                             readonly property var nodeData: root.node("output")
                             x: Number(root.nodePosition(nodeData, 1320, 120).x)
                             y: Number(root.nodePosition(nodeData, 1320, 120).y)
-                            Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), outputCardContent.implicitHeight + contentPadding * 2)
                             z: 2
@@ -2251,15 +2494,14 @@ Item {
                                 z: -1
                                 drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? outputNode : null
                                 drag.axis: Drag.XAndYAxis
+                                onPressed: root.beginLiveNodeDrag(outputNode.nodeData)
                                 onPositionChanged: function(mouse) {
-                                    if (drag.active) root.noteNodePosition(outputNode.nodeData.objectId, outputNode.x, outputNode.y)
+                                    if (drag.active) root.updateLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
                                 }
                                 onReleased: {
                                     if (drag.active) {
-                                        root.noteNodePosition(outputNode.nodeData.objectId, outputNode.x, outputNode.y)
-                                        root.saveNodePlacement(outputNode.nodeData, outputNode.x, outputNode.y, Boolean(outputNode.nodeData.pinned))
-                                    }
-                                    saveTimer.restart()
+                                        root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
+                                    } else root.cancelLiveNodeDrag(outputNode.nodeData)
                                 }
                                 onClicked: function(mouse) { if (!drag.active) root.selectNode(outputNode.nodeData) }
                                 onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(outputNode.nodeData) }

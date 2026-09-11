@@ -6093,12 +6093,14 @@ bool verifyFlightDeckAutomationInteraction(hotas::AppBackend &backend, hotas::Th
     return true;
 }
 
-QVariantList signalFlowStressPorts(const QString &prefix)
+QVariantList signalFlowStressPorts(const QString &prefix, const QString &ownerNodeId)
 {
     QVariantList ports;
     ports.reserve(64);
     for (int index = 0; index < 64; ++index) {
         ports.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("%1:%2").arg(prefix).arg(index)},
+                                 {QStringLiteral("endpointId"), QStringLiteral("%1:%2").arg(prefix).arg(index)},
+                                 {QStringLiteral("ownerNodeId"), ownerNodeId},
                                  {QStringLiteral("kind"), QStringLiteral("axis")},
                                  {QStringLiteral("index"), index},
                                  {QStringLiteral("group"), QStringLiteral("Stress ports")},
@@ -6141,8 +6143,8 @@ QVariantList signalFlowFixtureSegments(const QString &routeId, const QString &so
 
 QVariantMap signalFlowVisualStressGraph()
 {
-    const QVariantList sourcePorts = signalFlowStressPorts(QStringLiteral("stress-input"));
-    const QVariantList destinationPorts = signalFlowStressPorts(QStringLiteral("stress-output"));
+    const QVariantList sourcePorts = signalFlowStressPorts(QStringLiteral("stress-input"), QStringLiteral("stress-input"));
+    const QVariantList destinationPorts = signalFlowStressPorts(QStringLiteral("stress-output"), QStringLiteral("stress-output"));
     const auto endpoint = [](const QString &id, const QString &kind, const QString &label, int x, int y,
                              const QVariantList &ports = {}) {
         return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("objectId"), id},
@@ -6290,6 +6292,231 @@ QVariantMap signalFlowNormalHotasGraph()
             {QStringLiteral("densityMode"), QStringLiteral("compact")}, {QStringLiteral("layoutLocked"), true}}}};
 }
 
+QVariantMap signalFlowLiveDragGraph()
+{
+    const auto port = [](const QString &id, const QString &ownerNodeId, const QString &label,
+                         const QString &group, const QString &direction) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("endpointId"), id},
+            {QStringLiteral("ownerNodeId"), ownerNodeId}, {QStringLiteral("label"), label},
+            {QStringLiteral("technicalLabel"), label}, {QStringLiteral("kind"), QStringLiteral("axis")},
+            {QStringLiteral("group"), group}, {QStringLiteral("direction"), direction},
+            {QStringLiteral("available"), true}, {QStringLiteral("mapped"), true}};
+    };
+    const auto node = [](const QString &id, const QString &kind, const QString &label, int x, int y,
+                         const QVariantList &ports) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("objectId"), id},
+            {QStringLiteral("kind"), kind}, {QStringLiteral("label"), label},
+            {QStringLiteral("detail"), QStringLiteral("Deterministic live-drag fixture")},
+            {QStringLiteral("x"), x}, {QStringLiteral("y"), y}, {QStringLiteral("connected"), true},
+            {QStringLiteral("ports"), ports}, {QStringLiteral("portGroups"), QVariantList{}}};
+    };
+    const QVariantList inputA{port(QStringLiteral("live-input-a-roll"), QStringLiteral("live-input-a"),
+            QStringLiteral("Roll"), QStringLiteral("Axes"), QStringLiteral("source")),
+        port(QStringLiteral("live-input-a-pitch"), QStringLiteral("live-input-a"),
+            QStringLiteral("Pitch"), QStringLiteral("Axes"), QStringLiteral("source")),
+        port(QStringLiteral("live-input-a-yaw"), QStringLiteral("live-input-a"),
+            QStringLiteral("Yaw"), QStringLiteral("Axes"), QStringLiteral("source"))};
+    const QVariantList inputB{port(QStringLiteral("live-input-b-roll"), QStringLiteral("live-input-b"),
+        QStringLiteral("Roll"), QStringLiteral("Axes"), QStringLiteral("source"))};
+    const QVariantList curvePorts{
+        port(QStringLiteral("fixture-port:live-curve:live-roll-chain:in"), QStringLiteral("live-curve"),
+            QStringLiteral("IN"), QStringLiteral("Processor"), QStringLiteral("input")),
+        port(QStringLiteral("fixture-port:live-curve:live-roll-chain:out"), QStringLiteral("live-curve"),
+            QStringLiteral("OUT"), QStringLiteral("Processor"), QStringLiteral("output"))};
+    const QVariantList adaptivePorts{
+        port(QStringLiteral("fixture-port:live-adaptive:live-roll-chain:in"), QStringLiteral("live-adaptive"),
+            QStringLiteral("IN"), QStringLiteral("Processor"), QStringLiteral("input")),
+        port(QStringLiteral("fixture-port:live-adaptive:live-roll-chain:out"), QStringLiteral("live-adaptive"),
+            QStringLiteral("OUT"), QStringLiteral("Processor"), QStringLiteral("output"))};
+    const QVariantList outputPorts{port(QStringLiteral("live-output-x"), QStringLiteral("live-output"),
+            QStringLiteral("X"), QStringLiteral("Virtual Axes"), QStringLiteral("destination")),
+        port(QStringLiteral("live-output-y"), QStringLiteral("live-output"),
+            QStringLiteral("Y"), QStringLiteral("Virtual Axes"), QStringLiteral("destination")),
+        port(QStringLiteral("live-output-z"), QStringLiteral("live-output"),
+            QStringLiteral("Z"), QStringLiteral("Virtual Axes"), QStringLiteral("destination")),
+        port(QStringLiteral("live-output-rx"), QStringLiteral("live-output"),
+            QStringLiteral("Rx"), QStringLiteral("Virtual Axes"), QStringLiteral("destination"))};
+    const auto route = [](const QString &id, const QString &sourceNodeId, const QString &sourceEndpointId,
+                          const QString &destinationEndpointId, const QVariantList &processors = {}) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("sourceNodeId"), sourceNodeId},
+            {QStringLiteral("destinationNodeId"), QStringLiteral("live-output")},
+            {QStringLiteral("sourcePortId"), sourceEndpointId}, {QStringLiteral("sourceEndpointId"), sourceEndpointId},
+            {QStringLiteral("destinationPortId"), destinationEndpointId}, {QStringLiteral("destinationEndpointId"), destinationEndpointId},
+            {QStringLiteral("sourceLabel"), sourceEndpointId}, {QStringLiteral("destinationLabel"), destinationEndpointId},
+            {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
+            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}},
+            {QStringLiteral("segments"), signalFlowFixtureSegments(id, sourceNodeId, sourceEndpointId,
+                QStringLiteral("live-output"), destinationEndpointId, processors)}};
+    };
+    return QVariantMap{{QStringLiteral("nodes"), QVariantList{
+            node(QStringLiteral("live-input-a"), QStringLiteral("input"), QStringLiteral("Input A"), 80, 120, inputA),
+            node(QStringLiteral("live-input-b"), QStringLiteral("input"), QStringLiteral("Input B"), 80, 500, inputB),
+            node(QStringLiteral("live-curve"), QStringLiteral("processor"), QStringLiteral("Curve"), 500, 160, curvePorts),
+            node(QStringLiteral("live-adaptive"), QStringLiteral("processor"), QStringLiteral("Adaptive"), 800, 160, adaptivePorts),
+            node(QStringLiteral("live-output"), QStringLiteral("output"), QStringLiteral("BF6 output"), 1100, 160, outputPorts)}},
+        {QStringLiteral("routes"), QVariantList{
+            route(QStringLiteral("live-roll-chain"), QStringLiteral("live-input-a"), QStringLiteral("live-input-a-roll"),
+                QStringLiteral("live-output-x"), QVariantList{QStringLiteral("live-curve"), QStringLiteral("live-adaptive")} ),
+            route(QStringLiteral("live-pitch"), QStringLiteral("live-input-a"), QStringLiteral("live-input-a-pitch"),
+                QStringLiteral("live-output-y")),
+            route(QStringLiteral("live-yaw"), QStringLiteral("live-input-a"), QStringLiteral("live-input-a-yaw"),
+                QStringLiteral("live-output-z")),
+            route(QStringLiteral("live-input-b-roll"), QStringLiteral("live-input-b"), QStringLiteral("live-input-b-roll"),
+                QStringLiteral("live-output-rx"))}},
+        {QStringLiteral("inputNodeId"), QStringLiteral("live-input-a")},
+        {QStringLiteral("outputNodeId"), QStringLiteral("live-output")}, {QStringLiteral("editable"), false},
+        {QStringLiteral("workspace"), QVariantMap{{QStringLiteral("wireStyle"), QStringLiteral("smooth")},
+            {QStringLiteral("densityMode"), QStringLiteral("detailed")}, {QStringLiteral("layoutLocked"), true}}}};
+}
+
+bool verifySignalFlowLiveNodeDragFixture(QObject *page)
+{
+    if (!page) return failPresentationLifecycleTest(QStringLiteral("Signal Flow live-drag fixture needs a live page"));
+    const auto verifyDense = [page](int routeCount) {
+        QVariantMap graph = signalFlowVisualStressGraph();
+        graph.insert(QStringLiteral("routes"), graph.value(QStringLiteral("routes")).toList().mid(0, routeCount));
+        page->setProperty("nodePositions", QVariantMap{});
+        page->setProperty("graph", graph);
+        settlePresentation();
+        QQmlExpression drag(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const routes = graph.routes || [];"
+            " function attached() {"
+            "   for (let entryIndex = 0; entryIndex < wireGeometry.length; ++entryIndex) {"
+            "     const segments = wireGeometry[entryIndex].segments || [];"
+            "     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
+            "       const segment = segments[segmentIndex];"
+            "       const source = resolvedPortAnchor(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
+            "       const destination = resolvedPortAnchor(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
+            "       if (Math.abs(segment.startX - source.x) > 0.01 || Math.abs(segment.startY - source.y) > 0.01"
+            "           || Math.abs(segment.endX - destination.x) > 0.01 || Math.abs(segment.endY - destination.y) > 0.01) return false;"
+            "     }"
+            "   } return true;"
+            " }"
+            " for (let index = 0; index < routes.length; ++index) {"
+            "   const segment = routes[index].segments[0];"
+            "   notePortAnchor({ id: segment.sourceEndpointId, endpointId: segment.sourceEndpointId, ownerNodeId: 'stress-input' }, 344, 150 + index * 6);"
+            "   notePortAnchor({ id: segment.destinationEndpointId, endpointId: segment.destinationEndpointId, ownerNodeId: 'stress-output' }, 1340, 150 + index * 6);"
+            " }"
+            " wireGeometryTimer.stop(); rebuildWireGeometry();"
+            " const input = nodeForId('stress-input');"
+            " const fullBefore = geometryRebuildCount; const writesBefore = nodePlacementWriteCount;"
+            " const updatesBefore = liveDragGeometryUpdates; const affectedBefore = liveDragAffectedSegments;"
+            " beginLiveNodeDrag(input); let attachedEverySample = true; let exactAffectedSamples = 0;"
+            " for (let sample = 1; sample <= 30; ++sample) {"
+            "   const affected = updateLiveNodeDrag(input, 50 + sample, 160);"
+            "   if (affected === routes.length) ++exactAffectedSamples;"
+            "   attachedEverySample = attachedEverySample && attached();"
+            " }"
+            " const noFullDuringDrag = geometryRebuildCount === fullBefore;"
+            " const fullBeforeRelease = geometryRebuildCount;"
+            " finishLiveNodeDrag(input, 80, 160, false);"
+            " return ({ attached: attachedEverySample && attached(), noFullDuringDrag: noFullDuringDrag,"
+            "   releaseFullDelta: geometryRebuildCount - fullBeforeRelease, writesDelta: nodePlacementWriteCount - writesBefore,"
+            "   updatesDelta: liveDragGeometryUpdates - updatesBefore, affectedDelta: liveDragAffectedSegments - affectedBefore,"
+            "   exactAffectedSamples: exactAffectedSamples, routes: routes.length });"
+            "})()"));
+        const QVariantMap result = drag.evaluate().toMap();
+        return !drag.hasError() && result.value(QStringLiteral("routes")).toInt() == routeCount
+            && result.value(QStringLiteral("attached")).toBool()
+            && result.value(QStringLiteral("noFullDuringDrag")).toBool()
+            && result.value(QStringLiteral("releaseFullDelta")).toInt() == 1
+            && result.value(QStringLiteral("writesDelta")).toInt() == 0
+            && result.value(QStringLiteral("updatesDelta")).toInt() >= 30
+            && result.value(QStringLiteral("affectedDelta")).toInt() == routeCount * 30
+            && result.value(QStringLiteral("exactAffectedSamples")).toInt() == 30;
+    };
+    const bool denseOne = verifyDense(1);
+    const bool denseEight = verifyDense(8);
+    const bool denseTwentyEight = verifyDense(28);
+
+    page->setProperty("nodePositions", QVariantMap{});
+    page->setProperty("graph", signalFlowLiveDragGraph());
+    settlePresentation();
+    QQmlExpression chain(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " function anchor(id, owner, x, y) { notePortAnchor({ id: id, endpointId: id, ownerNodeId: owner }, x, y); }"
+        " anchor('live-input-a-roll', 'live-input-a', 374, 200); anchor('live-input-a-pitch', 'live-input-a', 374, 228);"
+        " anchor('live-input-a-yaw', 'live-input-a', 374, 256); anchor('live-input-b-roll', 'live-input-b', 374, 580);"
+        " anchor('fixture-port:live-curve:live-roll-chain:in', 'live-curve', 500, 200);"
+        " anchor('fixture-port:live-curve:live-roll-chain:out', 'live-curve', 688, 200);"
+        " anchor('fixture-port:live-adaptive:live-roll-chain:in', 'live-adaptive', 800, 200);"
+        " anchor('fixture-port:live-adaptive:live-roll-chain:out', 'live-adaptive', 988, 200);"
+        " anchor('live-output-x', 'live-output', 1100, 200); anchor('live-output-y', 'live-output', 1100, 228);"
+        " anchor('live-output-z', 'live-output', 1100, 256); anchor('live-output-rx', 'live-output', 1100, 284);"
+        " wireGeometryTimer.stop(); rebuildWireGeometry();"
+        " function entry(id) { return wireGeometry.filter(function(item) { return item.routeId === id; })[0]; }"
+        " function signature(id) { const item = entry(id); return !item ? '' : (item.segments || []).map(function(segment) {"
+        "   return [segment.startX, segment.startY, segment.endX, segment.endY].join(','); }).join('|'); }"
+        " function attached() {"
+        "   for (let entryIndex = 0; entryIndex < wireGeometry.length; ++entryIndex) {"
+        "     const segments = wireGeometry[entryIndex].segments || [];"
+        "     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
+        "       const segment = segments[segmentIndex];"
+        "       const source = resolvedPortAnchor(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
+        "       const destination = resolvedPortAnchor(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
+        "       if (Math.abs(segment.startX - source.x) > 0.01 || Math.abs(segment.startY - source.y) > 0.01"
+        "           || Math.abs(segment.endX - destination.x) > 0.01 || Math.abs(segment.endY - destination.y) > 0.01) return false;"
+        "     }"
+        "   } return true;"
+        " }"
+        " function move(id, x, y, expectedAffected, affectedRouteIds, zoomValue) {"
+        "   const before = {}; const routeIds = ['live-roll-chain', 'live-pitch', 'live-yaw', 'live-input-b-roll'];"
+        "   for (let routeIndex = 0; routeIndex < routeIds.length; ++routeIndex) before[routeIds[routeIndex]] = signature(routeIds[routeIndex]);"
+        "   const node = nodeForId(id); const fullBefore = geometryRebuildCount; const updatesBefore = liveDragGeometryUpdates;"
+        "   const affectedBefore = liveDragAffectedSegments; beginLiveNodeDrag(node); let exact = 0; let everyAttached = true;"
+        "   const base = nodePosition(node, Number(node.x), Number(node.y));"
+        "   if (zoomValue) { zoom = zoomValue; if (graphViewport) { graphViewport.contentX = 43; graphViewport.contentY = 29; } }"
+        "   for (let sample = 1; sample <= 30; ++sample) {"
+        "     const affected = updateLiveNodeDrag(node, x + sample, y + sample * 0.25);"
+        "     if (affected === expectedAffected) ++exact; everyAttached = everyAttached && attached();"
+        "   }"
+        "   let onlyAffected = true; for (let routeIndex = 0; routeIndex < routeIds.length; ++routeIndex) {"
+        "     const routeId = routeIds[routeIndex]; if (affectedRouteIds.indexOf(routeId) < 0 && signature(routeId) !== before[routeId]) onlyAffected = false;"
+        "   }"
+        "   const noFullDuringDrag = geometryRebuildCount === fullBefore; const releaseBefore = geometryRebuildCount;"
+        "   finishLiveNodeDrag(node, x + 30, y + 7.5, false);"
+        "   return { attached: everyAttached && attached(), onlyAffected: onlyAffected, noFull: noFullDuringDrag,"
+        "     release: geometryRebuildCount - releaseBefore, updates: liveDragGeometryUpdates - updatesBefore,"
+        "     affected: liveDragAffectedSegments - affectedBefore, exact: exact };"
+        " }"
+        " const writesBefore = nodePlacementWriteCount;"
+        " const inputA = move('live-input-a', 80, 120, 3, ['live-roll-chain', 'live-pitch', 'live-yaw'], 1.0);"
+        " const inputB = move('live-input-b', 80, 500, 1, ['live-input-b-roll'], 0.62);"
+        " const curve = move('live-curve', 500, 160, 2, ['live-roll-chain'], 1.18);"
+        " const adaptive = move('live-adaptive', 800, 160, 2, ['live-roll-chain'], 0.76);"
+        " const output = move('live-output', 1100, 160, 4, ['live-roll-chain', 'live-pitch', 'live-yaw', 'live-input-b-roll'], 1.0);"
+        " anchor('live-input-a-roll', 'live-input-a', 404, 222); wireGeometryTimer.stop(); rebuildWireGeometry();"
+        " const groupAndDensityAnchor = attached() && entry('live-roll-chain').segments[0].startY === 222;"
+        " return ({ inputA: inputA, inputB: inputB, curve: curve, adaptive: adaptive, output: output,"
+        "   groupAndDensityAnchor: groupAndDensityAnchor, writes: nodePlacementWriteCount - writesBefore });"
+        "})()"));
+    const QVariantMap result = chain.evaluate().toMap();
+    const auto validMove = [](const QVariantMap &move, int affected) {
+        return move.value(QStringLiteral("attached")).toBool() && move.value(QStringLiteral("onlyAffected")).toBool()
+            && move.value(QStringLiteral("noFull")).toBool() && move.value(QStringLiteral("release")).toInt() == 1
+            && move.value(QStringLiteral("updates")).toInt() >= 30
+            && move.value(QStringLiteral("affected")).toInt() == affected * 30
+            && move.value(QStringLiteral("exact")).toInt() == 30;
+    };
+    const bool chainPass = !chain.hasError()
+        && validMove(result.value(QStringLiteral("inputA")).toMap(), 3)
+        && validMove(result.value(QStringLiteral("inputB")).toMap(), 1)
+        && validMove(result.value(QStringLiteral("curve")).toMap(), 2)
+        && validMove(result.value(QStringLiteral("adaptive")).toMap(), 2)
+        && validMove(result.value(QStringLiteral("output")).toMap(), 4)
+        && result.value(QStringLiteral("groupAndDensityAnchor")).toBool()
+        && result.value(QStringLiteral("writes")).toInt() == 0;
+    if (!denseOne || !denseEight || !denseTwentyEight || !chainPass) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow live-drag endpoint fixture failed (dense 1/8/28=%1/%2/%3 chain=%4 error=%5)")
+                .arg(denseOne).arg(denseEight).arg(denseTwentyEight).arg(chainPass)
+                .arg(chain.hasError() ? chain.error().toString() : QStringLiteral("none")));
+    }
+    return true;
+}
+
 bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, const QString &theme)
 {
     if (!page || !window) {
@@ -6425,6 +6652,10 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
     const int orthogonalSegmentCount = orthogonalState.value(QStringLiteral("segments")).toInt();
     const bool stylePreservesTopology = !orthogonalStyle.hasError()
         && orthogonalProcessorCount == 2 && orthogonalSegmentCount == 3;
+    if (!verifySignalFlowLiveNodeDragFixture(page)) {
+        restore();
+        return false;
+    }
     // Dense topology is diagnostic-only. Qualify the owner-facing default on
     // a normal two-device HOTAS rig with discrete banks collapsed.
     page->setProperty("nodePositions", QVariantMap{});
@@ -7190,6 +7421,49 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     if (!verifySignalFlowVisualStressFixture(flightDeckPage, qobject_cast<QQuickWindow *>(flightDeckWindow),
             QStringLiteral("Flight Deck"))) {
         return false;
+    }
+    const QVariantMap persistedGraph = backend.signalFlowGraph();
+    const QVariantList persistedNodes = persistedGraph.value(QStringLiteral("nodes")).toList();
+    const auto persistedInput = std::find_if(persistedNodes.cbegin(), persistedNodes.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("input");
+    });
+    if (persistedInput == persistedNodes.cend()) {
+        return failPresentationLifecycleTest(QStringLiteral("Signal Flow live-drag persistence test could not find an input card"));
+    }
+    const QVariantMap persistedInputNode = persistedInput->toMap();
+    QQmlExpression directManipulationPersistence(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "(function() {"
+        " const input = node('input'); if (!input || !input.objectId) return ({ saved: false });"
+        " const position = nodePosition(input, Number(input.x || 0), Number(input.y || 0));"
+        " const fullBefore = geometryRebuildCount; const writesBefore = nodePlacementWriteCount;"
+        " beginLiveNodeDrag(input);"
+        " updateLiveNodeDrag(input, position.x + 11, position.y + 3);"
+        " updateLiveNodeDrag(input, position.x + 22, position.y + 6);"
+        " const cleanDuring = geometryRebuildCount === fullBefore && nodePlacementWriteCount === writesBefore;"
+        " const saved = finishLiveNodeDrag(input, position.x + 22, position.y + 6, true);"
+        " return ({ saved: saved, cleanDuring: cleanDuring, writes: nodePlacementWriteCount - writesBefore,"
+        "   releaseRebuilds: geometryRebuildCount - fullBefore });"
+        "})()"));
+    const QVariantMap directPersistence = directManipulationPersistence.evaluate().toMap();
+    const bool restoredPersistedInput = backend.signalFlowSaveNodeLayout(
+        persistedInputNode.value(QStringLiteral("objectId")).toString(),
+        persistedInputNode.value(QStringLiteral("x")).toDouble(), persistedInputNode.value(QStringLiteral("y")).toDouble(),
+        persistedInputNode.value(QStringLiteral("pinned")).toBool());
+    flightDeckPage->setProperty("graph", backend.signalFlowGraph());
+    settlePresentation();
+    if (directManipulationPersistence.hasError() || !restoredPersistedInput
+        || !directPersistence.value(QStringLiteral("saved")).toBool()
+        || !directPersistence.value(QStringLiteral("cleanDuring")).toBool()
+        || directPersistence.value(QStringLiteral("writes")).toInt() != 1
+        || directPersistence.value(QStringLiteral("releaseRebuilds")).toInt() != 1) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow live drag did not defer one placement save and one release rebuild (saved=%1 clean=%2 writes=%3 rebuilds=%4 error=%5)"
+        ).arg(directPersistence.value(QStringLiteral("saved")).toBool())
+            .arg(directPersistence.value(QStringLiteral("cleanDuring")).toBool())
+            .arg(directPersistence.value(QStringLiteral("writes")).toInt())
+            .arg(directPersistence.value(QStringLiteral("releaseRebuilds")).toInt())
+            .arg(directManipulationPersistence.hasError() ? directManipulationPersistence.error().toString()
+                                                           : QStringLiteral("none")));
     }
     QQmlExpression openDeckInputCardSettings(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
         "(function() { const input = node('input'); selectNode(input); return openCardSettings(input); })()"));
