@@ -1850,7 +1850,7 @@ Page {
                         { c: "MAPPING", v: backend.mappingStatus, t: backend.mappingActive ? "#a8cfba" : (backend.mappingRequested ? "#e1c887" : "#a5afb3"),
                           note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT QUIESCED; WILL REACQUIRE" : "OUTPUT NEUTRALIZED") },
                         { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: "#b9d1d8",
-                          note: "PERSISTENT MANUAL SELECTION" },
+                          note: "SESSION MANUAL OVERRIDE; CLEARS ON CONTEXT CHANGE / RESTART" },
                         { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: "#b9d1d8",
                           note: backend.profileSourceLabel.toUpperCase() },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: "#c9d6d9",

@@ -62,6 +62,7 @@ private slots:
     void deterministicAxisComposition();
     void rejectsFeedbackAndClampConflicts();
     void profileOverrideUsesUnifiedPrecedence();
+    void profileControlsRejectCrossRigTargetsWithoutChangingTheReportRoute();
     void migrationDefaultsToEnabledEmptyEngine();
     void disabledEmptyDraftPersistsWithoutPublishing();
     void legacyAlwaysRuleRoundTripsWithoutChangingBehavior();
@@ -250,6 +251,62 @@ void AutomationEngineTests::profileOverrideUsesUnifiedPrecedence()
     contributions[0].active = false;
     runtime.updateAutomationContributions(contributions, 1, 3);
     QCOMPARE(runtime.effectiveProfile(cache).profileIndex, 1);
+}
+
+void AutomationEngineTests::profileControlsRejectCrossRigTargetsWithoutChangingTheReportRoute()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &base = activeProfile(configuration);
+    ControllerProfile *target = findProfile(configuration, precisionProfileId());
+    QVERIFY(target);
+    // The two Profiles intentionally share the same virtual output. Rig
+    // identity, not output identity, is the authority for report-path Profile
+    // controls.
+    QCOMPARE(base.outputLayoutId, target->outputLayoutId);
+    DeviceRig rigA;
+    rigA.id = u"rig-a"_qs;
+    rigA.name = u"Flight Rig A"_qs;
+    DeviceRig rigB;
+    rigB.id = u"rig-b"_qs;
+    rigB.name = u"Flight Rig B"_qs;
+    configuration.deviceRigs = {rigA, rigB};
+    base.deviceRigId = rigA.id;
+    target->deviceRigId = rigB.id;
+    configuration.profileTriggers.resize(2);
+    configuration.profileTriggers[0] = {target->id, ProfileTriggerMode::Hold};
+    configuration.profileTriggers[1] = {target->id, ProfileTriggerMode::Toggle};
+
+    AutomationActionDefinition hold;
+    hold.type = AutomationActionType::ProfileHold;
+    hold.profileId = target->id;
+    AutomationActionDefinition toggle = hold;
+    toggle.type = AutomationActionType::ProfileToggle;
+    configuration.automations = {rule(u"Cross Rig Hold"_qs, always(), hold),
+                                 rule(u"Cross Rig Toggle"_qs, always(), toggle)};
+
+    RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(!cache.profileTriggers[0].consumesInput);
+    QVERIFY(!cache.profileTriggers[1].consumesInput);
+    QCOMPARE(cache.profileTriggers[0].targetProfileIndex, -1);
+    QCOMPARE(cache.profileTriggers[1].targetProfileIndex, -1);
+    QCOMPARE(cache.automation->ruleHealth[0], AutomationHealth::Invalid);
+    QCOMPARE(cache.automation->ruleHealth[1], AutomationHealth::Invalid);
+    QVERIFY(cache.automation->ruleMessages[0].contains(u"different Device Rig"_qs));
+
+    ProfileTriggerRuntime profileRuntime;
+    PhysicalButtonStates buttons{};
+    profileRuntime.initializeForMapping(cache, buttons);
+    buttons[0] = true; // Cross-Rig Hold is ignored; base Rig A remains coherent.
+    QCOMPARE(profileRuntime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+    buttons[0] = false;
+    profileRuntime.processReport(cache, buttons);
+    buttons[1] = true; // Cross-Rig Toggle is ignored as well.
+    QCOMPARE(profileRuntime.processReport(cache, buttons).profileIndex, cache.baseProfileIndex);
+
+    AutomationRuntime automationRuntime;
+    const AutomationEvaluationResult &automation = evaluate(automationRuntime, cache, input());
+    QCOMPARE(automation.profileContributionCount, 0);
+
 }
 
 void AutomationEngineTests::migrationDefaultsToEnabledEmptyEngine()

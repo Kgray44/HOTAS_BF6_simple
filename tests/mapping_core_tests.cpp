@@ -5456,7 +5456,25 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QVERIFY(createProfileCategory(source, QStringLiteral("Battlefield 6"), &category));
     QString profileId;
     QVERIFY(createProfileInCategory(source, QStringLiteral("Helicopter"), category, precisionProfileId(), &profileId));
-    findProfile(source, profileId)->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.21F;
+    ControllerProfile *sourceProfile = findProfile(source, profileId);
+    QVERIFY(sourceProfile);
+    sourceProfile->axes[static_cast<int>(PhysicalAxis::X)].deadzone = 0.21F;
+    sourceProfile->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+    SavedControllerRecord sourceController = legacyMigrationRecord(
+        QStringLiteral("source-machine-controller"), QStringLiteral("{SOURCE-MACHINE-CONTROLLER}"), true);
+    sourceController.displayName = QStringLiteral("T.Flight HOTAS One");
+    source.savedControllers = {sourceController};
+    DeviceRig sourceRig;
+    sourceRig.id = QStringLiteral("source-machine-rig");
+    sourceRig.name = QStringLiteral("Flight Controls");
+    sourceRig.members = {{sourceController.id, true, true, defaultOutputLayoutId()}};
+    sourceRig.outputs = {{defaultOutputLayoutId(), true}};
+    source.deviceRigs.push_back(sourceRig);
+    sourceProfile->deviceRigId = sourceRig.id;
+    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceProfile->outputLayoutId);
+    QVERIFY(sourceLayout);
+    sourceLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\SOURCE-MACHINE-ONLY");
+    sourceLayout->hidhideManaged = true;
     const QString fileName = temporary.filePath(QStringLiteral("helicopter.hbf6profile"));
     QString error;
     QVERIFY2(ProfilePortability::exportProfile(source, profileId, fileName, &error), qPrintable(error));
@@ -5465,7 +5483,29 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QVERIFY2(ProfilePortability::inspect(fileName, &bundle, &error), qPrintable(error));
     QVERIFY(bundle.kind == PortableConfigurationKind::Profile);
     QCOMPARE(bundle.profiles.size(), size_t{1});
+    QCOMPARE(bundle.profiles.front().automaticSelectionMode, ProfileAutomaticSelectionMode::ManualOnly);
+    QCOMPARE(bundle.profiles.front().deviceRigId, sourceRig.id);
+    QCOMPARE(bundle.outputLayouts.size(), size_t{1});
+    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
+    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
     MapperConfiguration target = defaultConfiguration();
+    SavedControllerRecord destinationController = legacyMigrationRecord(
+        QStringLiteral("destination-machine-controller"), QStringLiteral("{DESTINATION-MACHINE-CONTROLLER}"), true);
+    // A same-named physical controller and Rig are deliberately not evidence
+    // for an implicit cross-machine assignment.
+    destinationController.displayName = sourceController.displayName;
+    target.savedControllers = {destinationController};
+    DeviceRig destinationRig;
+    destinationRig.id = QStringLiteral("destination-machine-rig");
+    // A friendly-name collision is deliberately not an implicit remap.
+    destinationRig.name = sourceRig.name;
+    destinationRig.members = {{destinationController.id, true, true, defaultOutputLayoutId()}};
+    destinationRig.outputs = {{defaultOutputLayoutId(), true}};
+    target.deviceRigs.push_back(destinationRig);
+    VirtualOutputLayout *destinationLayout = findOutputLayout(target, defaultOutputLayoutId());
+    QVERIFY(destinationLayout);
+    destinationLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\DESTINATION-MACHINE-ONLY");
+    destinationLayout->hidhideManaged = true;
     QStringList warnings;
     QVERIFY2(ProfilePortability::apply(&target, bundle, {}, &warnings, &error), qPrintable(error));
     QCOMPARE(target.profiles.size(), size_t{3});
@@ -5474,6 +5514,14 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QVERIFY(imported != target.profiles.cend());
     QVERIFY(imported->id != profileId);
     QCOMPARE(imported->axes[static_cast<int>(PhysicalAxis::X)].deadzone, 0.21F);
+    QCOMPARE(imported->automaticSelectionMode, ProfileAutomaticSelectionMode::ManualOnly);
+    QVERIFY(imported->deviceRigId.isEmpty());
+    QVERIFY(std::any_of(warnings.cbegin(), warnings.cend(), [](const QString &warning) {
+        return warning.contains(QStringLiteral("Device Rig assignment required"));
+    }));
+    QCOMPARE(findOutputLayout(target, defaultOutputLayoutId())->hidHideDeviceInstanceId,
+             QStringLiteral("HID\\DESTINATION-MACHINE-ONLY"));
+    QVERIFY(findOutputLayout(target, defaultOutputLayoutId())->hidhideManaged);
     bool valid = false;
     QVERIFY(ConfigStore::fromJson(ConfigStore::toJson(target), &valid).profiles.size() == target.profiles.size());
     QVERIFY(valid);
@@ -5611,6 +5659,24 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QString profileId;
     QVERIFY(createProfileInCategory(source, QStringLiteral("Vehicle"), categoryId,
                                     normalProfileId(), &profileId));
+    ControllerProfile *sourceProfile = findProfile(source, profileId);
+    QVERIFY(sourceProfile);
+    sourceProfile->automaticSelectionMode = ProfileAutomaticSelectionMode::Fallback;
+    SavedControllerRecord sourceController = legacyMigrationRecord(
+        QStringLiteral("pack-source-machine-controller"), QStringLiteral("{PACK-SOURCE-MACHINE-CONTROLLER}"), true);
+    sourceController.displayName = QStringLiteral("T.Flight HOTAS One");
+    source.savedControllers = {sourceController};
+    DeviceRig sourceRig;
+    sourceRig.id = QStringLiteral("pack-source-machine-rig");
+    sourceRig.name = QStringLiteral("Travel Flight Controls");
+    sourceRig.members = {{sourceController.id, true, true, defaultOutputLayoutId()}};
+    sourceRig.outputs = {{defaultOutputLayoutId(), true}};
+    source.deviceRigs.push_back(sourceRig);
+    sourceProfile->deviceRigId = sourceRig.id;
+    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceProfile->outputLayoutId);
+    QVERIFY(sourceLayout);
+    sourceLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\PACK-SOURCE-MACHINE-ONLY");
+    sourceLayout->hidhideManaged = true;
     findProfileCategory(source, categoryId)->executableRules = {QStringLiteral("bf6.exe")};
     AdaptiveResponsePreset responsePreset;
     responsePreset.id = QStringLiteral("pack-response");
@@ -5649,10 +5715,29 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(!bundle.includesCalibration);
     QCOMPARE(bundle.categories.size(), size_t{1});
     QCOMPARE(bundle.profiles.size(), size_t{1});
+    QCOMPARE(bundle.profiles.front().automaticSelectionMode, ProfileAutomaticSelectionMode::Fallback);
+    QCOMPARE(bundle.profiles.front().deviceRigId, sourceRig.id);
+    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
+    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
     QCOMPARE(bundle.adaptiveResponsePresets.size(), size_t{1});
     QCOMPARE(bundle.automations.size(), size_t{1});
 
     MapperConfiguration target = defaultConfiguration();
+    SavedControllerRecord destinationController = legacyMigrationRecord(
+        QStringLiteral("pack-destination-machine-controller"),
+        QStringLiteral("{PACK-DESTINATION-MACHINE-CONTROLLER}"), true);
+    destinationController.displayName = sourceController.displayName;
+    target.savedControllers = {destinationController};
+    DeviceRig destinationRig;
+    destinationRig.id = QStringLiteral("pack-destination-machine-rig");
+    destinationRig.name = sourceRig.name;
+    destinationRig.members = {{destinationController.id, true, true, defaultOutputLayoutId()}};
+    destinationRig.outputs = {{defaultOutputLayoutId(), true}};
+    target.deviceRigs.push_back(destinationRig);
+    VirtualOutputLayout *destinationLayout = findOutputLayout(target, defaultOutputLayoutId());
+    QVERIFY(destinationLayout);
+    destinationLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\PACK-DESTINATION-MACHINE-ONLY");
+    destinationLayout->hidhideManaged = true;
     const float originalMinimum = target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum;
     QStringList warnings;
     QVERIFY2(ProfilePortability::apply(&target, bundle, {}, &warnings, &error), qPrintable(error));
@@ -5664,6 +5749,17 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QVERIFY(std::any_of(target.automations.cbegin(), target.automations.cend(),
         [](const AutomationDefinition &item) { return item.name == QStringLiteral("Pack Response Automation"); }));
     QCOMPARE(target.calibration[static_cast<size_t>(PhysicalAxis::X)].minimum, originalMinimum);
+    const auto imported = std::find_if(target.profiles.cbegin(), target.profiles.cend(),
+        [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Vehicle"); });
+    QVERIFY(imported != target.profiles.cend());
+    QCOMPARE(imported->automaticSelectionMode, ProfileAutomaticSelectionMode::Fallback);
+    QVERIFY(imported->deviceRigId.isEmpty());
+    QVERIFY(std::any_of(warnings.cbegin(), warnings.cend(), [](const QString &warning) {
+        return warning.contains(QStringLiteral("Device Rig assignment required"));
+    }));
+    QCOMPARE(findOutputLayout(target, defaultOutputLayoutId())->hidHideDeviceInstanceId,
+             QStringLiteral("HID\\PACK-DESTINATION-MACHINE-ONLY"));
+    QVERIFY(findOutputLayout(target, defaultOutputLayoutId())->hidhideManaged);
 }
 
 void MappingCoreTests::portablePackSelectionsConflictsAndDependenciesAreSafe()

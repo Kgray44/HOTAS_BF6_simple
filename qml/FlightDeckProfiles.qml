@@ -151,10 +151,7 @@ Flickable {
     function categoryBehavior(category) {
         if (!category)
             return "No category selected";
-        if (category.restoreLastProfile) {
-            return category.lastActiveProfileName && String(category.lastActiveProfileName).length > 0 ? "Use the last profile: " + category.lastActiveProfileName : "Use the last profile when one is available";
-        }
-        return category.defaultProfileName && String(category.defaultProfileName).length > 0 ? "Always use: " + category.defaultProfileName : "Always use the category default";
+        return "Resolver order: Preferred profiles, then Fallback profiles; legacy defaults are compatibility-only.";
     }
     function profileMatchesFilter(profile) {
         if (!profile)
@@ -1657,7 +1654,7 @@ Flickable {
                             onActivated: backend.assignProfileDeviceRig(root.selectedProfileId, currentValue)
                         }
                         Text {
-                            text: String(root.selectedDetail.deviceRigName || "No Device Rig assigned") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
+                            text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
                             font.pixelSize: 9
                             Layout.fillWidth: true

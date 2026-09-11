@@ -975,6 +975,22 @@ RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguratio
     return runtime;
 }
 
+bool runtimeProfileControlTargetIsCompatible(const MapperConfiguration &configuration,
+                                             const RuntimeProfileCache &cache,
+                                             int targetProfileIndex)
+{
+    const int profileCount = static_cast<int>(configuration.profiles.size());
+    if (cache.baseProfileIndex < 0 || cache.baseProfileIndex >= profileCount
+        || targetProfileIndex < 0 || targetProfileIndex >= profileCount) {
+        return false;
+    }
+    // Profile controls switch only the compiled mapping. They cannot perform a
+    // Device Rig transition, so the source and target must retain the exact
+    // same explicit Rig identity (including the legacy unassigned case).
+    return configuration.profiles[static_cast<size_t>(cache.baseProfileIndex)].deviceRigId
+        == configuration.profiles[static_cast<size_t>(targetProfileIndex)].deviceRigId;
+}
+
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration)
 {
     RuntimeProfileCache cache;
@@ -1020,12 +1036,14 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
     for (int source = 0; source < triggerCount; ++source) {
         const ProfileTriggerBinding &binding = configuration.profileTriggers[static_cast<size_t>(source)];
         if (!profileTriggerBindingEnabled(binding)) continue;
-        RuntimeProfileTrigger &trigger = cache.profileTriggers[static_cast<size_t>(source)];
-        trigger.mode = binding.mode;
-        trigger.consumesInput = true;
         for (int profile = 0; profile < static_cast<int>(configuration.profiles.size()); ++profile) {
             if (configuration.profiles[static_cast<size_t>(profile)].id == binding.targetProfileId) {
-                trigger.targetProfileIndex = profile;
+                if (runtimeProfileControlTargetIsCompatible(configuration, cache, profile)) {
+                    RuntimeProfileTrigger &trigger = cache.profileTriggers[static_cast<size_t>(source)];
+                    trigger.targetProfileIndex = profile;
+                    trigger.mode = binding.mode;
+                    trigger.consumesInput = true;
+                }
                 break;
             }
         }
@@ -1037,13 +1055,15 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             const ProfileTriggerBinding &binding = configuration.povProfileTriggers[static_cast<size_t>(hat)]
                 [static_cast<size_t>(direction)];
             if (!profileTriggerBindingEnabled(binding)) continue;
-            RuntimeProfileTrigger &trigger = cache.povProfileTriggers[static_cast<size_t>(hat)]
-                [static_cast<size_t>(direction)];
-            trigger.mode = binding.mode;
-            trigger.consumesInput = true;
             for (int profile = 0; profile < static_cast<int>(configuration.profiles.size()); ++profile) {
                 if (configuration.profiles[static_cast<size_t>(profile)].id == binding.targetProfileId) {
-                    trigger.targetProfileIndex = profile;
+                    if (runtimeProfileControlTargetIsCompatible(configuration, cache, profile)) {
+                        RuntimeProfileTrigger &trigger = cache.povProfileTriggers[static_cast<size_t>(hat)]
+                            [static_cast<size_t>(direction)];
+                        trigger.targetProfileIndex = profile;
+                        trigger.mode = binding.mode;
+                        trigger.consumesInput = true;
+                    }
                     break;
                 }
             }

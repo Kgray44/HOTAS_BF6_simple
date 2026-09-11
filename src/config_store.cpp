@@ -2278,12 +2278,23 @@ bool ConfigStore::portableAutomationFromJson(const QJsonObject &json, Automation
 
 QJsonObject ConfigStore::portableOutputLayoutToJson(const VirtualOutputLayout &layout)
 {
-    return outputLayoutToJson(layout);
+    // HidHide device ownership is an exact physical-device relationship on
+    // this Windows installation, not a portable output capability. Never
+    // include it in a Profile or Pack export.
+    VirtualOutputLayout portable = layout;
+    portable.hidHideDeviceInstanceId.clear();
+    portable.hidhideManaged = false;
+    return outputLayoutToJson(portable);
 }
 
 bool ConfigStore::portableOutputLayoutFromJson(const QJsonObject &json, VirtualOutputLayout *layout)
 {
-    return outputLayoutFromJson(json, layout);
+    if (!outputLayoutFromJson(json, layout)) return false;
+    // Defend the import boundary as well: a manually edited or older portable
+    // file cannot assign a source machine's HidHide ownership locally.
+    layout->hidHideDeviceInstanceId.clear();
+    layout->hidhideManaged = false;
+    return true;
 }
 
 QJsonArray ConfigStore::portableProfileTriggersToJson(const ProfileTriggerBindings &bindings)

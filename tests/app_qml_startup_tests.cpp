@@ -3738,35 +3738,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     settlePresentation();
     const bool mappingSelectorVisible = findVisualItemByObjectName(axesItem,
         QStringLiteral("flightDeckMappingSelector_0")) != nullptr;
-    // The expanded editor can be taller than a minimum-height Flight Deck
-    // viewport. Scroll its real Flickable range before asserting the static
-    // preview, rather than relying on it to be eagerly created offscreen.
-    QQuickItem *responsePreview = nullptr;
-    const qreal maximumContentY = std::max<qreal>(0.0,
-        axesItem->property("contentHeight").toReal() - axesItem->height());
-    for (const qreal progress : {0.0, 0.25, 0.5, 0.75, 1.0}) {
-        axesItem->setProperty("contentY", maximumContentY * progress);
-        QTest::qWait(16);
-        settlePresentation();
-        responsePreview = findVisualItemByObjectName(axesItem,
-            QStringLiteral("flightDeckResponsePreview_0"));
-        if (responsePreview) break;
-    }
-    axesItem->setProperty("contentY", 0.0);
-    settlePresentation();
     if (configureAxis.hasError() || backend.selectedAxisIndex() != 0
         || axes->property("expandedAxisIndex").toInt() != 0
-        || !mappingSelectorVisible || !responsePreview) {
+        || !mappingSelectorVisible
+        || findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckResponsePreview_0"))) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview "
-            "(qmlError=%2 selected=%3 expanded=%4 mapping=%5 preview=%6 visible=%7 size=%8x%9)")
+            "Flight Deck %1 Axes configure flow did not select the authoritative axis or retained a duplicate response graph "
+            "(qmlError=%2 selected=%3 expanded=%4 mapping=%5)")
             .arg(appearance).arg(configureAxis.hasError()).arg(backend.selectedAxisIndex())
             .arg(axes->property("expandedAxisIndex").toInt())
-            .arg(mappingSelectorVisible)
-            .arg(responsePreview != nullptr)
-            .arg(responsePreview ? responsePreview->isVisible() : false)
-            .arg(responsePreview ? responsePreview->width() : 0.0)
-            .arg(responsePreview ? responsePreview->height() : 0.0));
+            .arg(mappingSelectorVisible));
     }
     const QVariantMap axisLearningBefore = flightDeckConfigurationSnapshot(backend);
     auto *axisLearningButton = findVisualItemByObjectName(axesItem,
@@ -3877,6 +3858,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (adaptiveDeepLink.hasError() || surface->property("currentPage").toInt() != 9
         || backend.selectedAxisIndex() != 0) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes Adaptive Response deep link did not preserve axis context")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 6)) return false;
+    QObject *curveEditor = pageItem(surface, 6);
+    auto *curveEditorItem = qobject_cast<QQuickItem *>(curveEditor);
+    QQuickItem *curveGraph = curveEditorItem ? findVisualItemByObjectName(
+        curveEditorItem, QStringLiteral("flightDeckCurveGraph")) : nullptr;
+    if (!curveEditor || curveEditor->objectName() != QStringLiteral("flightDeckCurveEditor")
+        || !curveGraph || !curveGraph->property("liveMarkerVisible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Curve Editor did not expose its live selected-axis marker")
             .arg(appearance));
     }
 

@@ -2947,7 +2947,7 @@ QVariantList AppBackend::profiles() const
         const auto rigStatus = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
             [&profile](const DeviceRigStatus &status) { return status.rigId == profile.deviceRigId; });
         item.insert(u"deviceRigId"_qs, profile.deviceRigId);
-        item.insert(u"deviceRigName"_qs, rig ? rig->name : u"Device Rig needed"_qs);
+        item.insert(u"deviceRigName"_qs, rig ? rig->name : u"Device Rig assignment required"_qs);
         item.insert(u"deviceRigReady"_qs, rigStatus != m_deviceRigStatuses.cend() && rigStatus->complete
             && rigStatus->ambiguousRequiredMemberIds.isEmpty()
             && rigStatus->needsVerificationRequiredMemberIds.isEmpty());
@@ -3192,6 +3192,28 @@ QVariantList AppBackend::deviceRigs() const
             [&rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig.id; });
         const DeviceRigStatus fallback{rig.id, rig.enabled ? DeviceRigHealth::Offline : DeviceRigHealth::Disabled};
         const DeviceRigStatus &health = status == m_deviceRigStatuses.cend() ? fallback : *status;
+        // This is intentionally a UI/control-plane compilation. "In use" is
+        // not Rig membership: it means that the current effective Profile has
+        // a compiled, meaningful route for this member.
+        const CompiledDeviceRigRuntime currentRoutes = compileDeviceRigRuntime(
+            m_configuration, rig.id, effectiveProfileId());
+        const auto compiledMemberHasRoute = [](const CompiledDeviceRigMember &compiled) {
+            if (std::any_of(compiled.mapping.axes.cbegin(), compiled.mapping.axes.cend(),
+                            [](const RuntimeAxisMapping &axis) {
+                                return axis.profile.target != VirtualAxis::Disabled;
+                            })) return true;
+            if (std::any_of(compiled.mapping.buttons.cbegin(), compiled.mapping.buttons.cend(),
+                            [](const ButtonBinding &button) {
+                                return button.type == ButtonActionType::VirtualButton;
+                            })) return true;
+            return std::any_of(compiled.mapping.povs.cbegin(), compiled.mapping.povs.cend(),
+                               [](const auto &hat) {
+                                   return std::any_of(hat.cbegin(), hat.cend(),
+                                                      [](const ButtonBinding &button) {
+                                                          return button.type == ButtonActionType::VirtualButton;
+                                                      });
+                               });
+        };
         QVariantList members;
         for (const DeviceRigMember &member : rig.members) {
             const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
@@ -3207,10 +3229,20 @@ QVariantList AppBackend::deviceRigs() const
                     break;
                 }
             }
+            const bool inUse = currentRoutes.valid && std::any_of(
+                currentRoutes.members.cbegin(),
+                currentRoutes.members.cbegin() + currentRoutes.memberCount,
+                [&member, &compiledMemberHasRoute](const CompiledDeviceRigMember &compiled) {
+                    return compiled.controllerRecordId == member.controllerRecordId
+                        && compiledMemberHasRoute(compiled);
+                });
+            const bool visibilityManaged = detail.value(u"managedVisibility"_qs, false).toBool();
+            const bool visibilityKnown = detail.value(u"visibilityKnown"_qs, false).toBool();
             members.append(QVariantMap{{u"id"_qs, member.controllerRecordId},
                 {u"name"_qs, record ? record->displayName : u"Unknown device"_qs},
                 {u"enabled"_qs, member.enabled}, {u"required"_qs, member.required},
-                {u"connected"_qs, connected},
+                {u"connected"_qs, connected}, {u"inUse"_qs, inUse},
+                {u"unused"_qs, !inUse},
                 {u"expectedIdentity"_qs, record ? record->lastDirectInputId : QString{}},
                 {u"seenIdentity"_qs, seenIdentity},
                 {u"ambiguous"_qs, health.ambiguousMemberIds.contains(member.controllerRecordId)},
@@ -3222,9 +3254,10 @@ QVariantList AppBackend::deviceRigs() const
                     && m_configuration.editingDeviceRecordIds.contains(member.controllerRecordId)},
                 {u"needsVerification"_qs, health.needsVerificationMemberIds.contains(member.controllerRecordId)},
                 {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId},
-                {u"visibilityManaged"_qs, detail.value(u"managedVisibility"_qs, false)},
+                {u"visibilityManaged"_qs, visibilityManaged},
                 {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
-                {u"visibilityKnown"_qs, detail.value(u"visibilityKnown"_qs, false)}});
+                {u"visibilityKnown"_qs, visibilityKnown},
+                {u"isolationNeedsAttention"_qs, !visibilityManaged || !visibilityKnown}});
         }
         QVariantList outputs;
         for (const DeviceRigOutputTarget &target : rig.outputs) {
@@ -7119,7 +7152,7 @@ bool AppBackend::activateProfile(const QString &profileId)
             candidate.vjoyDeviceId = layout->requirements.deviceId;
         }
         if (!commitActivationConfiguration(candidate)) {
-            appendEvent(u"Manual activation could not persist the legacy Profile selection."_qs);
+            appendEvent(u"Manual activation could not save the legacy Profile selection."_qs);
             return false;
         }
         m_manualActivationOverride = true;
@@ -7787,8 +7820,8 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     detail.insert(u"categoryId"_qs, profile->categoryId);
     detail.insert(u"category"_qs, category ? category->name : u"General"_qs);
     detail.insert(u"categoryGames"_qs, category ? category->executableRules : QStringList{});
-    detail.insert(u"categoryActivationBehavior"_qs, category && !category->restoreLastProfile
-        ? u"Always use the selected profile"_qs : u"Restore the last-used profile"_qs);
+    detail.insert(u"categoryActivationBehavior"_qs,
+                  u"Resolver order: Preferred profiles, then Fallback profiles; legacy defaults are compatibility-only."_qs);
     detail.insert(u"displayName"_qs, profileDisplayName(profileId));
     detail.insert(u"active"_qs, profile->id == m_configuration.activeProfileId);
     detail.insert(u"enabled"_qs, profile->enabled);
@@ -7817,7 +7850,8 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
         && profileRigStatus->complete && profileRigStatus->ambiguousRequiredMemberIds.isEmpty()
         && profileRigStatus->needsVerificationRequiredMemberIds.isEmpty();
     detail.insert(u"deviceRigId"_qs, profile->deviceRigId);
-    detail.insert(u"deviceRigName"_qs, profileRig ? profileRig->name : u"No Device Rig assigned"_qs);
+    detail.insert(u"deviceRigName"_qs, profileRig ? profileRig->name
+                                                   : u"Device Rig assignment required"_qs);
     detail.insert(u"deviceRigReady"_qs, rigReady);
     detail.insert(u"requiredDevices"_qs, requiredCount);
     detail.insert(u"requiredConnected"_qs, std::max(0, requiredCount - requiredMissing));

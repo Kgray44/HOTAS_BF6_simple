@@ -76,16 +76,16 @@
       "Profile Library cards and detail views show category, mapped axes/buttons/POVs, curves, Automation links, active state, output layout, and controller compatibility without using live mapper telemetry as a rebuild trigger.",
       "User-managed categories support defaults, last-active restoration, enable state, case-insensitive unique names within a category, and explicit profile move or duplicate actions that retain stable profile IDs and references.",
       "Automatic Activation uses one ordered, hardware-aware Category → Profile → Device Rig → Virtual Output resolver. Profiles persist Preferred, Fallback, or Manual Only policy; a valid current pair remains stable, and Manual Only is never selected automatically.",
-      "Direct manual profile activation creates an explicit override that can be ended with Resume Automatic. Profiles without a Device Rig remain manually selectable but are ineligible for automatic selection until assigned a complete, verified rig.",
+      "Direct manual profile activation creates a runtime/session override that can be ended with Resume Automatic and clears on game-context change or restart. Profiles without a Device Rig remain manually selectable but are ineligible for automatic selection until assigned a complete, verified rig.",
       "Optional foreground executable matching evaluates at a low control-plane cadence and only changes a category when a configured executable transition occurs.",
       "New profiles are deep copies with no live parent link.",
       "Profile-owned routes, deadzones, hysteresis, inversion, domains, limits, curves, button routes, custom names, and virtual-output layout selection.",
-      "Same-layout Profile Hold/Toggle changes use compiled runtime state; changing layouts is an explicit neutral/release/reacquire control-plane transition.",
+      "Same-Rig, same-layout Profile Hold/Toggle changes use compiled runtime state; incompatible Device Rig targets are rejected, and changing layouts is an explicit neutral/release/reacquire control-plane transition.",
       "Global physical-button and POV Profile Hold/Toggle controls.",
       "Deterministic precedence: newest active Hold, then newest active Toggle, then manual base profile.",
       "Manual profile selection clears Toggle overrides while currently held Hold controls remain until release.",
       "Stop Mapping and disconnect clear runtime-only profile overrides.",
-      "Portable .hbf6profile and .hbf6pack files validate bounded versioned JSON before preview and atomic import; hardware descriptors and calibration are excluded by default, and imported calibration is never applied automatically."
+      "Portable .hbf6profile and .hbf6pack files validate bounded versioned JSON before preview and atomic import; hardware descriptors and calibration are excluded by default, HidHide ownership is stripped, and a source Device Rig is left unassigned with a Device Rig assignment required message rather than matched by name."
     ]
   },
   {
@@ -258,7 +258,7 @@
       "Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.",
       "Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.",
       "Schema 24 and Adaptive Response schema 2 persist Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity across global, category, profile, device, custom-preset, and portable-profile resolution while missing fields inherit conservative Balanced values.",
-      "Schema 25 persists Profile automatic-selection policy plus an explicit manual override. Schema-24-and-earlier categories migrate their saved default (or first profile) to Preferred and the remaining profiles to deterministic Fallback order.",
+      "Schema 25 persists Profile automatic-selection policy only; Manual Override is runtime/session scoped and is never serialized. Schema-24-and-earlier categories migrate their saved default (or first profile) to Preferred and the remaining profiles to deterministic Fallback order.",
       "Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.",
       "Automation schema defaults new temporal fields deterministically.",
       "Profile IDs remain stable for controls and readable summaries use profile names.",

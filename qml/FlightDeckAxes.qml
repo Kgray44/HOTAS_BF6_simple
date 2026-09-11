@@ -100,31 +100,6 @@ Flickable {
         return "Adaptive · " + source;
     }
 
-    // Mirrors evaluateStaticNormalizedAxisTransfer: rescaled deadzone,
-    // inversion, the existing curve evaluator, and output limits. Adaptive
-    // response and hysteresis are intentionally omitted from this static view.
-    function staticTransferFor(axisIndex, domainInput) {
-        const axis = axisForIndex(axisIndex);
-        if (!axis)
-            return Number(domainInput);
-        const unipolar = Boolean(axis.unipolar);
-        const domainMinimum = unipolar ? 0 : -1;
-        let value = Math.max(domainMinimum, Math.min(1, Number(domainInput)));
-        const deadzone = Math.max(0, Math.min(0.95, Number(axis.deadzone || 0)));
-        if (unipolar) {
-            value = value <= deadzone ? 0 : Math.min((value - deadzone) / (1 - deadzone), 1);
-        } else {
-            const magnitude = Math.abs(value);
-            value = magnitude <= deadzone ? 0 : Math.sign(value) * Math.min((magnitude - deadzone) / (1 - deadzone), 1);
-        }
-        if (axis.inverted)
-            value = unipolar ? 1 - value : -value;
-        const curve = backend.inspectCurve(value);
-        if (curve && curve.output !== undefined)
-            value = Number(curve.output);
-        return Math.max(Number(axis.outputMinimum), Math.min(Number(axis.outputMaximum), value));
-    }
-
     function configureAxis(axisIndex) {
         if (expandedAxisIndex === axisIndex) {
             expandedAxisIndex = -1;
@@ -716,37 +691,8 @@ Flickable {
                                     Layout.preferredWidth: 34
                                 }
                             }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text {
-                                    text: "STATIC RESPONSE PREVIEW"
-                                    color: deck.textSecondary
-                                    font.family: deck.telemetryFont
-                                    font.pixelSize: 9
-                                    font.bold: true
-                                    Layout.fillWidth: true
-                                }
-                                DeckButton {
-                                    text: "RESET CURVE"
-                                    subdued: true
-                                    Layout.preferredWidth: 94
-                                    onClicked: {
-                                        backend.setSelectedAxis(card.axisIndex);
-                                        backend.resetCurveLinear();
-                                    }
-                                }
-                            }
-                            FlightDeckResponsePreview {
-                                objectName: "flightDeckResponsePreview_" + card.axisIndex
-                                tokens: deck
-                                axisIndex: card.axisIndex
-                                configurationRevision: root.configurationRevision
-                                unipolar: Boolean(axis.unipolar)
-                                transferEvaluator: root.staticTransferFor
-                                Layout.fillWidth: true
-                            }
                             Text {
-                                text: "Configured deadzone, inversion, response curve, and output limits. Adaptive Response remains a live-only overlay and is not predicted here."
+                                text: "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
                                 color: deck.textMuted
                                 font.pixelSize: 9
                                 Layout.fillWidth: true

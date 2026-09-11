@@ -1362,6 +1362,12 @@ RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguratio
                                                          const ControllerProfile &profile,
                                                          const DeviceProfileMapping &deviceMapping,
                                                          const SavedControllerRecord *record);
+// Profile Hold/Toggle controls are report-path overlays, not Device Rig
+// transitions. Resolve their compatibility at compile time so a physical
+// report can never create Profile B + Rig A.
+bool runtimeProfileControlTargetIsCompatible(const MapperConfiguration &configuration,
+                                             const RuntimeProfileCache &cache,
+                                             int targetProfileIndex);
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration);
 
 inline QString profileTriggerModeLabel(ProfileTriggerMode mode)
