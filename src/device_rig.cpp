@@ -349,8 +349,9 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         return runtime;
     }
 
-    // A raw shared axis would otherwise depend on poll order. Refuse that
-    // topology until a later explicit Share/Mix route policy is selected.
+    // A shared output between physical members would otherwise depend on poll
+    // order. Each member may still contain its own explicit Signal Flow
+    // fan-out/mixer topology; only a cross-member claim is rejected here.
     std::array<std::array<bool, kVirtualAxisSlotCount>, kMaximumDeviceRigOutputs> claimedAxes{};
     std::array<std::array<bool, kMaximumPhysicalPovs + 1>, kMaximumDeviceRigOutputs>
         claimedContinuousPovs{};
@@ -358,9 +359,27 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         claimedDiscretePovs{};
     for (int memberIndex = 0; memberIndex < runtime.memberCount; ++memberIndex) {
         const CompiledDeviceRigMember &member = runtime.members[static_cast<size_t>(memberIndex)];
-        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-            const int target = static_cast<int>(member.mapping.axes[static_cast<size_t>(axis)].profile.target);
-            if (target <= 0 || target >= kVirtualAxisSlotCount) continue;
+        std::array<bool, kVirtualAxisSlotCount> memberAxisClaims{};
+        if (member.mapping.signalFlowTopologyCompiled) {
+            const int routeCount = std::clamp(member.mapping.signalFlowAxisRouteCount, 0,
+                                              kMaximumRuntimeSignalFlowAxisRoutes);
+            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                const int target = member.mapping.signalFlowAxisRoutes[static_cast<size_t>(routeIndex)]
+                    .destinationAxis;
+                if (target > 0 && target < kVirtualAxisSlotCount) {
+                    memberAxisClaims[static_cast<size_t>(target)] = true;
+                }
+            }
+        } else {
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                const int target = static_cast<int>(member.mapping.axes[static_cast<size_t>(axis)].profile.target);
+                if (target > 0 && target < kVirtualAxisSlotCount) {
+                    memberAxisClaims[static_cast<size_t>(target)] = true;
+                }
+            }
+        }
+        for (int target = 1; target < kVirtualAxisSlotCount; ++target) {
+            if (!memberAxisClaims[static_cast<size_t>(target)]) continue;
             std::array<bool, kVirtualAxisSlotCount> &claims = claimedAxes[static_cast<size_t>(member.outputIndex)];
             if (claims[static_cast<size_t>(target)]) {
                 runtime.issue = u"Two physical axis routes target the same virtual axis."_qs;
@@ -368,20 +387,39 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
             }
             claims[static_cast<size_t>(target)] = true;
         }
-        for (const NativePovBinding &binding : member.nativePovBindings) {
-            if (!binding.enabled || binding.targetType == NativePovTargetType::Disabled) continue;
-            if (binding.targetIndex < 1 || binding.targetIndex > kMaximumPhysicalPovs) {
-                runtime.issue = u"A native POV route has an unsupported target index."_qs;
-                return runtime;
+        const auto claimNativePov = [&runtime, &member, &claimedContinuousPovs, &claimedDiscretePovs]
+            (NativePovTargetType type, int target) {
+                if (target < 1 || target > kMaximumPhysicalPovs
+                    || (type != NativePovTargetType::Continuous && type != NativePovTargetType::Discrete)) {
+                    runtime.issue = u"A native POV route has an unsupported target index."_qs;
+                    return false;
+                }
+                auto &claims = type == NativePovTargetType::Continuous
+                    ? claimedContinuousPovs[static_cast<size_t>(member.outputIndex)]
+                    : claimedDiscretePovs[static_cast<size_t>(member.outputIndex)];
+                if (claims[static_cast<size_t>(target)]) {
+                    runtime.issue = u"Two physical POV routes target the same virtual POV."_qs;
+                    return false;
+                }
+                claims[static_cast<size_t>(target)] = true;
+                return true;
+            };
+        if (member.mapping.signalFlowTopologyCompiled) {
+            const int routeCount = std::clamp(member.mapping.signalFlowNativePovRouteCount, 0,
+                                              kMaximumRuntimeSignalFlowNativePovRoutes);
+            for (int routeIndex = 0; routeIndex < routeCount; ++routeIndex) {
+                const RuntimeSignalFlowNativePovRoute &route = member.mapping.signalFlowNativePovRoutes[
+                    static_cast<size_t>(routeIndex)];
+                if (!claimNativePov(static_cast<NativePovTargetType>(route.destinationType),
+                                    route.destinationIndex)) {
+                    return runtime;
+                }
             }
-            auto &claims = binding.targetType == NativePovTargetType::Continuous
-                ? claimedContinuousPovs[static_cast<size_t>(member.outputIndex)]
-                : claimedDiscretePovs[static_cast<size_t>(member.outputIndex)];
-            if (claims[static_cast<size_t>(binding.targetIndex)]) {
-                runtime.issue = u"Two physical POV routes target the same virtual POV."_qs;
-                return runtime;
+        } else {
+            for (const NativePovBinding &binding : member.nativePovBindings) {
+                if (!binding.enabled || binding.targetType == NativePovTargetType::Disabled) continue;
+                if (!claimNativePov(binding.targetType, binding.targetIndex)) return runtime;
             }
-            claims[static_cast<size_t>(binding.targetIndex)] = true;
         }
     }
     runtime.valid = true;

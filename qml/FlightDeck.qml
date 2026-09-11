@@ -20,6 +20,9 @@ Item {
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
     property var learningDialog: null
+    // Holds only the transient Signal Flow viewport/selection while one of
+    // Flight Deck's authoritative focused editors is shown.
+    property var signalFlowPresentationState: ({})
     readonly property int loadedPageCount: currentPage === 7
         ? (automationPageLoader.item ? 1 : 0)
         : currentPage === 11 ? (signalFlowPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
@@ -408,6 +411,12 @@ Item {
                             FlightDeckSignalFlow {
                                 anchors.fill: parent
                                 backendObject: backend
+                                presentationState: root.signalFlowPresentationState
+                                onNavigateRequested: function(page, axis, state) {
+                                    root.signalFlowPresentationState = state
+                                    if (axis >= 0) backend.setSelectedAxis(axis)
+                                    root.currentPage = page
+                                }
                             }
                         }
                     }

@@ -2,7 +2,9 @@
 
 #include "mapping_types.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace hotas {
 
@@ -69,21 +71,83 @@ inline VirtualAxisOutputPlan buildVirtualAxisOutputPlan(
     const RuntimeMappingConfiguration &mapping,
     const std::array<bool, kPhysicalAxisCount> &availableAxes,
     const std::array<float, kPhysicalAxisCount> &transformedAxes,
+    const std::array<bool, kVirtualAxisSlotCount> &availableTargets,
     float disabledAxisValue)
 {
     VirtualAxisOutputPlan plan;
     plan.values.fill(sanitizedDisabledAxisValue(disabledAxisValue));
     plan.sourceIndexes.fill(-1);
-    for (int index = 0; index < kPhysicalAxisCount; ++index) {
-        const int target = static_cast<int>(mapping.axes[static_cast<size_t>(index)].profile.target);
-        if (!availableAxes[static_cast<size_t>(index)] || target <= 0
-            || target >= static_cast<int>(plan.values.size()) || plan.sourceIndexes[target] >= 0) {
-            continue;
+    std::array<int, kVirtualAxisSlotCount> contributorCounts{};
+    const auto applyRoute = [&](int source, int target) {
+        if (source < 0 || source >= kPhysicalAxisCount || target <= 0
+            || target >= static_cast<int>(plan.values.size())
+            || !availableTargets[static_cast<size_t>(target)]
+            || !availableAxes[static_cast<size_t>(source)]) return;
+        const float value = transformedAxes[static_cast<size_t>(source)];
+        int &count = contributorCounts[static_cast<size_t>(target)];
+        if (count == 0) {
+            plan.values[static_cast<size_t>(target)] = value;
+            plan.sourceIndexes[static_cast<size_t>(target)] = source;
+            count = 1;
+            return;
         }
-        plan.values[target] = transformedAxes[static_cast<size_t>(index)];
-        plan.sourceIndexes[target] = index;
+        // An analog second contributor is possible only after the canonical
+        // topology compiler has attached an explicit mixer. The defensive
+        // Disabled branch preserves safe legacy behavior for a malformed
+        // runtime table rather than inventing a hidden merge.
+        const SignalFlowMixerMode mixer = mapping.signalFlowAxisMixers[static_cast<size_t>(target)];
+        if (mixer == SignalFlowMixerMode::Disabled) return;
+        float &combined = plan.values[static_cast<size_t>(target)];
+        switch (mixer) {
+        case SignalFlowMixerMode::Average:
+            combined = (combined * static_cast<float>(count) + value)
+                / static_cast<float>(count + 1);
+            break;
+        case SignalFlowMixerMode::SumClamped:
+            combined = std::clamp(combined + value, -1.0F, 1.0F);
+            break;
+        case SignalFlowMixerMode::HighestMagnitude:
+            if (std::abs(value) > std::abs(combined)) combined = value;
+            break;
+        case SignalFlowMixerMode::Disabled:
+            return;
+        }
+        ++count;
+        // A mixed output has no single physical source for bumpless-transfer
+        // intent detection or source-specific telemetry. -1 keeps those paths
+        // deterministic and prevents one contributor from being misreported.
+        plan.sourceIndexes[static_cast<size_t>(target)] = -1;
+    };
+    if (mapping.signalFlowAxisRouteCount > 0 || mapping.signalFlowTopologyCompiled) {
+        const int count = std::clamp(mapping.signalFlowAxisRouteCount, 0,
+                                     kMaximumRuntimeSignalFlowAxisRoutes);
+        for (int index = 0; index < count; ++index) {
+            const RuntimeSignalFlowAxisRoute &route = mapping.signalFlowAxisRoutes[
+                static_cast<size_t>(index)];
+            applyRoute(static_cast<int>(route.sourceAxis), static_cast<int>(route.destinationAxis));
+        }
+    } else {
+        // Compatibility for direct unit callers that construct a historical
+        // RuntimeMappingConfiguration by hand. Production compilation fills
+        // the route table before MappingWorker accepts a configuration.
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            applyRoute(index, static_cast<int>(mapping.axes[static_cast<size_t>(index)].profile.target));
+        }
     }
     return plan;
+}
+
+inline VirtualAxisOutputPlan buildVirtualAxisOutputPlan(
+    const RuntimeMappingConfiguration &mapping,
+    const std::array<bool, kPhysicalAxisCount> &availableAxes,
+    const std::array<float, kPhysicalAxisCount> &transformedAxes,
+    float disabledAxisValue)
+{
+    std::array<bool, kVirtualAxisSlotCount> availableTargets{};
+    availableTargets.fill(true);
+    availableTargets[0] = false;
+    return buildVirtualAxisOutputPlan(mapping, availableAxes, transformedAxes,
+                                      availableTargets, disabledAxisValue);
 }
 
 float clampUnit(float value);

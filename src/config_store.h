@@ -20,6 +20,14 @@ public:
     // runtime state.
     static QJsonObject portableProfileToJson(const ControllerProfile &profile);
     static bool portableProfileFromJson(const QJsonObject &json, ControllerProfile *profile);
+    // Portable profiles carry their canonical Signal Flow topology separately
+    // from the focused profile fields. Runtime IDs and workspace layout are
+    // intentionally excluded: import remaps profile identity first, then
+    // reconciliation allocates collision-safe durable IDs locally.
+    static QJsonObject portableSignalFlowTopologyToJson(const SignalFlowState &state,
+                                                         const QStringList &profileIds);
+    static bool portableSignalFlowTopologyFromJson(const QJsonValue &value,
+                                                   SignalFlowState *state);
     static QJsonObject portableCategoryToJson(const ProfileCategory &category);
     static bool portableCategoryFromJson(const QJsonObject &json, ProfileCategory *category);
     static QJsonObject portableCurveToJson(const PersonalCurvePreset &preset);

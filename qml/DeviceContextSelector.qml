@@ -7,6 +7,10 @@ Item {
     objectName: "deviceContextSelector"
     required property var backendObject
     required property var theme
+    readonly property var safeBackend: backendObject || ({
+        deviceRigs: [], editingDevices: [], editingDeviceRigId: "",
+        editingDeviceRigName: "", editingScopeLabel: "All Devices"
+    })
     property bool legacy: !!theme.legacy
     // The header keeps this selector present on compact shells.  At widths
     // where its full rig/scope text would compete with mapping status, it
@@ -27,9 +31,9 @@ Item {
         return theme.danger
     }
     function currentRig() {
-        const rigs = backendObject.deviceRigs || []
+        const rigs = safeBackend.deviceRigs || []
         for (let i = 0; i < rigs.length; ++i)
-            if (rigs[i].id === backendObject.editingDeviceRigId) return rigs[i]
+            if (rigs[i].id === safeBackend.editingDeviceRigId) return rigs[i]
         return rigs.length > 0 ? rigs[0] : null
     }
     function connectedSummary() {
@@ -40,8 +44,12 @@ Item {
         for (let i = 0; i < members.length; ++i) if (members[i].connected) ++connected
         return connected + "/" + members.length + " connected"
     }
-    function selectRig(rigId) { backendObject.setEditingDeviceContext(rigId, []) }
-    function selectScope(ids) { backendObject.setEditingDeviceContext(backendObject.editingDeviceRigId, ids) }
+    function selectRig(rigId) {
+        if (backendObject) backendObject.setEditingDeviceContext(rigId, [])
+    }
+    function selectScope(ids) {
+        if (backendObject) backendObject.setEditingDeviceContext(safeBackend.editingDeviceRigId, ids)
+    }
 
     Rectangle {
         anchors.fill: parent; radius: control.legacy ? 4 : control.standard ? 8 : theme.controlRadius
@@ -52,7 +60,7 @@ Item {
                                            : (control.legacy ? "#435660" : theme.border)
         RowLayout { anchors.fill: parent; anchors.leftMargin: compact ? 7 : 9; anchors.rightMargin: compact ? 6 : 8; spacing: compact ? 4 : 6
             Rectangle { width: 7; height: 7; radius: theme.topGun ? 1 : 4; color: control.healthColor((control.currentRig() || {}).health || "offline") }
-            Text { id: contextLabel; objectName: "deviceContextLabel"; visible: !control.compact; Layout.fillWidth: true; text: backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
+            Text { id: contextLabel; objectName: "deviceContextLabel"; visible: !control.compact; Layout.fillWidth: true; text: control.safeBackend.editingDeviceRigName + " / " + control.safeBackend.editingScopeLabel; elide: Text.ElideRight; color: theme.textStrong; font.pixelSize: 10; font.bold: true; verticalAlignment: Text.AlignVCenter }
             Text { text: popup.visible ? "⌃" : "⌄"; color: theme.textMuted; font.pixelSize: 14 }
         }
     }
@@ -60,9 +68,14 @@ Item {
     ToolTip {
         visible: control.compact && trigger.containsMouse && !popup.visible
         delay: 350
-        text: "Device Context — " + backendObject.editingDeviceRigName + " / " + backendObject.editingScopeLabel
+        text: "Device Context — " + control.safeBackend.editingDeviceRigName + " / " + control.safeBackend.editingScopeLabel
         background: DevicePanel { theme: control.theme; legacy: control.legacy }
-        contentItem: Text { text: parent.text; color: control.theme.text; font.pixelSize: 10 }
+        contentItem: Text {
+            text: "Device Context — " + control.safeBackend.editingDeviceRigName
+                + " / " + control.safeBackend.editingScopeLabel
+            color: control.theme.text
+            font.pixelSize: 10
+        }
     }
     Popup {
         id: popup
@@ -80,25 +93,25 @@ Item {
             Text { text: "CURRENT RIG"; color: theme.textMuted; font.pixelSize: 9; font.bold: true }
             DevicePanel { Layout.fillWidth: true; implicitHeight: 48; theme: control.theme; legacy: control.legacy; border.color: control.legacy ? "#52717c" : theme.border
                 Column { anchors.fill: parent; anchors.margins: 8; spacing: 2
-                    Text { text: backendObject.editingDeviceRigName; color: theme.textStrong; font.pixelSize: 12; font.bold: true }
+                    Text { text: control.safeBackend.editingDeviceRigName; color: theme.textStrong; font.pixelSize: 12; font.bold: true }
                     Text { text: ((control.currentRig() || {}).healthLabel || "Offline") + " · " + control.connectedSummary() + ((control.currentRig() || {}).inUse ? "   ROUTE IN USE" : ((control.currentRig() || {}).configured ? "   CONFIGURED" : "")); color: theme.textMuted; font.pixelSize: 9 }
                 }
             }
             Text { text: "VIEW / EDIT"; color: theme.textMuted; font.pixelSize: 9; font.bold: true; Layout.topMargin: 3 }
-            ContextRow { label: "All Devices"; selected: backendObject.editingScopeLabel === "All Devices"; onTriggered: control.selectScope([]) }
+            ContextRow { label: "All Devices"; selected: control.safeBackend.editingScopeLabel === "All Devices"; onTriggered: control.selectScope([]) }
             Repeater {
-                model: backendObject.editingDevices
+                model: control.safeBackend.editingDevices
                 delegate: ContextRow {
                     required property var modelData
                     label: modelData.name + (modelData.required ? "" : " · optional")
-                    selected: !!modelData.selected && backendObject.editingScopeLabel !== "All Devices"
+                    selected: !!modelData.selected && control.safeBackend.editingScopeLabel !== "All Devices"
                     onTriggered: control.selectScope([modelData.id])
                 }
             }
-            ContextRow { label: popup.choosingMultiple ? "Done selecting" : "Select Multiple…"; selected: popup.choosingMultiple || backendObject.editingScopeLabel.indexOf("Devices") > 0
+            ContextRow { label: popup.choosingMultiple ? "Done selecting" : "Select Multiple…"; selected: popup.choosingMultiple || control.safeBackend.editingScopeLabel.indexOf("Devices") > 0
                 onTriggered: popup.choosingMultiple = !popup.choosingMultiple }
             Repeater {
-                model: backendObject.editingDevices
+                model: control.safeBackend.editingDevices
                 delegate: ThemedCheckBox {
                     required property var modelData
                     visible: popup.choosingMultiple
@@ -108,19 +121,19 @@ Item {
                     checked: !!modelData.selected
                     onToggled: function(nowChecked) {
                         const ids = []
-                        const devices = backendObject.editingDevices
+                        const devices = control.safeBackend.editingDevices
                         for (let i = 0; i < devices.length; ++i)
                             if (devices[i].id === modelData.id ? nowChecked : devices[i].selected) ids.push(devices[i].id)
                         control.selectScope(ids)
                     }
                 }
             }
-            Text { visible: backendObject.deviceRigs.length > 1; text: "OTHER RIGS"; color: theme.textMuted; font.pixelSize: 9; font.bold: true; Layout.topMargin: 3 }
+            Text { visible: control.safeBackend.deviceRigs.length > 1; text: "OTHER RIGS"; color: theme.textMuted; font.pixelSize: 9; font.bold: true; Layout.topMargin: 3 }
             Repeater {
-                model: backendObject.deviceRigs
+                model: control.safeBackend.deviceRigs
                 delegate: ContextRow {
                     required property var modelData
-                    visible: modelData.id !== backendObject.editingDeviceRigId
+                    visible: modelData.id !== control.safeBackend.editingDeviceRigId
                     label: modelData.name
                     detail: modelData.healthLabel
                     status: modelData.health

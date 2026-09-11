@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.5.5**
+**Current version: v2.6.0**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.0 — Signal Flow
+
+Adds a canonical editable Signal Flow workspace while preserving the bounded DirectInput-to-vJoy mapping runtime and the established focused editors.
+
+- Stable canonical routes, endpoints, processors, mixers, and workspace metadata persist with profile configuration. Existing Axes, Buttons, POV, Curve, Automation, and Adaptive Response editors remain projections of that same state rather than parallel configuration stores.
+- Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude choice. Mixer behavior is deterministic and bounded; no hidden analog fan-in can be created by a focused editor or the graph.
+- Signal Flow provides direct manipulation, visible wire routing, contextual inspection, and revision-aware undo/redo across Legacy, Standard, Top Gun, Day Ops, and a native Flight Deck surface. Flight Deck remains its own presentation architecture, not a recolored Standard workspace.
+- Schema 28 migrates canonical topology and preserves implicit focused-editor button defaults through persistence, focused-editor edits, and portable-profile round trips.
+- Qualification covers topology/migration, collision semantics, focused-editor projection, QML lifecycle/source contracts, isolated snapshot capture, and the synthetic zero-allocation mapping benchmark. Physical controller-to-vJoy, installer interaction, signing, and public-release claims require their separate release evidence.
 
 ## v2.5.5 — Flight Deck Device Rig management
 

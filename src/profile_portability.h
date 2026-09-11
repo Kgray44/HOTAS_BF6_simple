@@ -30,6 +30,8 @@ struct PortableConfigurationBundle {
     bool includesAdaptiveResponseGlobal = false;
     std::vector<AutomationDefinition> automations;
     std::vector<VirtualOutputLayout> outputLayouts;
+    SignalFlowState signalFlow;
+    bool includesSignalFlowTopology = false;
     ProfileTriggerBindings profileTriggers;
     PovProfileTriggerBindings povProfileTriggers;
     QVariantList deviceDescriptors;

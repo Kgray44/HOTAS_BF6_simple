@@ -230,8 +230,10 @@ QVariantMap issueNavigationTarget(const QString &code, const QString &objectType
                                   const QString &objectId)
 {
     int page = 3; // Diagnostics is the safe technical fallback.
-    if (code == u"RoutingConflict"_qs || code == u"NoMappedControl"_qs
-        || objectType == u"axis"_qs) {
+    if (objectType == u"signalFlowRoute"_qs || objectType == u"signalFlowProcessor"_qs
+        || code == u"RoutingConflict"_qs || code == u"NoMappedControl"_qs) {
+        page = 11;
+    } else if (objectType == u"axis"_qs) {
         page = 0;
     } else if (objectType == u"physicalDevice"_qs || objectType == u"deviceRig"_qs
         || objectType == u"virtualOutput"_qs || objectType == u"gameVisibility"_qs) {
@@ -1727,6 +1729,7 @@ bool AppBackend::setAdaptiveResponsePresetAtContext(const QString &scope, const 
     AdaptiveResponseAxisOverride &override = layer->axes[static_cast<size_t>(physicalAxis)];
     override = {};
     override.presetId = presetId;
+    propagateProfileAdaptiveResponseIfShared(scope, targetId, physicalAxis);
     persistAndApply();
     return true;
 }
@@ -1759,6 +1762,7 @@ bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, cons
     AdaptiveResponseAxisOverride &override = *entry;
     if (inherit) {
         override.properties &= ~bit;
+        propagateProfileAdaptiveResponseIfShared(scope, targetId, physicalAxis);
         persistAndApply();
         return true;
     }
@@ -1790,6 +1794,7 @@ bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, cons
     else return false;
     override.settings = sanitizedAdaptiveResponseSettings(override.settings);
     override.properties |= bit;
+    propagateProfileAdaptiveResponseIfShared(scope, targetId, physicalAxis);
     persistAndApply();
     return true;
 }
@@ -1815,6 +1820,7 @@ bool AppBackend::resetAdaptiveResponseAxisAtContext(const QString &scope, const 
         if (!layer) return false;
         layer->axes[static_cast<size_t>(physicalAxis)] = {};
     }
+    propagateProfileAdaptiveResponseIfShared(scope, targetId, physicalAxis);
     persistAndApply();
     return true;
 }
@@ -4233,6 +4239,48 @@ bool AppBackend::focusIssueTarget(const QString &objectType, const QString &obje
     if (type == u"deviceRig"_qs) return setEditingDeviceContext(id, {});
     if (id.isEmpty()) return false;
 
+    // Signal Flow uses durable identities in the same AppIssue contract as
+    // Devices. Resolve the affected route's canonical context before the
+    // shell loads page 11, then retain only the opaque identity for the QML
+    // presentation to select. This is deliberately not a graph-local route
+    // cache and does not mutate any mapping semantics.
+    const auto focusSignalFlowRoute = [this](const SignalFlowRoute &route,
+                                              const QString &focusId) {
+        if (route.profileId.isEmpty() || !findProfile(m_configuration, route.profileId)) return false;
+        if (route.profileId != m_configuration.activeProfileId
+            && !activateProfile(route.profileId)) return false;
+        if (!route.controllerRecordId.isEmpty()) {
+            for (const DeviceRig &rig : m_configuration.deviceRigs) {
+                const bool containsController = std::any_of(rig.members.cbegin(), rig.members.cend(),
+                    [&route](const DeviceRigMember &member) {
+                        return member.controllerRecordId == route.controllerRecordId;
+                    });
+                if (!containsController) continue;
+                const QStringList exactScope{route.controllerRecordId};
+                if ((m_configuration.editingDeviceRigId != rig.id
+                     || m_configuration.editingDeviceRecordIds != exactScope)
+                    && !setEditingDeviceContext(rig.id, exactScope)) return false;
+                break;
+            }
+        }
+        m_signalFlowFocusObjectId = focusId;
+        m_signalFlowActionFeedback = u"Opened the exact Signal Flow item reported by App Health."_qs;
+        emit signalFlowChanged();
+        return true;
+    };
+    if (type == u"signalFlowRoute"_qs) {
+        const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, id);
+        return route ? focusSignalFlowRoute(*route, id) : false;
+    }
+    if (type == u"signalFlowProcessor"_qs) {
+        const auto route = std::find_if(m_configuration.signalFlow.routes.cbegin(),
+            m_configuration.signalFlow.routes.cend(), [&id](const SignalFlowRoute &candidate) {
+                return candidate.processorPath.contains(id);
+            });
+        return route != m_configuration.signalFlow.routes.cend()
+            ? focusSignalFlowRoute(*route, id) : false;
+    }
+
     for (const DeviceRig &rig : m_configuration.deviceRigs) {
         const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(), [&id](const DeviceRigMember &candidate) {
             return candidate.controllerRecordId == id;
@@ -5393,6 +5441,19 @@ QVariantList AppBackend::appIssues() const
                u"edit-automation"_qs,
                automation.conditions.empty() ? u"ADD CONDITION"_qs : u"ADD ACTION"_qs, 120);
     }
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        if (route.enabled || route.id.isEmpty()
+            || route.sourceKind != SignalFlowPortKind::Axis
+            || route.destinationKind != SignalFlowPortKind::Axis) continue;
+        append(u"RoutingConflict"_qs, u"Signal Flow"_qs, u"warning"_qs,
+               u"signalFlowRoute"_qs, route.id,
+               u"An analog route needs an explicit mixer decision"_qs,
+               QString(u"A saved route into virtual axis %1 is disabled so it cannot silently merge with another analog source."_qs)
+                   .arg(route.destinationIndex),
+               u"review-routing"_qs, u"REVIEW ROUTING"_qs, 118,
+               QString(u"ROUTE ID\n%1\n\nDESTINATION AXIS\n%2\n\nSTATUS\nDisabled until an explicit Mixer is created or the competing route is replaced."_qs)
+                   .arg(route.id).arg(route.destinationIndex));
+    }
     if (m_updateCheckFailed) {
         append(u"UpdateCheckFailed"_qs, u"Update"_qs, u"note"_qs, u"application"_qs, {},
                u"Could not check for updates"_qs,
@@ -5959,13 +6020,38 @@ bool AppBackend::signalFlowCanRedo() const
 QVariantMap AppBackend::signalFlowGraph() const
 {
     const ControllerProfile &profile = currentProfile();
-    const DeviceProfileMapping *mapping = editingDeviceMapping();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const DeviceProfileMapping *editingMapping = editingDeviceMapping();
+    const QString graphDeviceRigId = !m_configuration.editingDeviceRigId.trimmed().isEmpty()
+        ? m_configuration.editingDeviceRigId : profile.deviceRigId;
+    const DeviceRig *graphDeviceRig = findDeviceRig(m_configuration, graphDeviceRigId);
+    const QString graphDeviceRigName = graphDeviceRig ? graphDeviceRig->name
+        : graphDeviceRigId.isEmpty() ? u"Profile-local input scope"_qs : u"Missing Device Rig"_qs;
+    // A multi-member rig can intentionally have no current *editing* member.
+    // The graph must still be a truthful read-only projection in that state,
+    // rather than falling back to legacy profile fields and hiding the rig.
+    // Pick a stable visible primary member for presentation only; mutation
+    // remains disabled until the user chooses an explicit input scope.
+    const DeviceProfileMapping *mapping = editingMapping;
+    QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    if (!mapping && graphDeviceRig) {
+        for (const DeviceRigMember &member : graphDeviceRig->members) {
+            if (!member.enabled) continue;
+            if (const DeviceProfileMapping *candidate = findDeviceProfileMapping(profile, member.controllerRecordId)) {
+                mapping = candidate;
+                controllerId = candidate->controllerRecordId;
+                break;
+            }
+        }
+    }
+    if (!mapping && !profile.deviceMappings.empty()) {
+        mapping = &profile.deviceMappings.front();
+        controllerId = mapping->controllerRecordId;
+    }
     const AxisMappings &axes = mapping ? mapping->axes : profile.axes;
     const ButtonBindings &buttons = mapping ? mapping->buttons : profile.buttons;
     const PovBindings &povs = mapping ? mapping->povs : profile.povs;
-    const NativePovBindings emptyNativePovs;
-    const NativePovBindings &nativePovs = mapping ? mapping->nativePovBindings : emptyNativePovs;
+    const NativePovBindings &nativePovs = mapping ? mapping->nativePovBindings
+                                                   : m_configuration.nativePovBindings;
     const VirtualOutputLayout *layout = activeOutputLayout();
     const QString workspaceKey = signalFlowWorkspaceKey();
     const QString inputNodeId = mapping
@@ -5977,8 +6063,20 @@ QVariantMap AppBackend::signalFlowGraph() const
     const auto saved = savedControllerRecord(controllerId);
     const QString inputLabel = saved ? saved->displayName
         : controllerId.isEmpty() ? u"Profile input"_qs : u"Saved controller"_qs;
-    const bool inputConnected = saved ? saved->lastSeen == u"connected"_qs || physicalConnected()
-                                      : physicalConnected();
+    // Persisted `lastSeen` is historical telemetry, not a current connection
+    // claim. The graph remains inspectable offline, while Effective mode only
+    // turns green for the present authoritative monitor state.
+    // A Signal Flow scope is allowed to describe a saved member that is not
+    // the currently acquired DirectInput device.  Do not borrow the global
+    // worker connection flag in that case: it would make a different live
+    // controller paint this card as ready.  `physicalDeviceDetail` resolves
+    // the durable record against the discovery inventory on the UI/control
+    // plane and preserves the card's identity when it is offline.
+    const QVariantMap inputDeviceDetail = controllerId.isEmpty()
+        ? QVariantMap{} : physicalDeviceDetail(controllerId);
+    const bool inputConnected = controllerId.isEmpty()
+        ? physicalConnected() : inputDeviceDetail.value(u"connected"_qs).toBool();
+    const bool inputMissing = !controllerId.isEmpty() && !saved;
     const auto layoutFor = [this, &workspaceKey](const QString &id, float fallbackX, float fallbackY) {
         for (const SignalFlowNodeLayout &savedLayout : m_configuration.signalFlow.nodeLayouts) {
             if (savedLayout.workspaceKey == workspaceKey && savedLayout.objectId == id) {
@@ -5994,25 +6092,163 @@ QVariantMap AppBackend::signalFlowGraph() const
             node->insert(entry.key(), entry.value());
         }
     };
+    const auto portGroupsFor = [this, &workspaceKey](const QString &cardId, bool output) {
+        const QStringList groups = output
+            ? QStringList{u"Virtual Axes"_qs, u"Virtual Buttons"_qs, u"Virtual POV"_qs}
+            : QStringList{u"Axes"_qs, u"Buttons"_qs, u"POV Directions"_qs, u"Native POV"_qs};
+        QVariantList result;
+        for (const QString &group : groups) {
+            bool collapsed = false;
+            for (const SignalFlowPortGroupState &state : m_configuration.signalFlow.portGroups) {
+                if (state.workspaceKey == workspaceKey && state.cardId == cardId
+                    && state.group == group) {
+                    collapsed = state.collapsed;
+                    break;
+                }
+            }
+            result.append(QVariantMap{{u"group"_qs, group}, {u"collapsed"_qs, collapsed}});
+        }
+        return result;
+    };
 
     QVariantList inputPorts;
     QVariantList outputPorts;
     QVariantList nodes;
     QVariantList routes;
+    const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
+        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+    };
+    const auto sourcePortId = [](SignalFlowPortKind kind, int index, int subIndex) {
+        switch (kind) {
+        case SignalFlowPortKind::Axis: return QString(u"axis:%1"_qs).arg(index);
+        case SignalFlowPortKind::Button: return QString(u"button:%1"_qs).arg(index);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"pov:%1:%2"_qs).arg(index).arg(subIndex);
+        case SignalFlowPortKind::NativePov: return QString(u"native-pov:%1"_qs).arg(index);
+        }
+        return QString{};
+    };
+    const auto destinationPortId = [](SignalFlowPortKind kind, int index, int subIndex) {
+        switch (kind) {
+        case SignalFlowPortKind::Axis: return QString(u"axis:%1"_qs).arg(index);
+        case SignalFlowPortKind::Button: return QString(u"button:%1"_qs).arg(index);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"pov:%1:%2"_qs).arg(index).arg(subIndex);
+        case SignalFlowPortKind::NativePov:
+            return QString(u"native-pov:%1:%2"_qs).arg(subIndex).arg(index);
+        }
+        return QString{};
+    };
+    const auto sourceIsMapped = [&inScope, this](SignalFlowPortKind kind, int index, int subIndex) {
+        return std::any_of(m_configuration.signalFlow.routes.cbegin(),
+            m_configuration.signalFlow.routes.cend(), [&inScope, kind, index, subIndex](const SignalFlowRoute &route) {
+                return route.enabled && inScope(route) && route.sourceKind == kind
+                    && route.sourceIndex == index && route.sourceSubIndex == subIndex;
+            });
+    };
+    const auto destinationIsMapped = [&profile, this](SignalFlowPortKind kind, int index, int subIndex) {
+        return std::any_of(m_configuration.signalFlow.routes.cbegin(),
+            m_configuration.signalFlow.routes.cend(), [&profile, kind, index, subIndex](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id && route.destinationKind == kind
+                    && route.destinationIndex == index && route.destinationSubIndex == subIndex;
+            });
+    };
+    const auto adaptiveSummaryFor = [this, &profile](const DeviceProfileMapping *scopeMapping, int axis) {
+        const int sourceAxis = std::clamp(axis, 0, kPhysicalAxisCount - 1);
+        const RuntimeAdaptiveResponseConfig adaptive = scopeMapping
+            ? resolveAdaptiveResponseConfiguration(m_configuration, profile, *scopeMapping, sourceAxis)
+            : resolveAdaptiveResponseConfiguration(m_configuration, profile, sourceAxis);
+        QVariantMap result = adaptiveSettingsMap(adaptive);
+        result.insert(u"summary"_qs, QString(u"%1 model · %2 ms horizon · ±%3 max lead"_qs)
+            .arg(result.value(u"model"_qs).toString().toUpper())
+            .arg(qRound(result.value(u"maximumHorizonMs"_qs).toDouble()))
+            .arg(QString::number(result.value(u"maximumLead"_qs).toDouble(), 'f', 2)));
+        return result;
+    };
+    const auto annotateProcessorSettings = [&adaptiveSummaryFor](QVariantMap *detail,
+                                                                   const QString &semantic,
+                                                                   const DeviceProfileMapping *scopeMapping,
+                                                                   int axis) {
+        if (!detail || semantic != u"adaptive-response"_qs) return;
+        const QVariantMap adaptive = adaptiveSummaryFor(scopeMapping, axis);
+        detail->insert(u"adaptiveSettings"_qs, adaptive);
+        detail->insert(u"settingsSummary"_qs, adaptive.value(u"summary"_qs));
+    };
     QSet<QString> emittedProcessors;
-    const auto addProcessor = [&](int axis, const QString &kind, const QString &label,
-                                  const QString &detail, float order) {
-        const QString key = signalFlowAxisProcessorIdentityKey(profile, controllerId, axis, kind);
-        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-            m_configuration.signalFlow.processorIdentities, key);
-        if (!identity || !identity->active || emittedProcessors.contains(identity->id)) return QString{};
-        emittedProcessors.insert(identity->id);
-        const QString nodeId = QString(u"processor:%1"_qs).arg(identity->id);
-        QVariantMap node{{u"id"_qs, nodeId}, {u"objectId"_qs, identity->id},
+    const auto addProcessor = [&](const QString &processorId, int axis, float order) {
+        if (processorId.isEmpty() || emittedProcessors.contains(processorId)) {
+            return processorId.isEmpty() ? QString{} : QString(u"processor:%1"_qs).arg(processorId);
+        }
+        const auto identityIt = std::find_if(m_configuration.signalFlow.processorIdentities.cbegin(),
+            m_configuration.signalFlow.processorIdentities.cend(),
+            [&processorId](const SignalFlowIdentityRecord &candidate) { return candidate.id == processorId; });
+        if (identityIt == m_configuration.signalFlow.processorIdentities.cend() || !identityIt->active) {
+            return QString{};
+        }
+        const SignalFlowIdentityRecord *identity = &*identityIt;
+        emittedProcessors.insert(processorId);
+        const QString key = identity->key;
+        const bool shared = key.startsWith(u"processor:shared:"_qs);
+        QString semantic = key.section(u':', -1);
+        QString label = u"Signal conditioner"_qs;
+        QString detail = u"Active route processor."_qs;
+        if (key.startsWith(u"processor:mixer:"_qs)) {
+            semantic = u"mixer"_qs;
+            label = u"Explicit mixer"_qs;
+            detail = u"Combines multiple analog inputs only when configured."_qs;
+        } else if (semantic == u"domain"_qs) {
+            label = u"One-sided domain"_qs;
+            detail = u"Uses 0–100% output semantics."_qs;
+        } else if (semantic == u"deadzone"_qs) {
+            label = u"Deadzone"_qs;
+            detail = u"Suppresses calibrated center noise."_qs;
+        } else if (semantic == u"center-hold"_qs) {
+            label = u"Center hold"_qs;
+            detail = u"Applies the configured release band."_qs;
+        } else if (semantic == u"invert"_qs) {
+            label = u"Invert"_qs;
+            detail = u"Reverses output direction."_qs;
+        } else if (semantic == u"curve"_qs) {
+            label = u"Response curve"_qs;
+            detail = u"Uses this source's focused curve setting."_qs;
+        } else if (semantic == u"limits"_qs) {
+            label = u"Output limits"_qs;
+            detail = u"Uses this source's focused output limits."_qs;
+        } else if (semantic == u"adaptive-response"_qs) {
+            label = u"Adaptive Response"_qs;
+            detail = adaptiveSummaryFor(mapping, axis).value(u"summary"_qs).toString();
+        }
+        int sharedChannelCount = 0;
+        int sharedOwnerAxis = -1;
+        if (shared) {
+            const auto sharedProcessor = std::find_if(
+                m_configuration.signalFlow.sharedProcessors.cbegin(),
+                m_configuration.signalFlow.sharedProcessors.cend(),
+                [&processorId](const SignalFlowSharedProcessor &candidate) {
+                    return candidate.enabled && candidate.id == processorId;
+                });
+            if (sharedProcessor != m_configuration.signalFlow.sharedProcessors.cend()) {
+                sharedChannelCount = static_cast<int>(sharedProcessor->sourceAxes.size());
+                sharedOwnerAxis = sharedProcessor->ownerAxis;
+                label = u"Shared "_qs + label;
+                detail = QString(u"One durable %1 setting mirrored to %2 routed source axes."_qs)
+                    .arg(semantic).arg(sharedChannelCount);
+            }
+        }
+        const QString nodeId = QString(u"processor:%1"_qs).arg(processorId);
+        QVariantMap node{{u"id"_qs, nodeId}, {u"objectId"_qs, processorId},
                          {u"kind"_qs, u"processor"_qs}, {u"label"_qs, label},
                          {u"detail"_qs, detail}, {u"axis"_qs, axis},
-                         {u"semantic"_qs, kind}, {u"connected"_qs, true}};
-        applyLayout(&node, layoutFor(identity->id, 340.0F + order * 162.0F, 115.0F + axis * 92.0F));
+                         {u"semantic"_qs, semantic}, {u"shared"_qs, shared},
+                         {u"sourceAxis"_qs, axis},
+                         {u"settingsPage"_qs, semantic == u"curve"_qs ? 6
+                             : semantic == u"adaptive-response"_qs ? 9 : -1},
+                         {u"canOpenFullSettings"_qs, semantic == u"curve"_qs
+                             || semantic == u"adaptive-response"_qs},
+                         {u"sharedChannelCount"_qs, sharedChannelCount},
+                         {u"sharedOwnerAxis"_qs, sharedOwnerAxis},
+                         {u"connected"_qs, true}};
+        applyLayout(&node, layoutFor(processorId, 340.0F + order * 162.0F, 115.0F + std::max(axis, 0) * 92.0F));
         nodes.append(node);
         return nodeId;
     };
@@ -6021,146 +6257,542 @@ QVariantMap AppBackend::signalFlowGraph() const
         const AxisMapping &axisMapping = axes[static_cast<size_t>(axis)];
         const QString axisLabel = axisMapping.customName.trimmed().isEmpty()
             ? physicalAxisLabel(static_cast<PhysicalAxis>(axis)) : axisMapping.customName.trimmed();
-        const bool mapped = axisMapping.target != VirtualAxis::Disabled;
+        const bool mapped = sourceIsMapped(SignalFlowPortKind::Axis, axis, -1);
         inputPorts.append(QVariantMap{{u"id"_qs, QString(u"axis:%1"_qs).arg(axis)},
                                       {u"kind"_qs, u"axis"_qs}, {u"index"_qs, axis},
+                                      {u"group"_qs, u"Axes"_qs},
                                       {u"label"_qs, axisLabel}, {u"technicalLabel"_qs,
                                       physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
                                       {u"mapped"_qs, mapped},
                                       {u"available"_qs, m_configuration.axisActivity[static_cast<size_t>(axis)]
                                           != PhysicalAxisActivity::Fixed}});
-        if (!mapped) continue;
-        const QString routeKey = signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, axis);
-        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-            m_configuration.signalFlow.routeIdentities, routeKey);
-        QVariantList processors;
-        const auto maybeProcessor = [&processors, &addProcessor](bool active, int processorAxis,
-                                                                   const QString &kind, const QString &label,
-                                                                   const QString &detail, float order) {
-            if (!active) return;
-            const QString processor = addProcessor(processorAxis, kind, label, detail, order);
-            if (!processor.isEmpty()) processors.append(processor);
-        };
-        maybeProcessor(axisMapping.rangeMode == AxisRangeMode::OneSided, axis, u"domain"_qs,
-                       u"One-sided domain"_qs, u"Uses 0–100% output semantics."_qs, 0.0F);
-        maybeProcessor(axisMapping.deadzone > 0.0001F, axis, u"deadzone"_qs,
-                       u"Deadzone"_qs, QString(u"%1%"_qs).arg(axisMapping.deadzone * 100.0F, 0, 'f', 1), 1.0F);
-        maybeProcessor(axisMapping.hysteresis > 0.0001F, axis, u"center-hold"_qs,
-                       u"Center hold"_qs, QString(u"%1% release band"_qs)
-                       .arg(axisMapping.hysteresis * 100.0F, 0, 'f', 2), 2.0F);
-        maybeProcessor(axisMapping.inverted, axis, u"invert"_qs,
-                       u"Invert"_qs, u"Output direction is reversed."_qs, 3.0F);
-        maybeProcessor(axisMapping.curve.family != CurveFamily::Linear || axisMapping.curve.pointEditing
-                           || std::abs(axisMapping.curve.strength) > 0.0001F,
-                       axis, u"curve"_qs, u"Response curve"_qs,
-                       curveDefinitionSummary(axisMapping.curve), 4.0F);
-        const float defaultMinimum = axisMapping.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F;
-        maybeProcessor(std::abs(axisMapping.outputMinimum - defaultMinimum) > 0.0001F
-                           || std::abs(axisMapping.outputMaximum - 1.0F) > 0.0001F,
-                       axis, u"limits"_qs, u"Output limits"_qs,
-                       QString(u"%1% to %2%"_qs).arg(axisMapping.outputMinimum * 100.0F, 0, 'f', 0)
-                           .arg(axisMapping.outputMaximum * 100.0F, 0, 'f', 0), 5.0F);
-        const bool adaptive = m_configuration.adaptiveResponseGlobal.axes[static_cast<size_t>(axis)].settings.enabled
-            || profile.adaptiveResponse.axes[static_cast<size_t>(axis)].settings.enabled
-            || (mapping && mapping->adaptiveResponse.axes[static_cast<size_t>(axis)].settings.enabled);
-        maybeProcessor(adaptive, axis, u"adaptive-response"_qs, u"Adaptive Response"_qs,
-                       u"Runtime prediction is applied from the shared Adaptive Response subsystem."_qs, 6.0F);
-
-        const int target = static_cast<int>(axisMapping.target);
-        const QString alias = target > 0 && target < kVirtualAxisSlotCount
-            ? profile.virtualAxisAliases[static_cast<size_t>(target)].trimmed() : QString{};
-        routes.append(QVariantMap{{u"id"_qs, identity ? identity->id : QString{}},
-                                  {u"kind"_qs, u"axis"_qs}, {u"sourceNodeId"_qs, inputNodeId},
-                                  {u"sourcePortId"_qs, QString(u"axis:%1"_qs).arg(axis)},
-                                  {u"sourceLabel"_qs, axisLabel}, {u"destinationNodeId"_qs, outputNodeId},
-                                  {u"destinationPortId"_qs, QString(u"axis:%1"_qs).arg(target)},
-                                  {u"destinationLabel"_qs, alias.isEmpty() ? virtualAxisLabel(axisMapping.target) : alias},
-                                  {u"processors"_qs, processors}, {u"configured"_qs, true},
-                                  {u"effective"_qs, mappingActive() && inputConnected && vjoyReady()},
-                                  {u"editable"_qs, true}});
     }
 
-    for (int button = 0; button < static_cast<int>(buttons.size()); ++button) {
-        const ButtonBinding &binding = buttons[static_cast<size_t>(button)];
+    const int inputButtonCount = std::max(static_cast<int>(buttons.size()), kMaximumPhysicalButtons);
+    for (int button = 0; button < inputButtonCount; ++button) {
+        const ButtonBinding binding = button < static_cast<int>(buttons.size())
+            ? buttons[static_cast<size_t>(button)] : ButtonBinding{};
         const QString label = binding.customName.trimmed().isEmpty()
             ? QString(u"Button %1"_qs).arg(button + 1) : binding.customName.trimmed();
-        const bool mapped = binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+        const bool mapped = sourceIsMapped(SignalFlowPortKind::Button, button, -1);
         inputPorts.append(QVariantMap{{u"id"_qs, QString(u"button:%1"_qs).arg(button)},
                                       {u"kind"_qs, u"button"_qs}, {u"index"_qs, button},
+                                      {u"group"_qs, u"Buttons"_qs},
                                       {u"label"_qs, label}, {u"technicalLabel"_qs,
                                       QString(u"Button %1"_qs).arg(button + 1)},
                                       {u"mapped"_qs, mapped}, {u"available"_qs, true}});
-        if (!mapped) continue;
-        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-            m_configuration.signalFlow.routeIdentities,
-            signalFlowRouteIdentityKey(profile, controllerId, u"button"_qs, button));
-        routes.append(QVariantMap{{u"id"_qs, identity ? identity->id : QString{}},
-                                  {u"kind"_qs, u"button"_qs}, {u"sourceNodeId"_qs, inputNodeId},
-                                  {u"sourcePortId"_qs, QString(u"button:%1"_qs).arg(button)},
-                                  {u"sourceLabel"_qs, label}, {u"destinationNodeId"_qs, outputNodeId},
-                                  {u"destinationPortId"_qs, QString(u"button:%1"_qs).arg(binding.target)},
-                                  {u"destinationLabel"_qs, QString(u"vJoy Button %1"_qs).arg(binding.target)},
-                                  {u"processors"_qs, QVariantList{}}, {u"configured"_qs, true},
-                                  {u"effective"_qs, mappingActive() && inputConnected && vjoyReady()},
-                                  {u"editable"_qs, true}});
     }
 
-    for (int hat = 0; hat < static_cast<int>(povs.size()); ++hat) {
+    const int inputPovCount = std::max(static_cast<int>(povs.size()), kMaximumPhysicalPovs);
+    for (int hat = 0; hat < inputPovCount; ++hat) {
         for (int direction = 0; direction < kPovDirectionCount; ++direction) {
-            const ButtonBinding &binding = povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
             const QString label = QString(u"POV %1 %2"_qs).arg(hat + 1)
                 .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)));
-            const bool mapped = binding.type == ButtonActionType::VirtualButton && binding.target > 0;
+            const bool mapped = sourceIsMapped(SignalFlowPortKind::PovDirection, hat, direction);
             inputPorts.append(QVariantMap{{u"id"_qs, QString(u"pov:%1:%2"_qs).arg(hat).arg(direction)},
                                           {u"kind"_qs, u"pov"_qs}, {u"index"_qs, hat},
+                                          {u"group"_qs, u"POV Directions"_qs},
                                           {u"subIndex"_qs, direction}, {u"label"_qs, label},
                                           {u"technicalLabel"_qs, label}, {u"mapped"_qs, mapped},
                                           {u"available"_qs, true}});
-            if (!mapped) continue;
-            const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-                m_configuration.signalFlow.routeIdentities,
-                signalFlowRouteIdentityKey(profile, controllerId, u"pov"_qs, hat, direction));
-            routes.append(QVariantMap{{u"id"_qs, identity ? identity->id : QString{}},
-                                      {u"kind"_qs, u"pov"_qs}, {u"sourceNodeId"_qs, inputNodeId},
-                                      {u"sourcePortId"_qs, QString(u"pov:%1:%2"_qs).arg(hat).arg(direction)},
-                                      {u"sourceLabel"_qs, label}, {u"destinationNodeId"_qs, outputNodeId},
-                                      {u"destinationPortId"_qs, QString(u"button:%1"_qs).arg(binding.target)},
-                                      {u"destinationLabel"_qs, QString(u"vJoy Button %1"_qs).arg(binding.target)},
-                                      {u"processors"_qs, QVariantList{}}, {u"configured"_qs, true},
-                                      {u"effective"_qs, mappingActive() && inputConnected && vjoyReady()},
-                                      {u"editable"_qs, true}});
         }
+    }
+    for (int hat = 0; hat < std::max(static_cast<int>(nativePovs.size()), kMaximumPhysicalPovs); ++hat) {
+        inputPorts.append(QVariantMap{{u"id"_qs, sourcePortId(SignalFlowPortKind::NativePov, hat, -1)},
+                                      {u"kind"_qs, u"native-pov"_qs}, {u"index"_qs, hat},
+                                      {u"group"_qs, u"Native POV"_qs},
+                                      {u"label"_qs, QString(u"Native POV %1"_qs).arg(hat + 1)},
+                                      {u"technicalLabel"_qs, QString(u"Native POV %1"_qs).arg(hat + 1)},
+                                      {u"mapped"_qs, sourceIsMapped(SignalFlowPortKind::NativePov, hat, -1)},
+                                      {u"available"_qs, true}});
     }
 
     for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
         const QString alias = profile.virtualAxisAliases[static_cast<size_t>(axis)].trimmed();
         outputPorts.append(QVariantMap{{u"id"_qs, QString(u"axis:%1"_qs).arg(axis)},
                                        {u"kind"_qs, u"axis"_qs}, {u"index"_qs, axis},
+                                       {u"group"_qs, u"Virtual Axes"_qs},
                                        {u"label"_qs, alias.isEmpty() ? virtualAxisLabel(static_cast<VirtualAxis>(axis)) : alias},
                                        {u"technicalLabel"_qs, virtualAxisLabel(static_cast<VirtualAxis>(axis))},
+                                       {u"mapped"_qs, destinationIsMapped(SignalFlowPortKind::Axis, axis, -1)},
                                        {u"available"_qs, !layout || layout->requirements.axes[static_cast<size_t>(axis)]}});
     }
     const int buttonCapacity = layout ? layout->requirements.buttons : 0;
     for (int button = 1; button <= std::max(buttonCapacity, 16); ++button) {
         outputPorts.append(QVariantMap{{u"id"_qs, QString(u"button:%1"_qs).arg(button)},
                                        {u"kind"_qs, u"button"_qs}, {u"index"_qs, button},
+                                       {u"group"_qs, u"Virtual Buttons"_qs},
                                        {u"label"_qs, QString(u"vJoy Button %1"_qs).arg(button)},
                                        {u"technicalLabel"_qs, QString(u"Button %1"_qs).arg(button)},
+                                       {u"mapped"_qs, destinationIsMapped(SignalFlowPortKind::Button, button, -1)},
                                        {u"available"_qs, !layout || button <= layout->requirements.buttons}});
     }
+    for (int targetType = static_cast<int>(NativePovTargetType::Continuous);
+         targetType <= static_cast<int>(NativePovTargetType::Discrete); ++targetType) {
+        const int capacity = !layout ? 0 : targetType == static_cast<int>(NativePovTargetType::Continuous)
+            ? layout->requirements.continuousPovs : layout->requirements.discretePovs;
+        for (int target = 1; target <= capacity; ++target) {
+            const QString label = targetType == static_cast<int>(NativePovTargetType::Continuous)
+                ? QString(u"vJoy Continuous POV %1"_qs).arg(target)
+                : QString(u"vJoy Discrete POV %1"_qs).arg(target);
+            outputPorts.append(QVariantMap{{u"id"_qs, destinationPortId(SignalFlowPortKind::NativePov, target, targetType)},
+                                           {u"kind"_qs, u"native-pov"_qs}, {u"index"_qs, target},
+                                           {u"group"_qs, u"Virtual POV"_qs},
+                                           {u"subIndex"_qs, targetType}, {u"label"_qs, label},
+                                           {u"technicalLabel"_qs, label},
+                                           {u"mapped"_qs, destinationIsMapped(SignalFlowPortKind::NativePov, target, targetType)},
+                                           {u"available"_qs, true}});
+        }
+    }
 
+    const auto mixerModeLabel = [](SignalFlowMixerMode mode) {
+        switch (mode) {
+        case SignalFlowMixerMode::Average: return u"Average"_qs;
+        case SignalFlowMixerMode::SumClamped: return u"Sum Clamped"_qs;
+        case SignalFlowMixerMode::HighestMagnitude: return u"Highest Magnitude"_qs;
+        case SignalFlowMixerMode::Disabled: return u"Disabled"_qs;
+        }
+        return u"Disabled"_qs;
+    };
+    for (const SignalFlowMixer &mixer : m_configuration.signalFlow.mixers) {
+        if (mixer.profileId != profile.id || mixer.controllerRecordId != controllerId
+            || !mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled || mixer.id.isEmpty()) continue;
+        const QString nodeId = addProcessor(mixer.id, -1, 5.0F + mixer.destinationAxis * 0.2F);
+        if (nodeId.isEmpty()) continue;
+        for (QVariant &value : nodes) {
+            QVariantMap node = value.toMap();
+            if (node.value(u"id"_qs).toString() != nodeId) continue;
+            node.insert(u"label"_qs, QString(u"Mixer · %1"_qs).arg(mixerModeLabel(mixer.mode)));
+            node.insert(u"detail"_qs, QString(u"Explicit analog merge into %1."_qs)
+                .arg(virtualAxisLabel(static_cast<VirtualAxis>(mixer.destinationAxis))));
+            node.insert(u"semantic"_qs, u"mixer"_qs);
+            node.insert(u"mixerMode"_qs, mixerModeLabel(mixer.mode));
+            value = node;
+            break;
+        }
+    }
+
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        if (!inScope(route)) continue;
+        QString sourceLabel;
+        switch (route.sourceKind) {
+        case SignalFlowPortKind::Axis:
+            sourceLabel = route.sourceIndex >= 0 && route.sourceIndex < kPhysicalAxisCount
+                ? (axes[static_cast<size_t>(route.sourceIndex)].customName.trimmed().isEmpty()
+                    ? physicalAxisLabel(static_cast<PhysicalAxis>(route.sourceIndex))
+                    : axes[static_cast<size_t>(route.sourceIndex)].customName.trimmed())
+                : u"Unknown axis"_qs;
+            break;
+        case SignalFlowPortKind::Button:
+            sourceLabel = route.sourceIndex >= 0 && route.sourceIndex < static_cast<int>(buttons.size())
+                && !buttons[static_cast<size_t>(route.sourceIndex)].customName.trimmed().isEmpty()
+                ? buttons[static_cast<size_t>(route.sourceIndex)].customName.trimmed()
+                : QString(u"Button %1"_qs).arg(route.sourceIndex + 1);
+            break;
+        case SignalFlowPortKind::PovDirection:
+            sourceLabel = QString(u"POV %1 %2"_qs).arg(route.sourceIndex + 1)
+                .arg(povDirectionLabel(static_cast<PovDirection>(route.sourceSubIndex + 1)));
+            break;
+        case SignalFlowPortKind::NativePov:
+            sourceLabel = QString(u"Native POV %1"_qs).arg(route.sourceIndex + 1);
+            break;
+        }
+        QString destinationLabel;
+        switch (route.destinationKind) {
+        case SignalFlowPortKind::Axis: {
+            const QString alias = route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount
+                ? profile.virtualAxisAliases[static_cast<size_t>(route.destinationIndex)].trimmed() : QString{};
+            destinationLabel = alias.isEmpty() ? virtualAxisLabel(static_cast<VirtualAxis>(route.destinationIndex)) : alias;
+            break;
+        }
+        case SignalFlowPortKind::Button:
+            destinationLabel = QString(u"vJoy Button %1"_qs).arg(route.destinationIndex);
+            break;
+        case SignalFlowPortKind::PovDirection:
+            destinationLabel = QString(u"vJoy POV %1 %2"_qs).arg(route.destinationIndex)
+                .arg(route.destinationSubIndex + 1);
+            break;
+        case SignalFlowPortKind::NativePov:
+            destinationLabel = route.destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)
+                ? QString(u"vJoy Continuous POV %1"_qs).arg(route.destinationIndex)
+                : QString(u"vJoy Discrete POV %1"_qs).arg(route.destinationIndex);
+            break;
+        }
+        QVariantList processors;
+        QVariantList processorDetails;
+        QString viaNodeId;
+        float processorOrder = 0.0F;
+        for (const QString &processorId : route.processorPath) {
+            const QString nodeId = addProcessor(processorId, route.sourceIndex, processorOrder++);
+            if (nodeId.isEmpty()) continue;
+            processors.append(nodeId);
+            const auto identityIt = std::find_if(m_configuration.signalFlow.processorIdentities.cbegin(),
+                m_configuration.signalFlow.processorIdentities.cend(),
+                [&processorId](const SignalFlowIdentityRecord &candidate) { return candidate.id == processorId; });
+            if (identityIt != m_configuration.signalFlow.processorIdentities.cend()
+                && identityIt->key.startsWith(u"processor:mixer:"_qs)) {
+                viaNodeId = nodeId;
+            }
+            if (identityIt != m_configuration.signalFlow.processorIdentities.cend()) {
+                const QString semantic = identityIt->key.startsWith(u"processor:mixer:"_qs)
+                    ? u"mixer"_qs : identityIt->key.section(u':', -1);
+                QVariantMap detail{{u"id"_qs, processorId}, {u"semantic"_qs, semantic},
+                                   {u"sourceAxis"_qs, route.sourceIndex},
+                                   {u"settingsPage"_qs, semantic == u"curve"_qs ? 6
+                                       : semantic == u"adaptive-response"_qs ? 9 : -1},
+                                   {u"canOpenFullSettings"_qs, semantic == u"curve"_qs
+                                       || semantic == u"adaptive-response"_qs}};
+                annotateProcessorSettings(&detail, semantic, editingMapping, route.sourceIndex);
+                if (identityIt->key.startsWith(u"processor:shared:"_qs)) {
+                    const auto shared = std::find_if(
+                        m_configuration.signalFlow.sharedProcessors.cbegin(),
+                        m_configuration.signalFlow.sharedProcessors.cend(),
+                        [&processorId](const SignalFlowSharedProcessor &candidate) {
+                            return candidate.enabled && candidate.id == processorId;
+                        });
+                    if (shared != m_configuration.signalFlow.sharedProcessors.cend()) {
+                        detail.insert(u"shared"_qs, true);
+                        detail.insert(u"sharedChannelCount"_qs,
+                                      static_cast<int>(shared->sourceAxes.size()));
+                        detail.insert(u"sharedOwnerAxis"_qs, shared->ownerAxis);
+                    }
+                }
+                processorDetails.append(std::move(detail));
+            }
+        }
+        bool destinationAvailable = layout != nullptr;
+        if (layout && route.destinationKind == SignalFlowPortKind::Axis) {
+            destinationAvailable = route.destinationIndex > 0
+                && route.destinationIndex < kVirtualAxisSlotCount
+                && layout->requirements.axes[static_cast<size_t>(route.destinationIndex)];
+        } else if (layout && route.destinationKind == SignalFlowPortKind::Button) {
+            destinationAvailable = route.destinationIndex > 0
+                && route.destinationIndex <= layout->requirements.buttons;
+        } else if (layout && route.destinationKind == SignalFlowPortKind::NativePov) {
+            const int capacity = route.destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)
+                ? layout->requirements.continuousPovs : layout->requirements.discretePovs;
+            destinationAvailable = route.destinationIndex > 0 && route.destinationIndex <= capacity;
+        }
+        QString health = u"ready"_qs;
+        QString healthDetail = u"Ready when Mapping Active is enabled."_qs;
+        if (!route.enabled) {
+            health = route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                ? u"conflict"_qs : u"disabled"_qs;
+            healthDetail = health == u"conflict"_qs
+                ? u"This analog route is disabled until its destination has an explicit Mixer or a single source."_qs
+                : u"This configured route is disabled and does not drive the virtual output."_qs;
+        } else if (!inputConnected) {
+            health = u"source-offline"_qs;
+            healthDetail = u"The saved physical input is offline; the route remains editable."_qs;
+        } else if (!destinationAvailable) {
+            health = u"destination-unavailable"_qs;
+            healthDetail = u"The selected virtual output does not currently provide this destination."_qs;
+        } else if (!mappingActive()) {
+            health = u"mapping-off"_qs;
+            healthDetail = u"The route is configured and ready; turn on Mapping Active to send output."_qs;
+        }
+        const bool effective = route.enabled && mappingActive() && inputConnected && destinationAvailable && vjoyReady();
+        routes.append(QVariantMap{{u"id"_qs, route.id.isEmpty() ? route.identityKey : route.id},
+                                  {u"kind"_qs, route.sourceKind == SignalFlowPortKind::Axis ? u"axis"_qs
+                                      : route.sourceKind == SignalFlowPortKind::Button ? u"button"_qs
+                                      : route.sourceKind == SignalFlowPortKind::PovDirection ? u"pov"_qs : u"native-pov"_qs},
+                                  {u"sourceNodeId"_qs, inputNodeId},
+                                  {u"sourcePortId"_qs, sourcePortId(route.sourceKind, route.sourceIndex, route.sourceSubIndex)},
+                                  {u"sourceIndex"_qs, route.sourceIndex},
+                                  {u"sourceSubIndex"_qs, route.sourceSubIndex},
+                                  {u"sourceLabel"_qs, sourceLabel}, {u"destinationNodeId"_qs, outputNodeId},
+                                  {u"destinationPortId"_qs, destinationPortId(route.destinationKind, route.destinationIndex,
+                                                                            route.destinationSubIndex)},
+                                  {u"destinationIndex"_qs, route.destinationIndex},
+                                  {u"destinationSubIndex"_qs, route.destinationSubIndex},
+                                  {u"destinationLabel"_qs, destinationLabel},
+                                  {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails},
+                                  {u"viaNodeId"_qs, viaNodeId},
+                                  {u"configured"_qs, true}, {u"enabled"_qs, route.enabled},
+                                  {u"effective"_qs, effective}, {u"primaryProjection"_qs, route.primaryProjection},
+                                  {u"health"_qs, health}, {u"healthDetail"_qs, healthDetail},
+                                  {u"editable"_qs, editingMapping != nullptr || graphDeviceRig == nullptr},
+                                  {u"controllerRecordId"_qs, controllerId}});
+    }
+
+    // The focused editors deliberately edit one physical member at a time,
+    // but Signal Flow is a Device Rig viewer as well as an editor. Project
+    // every saved member (including imported/missing references) into the
+    // same output topology. Secondary cards are read-only until their card
+    // explicitly becomes the editing scope, so no pointer gesture can write
+    // a route against the wrong controller.
+    QStringList secondaryControllerIds;
+    const auto appendSecondaryController = [&secondaryControllerIds, &controllerId](const QString &id) {
+        const QString normalized = id.trimmed();
+        if (!normalized.isEmpty() && normalized != controllerId && !secondaryControllerIds.contains(normalized)) {
+            secondaryControllerIds.append(normalized);
+        }
+    };
+    if (graphDeviceRig) {
+        for (const DeviceRigMember &member : graphDeviceRig->members) {
+            if (member.enabled) appendSecondaryController(member.controllerRecordId);
+        }
+    }
+    for (const DeviceProfileMapping &candidate : profile.deviceMappings) {
+        appendSecondaryController(candidate.controllerRecordId);
+    }
+    for (const SignalFlowRoute &candidate : m_configuration.signalFlow.routes) {
+        if (candidate.profileId == profile.id) appendSecondaryController(candidate.controllerRecordId);
+    }
+    const auto scopedSourcePortId = [&sourcePortId](const QString &scopeId, SignalFlowPortKind kind,
+                                                     int index, int subIndex) {
+        return QString(u"%1|%2"_qs).arg(scopeId, sourcePortId(kind, index, subIndex));
+    };
+    const auto routeSourceLabel = [](const SignalFlowRoute &route, const DeviceProfileMapping *scopeMapping) {
+        switch (route.sourceKind) {
+        case SignalFlowPortKind::Axis:
+            if (scopeMapping && route.sourceIndex >= 0 && route.sourceIndex < kPhysicalAxisCount) {
+                const AxisMapping &axis = scopeMapping->axes[static_cast<size_t>(route.sourceIndex)];
+                return axis.customName.trimmed().isEmpty()
+                    ? physicalAxisLabel(static_cast<PhysicalAxis>(route.sourceIndex)) : axis.customName.trimmed();
+            }
+            return route.sourceIndex >= 0 && route.sourceIndex < kPhysicalAxisCount
+                ? physicalAxisLabel(static_cast<PhysicalAxis>(route.sourceIndex)) : u"Unknown axis"_qs;
+        case SignalFlowPortKind::Button:
+            if (scopeMapping && route.sourceIndex >= 0
+                && route.sourceIndex < static_cast<int>(scopeMapping->buttons.size())
+                && !scopeMapping->buttons[static_cast<size_t>(route.sourceIndex)].customName.trimmed().isEmpty()) {
+                return scopeMapping->buttons[static_cast<size_t>(route.sourceIndex)].customName.trimmed();
+            }
+            return QString(u"Button %1"_qs).arg(route.sourceIndex + 1);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"POV %1 %2"_qs).arg(route.sourceIndex + 1)
+                .arg(povDirectionLabel(static_cast<PovDirection>(route.sourceSubIndex + 1)));
+        case SignalFlowPortKind::NativePov:
+            return QString(u"Native POV %1"_qs).arg(route.sourceIndex + 1);
+        }
+        return QString{};
+    };
+    const auto routeDestinationLabel = [&profile](const SignalFlowRoute &route) {
+        switch (route.destinationKind) {
+        case SignalFlowPortKind::Axis: {
+            const QString alias = route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount
+                ? profile.virtualAxisAliases[static_cast<size_t>(route.destinationIndex)].trimmed() : QString{};
+            return alias.isEmpty() ? virtualAxisLabel(static_cast<VirtualAxis>(route.destinationIndex)) : alias;
+        }
+        case SignalFlowPortKind::Button:
+            return QString(u"vJoy Button %1"_qs).arg(route.destinationIndex);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"vJoy POV %1 %2"_qs).arg(route.destinationIndex).arg(route.destinationSubIndex + 1);
+        case SignalFlowPortKind::NativePov:
+            return route.destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)
+                ? QString(u"vJoy Continuous POV %1"_qs).arg(route.destinationIndex)
+                : QString(u"vJoy Discrete POV %1"_qs).arg(route.destinationIndex);
+        }
+        return QString{};
+    };
+    for (int scopeIndex = 0; scopeIndex < secondaryControllerIds.size(); ++scopeIndex) {
+        const QString scopeId = secondaryControllerIds.at(scopeIndex);
+        const DeviceProfileMapping *scopeMapping = findDeviceProfileMapping(profile, scopeId);
+        const SavedControllerRecord *scopeRecord = savedControllerRecord(scopeId);
+        const QVariantMap scopeDetail = physicalDeviceDetail(scopeId);
+        const bool scopeConnected = scopeDetail.value(u"connected"_qs).toBool();
+        const bool scopeMissing = scopeRecord == nullptr;
+        const QString scopeNodeId = QString(u"input:%1:%2"_qs).arg(profile.id, scopeId);
+        QVariantList scopePorts;
+        const auto scopeMapped = [this, &profile, &scopeId](SignalFlowPortKind kind, int index, int subIndex) {
+            return std::any_of(m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
+                [&profile, &scopeId, kind, index, subIndex](const SignalFlowRoute &route) {
+                    return route.profileId == profile.id && route.controllerRecordId == scopeId && route.enabled
+                        && route.sourceKind == kind && route.sourceIndex == index && route.sourceSubIndex == subIndex;
+                });
+        };
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            const AxisMapping *axisMapping = scopeMapping ? &scopeMapping->axes[static_cast<size_t>(axis)] : nullptr;
+            const QString label = axisMapping && !axisMapping->customName.trimmed().isEmpty()
+                ? axisMapping->customName.trimmed() : physicalAxisLabel(static_cast<PhysicalAxis>(axis));
+            scopePorts.append(QVariantMap{{u"id"_qs, scopedSourcePortId(scopeId, SignalFlowPortKind::Axis, axis, -1)},
+                {u"kind"_qs, u"axis"_qs}, {u"index"_qs, axis}, {u"group"_qs, u"Axes"_qs},
+                {u"label"_qs, label}, {u"technicalLabel"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
+                {u"mapped"_qs, scopeMapped(SignalFlowPortKind::Axis, axis, -1)}, {u"available"_qs, true},
+                {u"scopeEditable"_qs, false}});
+        }
+        const int scopeButtonCount = std::max(scopeMapping ? static_cast<int>(scopeMapping->buttons.size()) : 0,
+                                              scopeRecord ? scopeRecord->buttonCount : kMaximumPhysicalButtons);
+        for (int button = 0; button < std::max(scopeButtonCount, 1); ++button) {
+            const ButtonBinding *binding = scopeMapping && button < static_cast<int>(scopeMapping->buttons.size())
+                ? &scopeMapping->buttons[static_cast<size_t>(button)] : nullptr;
+            const QString label = binding && !binding->customName.trimmed().isEmpty()
+                ? binding->customName.trimmed() : QString(u"Button %1"_qs).arg(button + 1);
+            scopePorts.append(QVariantMap{{u"id"_qs, scopedSourcePortId(scopeId, SignalFlowPortKind::Button, button, -1)},
+                {u"kind"_qs, u"button"_qs}, {u"index"_qs, button}, {u"group"_qs, u"Buttons"_qs},
+                {u"label"_qs, label}, {u"technicalLabel"_qs, QString(u"Button %1"_qs).arg(button + 1)},
+                {u"mapped"_qs, scopeMapped(SignalFlowPortKind::Button, button, -1)}, {u"available"_qs, true},
+                {u"scopeEditable"_qs, false}});
+        }
+        const int scopePovCount = std::max(scopeMapping ? static_cast<int>(scopeMapping->povs.size()) : 0,
+                                           scopeRecord ? scopeRecord->povCount : 1);
+        for (int hat = 0; hat < std::max(scopePovCount, 1); ++hat) {
+            for (int direction = 0; direction < kPovDirectionCount; ++direction) {
+                const QString label = QString(u"POV %1 %2"_qs).arg(hat + 1)
+                    .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)));
+                scopePorts.append(QVariantMap{{u"id"_qs, scopedSourcePortId(scopeId, SignalFlowPortKind::PovDirection, hat, direction)},
+                    {u"kind"_qs, u"pov"_qs}, {u"index"_qs, hat}, {u"subIndex"_qs, direction},
+                    {u"group"_qs, u"POV Directions"_qs}, {u"label"_qs, label}, {u"technicalLabel"_qs, label},
+                    {u"mapped"_qs, scopeMapped(SignalFlowPortKind::PovDirection, hat, direction)},
+                    {u"available"_qs, true}, {u"scopeEditable"_qs, false}});
+            }
+            scopePorts.append(QVariantMap{{u"id"_qs, scopedSourcePortId(scopeId, SignalFlowPortKind::NativePov, hat, -1)},
+                {u"kind"_qs, u"native-pov"_qs}, {u"index"_qs, hat}, {u"group"_qs, u"Native POV"_qs},
+                {u"label"_qs, QString(u"Native POV %1"_qs).arg(hat + 1)},
+                {u"technicalLabel"_qs, QString(u"Native POV %1"_qs).arg(hat + 1)},
+                {u"mapped"_qs, scopeMapped(SignalFlowPortKind::NativePov, hat, -1)}, {u"available"_qs, true},
+                {u"scopeEditable"_qs, false}});
+        }
+        int scopeRouteCount = 0;
+        for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+            if (route.profileId != profile.id || route.controllerRecordId != scopeId) continue;
+            ++scopeRouteCount;
+            QVariantList processors;
+            QVariantList processorDetails;
+            QString viaNodeId;
+            float processorOrder = 0.0F;
+            for (const QString &processorId : route.processorPath) {
+                const QString nodeId = addProcessor(processorId, route.sourceIndex,
+                    static_cast<float>(scopeIndex * 4) + processorOrder++);
+                if (nodeId.isEmpty()) continue;
+                processors.append(nodeId);
+                const auto identityIt = std::find_if(m_configuration.signalFlow.processorIdentities.cbegin(),
+                    m_configuration.signalFlow.processorIdentities.cend(), [&processorId](const SignalFlowIdentityRecord &candidate) {
+                        return candidate.id == processorId;
+                    });
+                if (identityIt == m_configuration.signalFlow.processorIdentities.cend()) continue;
+                const bool mixer = identityIt->key.startsWith(u"processor:mixer:"_qs);
+                const QString semantic = mixer ? u"mixer"_qs : identityIt->key.section(u':', -1);
+                if (mixer) viaNodeId = nodeId;
+                QVariantMap detail{{u"id"_qs, processorId}, {u"semantic"_qs, semantic},
+                    {u"sourceAxis"_qs, route.sourceIndex},
+                    {u"settingsPage"_qs, semantic == u"curve"_qs ? 6
+                        : semantic == u"adaptive-response"_qs ? 9 : -1},
+                    {u"canOpenFullSettings"_qs, semantic == u"curve"_qs
+                        || semantic == u"adaptive-response"_qs}};
+                annotateProcessorSettings(&detail, semantic, scopeMapping, route.sourceIndex);
+                if (identityIt->key.startsWith(u"processor:shared:"_qs)) {
+                    const auto shared = std::find_if(m_configuration.signalFlow.sharedProcessors.cbegin(),
+                        m_configuration.signalFlow.sharedProcessors.cend(), [&processorId](const SignalFlowSharedProcessor &candidate) {
+                            return candidate.enabled && candidate.id == processorId;
+                        });
+                    if (shared != m_configuration.signalFlow.sharedProcessors.cend()) {
+                        detail.insert(u"shared"_qs, true);
+                        detail.insert(u"sharedChannelCount"_qs, static_cast<int>(shared->sourceAxes.size()));
+                        detail.insert(u"sharedOwnerAxis"_qs, shared->ownerAxis);
+                    }
+                }
+                processorDetails.append(std::move(detail));
+            }
+            bool destinationAvailable = layout != nullptr;
+            if (layout && route.destinationKind == SignalFlowPortKind::Axis) {
+                destinationAvailable = route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount
+                    && layout->requirements.axes[static_cast<size_t>(route.destinationIndex)];
+            } else if (layout && route.destinationKind == SignalFlowPortKind::Button) {
+                destinationAvailable = route.destinationIndex > 0 && route.destinationIndex <= layout->requirements.buttons;
+            } else if (layout && route.destinationKind == SignalFlowPortKind::NativePov) {
+                const int capacity = route.destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)
+                    ? layout->requirements.continuousPovs : layout->requirements.discretePovs;
+                destinationAvailable = route.destinationIndex > 0 && route.destinationIndex <= capacity;
+            }
+            QString health = u"ready"_qs;
+            QString healthDetail = u"Ready when Mapping Active is enabled."_qs;
+            if (!route.enabled) {
+                health = route.sourceKind == SignalFlowPortKind::Axis && route.destinationKind == SignalFlowPortKind::Axis
+                    ? u"conflict"_qs : u"disabled"_qs;
+                healthDetail = health == u"conflict"_qs
+                    ? u"This analog route is disabled until its destination has an explicit Mixer or a single source."_qs
+                    : u"This configured route is disabled and does not drive the virtual output."_qs;
+            } else if (!scopeConnected) {
+                health = u"source-offline"_qs;
+                healthDetail = scopeMissing
+                    ? u"The saved controller reference is missing; its route is preserved for resolution."_qs
+                    : u"The saved physical input is offline; select this card to edit it without losing topology."_qs;
+            } else if (!destinationAvailable) {
+                health = u"destination-unavailable"_qs;
+                healthDetail = u"The selected virtual output does not currently provide this destination."_qs;
+            } else if (!mappingActive()) {
+                health = u"mapping-off"_qs;
+                healthDetail = u"The route is configured and ready; turn on Mapping Active to send output."_qs;
+            }
+            routes.append(QVariantMap{{u"id"_qs, route.id.isEmpty() ? route.identityKey : route.id},
+                {u"kind"_qs, route.sourceKind == SignalFlowPortKind::Axis ? u"axis"_qs
+                    : route.sourceKind == SignalFlowPortKind::Button ? u"button"_qs
+                    : route.sourceKind == SignalFlowPortKind::PovDirection ? u"pov"_qs : u"native-pov"_qs},
+                {u"sourceNodeId"_qs, scopeNodeId},
+                {u"sourcePortId"_qs, scopedSourcePortId(scopeId, route.sourceKind, route.sourceIndex, route.sourceSubIndex)},
+                {u"sourceIndex"_qs, route.sourceIndex}, {u"sourceSubIndex"_qs, route.sourceSubIndex},
+                {u"sourceLabel"_qs, routeSourceLabel(route, scopeMapping)}, {u"destinationNodeId"_qs, outputNodeId},
+                {u"destinationPortId"_qs, destinationPortId(route.destinationKind, route.destinationIndex, route.destinationSubIndex)},
+                {u"destinationIndex"_qs, route.destinationIndex},
+                {u"destinationSubIndex"_qs, route.destinationSubIndex},
+                {u"destinationLabel"_qs, routeDestinationLabel(route)},
+                {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails}, {u"viaNodeId"_qs, viaNodeId},
+                {u"configured"_qs, true}, {u"enabled"_qs, route.enabled},
+                {u"effective"_qs, route.enabled && mappingActive() && scopeConnected && destinationAvailable && vjoyReady()},
+                {u"primaryProjection"_qs, route.primaryProjection}, {u"health"_qs, health},
+                {u"healthDetail"_qs, healthDetail}, {u"editable"_qs, false}, {u"controllerRecordId"_qs, scopeId}});
+        }
+        const QString scopeLabel = scopeRecord ? scopeRecord->displayName : QString(u"Missing controller · %1"_qs).arg(scopeId.left(20));
+        const QString scopeDetailText = scopeMissing
+            ? u"Missing imported/saved controller reference — Resolve in Devices; routes are preserved."_qs
+            : scopeConnected ? QString(u"Connected · %1 routed endpoint%2 · select to edit this input"_qs)
+                .arg(scopeRouteCount).arg(scopeRouteCount == 1 ? QString{} : u"s"_qs)
+            : QString(u"Offline · %1 saved routed endpoint%2 · select to edit this input"_qs)
+                .arg(scopeRouteCount).arg(scopeRouteCount == 1 ? QString{} : u"s"_qs);
+        QVariantMap scopeNode{{u"id"_qs, scopeNodeId}, {u"objectId"_qs, scopeNodeId}, {u"kind"_qs, u"input"_qs},
+            {u"label"_qs, scopeLabel}, {u"detail"_qs, scopeDetailText}, {u"missingReference"_qs, scopeMissing},
+            {u"routeCount"_qs, scopeRouteCount}, {u"capabilitySummary"_qs, QString(u"%1 axes · %2 buttons · %3 POVs"_qs)
+                .arg(kPhysicalAxisCount).arg(std::max(scopeButtonCount, 1)).arg(std::max(scopePovCount, 1))},
+            {u"connected"_qs, scopeConnected}, {u"ports"_qs, scopePorts},
+            {u"portGroups"_qs, portGroupsFor(scopeNodeId, false)}, {u"controllerRecordId"_qs, scopeId},
+            {u"scopeEditable"_qs, false}};
+        applyLayout(&scopeNode, layoutFor(scopeNodeId, 80.0F, 160.0F + (scopeIndex + 1) * 238.0F));
+        nodes.append(scopeNode);
+    }
+
+    const int inputRouteCount = static_cast<int>(std::count_if(routes.cbegin(), routes.cend(),
+        [&inputNodeId](const QVariant &entry) {
+            const QVariantMap route = entry.toMap();
+            return route.value(u"sourceNodeId"_qs).toString() == inputNodeId && route.value(u"enabled"_qs).toBool();
+        }));
+    const int outputRouteCount = static_cast<int>(std::count_if(routes.cbegin(), routes.cend(),
+        [](const QVariant &entry) { return entry.toMap().value(u"enabled"_qs).toBool(); }));
+    const QString inputDetail = inputMissing
+        ? u"Missing saved controller reference — resolve it in Devices; preserved routes remain editable."_qs
+        : inputConnected ? QString(u"Connected · %1 routed endpoint%2"_qs)
+              .arg(inputRouteCount).arg(inputRouteCount == 1 ? QString{} : u"s"_qs)
+        : QString(u"Offline · %1 saved routed endpoint%2 remain editable"_qs)
+              .arg(inputRouteCount).arg(inputRouteCount == 1 ? QString{} : u"s"_qs);
     QVariantMap inputNode{{u"id"_qs, inputNodeId}, {u"objectId"_qs, inputNodeId},
                           {u"kind"_qs, u"input"_qs}, {u"label"_qs, inputLabel},
-                          {u"detail"_qs, inputConnected ? u"Connected input context"_qs : u"Saved/offline input context"_qs},
-                          {u"connected"_qs, inputConnected}, {u"ports"_qs, inputPorts}};
+                          {u"detail"_qs, inputDetail}, {u"missingReference"_qs, inputMissing},
+                          {u"routeCount"_qs, inputRouteCount},
+                          {u"capabilitySummary"_qs, QString(u"%1 axes · %2 buttons · %3 POVs"_qs)
+                              .arg(kPhysicalAxisCount).arg(inputButtonCount).arg(inputPovCount)},
+                          {u"connected"_qs, inputConnected}, {u"ports"_qs, inputPorts},
+                          {u"portGroups"_qs, portGroupsFor(inputNodeId, false)},
+                          {u"controllerRecordId"_qs, controllerId},
+                          {u"scopeEditable"_qs, editingMapping != nullptr || graphDeviceRig == nullptr}};
     applyLayout(&inputNode, layoutFor(inputNodeId, 80.0F, 160.0F));
     nodes.prepend(inputNode);
     QVariantMap outputNode{{u"id"_qs, outputNodeId}, {u"objectId"_qs, outputNodeId},
                            {u"kind"_qs, u"output"_qs},
                            {u"label"_qs, layout ? layout->name : u"Missing virtual output"_qs},
-                           {u"detail"_qs, layout ? QString(u"vJoy Device %1"_qs).arg(layout->requirements.deviceId)
-                                                   : u"Assign a virtual output in Profiles."_qs},
-                           {u"connected"_qs, vjoyReady()}, {u"ports"_qs, outputPorts}};
+                           {u"detail"_qs, layout ? QString(u"vJoy Device %1 · %2 incoming route%3"_qs)
+                                                   .arg(layout->requirements.deviceId).arg(outputRouteCount)
+                                                   .arg(outputRouteCount == 1 ? QString{} : u"s"_qs)
+                                                   : u"Missing virtual output reference — assign one in Profiles."_qs},
+                           {u"missingReference"_qs, layout == nullptr},
+                           {u"routeCount"_qs, outputRouteCount},
+                           {u"capabilitySummary"_qs, QString(u"%1 virtual axes · %2 buttons · %3 POV targets"_qs)
+                               .arg(kVirtualAxisSlotCount - 1).arg(buttonCapacity)
+                               .arg((layout ? layout->requirements.continuousPovs : 0)
+                                    + (layout ? layout->requirements.discretePovs : 0))},
+                           {u"connected"_qs, vjoyReady()}, {u"ports"_qs, outputPorts},
+                           {u"portGroups"_qs, portGroupsFor(outputNodeId, true)}};
     applyLayout(&outputNode, layoutFor(outputNodeId, 1380.0F, 160.0F));
     nodes.append(outputNode);
 
@@ -6179,14 +6811,230 @@ QVariantMap AppBackend::signalFlowGraph() const
     }
     return {{u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
             {u"profileId"_qs, profile.id}, {u"profileName"_qs, profile.name},
+            {u"effectiveProfileId"_qs, effectiveProfileId()},
+            {u"effectiveProfileName"_qs, effectiveProfileDisplayName()},
+            {u"editingDiffersFromEffective"_qs, profile.id != effectiveProfileId()},
+            {u"deviceRigId"_qs, graphDeviceRigId}, {u"deviceRigName"_qs, graphDeviceRigName},
+            {u"controllerRecordId"_qs, controllerId}, {u"controllerLabel"_qs, inputLabel},
             {u"inputNodeId"_qs, inputNodeId}, {u"outputNodeId"_qs, outputNodeId},
             {u"nodes"_qs, nodes}, {u"routes"_qs, routes}, {u"workspace"_qs, workspace},
+            {u"topologyVersion"_qs, m_configuration.signalFlow.topologyVersion},
             {u"configuredRouteCount"_qs, routes.size()},
             {u"effectiveSummary"_qs, mappingActive() && inputConnected && vjoyReady()
                 ? u"Effective mapping is active for this scope."_qs
                 : u"Configured routes are preserved; runtime output is currently inactive or unavailable."_qs},
             {u"editable"_qs, !findDeviceRig(m_configuration, m_configuration.editingDeviceRigId)
-                || mapping != nullptr}};
+                || editingMapping != nullptr}};
+}
+
+QVariantMap AppBackend::signalFlowExplainRoute(const QString &routeId) const
+{
+    const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
+    if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)) {
+        return signalFlowActionResult(false, u"Route is no longer available"_qs,
+            u"The selected route changed in another editor. Refresh Signal Flow and choose it again."_qs,
+            routeId.trimmed());
+    }
+
+    const AxisMappings &axes = mapping ? mapping->axes : profile.axes;
+    const ButtonBindings &buttons = mapping ? mapping->buttons : profile.buttons;
+    const auto sourceLabel = [&axes, &buttons, route] {
+        switch (route->sourceKind) {
+        case SignalFlowPortKind::Axis:
+            if (route->sourceIndex >= 0 && route->sourceIndex < kPhysicalAxisCount) {
+                const AxisMapping &axis = axes[static_cast<size_t>(route->sourceIndex)];
+                return axis.customName.trimmed().isEmpty()
+                    ? physicalAxisLabel(static_cast<PhysicalAxis>(route->sourceIndex))
+                    : axis.customName.trimmed();
+            }
+            return u"Unknown axis"_qs;
+        case SignalFlowPortKind::Button:
+            if (route->sourceIndex >= 0 && route->sourceIndex < static_cast<int>(buttons.size())
+                && !buttons[static_cast<size_t>(route->sourceIndex)].customName.trimmed().isEmpty()) {
+                return buttons[static_cast<size_t>(route->sourceIndex)].customName.trimmed();
+            }
+            return QString(u"Button %1"_qs).arg(route->sourceIndex + 1);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"POV %1 %2"_qs).arg(route->sourceIndex + 1)
+                .arg(povDirectionLabel(static_cast<PovDirection>(route->sourceSubIndex + 1)));
+        case SignalFlowPortKind::NativePov:
+            return QString(u"Native POV %1"_qs).arg(route->sourceIndex + 1);
+        }
+        return QString{};
+    };
+    const auto destinationLabel = [&profile, route] {
+        switch (route->destinationKind) {
+        case SignalFlowPortKind::Axis: {
+            const QString alias = route->destinationIndex > 0
+                    && route->destinationIndex < kVirtualAxisSlotCount
+                ? profile.virtualAxisAliases[static_cast<size_t>(route->destinationIndex)].trimmed()
+                : QString{};
+            return alias.isEmpty() ? virtualAxisLabel(static_cast<VirtualAxis>(route->destinationIndex)) : alias;
+        }
+        case SignalFlowPortKind::Button:
+            return QString(u"vJoy Button %1"_qs).arg(route->destinationIndex);
+        case SignalFlowPortKind::PovDirection:
+            return QString(u"vJoy POV %1 %2"_qs).arg(route->destinationIndex)
+                .arg(route->destinationSubIndex + 1);
+        case SignalFlowPortKind::NativePov:
+            return route->destinationSubIndex == static_cast<int>(NativePovTargetType::Continuous)
+                ? QString(u"vJoy Continuous POV %1"_qs).arg(route->destinationIndex)
+                : QString(u"vJoy Discrete POV %1"_qs).arg(route->destinationIndex);
+        }
+        return QString{};
+    };
+    const auto processorLabel = [](const QString &semantic) {
+        if (semantic == u"domain"_qs) return u"One-sided domain"_qs;
+        if (semantic == u"deadzone"_qs) return u"Deadzone"_qs;
+        if (semantic == u"center-hold"_qs) return u"Center hold"_qs;
+        if (semantic == u"invert"_qs) return u"Invert"_qs;
+        if (semantic == u"curve"_qs) return u"Response curve"_qs;
+        if (semantic == u"limits"_qs) return u"Output limits"_qs;
+        if (semantic == u"adaptive-response"_qs) return u"Adaptive Response"_qs;
+        if (semantic == u"mixer"_qs) return u"Explicit mixer"_qs;
+        return u"Signal conditioner"_qs;
+    };
+
+    QVariantList steps;
+    steps.append(QVariantMap{{u"kind"_qs, u"source"_qs}, {u"label"_qs, sourceLabel()},
+                             {u"detail"_qs, u"Physical input sampled by the mapper."_qs}});
+    for (const QString &processorId : route->processorPath) {
+        const auto identity = std::find_if(m_configuration.signalFlow.processorIdentities.cbegin(),
+            m_configuration.signalFlow.processorIdentities.cend(),
+            [&processorId](const SignalFlowIdentityRecord &candidate) { return candidate.id == processorId; });
+        if (identity == m_configuration.signalFlow.processorIdentities.cend() || !identity->active) continue;
+        const QString semantic = identity->key.startsWith(u"processor:mixer:"_qs)
+            ? u"mixer"_qs : identity->key.section(u':', -1);
+        QString detail = u"Uses the same persisted setting shown in the focused editor."_qs;
+        if (semantic == u"mixer"_qs) {
+            const auto mixer = std::find_if(m_configuration.signalFlow.mixers.cbegin(),
+                m_configuration.signalFlow.mixers.cend(), [route](const SignalFlowMixer &candidate) {
+                    return candidate.profileId == route->profileId
+                        && candidate.controllerRecordId == route->controllerRecordId
+                        && candidate.destinationAxis == route->destinationIndex;
+                });
+            if (mixer != m_configuration.signalFlow.mixers.cend()) {
+                switch (mixer->mode) {
+                case SignalFlowMixerMode::Average: detail = u"Average combines the participating analog inputs."_qs; break;
+                case SignalFlowMixerMode::SumClamped: detail = u"Sum Clamped adds the inputs, then clamps to the output range."_qs; break;
+                case SignalFlowMixerMode::HighestMagnitude: detail = u"Highest Magnitude forwards the input furthest from neutral."_qs; break;
+                case SignalFlowMixerMode::Disabled: break;
+                }
+            }
+        } else if (identity->key.startsWith(u"processor:shared:"_qs)) {
+            const auto shared = std::find_if(m_configuration.signalFlow.sharedProcessors.cbegin(),
+                m_configuration.signalFlow.sharedProcessors.cend(),
+                [&processorId](const SignalFlowSharedProcessor &candidate) {
+                    return candidate.enabled && candidate.id == processorId;
+                });
+            if (shared != m_configuration.signalFlow.sharedProcessors.cend()) {
+                detail = QString(u"One durable %1 setting is mirrored to %2 routed source axes; split this route before editing it locally."_qs)
+                    .arg(processorLabel(semantic)).arg(shared->sourceAxes.size());
+            }
+        }
+        steps.append(QVariantMap{{u"kind"_qs, semantic}, {u"id"_qs, processorId},
+                                 {u"label"_qs, processorLabel(semantic)}, {u"detail"_qs, detail}});
+    }
+    steps.append(QVariantMap{{u"kind"_qs, u"destination"_qs}, {u"label"_qs, destinationLabel()},
+                             {u"detail"_qs, u"Virtual output endpoint."_qs}});
+
+    const bool inputOnline = controllerId.isEmpty() ? physicalConnected()
+        : physicalDeviceDetail(controllerId).value(u"connected"_qs).toBool();
+    const bool outputReady = vjoyReady();
+    const bool runtimeActive = mappingActive();
+    const bool effective = route->enabled && inputOnline && outputReady && runtimeActive;
+    QString runtimeDetail;
+    if (!route->enabled) runtimeDetail = u"Configured route is disabled."_qs;
+    else if (!inputOnline) runtimeDetail = u"Configured route is waiting for its saved physical input."_qs;
+    else if (!outputReady) runtimeDetail = u"Configured route is waiting for its virtual output."_qs;
+    else if (!runtimeActive) runtimeDetail = u"Configured route is ready but Mapping Active is off."_qs;
+    else runtimeDetail = u"Configured route is currently effective at runtime."_qs;
+    const int processorCount = std::max(0, static_cast<int>(steps.size()) - 2);
+
+    return {{u"success"_qs, true}, {u"routeId"_qs, route->id},
+            {u"source"_qs, sourceLabel()}, {u"destination"_qs, destinationLabel()},
+            {u"steps"_qs, steps}, {u"configured"_qs, route->enabled},
+            {u"effective"_qs, effective}, {u"summary"_qs,
+                QString(u"%1 flows to %2 through %3 visible processor%4."_qs)
+                    .arg(sourceLabel(), destinationLabel())
+                    .arg(processorCount)
+                    .arg(processorCount == 1 ? QString{} : u"s"_qs)},
+            {u"runtimeDetail"_qs, runtimeDetail},
+            {u"technicalDetails"_qs,
+                QString(u"ROUTE ID\n%1\n\nSOURCE\n%2\n\nDESTINATION\n%3\n\nCONFIGURED\n%4\nEFFECTIVE\n%5"_qs)
+                    .arg(route->id, sourceLabel(), destinationLabel(), route->enabled ? u"yes"_qs : u"no"_qs,
+                         effective ? u"yes"_qs : u"no"_qs)},
+            {u"revision"_qs, QVariant::fromValue(m_configurationGeneration)}};
+}
+
+QVariantMap AppBackend::signalFlowLiveTelemetry() const
+{
+    // A deliberately bounded UI-side sample. MappingWorker only writes the
+    // fixed atomics below; it never traverses graph state, allocates QVariant
+    // containers, signals QML, or logs a Signal Flow update per report.
+    const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    QVariantList axes;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const size_t index = static_cast<size_t>(axis);
+        const float transformed = runtime.transformed[index].load(std::memory_order_relaxed);
+        const float output = runtime.virtualValues[index].load(std::memory_order_relaxed);
+        axes.append(QVariantMap{{u"sourcePortId"_qs, QString(u"axis:%1"_qs).arg(axis)},
+                                {u"axis"_qs, axis},
+                                {u"available"_qs, runtime.axisAvailable[index].load(std::memory_order_relaxed)},
+                                {u"raw"_qs, runtime.raw[index].load(std::memory_order_relaxed)},
+                                {u"normalized"_qs, runtime.normalized[index].load(std::memory_order_relaxed)},
+                                {u"afterDeadzone"_qs, runtime.afterDeadzone[index].load(std::memory_order_relaxed)},
+                                {u"afterHysteresis"_qs, runtime.afterHysteresis[index].load(std::memory_order_relaxed)},
+                                {u"afterInversion"_qs, runtime.afterInversion[index].load(std::memory_order_relaxed)},
+                                {u"curve"_qs, runtime.curveResponse[index].load(std::memory_order_relaxed)},
+                                {u"value"_qs, transformed}, {u"output"_qs, output},
+                                {u"active"_qs, std::isfinite(transformed) && std::abs(transformed) >= 0.015F}});
+    }
+    QVariantList routes;
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        if (!signalFlowRouteMatchesScope(route, profile, controllerId)) continue;
+        float value = 0.0F;
+        bool active = false;
+        if (route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex >= 0
+            && route.sourceIndex < kPhysicalAxisCount) {
+            value = runtime.transformed[static_cast<size_t>(route.sourceIndex)].load(std::memory_order_relaxed);
+            active = std::isfinite(value) && std::abs(value) >= 0.015F;
+        } else if (route.sourceKind == SignalFlowPortKind::Button && route.sourceIndex >= 0
+                   && route.sourceIndex < kMaximumPhysicalButtons) {
+            active = runtime.physicalButtonPressed[static_cast<size_t>(route.sourceIndex)].load(std::memory_order_relaxed);
+            value = active ? 1.0F : 0.0F;
+        } else if ((route.sourceKind == SignalFlowPortKind::PovDirection
+                    || route.sourceKind == SignalFlowPortKind::NativePov)
+                   && route.sourceIndex >= 0 && route.sourceIndex < kMaximumPhysicalPovs) {
+            const int raw = runtime.povValues[static_cast<size_t>(route.sourceIndex)].load(std::memory_order_relaxed);
+            if (route.sourceKind == SignalFlowPortKind::PovDirection) {
+                active = povDirectionFromRaw(raw) == static_cast<PovDirection>(route.sourceSubIndex + 1);
+            } else {
+                active = povDirectionFromRaw(raw) != PovDirection::Centered;
+            }
+            value = active ? 1.0F : 0.0F;
+        }
+        routes.append(QVariantMap{{u"id"_qs, route.id}, {u"sourcePortId"_qs,
+                                   route.sourceKind == SignalFlowPortKind::Axis
+                                       ? QString(u"axis:%1"_qs).arg(route.sourceIndex)
+                                       : route.sourceKind == SignalFlowPortKind::Button
+                                           ? QString(u"button:%1"_qs).arg(route.sourceIndex)
+                                           : route.sourceKind == SignalFlowPortKind::PovDirection
+                                               ? QString(u"pov:%1:%2"_qs).arg(route.sourceIndex).arg(route.sourceSubIndex)
+                                               : QString(u"native-pov:%1"_qs).arg(route.sourceIndex)},
+                                   {u"value"_qs, value}, {u"active"_qs, active && route.enabled}});
+    }
+    const bool inputOnline = controllerId.isEmpty() ? physicalConnected()
+        : physicalDeviceDetail(controllerId).value(u"connected"_qs).toBool();
+    return {{u"sampledAtMs"_qs, QDateTime::currentMSecsSinceEpoch()}, {u"axes"_qs, axes},
+            {u"routes"_qs, routes}, {u"inputOnline"_qs, inputOnline},
+            {u"outputReady"_qs, vjoyReady()}, {u"mappingActive"_qs, mappingActive()}};
 }
 
 QVariantMap AppBackend::signalFlowActionResult(bool success, const QString &title,
@@ -6201,6 +7049,11 @@ QVariantMap AppBackend::signalFlowActionResult(bool success, const QString &titl
 
 bool AppBackend::commitSignalFlowCommand(MapperConfiguration before, const QString &description)
 {
+    // Graph commands change canonical topology directly. Rebuild the focused
+    // axis/button/POV projection before normal persistence so the universal
+    // reconciliation path observes the graph's primary legs rather than
+    // treating stale compatibility fields as a later user edit.
+    projectSignalFlowTopologyToFocusedEditors(&m_configuration);
     m_signalFlowCommandInFlight = true;
     persistAndApply();
     m_signalFlowCommandInFlight = false;
@@ -6221,6 +7074,24 @@ QVariantMap AppBackend::signalFlowConnect(const QString &sourceKind, int sourceI
                                           int sourceSubIndex, const QString &destination,
                                           bool replaceConflicts, qulonglong expectedRevision)
 {
+    return signalFlowConnectInternal(sourceKind, sourceIndex, sourceSubIndex, destination,
+                                     replaceConflicts, {}, expectedRevision);
+}
+
+QVariantMap AppBackend::signalFlowConnectWithMixer(const QString &sourceKind, int sourceIndex,
+                                                   int sourceSubIndex, const QString &destination,
+                                                   const QString &mixerMode,
+                                                   qulonglong expectedRevision)
+{
+    return signalFlowConnectInternal(sourceKind, sourceIndex, sourceSubIndex, destination,
+                                     false, mixerMode, expectedRevision);
+}
+
+QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int sourceIndex,
+                                                  int sourceSubIndex, const QString &destination,
+                                                  bool replaceConflicts, const QString &mixerMode,
+                                                  qulonglong expectedRevision)
+{
     if (expectedRevision != m_configurationGeneration) {
         m_signalFlowActionFeedback = u"The graph changed while this connection was being prepared. Review the current route and retry."_qs;
         emit signalFlowChanged();
@@ -6228,22 +7099,58 @@ QVariantMap AppBackend::signalFlowConnect(const QString &sourceKind, int sourceI
             m_signalFlowActionFeedback);
     }
     const QString kind = sourceKind.trimmed().toLower();
+    // The canonical runtime has physical DirectInput endpoints only. Virtual
+    // outputs are sinks, never sources, so reject every attempted vJoy/virtual
+    // feedback leg before the transaction can mutate topology. This makes the
+    // current source-domain graph structurally acyclic and leaves no override
+    // path for direct or indirect virtual input/output loops.
+    const bool virtualFeedbackSource = kind == u"virtual-output"_qs
+        || kind.startsWith(u"virtual-"_qs) || kind.startsWith(u"virtual"_qs)
+        || kind.startsWith(u"vjoy-"_qs) || kind.startsWith(u"vjoy"_qs)
+        || kind == u"vjoy"_qs;
+    if (virtualFeedbackSource) {
+        return signalFlowActionResult(false, u"Virtual feedback is blocked"_qs,
+            u"Signal Flow accepts physical DirectInput sources only. Virtual vJoy input/output feedback cannot form a direct or indirect signal cycle."_qs);
+    }
     DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"This Device Rig contains multiple selected inputs. Select one source before creating a route."_qs);
     }
     ControllerProfile &profile = currentProfile();
-    AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
-    ButtonBindings &buttons = deviceMapping ? deviceMapping->buttons : profile.buttons;
-    PovBindings &povs = deviceMapping ? deviceMapping->povs : profile.povs;
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
     VirtualOutputLayout *layout = activeOutputLayout();
     if (!layout) {
         return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
             u"Assign a Virtual Output to this profile before creating a Signal Flow connection."_qs);
     }
+    // The graph always mutates durable topology first.  A pre-topology
+    // in-memory fixture can still arrive here from a test or legacy import;
+    // import its focused fields once before taking the undo snapshot.
+    reconcileSignalFlowState(&m_configuration);
     MapperConfiguration before = m_configuration;
     QString description;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
+        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+    };
+    const auto sameSource = [&inScope](const SignalFlowRoute &route, SignalFlowPortKind source,
+                                       int index, int subIndex) {
+        return inScope(route) && route.sourceKind == source && route.sourceIndex == index
+            && route.sourceSubIndex == subIndex;
+    };
+    const auto eraseSource = [&topology, &sameSource](SignalFlowPortKind source, int index, int subIndex) {
+        topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+            [&sameSource, source, index, subIndex](const SignalFlowRoute &route) {
+                return sameSource(route, source, index, subIndex);
+            }), topology.routes.end());
+    };
+    const auto hasPrimary = [&topology, &sameSource](SignalFlowPortKind source, int index, int subIndex) {
+        return std::any_of(topology.routes.cbegin(), topology.routes.cend(),
+            [&sameSource, source, index, subIndex](const SignalFlowRoute &route) {
+                return route.primaryProjection && sameSource(route, source, index, subIndex);
+            });
+    };
 
     if (kind == u"axis"_qs) {
         if (sourceIndex < 0 || sourceIndex >= kPhysicalAxisCount) {
@@ -6260,21 +7167,92 @@ QVariantMap AppBackend::signalFlowConnect(const QString &sourceKind, int sourceI
             return signalFlowActionResult(false, u"This axis is marked inactive"_qs,
                 u"Complete a calibration with meaningful travel before routing this fixed descriptor axis."_qs);
         }
-        if (hasMappingConflict(axes, sourceIndex, target) && !replaceConflicts) {
+        SignalFlowMixerMode requestedMixer = SignalFlowMixerMode::Disabled;
+        const QString normalizedMixer = mixerMode.trimmed().toLower();
+        if (!normalizedMixer.isEmpty()) {
+            if (normalizedMixer == u"average"_qs) requestedMixer = SignalFlowMixerMode::Average;
+            else if (normalizedMixer == u"sum-clamped"_qs) requestedMixer = SignalFlowMixerMode::SumClamped;
+            else if (normalizedMixer == u"highest-magnitude"_qs) requestedMixer = SignalFlowMixerMode::HighestMagnitude;
+            else return signalFlowActionResult(false, u"Choose a valid mixer mode"_qs,
+                u"Use Average, Sum Clamped, or Highest Magnitude for an explicit analog merge."_qs);
+        }
+        const auto exact = std::find_if(topology.routes.cbegin(), topology.routes.cend(),
+            [&sameSource, sourceIndex, targetIndex](const SignalFlowRoute &route) {
+                return route.enabled && sameSource(route, SignalFlowPortKind::Axis, sourceIndex, -1)
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.destinationIndex == targetIndex;
+            });
+        if (exact != topology.routes.cend()) {
+            return signalFlowActionResult(true, u"Connection already present"_qs,
+                u"This axis route is already part of the canonical Signal Flow topology."_qs, exact->id);
+        }
+        const auto existingMixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
+            [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
+                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                    && mixer.destinationAxis == targetIndex;
+            });
+        const bool mixerActive = existingMixer != topology.mixers.end() && existingMixer->enabled
+            && existingMixer->mode != SignalFlowMixerMode::Disabled;
+        const bool anotherAnalogInput = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
+            [&inScope, sourceIndex, targetIndex](const SignalFlowRoute &route) {
+                return route.enabled && inScope(route) && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.destinationIndex == targetIndex && route.sourceIndex != sourceIndex;
+            });
+        if (anotherAnalogInput && requestedMixer == SignalFlowMixerMode::Disabled && !mixerActive
+            && !replaceConflicts) {
             return signalFlowActionResult(false, u"Analog merge needs an explicit decision"_qs,
-                u"That virtual axis already has a source. Choose Replace to move the existing route; Signal Flow will not create an implicit analog merge."_qs);
+                u"That virtual axis already has another source. Choose Replace or Mixer; Signal Flow never creates an implicit analog merge."_qs);
         }
         if (replaceConflicts) {
-            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                if (axis != sourceIndex && axes[static_cast<size_t>(axis)].target == target) {
-                    axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
-                }
+            topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+                [&inScope, sourceIndex, targetIndex](const SignalFlowRoute &route) {
+                    return inScope(route) && route.sourceKind == SignalFlowPortKind::Axis
+                        && route.destinationKind == SignalFlowPortKind::Axis
+                        && route.destinationIndex == targetIndex && route.sourceIndex != sourceIndex;
+                }), topology.routes.end());
+            topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
+                [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
+                    return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                        && mixer.destinationAxis == targetIndex;
+                }), topology.mixers.end());
+        } else if (requestedMixer != SignalFlowMixerMode::Disabled) {
+            if (existingMixer != topology.mixers.end()) {
+                existingMixer->mode = requestedMixer;
+                existingMixer->enabled = true;
+            } else {
+                SignalFlowMixer mixer;
+                mixer.profileId = profile.id;
+                mixer.controllerRecordId = controllerId;
+                mixer.destinationAxis = targetIndex;
+                mixer.mode = requestedMixer;
+                mixer.enabled = true;
+                mixer.identityKey = signalFlowMixerIdentityKey(profile, controllerId, targetIndex);
+                topology.mixers.push_back(std::move(mixer));
             }
         }
         layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
-        axes[static_cast<size_t>(sourceIndex)].target = target;
-        description = QString(u"Connected %1 to %2"_qs)
-            .arg(physicalAxisLabel(static_cast<PhysicalAxis>(sourceIndex)), virtualAxisLabel(target));
+        SignalFlowRoute route;
+        route.profileId = profile.id;
+        route.controllerRecordId = controllerId;
+        route.sourceKind = SignalFlowPortKind::Axis;
+        route.sourceIndex = sourceIndex;
+        route.sourceSubIndex = -1;
+        route.destinationKind = SignalFlowPortKind::Axis;
+        route.destinationIndex = targetIndex;
+        route.destinationSubIndex = -1;
+        route.primaryProjection = !hasPrimary(SignalFlowPortKind::Axis, sourceIndex, -1);
+        route.enabled = true;
+        route.identityKey = route.primaryProjection
+            ? signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, sourceIndex)
+            : signalFlowFanoutRouteIdentityKey(profile, controllerId, u"axis"_qs, sourceIndex, -1,
+                                                SignalFlowPortKind::Axis, targetIndex);
+        topology.routes.push_back(std::move(route));
+        description = requestedMixer == SignalFlowMixerMode::Disabled
+            ? QString(u"Connected %1 to %2"_qs)
+                  .arg(physicalAxisLabel(static_cast<PhysicalAxis>(sourceIndex)), virtualAxisLabel(target))
+            : QString(u"Connected %1 to %2 through an explicit mixer"_qs)
+                  .arg(physicalAxisLabel(static_cast<PhysicalAxis>(sourceIndex)), virtualAxisLabel(target));
     } else if (kind == u"button"_qs || kind == u"pov"_qs) {
         bool parsed = false;
         const int target = destination.trimmed().toInt(&parsed);
@@ -6282,65 +7260,133 @@ QVariantMap AppBackend::signalFlowConnect(const QString &sourceKind, int sourceI
             return signalFlowActionResult(false, u"Choose a virtual button"_qs,
                 u"Button and POV routes must target a valid vJoy button number."_qs);
         }
+        SignalFlowPortKind sourcePort = SignalFlowPortKind::Button;
+        int normalizedSubIndex = -1;
+        QString routeKind = u"button"_qs;
         if (kind == u"button"_qs) {
             if (sourceIndex < 0 || sourceIndex >= kMaximumPhysicalButtons) {
                 return signalFlowActionResult(false, u"Button source is unavailable"_qs,
                     u"The selected physical button is outside the supported input range."_qs);
             }
-            if (buttons.size() <= static_cast<size_t>(sourceIndex)) buttons.resize(static_cast<size_t>(sourceIndex + 1));
         } else {
             if (sourceIndex < 0 || sourceIndex >= kMaximumPhysicalPovs
                 || sourceSubIndex < 0 || sourceSubIndex >= kPovDirectionCount) {
                 return signalFlowActionResult(false, u"POV source is unavailable"_qs,
                     u"Select a valid POV direction before creating a route."_qs);
             }
-            if (povs.size() <= static_cast<size_t>(sourceIndex)) povs.resize(static_cast<size_t>(sourceIndex + 1));
-        }
-        bool conflict = false;
-        for (int button = 0; button < static_cast<int>(buttons.size()); ++button) {
-            if (kind == u"button"_qs && button == sourceIndex) continue;
-            const ButtonBinding &binding = buttons[static_cast<size_t>(button)];
-            conflict = conflict || (binding.type == ButtonActionType::VirtualButton && binding.target == target);
-        }
-        for (int hat = 0; hat < static_cast<int>(povs.size()); ++hat) {
-            for (int direction = 0; direction < kPovDirectionCount; ++direction) {
-                if (kind == u"pov"_qs && hat == sourceIndex && direction == sourceSubIndex) continue;
-                const ButtonBinding &binding = povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)];
-                conflict = conflict || (binding.type == ButtonActionType::VirtualButton && binding.target == target);
-            }
-        }
-        if (conflict && !replaceConflicts) {
-            return signalFlowActionResult(false, u"Destination is already routed"_qs,
-                u"Choose Replace to move the existing button/POV route. Signal Flow keeps destination changes explicit."_qs);
-        }
-        if (replaceConflicts) {
-            for (ButtonBinding &binding : buttons) {
-                if (binding.type == ButtonActionType::VirtualButton && binding.target == target) {
-                    binding = {};
-                    binding.explicitlyConfigured = true;
-                }
-            }
-            for (PovDirectionBindings &hat : povs) {
-                for (ButtonBinding &binding : hat) {
-                    if (binding.type == ButtonActionType::VirtualButton && binding.target == target) {
-                        binding = {};
-                        binding.explicitlyConfigured = true;
-                    }
-                }
-            }
+            sourcePort = SignalFlowPortKind::PovDirection;
+            normalizedSubIndex = sourceSubIndex;
+            routeKind = u"pov"_qs;
         }
         layout->requirements.buttons = std::max(layout->requirements.buttons, target);
+        const auto exact = std::find_if(topology.routes.cbegin(), topology.routes.cend(),
+            [&sameSource, sourcePort, sourceIndex, normalizedSubIndex, target](const SignalFlowRoute &route) {
+                return route.enabled && sameSource(route, sourcePort, sourceIndex, normalizedSubIndex)
+                    && route.destinationKind == SignalFlowPortKind::Button
+                    && route.destinationIndex == target;
+            });
+        if (exact != topology.routes.cend()) {
+            return signalFlowActionResult(true, u"Connection already present"_qs,
+                u"This button route is already part of the canonical Signal Flow topology."_qs, exact->id);
+        }
+        // Digital fan-in and fan-out are both canonical runtime behaviors.
+        // The first leg remains the focused-editor compatibility projection;
+        // additional legs receive durable fan-out identities and compile into
+        // the fixed report-path source buckets.
+        SignalFlowRoute route;
+        route.profileId = profile.id;
+        route.controllerRecordId = controllerId;
+        route.sourceKind = sourcePort;
+        route.sourceIndex = sourceIndex;
+        route.sourceSubIndex = normalizedSubIndex;
+        route.destinationKind = SignalFlowPortKind::Button;
+        route.destinationIndex = target;
+        route.destinationSubIndex = -1;
+        route.primaryProjection = !hasPrimary(sourcePort, sourceIndex, normalizedSubIndex);
+        route.enabled = true;
+        route.identityKey = route.primaryProjection
+            ? signalFlowRouteIdentityKey(profile, controllerId, routeKind, sourceIndex, normalizedSubIndex)
+            : signalFlowFanoutRouteIdentityKey(profile, controllerId, routeKind, sourceIndex,
+                                                normalizedSubIndex, SignalFlowPortKind::Button, target);
+        topology.routes.push_back(std::move(route));
         if (kind == u"button"_qs) {
-            ButtonBinding &binding = buttons[static_cast<size_t>(sourceIndex)];
-            const QString customName = binding.customName;
-            binding = {ButtonActionType::VirtualButton, target, true, customName};
             description = QString(u"Connected Button %1 to vJoy Button %2"_qs).arg(sourceIndex + 1).arg(target);
         } else {
-            ButtonBinding &binding = povs[static_cast<size_t>(sourceIndex)][static_cast<size_t>(sourceSubIndex)];
-            binding = {ButtonActionType::VirtualButton, target, true, {}};
             description = QString(u"Connected POV %1 %2 to vJoy Button %3"_qs).arg(sourceIndex + 1)
                 .arg(povDirectionLabel(static_cast<PovDirection>(sourceSubIndex + 1))).arg(target);
         }
+    } else if (kind == u"native-pov"_qs) {
+        if (sourceIndex < 0 || sourceIndex >= kMaximumPhysicalPovs) {
+            return signalFlowActionResult(false, u"Native POV source is unavailable"_qs,
+                u"The selected physical POV is outside the supported input range."_qs);
+        }
+        const QStringList parts = destination.trimmed().split(u':');
+        bool typeParsed = false;
+        bool targetParsed = false;
+        const int targetType = parts.size() == 3 && parts.front() == u"native-pov"_qs
+            ? parts.at(1).toInt(&typeParsed) : 0;
+        const int target = parts.size() == 3 ? parts.at(2).toInt(&targetParsed) : 0;
+        if (!typeParsed || !targetParsed
+            || (targetType != static_cast<int>(NativePovTargetType::Continuous)
+                && targetType != static_cast<int>(NativePovTargetType::Discrete)) || target < 1) {
+            return signalFlowActionResult(false, u"Choose a virtual POV destination"_qs,
+                u"Native POV routes must target a valid continuous or discrete vJoy POV."_qs);
+        }
+        const int capacity = std::min(targetType == static_cast<int>(NativePovTargetType::Continuous)
+            ? layout->requirements.continuousPovs : layout->requirements.discretePovs,
+            kMaximumPhysicalPovs);
+        if (target > capacity) {
+            return signalFlowActionResult(false, u"Virtual POV destination is unavailable"_qs,
+                u"Create or assign a virtual output with that POV capacity before connecting it."_qs);
+        }
+        const auto exact = std::find_if(topology.routes.cbegin(), topology.routes.cend(),
+            [&sameSource, sourceIndex, target, targetType](const SignalFlowRoute &route) {
+                return route.enabled && sameSource(route, SignalFlowPortKind::NativePov, sourceIndex, -1)
+                    && route.destinationKind == SignalFlowPortKind::NativePov
+                    && route.destinationIndex == target && route.destinationSubIndex == targetType;
+            });
+        if (exact != topology.routes.cend()) {
+            return signalFlowActionResult(true, u"Connection already present"_qs,
+                u"This native POV route is already part of the canonical Signal Flow topology."_qs, exact->id);
+        }
+        const auto destinationConflict = std::find_if(topology.routes.cbegin(), topology.routes.cend(),
+            [&inScope, sourceIndex, target, targetType](const SignalFlowRoute &route) {
+                return route.enabled && inScope(route) && route.sourceKind == SignalFlowPortKind::NativePov
+                    && route.sourceIndex != sourceIndex && route.destinationKind == SignalFlowPortKind::NativePov
+                    && route.destinationIndex == target && route.destinationSubIndex == targetType;
+            });
+        if (destinationConflict != topology.routes.cend() && !replaceConflicts) {
+            return signalFlowActionResult(false, u"Virtual POV already has a source"_qs,
+                u"That virtual POV already receives a physical POV stream. Replace it or choose a different destination; Signal Flow does not silently merge raw POV angles."_qs);
+        }
+        if (destinationConflict != topology.routes.cend()) {
+            topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+                [&inScope, sourceIndex, target, targetType](const SignalFlowRoute &route) {
+                    return inScope(route) && route.sourceKind == SignalFlowPortKind::NativePov
+                        && route.sourceIndex != sourceIndex && route.destinationKind == SignalFlowPortKind::NativePov
+                        && route.destinationIndex == target && route.destinationSubIndex == targetType;
+                }), topology.routes.end());
+        }
+        SignalFlowRoute route;
+        route.profileId = profile.id;
+        route.controllerRecordId = controllerId;
+        route.sourceKind = SignalFlowPortKind::NativePov;
+        route.sourceIndex = sourceIndex;
+        route.sourceSubIndex = -1;
+        route.destinationKind = SignalFlowPortKind::NativePov;
+        route.destinationIndex = target;
+        route.destinationSubIndex = targetType;
+        route.primaryProjection = !hasPrimary(SignalFlowPortKind::NativePov, sourceIndex, -1);
+        route.enabled = true;
+        route.identityKey = route.primaryProjection
+            ? signalFlowRouteIdentityKey(profile, controllerId, u"native-pov"_qs, sourceIndex)
+            : signalFlowFanoutRouteIdentityKey(profile, controllerId, u"native-pov"_qs, sourceIndex, -1,
+                                                SignalFlowPortKind::NativePov, target, targetType);
+        topology.routes.push_back(std::move(route));
+        description = QString(u"Connected Native POV %1 to vJoy %2 POV %3"_qs).arg(sourceIndex + 1)
+            .arg(targetType == static_cast<int>(NativePovTargetType::Continuous)
+                ? u"Continuous"_qs : u"Discrete"_qs)
+            .arg(target);
     } else {
         return signalFlowActionResult(false, u"Unsupported Signal Flow source"_qs,
             u"This source type is visible for inspection but cannot be connected by the current route command."_qs);
@@ -6364,50 +7410,386 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
     }
     ControllerProfile &profile = currentProfile();
     const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
-    AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
-    ButtonBindings &buttons = deviceMapping ? deviceMapping->buttons : profile.buttons;
-    PovBindings &povs = deviceMapping ? deviceMapping->povs : profile.povs;
-    MapperConfiguration before = m_configuration;
-    QString description;
-    for (int axis = 0; axis < kPhysicalAxisCount && description.isEmpty(); ++axis) {
-        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-            m_configuration.signalFlow.routeIdentities,
-            signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, axis));
-        if (identity && identity->active && identity->id == id) {
-            axes[static_cast<size_t>(axis)].target = VirtualAxis::Disabled;
-            description = QString(u"Disconnected %1"_qs)
-                .arg(physicalAxisLabel(static_cast<PhysicalAxis>(axis)));
-        }
-    }
-    for (int button = 0; button < static_cast<int>(buttons.size()) && description.isEmpty(); ++button) {
-        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-            m_configuration.signalFlow.routeIdentities,
-            signalFlowRouteIdentityKey(profile, controllerId, u"button"_qs, button));
-        if (identity && identity->active && identity->id == id) {
-            buttons[static_cast<size_t>(button)] = {};
-            buttons[static_cast<size_t>(button)].explicitlyConfigured = true;
-            description = QString(u"Disconnected Button %1"_qs).arg(button + 1);
-        }
-    }
-    for (int hat = 0; hat < static_cast<int>(povs.size()) && description.isEmpty(); ++hat) {
-        for (int direction = 0; direction < kPovDirectionCount && description.isEmpty(); ++direction) {
-            const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
-                m_configuration.signalFlow.routeIdentities,
-                signalFlowRouteIdentityKey(profile, controllerId, u"pov"_qs, hat, direction));
-            if (identity && identity->active && identity->id == id) {
-                povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)] = {};
-                povs[static_cast<size_t>(hat)][static_cast<size_t>(direction)].explicitlyConfigured = true;
-                description = QString(u"Disconnected POV %1 %2"_qs).arg(hat + 1)
-                    .arg(povDirectionLabel(static_cast<PovDirection>(direction + 1)));
-            }
-        }
-    }
-    if (description.isEmpty()) {
+    SignalFlowRoute *selected = findSignalFlowRouteById(&m_configuration.signalFlow, id);
+    if (!selected || !signalFlowRouteMatchesScope(*selected, profile, controllerId)) {
         return signalFlowActionResult(false, u"Route is no longer available"_qs,
             u"The selected route changed in another editor. Refresh the graph and try again."_qs, id);
     }
+    const SignalFlowPortKind sourceKind = selected->sourceKind;
+    const int sourceIndex = selected->sourceIndex;
+    const int sourceSubIndex = selected->sourceSubIndex;
+    const SignalFlowPortKind destinationKind = selected->destinationKind;
+    const int destinationIndex = selected->destinationIndex;
+    MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+        [&id](const SignalFlowRoute &route) { return route.id == id; }), topology.routes.end());
+
+    // Preserve a usable one-target focused projection if a legacy-inexpressible
+    // fan-out leg remains after the selected primary route was removed.
+    SignalFlowRoute *replacement = nullptr;
+    for (SignalFlowRoute &route : topology.routes) {
+        if (!signalFlowRouteMatchesScope(route, profile, controllerId)
+            || route.sourceKind != sourceKind || route.sourceIndex != sourceIndex
+            || route.sourceSubIndex != sourceSubIndex) continue;
+        if (!replacement || (!replacement->enabled && route.enabled)) replacement = &route;
+        route.primaryProjection = false;
+    }
+    if (replacement) replacement->primaryProjection = true;
+
+    // Button/POV absence means legacy default behavior, so explicitly clear a
+    // just-disconnected source before the projection routine preserves it.
+    if (!replacement) {
+        if (sourceKind == SignalFlowPortKind::Button && sourceIndex >= 0) {
+            ButtonBindings &buttons = deviceMapping ? deviceMapping->buttons : profile.buttons;
+            if (buttons.size() <= static_cast<size_t>(sourceIndex)) {
+                buttons.resize(static_cast<size_t>(sourceIndex + 1));
+            }
+            const QString customName = buttons[static_cast<size_t>(sourceIndex)].customName;
+            buttons[static_cast<size_t>(sourceIndex)] = {};
+            buttons[static_cast<size_t>(sourceIndex)].customName = customName;
+            buttons[static_cast<size_t>(sourceIndex)].explicitlyConfigured = true;
+        } else if (sourceKind == SignalFlowPortKind::PovDirection && sourceIndex >= 0
+                   && sourceSubIndex >= 0 && sourceSubIndex < kPovDirectionCount) {
+            PovBindings &povs = deviceMapping ? deviceMapping->povs : profile.povs;
+            if (povs.size() <= static_cast<size_t>(sourceIndex)) {
+                povs.resize(static_cast<size_t>(sourceIndex + 1));
+            }
+            ButtonBinding &binding = povs[static_cast<size_t>(sourceIndex)]
+                [static_cast<size_t>(sourceSubIndex)];
+            const QString customName = binding.customName;
+            binding = {};
+            binding.customName = customName;
+            binding.explicitlyConfigured = true;
+        } else if (sourceKind == SignalFlowPortKind::NativePov && sourceIndex >= 0) {
+            NativePovBindings &nativePovs = deviceMapping ? deviceMapping->nativePovBindings
+                                                           : m_configuration.nativePovBindings;
+            if (nativePovs.size() <= static_cast<size_t>(sourceIndex)) {
+                nativePovs.resize(static_cast<size_t>(sourceIndex + 1));
+            }
+            nativePovs[static_cast<size_t>(sourceIndex)] = {};
+        }
+    }
+    if (destinationKind == SignalFlowPortKind::Axis) {
+        const int remainingInputs = static_cast<int>(std::count_if(topology.routes.cbegin(),
+            topology.routes.cend(), [&profile, &controllerId, destinationIndex](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id
+                    && route.controllerRecordId == controllerId
+                    && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.destinationIndex == destinationIndex;
+            }));
+        if (remainingInputs <= 1) {
+            topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
+                [&profile, &controllerId, destinationIndex](const SignalFlowMixer &mixer) {
+                    return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                        && mixer.destinationAxis == destinationIndex;
+                }), topology.mixers.end());
+        }
+    }
+    QString description;
+    switch (sourceKind) {
+    case SignalFlowPortKind::Axis:
+        description = sourceIndex >= 0 && sourceIndex < kPhysicalAxisCount
+            ? QString(u"Disconnected %1"_qs).arg(physicalAxisLabel(static_cast<PhysicalAxis>(sourceIndex)))
+            : u"Disconnected axis route"_qs;
+        break;
+    case SignalFlowPortKind::Button:
+        description = QString(u"Disconnected Button %1"_qs).arg(sourceIndex + 1);
+        break;
+    case SignalFlowPortKind::PovDirection:
+        description = QString(u"Disconnected POV %1 %2"_qs).arg(sourceIndex + 1)
+            .arg(povDirectionLabel(static_cast<PovDirection>(sourceSubIndex + 1)));
+        break;
+    case SignalFlowPortKind::NativePov:
+        description = QString(u"Disconnected native POV %1"_qs).arg(sourceIndex + 1);
+        break;
+    }
     commitSignalFlowCommand(std::move(before), description);
     return signalFlowActionResult(true, u"Route disconnected"_qs, description, id);
+}
+
+QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
+                                                   const QString &processorKind, bool enabled,
+                                                   qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Processor change was not applied"_qs,
+            u"The graph changed while this processor was being prepared. Review the current route and retry."_qs,
+            routeId.trimmed());
+    }
+    const QString kind = processorKind.trimmed().toLower();
+    const QSet<QString> supported{u"curve"_qs, u"deadzone"_qs, u"center-hold"_qs,
+                                  u"invert"_qs, u"limits"_qs, u"adaptive-response"_qs};
+    if (!supported.contains(kind)) {
+        return signalFlowActionResult(false, u"Choose a supported processor"_qs,
+            u"Signal Flow can add Curve, Deadzone, Center Hold, Invert, Output Limits, or Adaptive Response to an axis route."_qs,
+            routeId.trimmed());
+    }
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        return signalFlowActionResult(false, u"Choose one physical input first"_qs,
+            u"Select one source before editing a processor in this multi-device Device Rig."_qs,
+            routeId.trimmed());
+    }
+    reconcileSignalFlowState(&m_configuration);
+    ControllerProfile &profile = currentProfile();
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
+    if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
+        || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
+        || route->sourceIndex >= kPhysicalAxisCount) {
+        return signalFlowActionResult(false, u"Processor target is unavailable"_qs,
+            u"Choose a current axis route. Button and POV routes do not have an axis conditioning chain."_qs,
+            routeId.trimmed());
+    }
+    const auto shared = std::find_if(m_configuration.signalFlow.sharedProcessors.cbegin(),
+        m_configuration.signalFlow.sharedProcessors.cend(), [&profile, &controllerId, &kind, route](
+            const SignalFlowSharedProcessor &processor) {
+            return processor.enabled && processor.profileId == profile.id
+                && processor.controllerRecordId == controllerId && processor.kind == kind
+                && std::find(processor.sourceAxes.cbegin(), processor.sourceAxes.cend(),
+                             route->sourceIndex) != processor.sourceAxes.cend();
+        });
+    if (shared != m_configuration.signalFlow.sharedProcessors.cend()) {
+        return signalFlowActionResult(false, u"Shared processor needs an explicit split"_qs,
+            u"This source uses a shared conditioner. Split it first to keep the other selected channels unchanged, then edit the local processor."_qs,
+            routeId.trimmed());
+    }
+    MapperConfiguration before = m_configuration;
+    AxisMapping &axis = (deviceMapping ? deviceMapping->axes : profile.axes)[static_cast<size_t>(route->sourceIndex)];
+    AdaptiveResponseAxisOverride &adaptive = (deviceMapping ? deviceMapping->adaptiveResponse
+                                                              : profile.adaptiveResponse)
+        .axes[static_cast<size_t>(route->sourceIndex)];
+    if (kind == u"curve"_qs) {
+        axis.curve = enabled ? standardCurveDefinition(CurveFamily::SCurve, 0.50F)
+                             : linearCurveDefinition();
+    } else if (kind == u"deadzone"_qs) {
+        axis.deadzone = enabled ? 0.08F : 0.03F;
+    } else if (kind == u"center-hold"_qs) {
+        axis.hysteresis = enabled ? 0.01F : 0.002F;
+    } else if (kind == u"invert"_qs) {
+        axis.inverted = enabled;
+    } else if (kind == u"limits"_qs) {
+        const bool oneSided = axis.rangeMode == AxisRangeMode::OneSided;
+        const float minimum = enabled ? (oneSided ? 0.08F : -0.85F) : (oneSided ? 0.0F : -1.0F);
+        const float maximum = enabled ? (oneSided ? 0.92F : 0.85F) : 1.0F;
+        axis.outputMinimum = minimum;
+        axis.outputMaximum = maximum;
+        if (oneSided) {
+            axis.oneSidedOutputMinimum = minimum;
+            axis.oneSidedOutputMaximum = maximum;
+        } else {
+            axis.centeredOutputMinimum = minimum;
+            axis.centeredOutputMaximum = maximum;
+        }
+    } else if (kind == u"adaptive-response"_qs) {
+        adaptive.settings.enabled = enabled;
+        adaptive.properties |= AdaptiveResponseEnabled;
+    }
+    const QString label = kind == u"center-hold"_qs ? u"Center Hold"_qs
+        : kind == u"adaptive-response"_qs ? u"Adaptive Response"_qs
+        : kind == u"limits"_qs ? u"Output Limits"_qs
+        : kind.left(1).toUpper() + kind.mid(1);
+    const QString description = QString(u"%1 %2 on %3"_qs).arg(enabled ? u"Added"_qs : u"Removed"_qs,
+        label, physicalAxisLabel(static_cast<PhysicalAxis>(route->sourceIndex)));
+    commitSignalFlowCommand(std::move(before), description);
+    return signalFlowActionResult(true, enabled ? u"Processor added"_qs : u"Processor removed"_qs,
+                                  description, routeId.trimmed());
+}
+
+QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
+                                                  const QString &processorKind,
+                                                  qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Shared processor was not created"_qs,
+            u"The graph changed while this shared processor was being prepared. Review the latest routes and retry."_qs);
+    }
+    const QString kind = processorKind.trimmed().toLower();
+    const QSet<QString> supported{u"curve"_qs, u"deadzone"_qs, u"center-hold"_qs,
+                                  u"invert"_qs, u"limits"_qs, u"adaptive-response"_qs};
+    if (!supported.contains(kind)) {
+        return signalFlowActionResult(false, u"Choose a supported processor"_qs,
+            u"Only Curve, Deadzone, Center Hold, Invert, Output Limits, and Adaptive Response can be shared between axis sources."_qs);
+    }
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        return signalFlowActionResult(false, u"Choose one physical input first"_qs,
+            u"Select one source before sharing a processor in this multi-device Device Rig."_qs);
+    }
+    reconcileSignalFlowState(&m_configuration);
+    ControllerProfile &profile = currentProfile();
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    if (routeIds.size() < 2 || routeIds.size() > kPhysicalAxisCount) {
+        return signalFlowActionResult(false, u"Choose two or more axis routes"_qs,
+            u"A shared processor needs two to eight distinct axis sources in the current Signal Flow scope."_qs);
+    }
+    QSet<QString> seenRouteIds;
+    QSet<int> seenAxes;
+    std::vector<int> sourceAxes;
+    sourceAxes.reserve(static_cast<size_t>(routeIds.size()));
+    int ownerAxis = -1;
+    for (const QString &rawId : routeIds) {
+        const QString id = rawId.trimmed();
+        const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, id);
+        if (id.isEmpty() || seenRouteIds.contains(id) || !route
+            || !signalFlowRouteMatchesScope(*route, profile, controllerId)
+            || !route->enabled || route->sourceKind != SignalFlowPortKind::Axis
+            || route->sourceIndex < 0 || route->sourceIndex >= kPhysicalAxisCount) {
+            return signalFlowActionResult(false, u"Selected route is unavailable"_qs,
+                u"Choose distinct enabled axis routes from the current Signal Flow scope before sharing a processor."_qs, id);
+        }
+        if (seenAxes.contains(route->sourceIndex)) {
+            return signalFlowActionResult(false, u"Choose one route per axis source"_qs,
+                u"Fan-out legs from the same physical axis already share that source setting; select a different physical axis."_qs, id);
+        }
+        seenRouteIds.insert(id);
+        seenAxes.insert(route->sourceIndex);
+        if (ownerAxis < 0) ownerAxis = route->sourceIndex;
+        sourceAxes.push_back(route->sourceIndex);
+    }
+    const AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
+    const AxisMapping &owner = axes[static_cast<size_t>(ownerAxis)];
+    const bool processorActive = kind == u"curve"_qs
+        ? owner.curve.family != CurveFamily::Linear || owner.curve.pointEditing
+            || std::abs(owner.curve.strength) > 0.0001F
+        : kind == u"deadzone"_qs ? std::abs(owner.deadzone - 0.03F) > 0.0001F
+        : kind == u"center-hold"_qs ? std::abs(owner.hysteresis - 0.002F) > 0.0001F
+        : kind == u"invert"_qs ? owner.inverted
+        : kind == u"limits"_qs
+            ? std::abs(owner.outputMinimum - (owner.rangeMode == AxisRangeMode::OneSided ? 0.0F : -1.0F)) > 0.0001F
+                || std::abs(owner.outputMaximum - 1.0F) > 0.0001F
+        : m_configuration.adaptiveResponseGlobal.axes[static_cast<size_t>(ownerAxis)].settings.enabled
+            || profile.adaptiveResponse.axes[static_cast<size_t>(ownerAxis)].settings.enabled
+            || (deviceMapping && deviceMapping->adaptiveResponse.axes[static_cast<size_t>(ownerAxis)].settings.enabled);
+    if (!processorActive) {
+        const QString label = kind == u"center-hold"_qs ? u"Center Hold"_qs
+            : kind == u"adaptive-response"_qs ? u"Adaptive Response"_qs
+            : kind == u"limits"_qs ? u"Output Limits"_qs
+            : kind.left(1).toUpper() + kind.mid(1);
+        return signalFlowActionResult(false, u"Add the owner processor first"_qs,
+            QString(u"Add or configure %1 on the first selected axis, then share that exact setting with the other routes."_qs)
+                .arg(label));
+    }
+    MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    for (auto iterator = topology.sharedProcessors.begin();
+         iterator != topology.sharedProcessors.end();) {
+        if (iterator->profileId != profile.id || iterator->controllerRecordId != controllerId
+            || iterator->kind != kind) {
+            ++iterator;
+            continue;
+        }
+        iterator->sourceAxes.erase(std::remove_if(iterator->sourceAxes.begin(), iterator->sourceAxes.end(),
+            [&seenAxes](int axis) { return seenAxes.contains(axis); }), iterator->sourceAxes.end());
+        if (iterator->sourceAxes.size() < 2) {
+            iterator = topology.sharedProcessors.erase(iterator);
+            continue;
+        }
+        if (std::find(iterator->sourceAxes.cbegin(), iterator->sourceAxes.cend(), iterator->ownerAxis)
+            == iterator->sourceAxes.cend()) {
+            iterator->ownerAxis = iterator->sourceAxes.front();
+            iterator->identityKey = signalFlowSharedProcessorIdentityKey(
+                profile, controllerId, kind, iterator->ownerAxis);
+        }
+        ++iterator;
+    }
+    if (topology.sharedProcessors.size() >= kMaximumSignalFlowSharedProcessors) {
+        return signalFlowActionResult(false, u"Shared processor limit reached"_qs,
+            u"This configuration has reached its bounded Signal Flow shared-processor limit."_qs);
+    }
+    SignalFlowSharedProcessor shared;
+    shared.profileId = profile.id;
+    shared.controllerRecordId = controllerId;
+    shared.kind = kind;
+    shared.ownerAxis = ownerAxis;
+    shared.sourceAxes = std::move(sourceAxes);
+    shared.enabled = true;
+    shared.identityKey = signalFlowSharedProcessorIdentityKey(profile, controllerId, kind, ownerAxis);
+    topology.sharedProcessors.push_back(std::move(shared));
+    const QString label = kind == u"center-hold"_qs ? u"Center Hold"_qs
+        : kind == u"adaptive-response"_qs ? u"Adaptive Response"_qs
+        : kind == u"limits"_qs ? u"Output Limits"_qs
+        : kind.left(1).toUpper() + kind.mid(1);
+    const QString description = QString(u"Shared %1 across %2 axis sources"_qs)
+        .arg(label).arg(seenAxes.size());
+    commitSignalFlowCommand(std::move(before), description);
+    return signalFlowActionResult(true, u"Shared processor created"_qs, description,
+                                  routeIds.front().trimmed());
+}
+
+QVariantMap AppBackend::signalFlowSplitSharedProcessor(const QString &routeId,
+                                                       const QString &processorKind,
+                                                       qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Shared processor was not split"_qs,
+            u"The graph changed while this split was being prepared. Review the latest route and retry."_qs,
+            routeId.trimmed());
+    }
+    const QString kind = processorKind.trimmed().toLower();
+    const QSet<QString> supported{u"curve"_qs, u"deadzone"_qs, u"center-hold"_qs,
+                                  u"invert"_qs, u"limits"_qs, u"adaptive-response"_qs};
+    if (!supported.contains(kind)) {
+        return signalFlowActionResult(false, u"Choose a supported processor"_qs,
+            u"Only source-owned axis processors can be split from a shared Signal Flow object."_qs,
+            routeId.trimmed());
+    }
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        return signalFlowActionResult(false, u"Choose one physical input first"_qs,
+            u"Select one source before changing a shared processor in this multi-device Device Rig."_qs,
+            routeId.trimmed());
+    }
+    reconcileSignalFlowState(&m_configuration);
+    ControllerProfile &profile = currentProfile();
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
+    if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
+        || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
+        || route->sourceIndex >= kPhysicalAxisCount) {
+        return signalFlowActionResult(false, u"Route is unavailable"_qs,
+            u"Choose a current axis route before splitting a shared processor."_qs, routeId.trimmed());
+    }
+    SignalFlowState &topology = m_configuration.signalFlow;
+    const auto shared = std::find_if(topology.sharedProcessors.cbegin(), topology.sharedProcessors.cend(),
+        [&profile, &controllerId, &kind, route](const SignalFlowSharedProcessor &processor) {
+            return processor.enabled && processor.profileId == profile.id
+                && processor.controllerRecordId == controllerId && processor.kind == kind
+                && std::find(processor.sourceAxes.cbegin(), processor.sourceAxes.cend(), route->sourceIndex)
+                    != processor.sourceAxes.cend();
+        });
+    if (shared == topology.sharedProcessors.cend()) {
+        return signalFlowActionResult(false, u"Processor is already local"_qs,
+            u"This route does not currently use a shared processor of that kind."_qs, routeId.trimmed());
+    }
+    MapperConfiguration before = m_configuration;
+    const int sourceAxis = route->sourceIndex;
+    for (auto iterator = topology.sharedProcessors.begin();
+         iterator != topology.sharedProcessors.end(); ++iterator) {
+        if (iterator->identityKey != shared->identityKey) continue;
+        iterator->sourceAxes.erase(std::remove(iterator->sourceAxes.begin(), iterator->sourceAxes.end(), sourceAxis),
+                                   iterator->sourceAxes.end());
+        if (iterator->sourceAxes.size() < 2) {
+            topology.sharedProcessors.erase(iterator);
+        } else if (iterator->ownerAxis == sourceAxis) {
+            iterator->ownerAxis = iterator->sourceAxes.front();
+            iterator->identityKey = signalFlowSharedProcessorIdentityKey(
+                profile, controllerId, kind, iterator->ownerAxis);
+        }
+        break;
+    }
+    const QString label = kind == u"center-hold"_qs ? u"Center Hold"_qs
+        : kind == u"adaptive-response"_qs ? u"Adaptive Response"_qs
+        : kind == u"limits"_qs ? u"Output Limits"_qs
+        : kind.left(1).toUpper() + kind.mid(1);
+    const QString description = QString(u"Split %1 from %2"_qs)
+        .arg(label, physicalAxisLabel(static_cast<PhysicalAxis>(sourceAxis)));
+    commitSignalFlowCommand(std::move(before), description);
+    return signalFlowActionResult(true, u"Shared processor split"_qs,
+                                  u"This axis retains its current settings as an independent local processor."_qs,
+                                  routeId.trimmed());
 }
 
 QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
@@ -6422,20 +7804,48 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"Default Connections needs one explicit source in this multi-device Device Rig."_qs);
     }
-    const AxisMappings &axes = mapping ? mapping->axes : currentProfile().axes;
+    const ControllerProfile &profile = currentProfile();
+    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
     QVariantList changes;
+    int actionableChanges = 0;
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
         const VirtualAxis desired = static_cast<VirtualAxis>(axis + 1);
-        if (normalized == u"unassigned"_qs && axes[static_cast<size_t>(axis)].target != VirtualAxis::Disabled) continue;
-        if (axes[static_cast<size_t>(axis)].target == desired) continue;
-        changes.append(QVariantMap{{u"source"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
-                                  {u"from"_qs, virtualAxisLabel(axes[static_cast<size_t>(axis)].target)},
-                                  {u"to"_qs, virtualAxisLabel(desired)}});
+        QStringList existing;
+        bool hasDesiredOnly = true;
+        for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+            if (!route.enabled || route.profileId != profile.id || route.controllerRecordId != controllerId
+                || route.sourceKind != SignalFlowPortKind::Axis || route.sourceIndex != axis
+                || route.destinationKind != SignalFlowPortKind::Axis) continue;
+            existing.append(virtualAxisLabel(static_cast<VirtualAxis>(route.destinationIndex)));
+            hasDesiredOnly = hasDesiredOnly && route.destinationIndex == static_cast<int>(desired);
+        }
+        if (normalized == u"unassigned"_qs && !existing.isEmpty()) continue;
+        if (normalized == u"replace-all"_qs && existing.size() == 1 && hasDesiredOnly) continue;
+        const bool destinationBusy = normalized == u"unassigned"_qs && std::any_of(
+            m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
+            [&profile, &controllerId, axis](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id
+                    && route.controllerRecordId == controllerId
+                    && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex != axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.destinationIndex == axis + 1;
+            });
+        QVariantMap change{{u"source"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
+                           {u"from"_qs, existing.isEmpty() ? u"Unassigned"_qs
+                               : existing.join(u", "_qs)},
+                           {u"to"_qs, virtualAxisLabel(desired)},
+                           {u"blocked"_qs, destinationBusy}};
+        if (destinationBusy) {
+            change.insert(u"reason"_qs, u"Destination already has an analog source; create a mixer or use Replace All."_qs);
+        } else {
+            ++actionableChanges;
+        }
+        changes.append(std::move(change));
     }
     return {{u"success"_qs, true}, {u"mode"_qs, normalized}, {u"changes"_qs, changes},
-            {u"count"_qs, changes.size()}, {u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
+            {u"count"_qs, actionableChanges}, {u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
             {u"message"_qs, normalized == u"unassigned"_qs
-                ? u"Only currently unassigned axes will be connected 1:1."_qs
+                ? u"Only unassigned axes with an unoccupied default destination will be connected 1:1."_qs
                 : u"All axis destinations in this scope will be replaced by the 1:1 default map."_qs}};
 }
 
@@ -6453,14 +7863,55 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
     VirtualOutputLayout *layout = activeOutputLayout();
     if (!layout) return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
         u"Assign a Virtual Output before applying default connections."_qs);
-    AxisMappings &axes = mapping ? mapping->axes : currentProfile().axes;
+    ControllerProfile &profile = currentProfile();
+    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
     MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
     if (normalized == u"replace-all"_qs) {
-        for (AxisMapping &axis : axes) axis.target = VirtualAxis::Disabled;
+        topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+            [&profile, &controllerId](const SignalFlowRoute &route) {
+                return route.profileId == profile.id && route.controllerRecordId == controllerId
+                    && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis;
+            }), topology.routes.end());
+        topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
+            [&profile, &controllerId](const SignalFlowMixer &mixer) {
+                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId;
+            }), topology.mixers.end());
     }
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-        if (normalized == u"unassigned"_qs && axes[static_cast<size_t>(axis)].target != VirtualAxis::Disabled) continue;
-        axes[static_cast<size_t>(axis)].target = static_cast<VirtualAxis>(axis + 1);
+        const bool assigned = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
+            [&profile, &controllerId, axis](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id
+                    && route.controllerRecordId == controllerId
+                    && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex == axis
+                    && route.destinationKind == SignalFlowPortKind::Axis;
+            });
+        if (normalized == u"unassigned"_qs && assigned) continue;
+        if (normalized == u"unassigned"_qs) {
+            const bool destinationBusy = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
+                [&profile, &controllerId, axis](const SignalFlowRoute &route) {
+                    return route.enabled && route.profileId == profile.id
+                        && route.controllerRecordId == controllerId
+                        && route.sourceKind == SignalFlowPortKind::Axis
+                        && route.sourceIndex != axis && route.destinationKind == SignalFlowPortKind::Axis
+                        && route.destinationIndex == axis + 1;
+                });
+            if (destinationBusy) continue;
+        }
+        SignalFlowRoute route;
+        route.profileId = profile.id;
+        route.controllerRecordId = controllerId;
+        route.sourceKind = SignalFlowPortKind::Axis;
+        route.sourceIndex = axis;
+        route.sourceSubIndex = -1;
+        route.destinationKind = SignalFlowPortKind::Axis;
+        route.destinationIndex = axis + 1;
+        route.destinationSubIndex = -1;
+        route.primaryProjection = true;
+        route.enabled = true;
+        route.identityKey = signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, axis);
+        topology.routes.push_back(std::move(route));
         layout->requirements.axes[static_cast<size_t>(axis + 1)] = true;
     }
     if (preview.value(u"count"_qs).toInt() == 0) {
@@ -6488,6 +7939,14 @@ QVariantMap AppBackend::signalFlowUndo(qulonglong expectedRevision)
     m_signalFlowCommandInFlight = false;
     command.redoRevision = m_configurationGeneration;
     m_signalFlowRedo.push_back(std::move(command));
+    // We are now exactly at the `after` snapshot of the preceding undo
+    // command. Persisting the reverted state legitimately advances the
+    // global configuration generation, so carry that fresh precondition to
+    // the next undo rather than treating our own successful undo as an
+    // external edit conflict.
+    if (!m_signalFlowUndo.empty()) {
+        m_signalFlowUndo.back().undoRevision = m_configurationGeneration;
+    }
     m_signalFlowActionFeedback = u"Signal Flow change undone."_qs;
     emit signalFlowChanged();
     return signalFlowActionResult(true, u"Undo applied"_qs, m_signalFlowActionFeedback);
@@ -6507,6 +7966,13 @@ QVariantMap AppBackend::signalFlowRedo(qulonglong expectedRevision)
     m_signalFlowCommandInFlight = false;
     command.undoRevision = m_configurationGeneration;
     m_signalFlowUndo.push_back(std::move(command));
+    // Symmetric redo-chain rule: after restoring this command we are at the
+    // `before` snapshot of the next redo command, with a new durable
+    // generation caused by persistence. Keep that command usable while any
+    // unrelated canonical edit still invalidates both stacks normally.
+    if (!m_signalFlowRedo.empty()) {
+        m_signalFlowRedo.back().redoRevision = m_configurationGeneration;
+    }
     m_signalFlowActionFeedback = u"Signal Flow change restored."_qs;
     emit signalFlowChanged();
     return signalFlowActionResult(true, u"Redo applied"_qs, m_signalFlowActionFeedback);
@@ -6568,6 +8034,90 @@ bool AppBackend::signalFlowSaveNodeLayout(const QString &objectId, double x, dou
     return saveSignalFlowPresentation();
 }
 
+QVariantMap AppBackend::signalFlowSetPortGroupCollapsed(const QString &cardId,
+                                                        const QString &group, bool collapsed)
+{
+    const QString card = cardId.trimmed().left(96);
+    const QString label = group.trimmed().left(96);
+    const QSet<QString> inputGroups{u"Axes"_qs, u"Buttons"_qs, u"POV Directions"_qs, u"Native POV"_qs};
+    const QSet<QString> outputGroups{u"Virtual Axes"_qs, u"Virtual Buttons"_qs, u"Virtual POV"_qs};
+    const bool inputCard = card.startsWith(u"input:"_qs);
+    const bool outputCard = card.startsWith(u"output:"_qs);
+    if (card.isEmpty() || (!inputCard && !outputCard)
+        || (inputCard && !inputGroups.contains(label))
+        || (outputCard && !outputGroups.contains(label))) {
+        return signalFlowActionResult(false, u"Port group was not changed"_qs,
+            u"That port group is no longer part of the current Signal Flow workspace."_qs, card);
+    }
+    const QString workspaceKey = signalFlowWorkspaceKey();
+    for (SignalFlowPortGroupState &state : m_configuration.signalFlow.portGroups) {
+        if (state.workspaceKey != workspaceKey || state.cardId != card || state.group != label) continue;
+        state.collapsed = collapsed;
+        m_signalFlowActionFeedback = QString(u"%1 is now %2."_qs).arg(label,
+            collapsed ? u"collapsed"_qs : u"expanded"_qs);
+        const bool saved = saveSignalFlowPresentation();
+        return signalFlowActionResult(saved, saved ? u"Port group updated"_qs : u"Port group was not saved"_qs,
+            saved ? m_signalFlowActionFeedback : u"Signal Flow could not save this port group state."_qs, card);
+    }
+    if (m_configuration.signalFlow.portGroups.size() >= kMaximumSignalFlowPortGroupStates) {
+        return signalFlowActionResult(false, u"Port group was not saved"_qs,
+            u"This configuration has reached its bounded Signal Flow port-group limit."_qs, card);
+    }
+    m_configuration.signalFlow.portGroups.push_back({workspaceKey, card, label, collapsed});
+    m_signalFlowActionFeedback = QString(u"%1 is now %2."_qs).arg(label,
+        collapsed ? u"collapsed"_qs : u"expanded"_qs);
+    const bool saved = saveSignalFlowPresentation();
+    return signalFlowActionResult(saved, saved ? u"Port group updated"_qs : u"Port group was not saved"_qs,
+        saved ? m_signalFlowActionFeedback : u"Signal Flow could not save this port group state."_qs, card);
+}
+
+QVariantMap AppBackend::signalFlowAutoLayout()
+{
+    const ControllerProfile &profile = currentProfile();
+    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString workspaceKey = signalFlowWorkspaceKey();
+    const QString inputId = mapping ? QString(u"input:%1:%2"_qs).arg(profile.id, controllerId)
+                                    : QString(u"input:%1:legacy"_qs).arg(profile.id);
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    const QString outputId = layout ? QString(u"output:%1"_qs).arg(layout->id) : u"output:missing"_qs;
+    const auto upsert = [this, &workspaceKey](const QString &objectId, float x, float y) {
+        for (SignalFlowNodeLayout &entry : m_configuration.signalFlow.nodeLayouts) {
+            if (entry.workspaceKey != workspaceKey || entry.objectId != objectId) continue;
+            if (entry.pinned) return true;
+            entry.x = x;
+            entry.y = y;
+            return true;
+        }
+        if (m_configuration.signalFlow.nodeLayouts.size() >= kMaximumSignalFlowNodeLayouts) return false;
+        m_configuration.signalFlow.nodeLayouts.push_back({workspaceKey, objectId, x, y, false});
+        return true;
+    };
+    if (!upsert(inputId, 80.0F, 160.0F) || !upsert(outputId, 1380.0F, 160.0F)) {
+        return signalFlowActionResult(false, u"Auto-layout was not saved"_qs,
+            u"This configuration has reached its bounded Signal Flow layout limit."_qs);
+    }
+    QSet<QString> uniqueProcessors;
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        if (!signalFlowRouteMatchesScope(route, profile, controllerId)) continue;
+        for (const QString &processorId : route.processorPath) uniqueProcessors.insert(processorId);
+    }
+    QStringList processors = uniqueProcessors.values();
+    processors.sort(Qt::CaseSensitive);
+    for (int index = 0; index < processors.size(); ++index) {
+        const int column = index % 4;
+        const int row = index / 4;
+        if (!upsert(processors.at(index), 380.0F + column * 220.0F, 105.0F + row * 126.0F)) {
+            return signalFlowActionResult(false, u"Auto-layout was not saved"_qs,
+                u"This configuration has reached its bounded Signal Flow layout limit."_qs);
+        }
+    }
+    m_signalFlowActionFeedback = u"Signal Flow arranged the current scope with a bounded, stable layout."_qs;
+    const bool saved = saveSignalFlowPresentation();
+    return signalFlowActionResult(saved, saved ? u"Auto-layout applied"_qs : u"Auto-layout was not saved"_qs,
+        saved ? m_signalFlowActionFeedback : u"Signal Flow could not save the requested layout."_qs);
+}
+
 QVariantMap AppBackend::inputLearning() const
 {
     const auto kindName = [this] {
@@ -6575,6 +8125,7 @@ QVariantMap AppBackend::inputLearning() const
         case InputLearningKind::Axis: return u"axis"_qs;
         case InputLearningKind::Button: return u"button"_qs;
         case InputLearningKind::Pov: return u"pov"_qs;
+        case InputLearningKind::SignalFlowSource: return u"signal-flow"_qs;
         case InputLearningKind::None: return u"none"_qs;
         }
         return u"none"_qs;
@@ -6590,13 +8141,38 @@ QVariantMap AppBackend::inputLearning() const
         }
         return u"idle"_qs;
     };
+    QString sourceKind;
+    int sourceIndex = -1;
+    int sourceSubIndex = -1;
+    if (m_inputLearning.sourceAxis >= 0) {
+        sourceKind = u"axis"_qs;
+        sourceIndex = m_inputLearning.sourceAxis;
+    } else if (m_inputLearning.sourceButton > 0) {
+        sourceKind = u"button"_qs;
+        sourceIndex = m_inputLearning.sourceButton - 1;
+    } else if (m_inputLearning.sourcePovHat > 0
+               && m_inputLearning.sourcePovDirection != PovDirection::Centered) {
+        sourceKind = u"pov"_qs;
+        sourceIndex = m_inputLearning.sourcePovHat - 1;
+        sourceSubIndex = povDirectionIndex(m_inputLearning.sourcePovDirection);
+    }
+    QString sourcePortId;
+    if (sourceKind == u"axis"_qs || sourceKind == u"button"_qs) {
+        sourcePortId = QString(u"%1:%2"_qs).arg(sourceKind).arg(sourceIndex);
+    } else if (sourceKind == u"pov"_qs && sourceSubIndex >= 0) {
+        sourcePortId = QString(u"pov:%1:%2"_qs).arg(sourceIndex).arg(sourceSubIndex);
+    }
     return {{u"active"_qs, m_inputLearning.kind != InputLearningKind::None},
         {u"kind"_qs, kindName()}, {u"phase"_qs, phaseName()},
         {u"target"_qs, m_inputLearning.target},
         {u"targetLabel"_qs, m_inputLearning.kind == InputLearningKind::Axis
             ? QString(u"vJoy %1"_qs).arg(m_inputLearning.target)
+            : m_inputLearning.kind == InputLearningKind::SignalFlowSource
+                ? u"Physical Signal Flow source"_qs
             : QString(u"vJoy Button %1"_qs).arg(m_inputLearning.virtualButton)},
         {u"sourceLabel"_qs, m_inputLearning.sourceLabel},
+        {u"sourceKind"_qs, sourceKind}, {u"sourceIndex"_qs, sourceIndex},
+        {u"sourceSubIndex"_qs, sourceSubIndex}, {u"sourcePortId"_qs, sourcePortId},
         {u"message"_qs, m_inputLearning.message}};
 }
 
@@ -6653,9 +8229,153 @@ void AppBackend::setMappingActive(bool active)
     emit stateChanged();
 }
 
+QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QString &target,
+                                                   const QString &decision,
+                                                   qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Route decision was not applied"_qs,
+            u"The routing changed while this decision was open. Review the current Signal Flow and choose again."_qs);
+    }
+    if (!validAxis(physicalAxis)) {
+        return signalFlowActionResult(false, u"Axis route is unavailable"_qs,
+            u"The selected physical axis is no longer part of this mapping context."_qs);
+    }
+
+    // Bring a focused-editor projection to its canonical form before taking
+    // the undo snapshot. This keeps a decision made from Axes, Standard, or
+    // Flight Deck equivalent to the same decision made from Signal Flow.
+    reconcileSignalFlowState(&m_configuration);
+    ControllerProfile &profile = currentProfile();
+    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
+        return signalFlowActionResult(false, u"Choose one physical input first"_qs,
+            u"This Device Rig contains multiple selected inputs. Select one source before changing an axis route."_qs);
+    }
+    const VirtualAxis virtualAxis = virtualAxisFromString(target);
+    const int targetIndex = static_cast<int>(virtualAxis);
+    if (virtualAxis == VirtualAxis::Disabled || targetIndex < 1
+        || targetIndex >= kVirtualAxisSlotCount) {
+        return signalFlowActionResult(false, u"Choose a virtual axis"_qs,
+            u"A conflict decision needs a valid exposed vJoy axis destination."_qs);
+    }
+    if (m_configuration.axisActivity[static_cast<size_t>(physicalAxis)] == PhysicalAxisActivity::Fixed) {
+        return signalFlowActionResult(false, u"This axis is marked inactive"_qs,
+            u"Complete a calibration with meaningful travel before routing this fixed descriptor axis."_qs);
+    }
+    if (!m_worker.runtime().virtualAxisAvailable[static_cast<size_t>(targetIndex)].load()) {
+        return signalFlowActionResult(false, u"Virtual axis is unavailable"_qs,
+            u"The requested vJoy axis is not exposed by the active virtual-output descriptor."_qs);
+    }
+    VirtualOutputLayout *layout = activeOutputLayout();
+    if (!layout) {
+        return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
+            u"Assign a Virtual Output to this profile before changing this route."_qs);
+    }
+
+    const QString normalizedDecision = decision.trimmed().toLower();
+    SignalFlowMixerMode mixerMode = SignalFlowMixerMode::Disabled;
+    if (normalizedDecision == u"average"_qs) mixerMode = SignalFlowMixerMode::Average;
+    else if (normalizedDecision == u"sum-clamped"_qs) mixerMode = SignalFlowMixerMode::SumClamped;
+    else if (normalizedDecision == u"highest-magnitude"_qs) mixerMode = SignalFlowMixerMode::HighestMagnitude;
+    else if (normalizedDecision != u"replace"_qs) {
+        return signalFlowActionResult(false, u"Choose a valid route decision"_qs,
+            u"Choose Replace, Average, Sum Clamped, or Highest Magnitude for this analog conflict."_qs);
+    }
+
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
+        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+    };
+    const bool anotherAnalogInput = std::any_of(m_configuration.signalFlow.routes.cbegin(),
+        m_configuration.signalFlow.routes.cend(), [&inScope, physicalAxis, targetIndex](const SignalFlowRoute &route) {
+            return route.enabled && inScope(route) && route.sourceKind == SignalFlowPortKind::Axis
+                && route.destinationKind == SignalFlowPortKind::Axis
+                && route.sourceIndex != physicalAxis && route.destinationIndex == targetIndex;
+        });
+    if (!anotherAnalogInput) {
+        return signalFlowActionResult(false, u"No active analog conflict"_qs,
+            u"The occupied destination changed before this decision was applied. Review the current Signal Flow."_qs);
+    }
+
+    MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    // A focused axis selector can express one primary target only. Replacing
+    // its source leg intentionally removes any graph-only fan-out from that
+    // source rather than leaving a hidden secondary path behind.
+    topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+        [&inScope, physicalAxis](const SignalFlowRoute &route) {
+            return inScope(route) && route.sourceKind == SignalFlowPortKind::Axis
+                && route.sourceIndex == physicalAxis;
+        }), topology.routes.end());
+
+    if (mixerMode == SignalFlowMixerMode::Disabled) {
+        topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+            [&inScope, physicalAxis, targetIndex](const SignalFlowRoute &route) {
+                return inScope(route) && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.sourceIndex != physicalAxis && route.destinationIndex == targetIndex;
+            }), topology.routes.end());
+        topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
+            [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
+                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                    && mixer.destinationAxis == targetIndex;
+            }), topology.mixers.end());
+    } else {
+        const auto mixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
+            [&profile, &controllerId, targetIndex](const SignalFlowMixer &candidate) {
+                return candidate.profileId == profile.id && candidate.controllerRecordId == controllerId
+                    && candidate.destinationAxis == targetIndex;
+            });
+        if (mixer != topology.mixers.end()) {
+            mixer->mode = mixerMode;
+            mixer->enabled = true;
+        } else {
+            SignalFlowMixer created;
+            created.profileId = profile.id;
+            created.controllerRecordId = controllerId;
+            created.destinationAxis = targetIndex;
+            created.mode = mixerMode;
+            created.enabled = true;
+            created.identityKey = signalFlowMixerIdentityKey(profile, controllerId, targetIndex);
+            topology.mixers.push_back(std::move(created));
+        }
+    }
+
+    SignalFlowRoute route;
+    route.profileId = profile.id;
+    route.controllerRecordId = controllerId;
+    route.sourceKind = SignalFlowPortKind::Axis;
+    route.sourceIndex = physicalAxis;
+    route.sourceSubIndex = -1;
+    route.destinationKind = SignalFlowPortKind::Axis;
+    route.destinationIndex = targetIndex;
+    route.destinationSubIndex = -1;
+    route.primaryProjection = true;
+    route.enabled = true;
+    route.identityKey = signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, physicalAxis);
+    topology.routes.push_back(std::move(route));
+    layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
+
+    const QString description = mixerMode == SignalFlowMixerMode::Disabled
+        ? QString(u"Replaced competing routes into %1"_qs).arg(virtualAxisLabel(virtualAxis))
+        : QString(u"Connected %1 to %2 through a visible %3 mixer"_qs)
+              .arg(physicalAxisLabel(static_cast<PhysicalAxis>(physicalAxis)),
+                   virtualAxisLabel(virtualAxis),
+                   normalizedDecision == u"sum-clamped"_qs ? u"Sum Clamped"_qs
+                   : normalizedDecision == u"highest-magnitude"_qs ? u"Highest Magnitude"_qs
+                   : u"Average"_qs);
+    commitSignalFlowCommand(std::move(before), description);
+    return signalFlowActionResult(true, u"Axis route decision applied"_qs, description);
+}
+
 bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explicitOverride)
 {
     if (!validAxis(physicalAxis)) return false;
+    // The axis selector is a focused projection of Signal Flow. Reconcile
+    // before checking a collision so a graph-originated fan-out cannot be
+    // bypassed merely because it has no legacy selector row.
+    reconcileSignalFlowState(&m_configuration);
     ControllerProfile &profile = currentProfile();
     DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
@@ -6679,8 +8399,24 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     // Do not mutate any persistent state until the conflict decision has
     // completed. In particular, Cancel must leave both routes and output
     // layout metadata exactly as they were before the attempted selection.
-    if (hasMappingConflict(axes, physicalAxis, virtualAxis)) {
+    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const bool topologyConflict = virtualAxis != VirtualAxis::Disabled
+        && std::any_of(m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
+            [&profile, &controllerId, physicalAxis, targetIndex](const SignalFlowRoute &route) {
+                return route.enabled && route.profileId == profile.id
+                    && route.controllerRecordId == controllerId
+                    && route.sourceKind == SignalFlowPortKind::Axis
+                    && route.destinationKind == SignalFlowPortKind::Axis
+                    && route.sourceIndex != physicalAxis && route.destinationIndex == targetIndex;
+            });
+    if (hasMappingConflict(axes, physicalAxis, virtualAxis) || topologyConflict) {
         if (!explicitOverride) return false;
+        // Compatibility callers that already confirmed a conflict retain a
+        // safe, explicit meaning: Replace. The visual focused editors use
+        // resolveAxisMappingConflict directly when the user chooses a mixer.
+        return resolveAxisMappingConflict(physicalAxis, target, u"replace"_qs,
+                                          m_configurationGeneration)
+            .value(u"success"_qs).toBool();
     }
     // The device descriptor is authoritative for the editor. Persist an
     // exposed target into this profile's layout before compiling the next
@@ -6798,12 +8534,23 @@ bool AppBackend::startPovLearning(int virtualButton)
     return true;
 }
 
+bool AppBackend::startSignalFlowInputLearning()
+{
+    if (!physicalConnected()) return false;
+    m_inputLearning = {};
+    m_inputLearning.kind = InputLearningKind::SignalFlowSource;
+    enterInputLearningArming();
+    emit inputLearningChanged();
+    return true;
+}
+
 void AppBackend::retryInputLearning()
 {
     if (m_inputLearning.kind == InputLearningKind::None) return;
     m_inputLearning.sourceAxis = -1;
     m_inputLearning.sourceButton = 0;
     m_inputLearning.sourcePovHat = 0;
+    m_inputLearning.sourcePovDirection = PovDirection::Centered;
     m_inputLearning.sourceLabel.clear();
     enterInputLearningArming();
     emit inputLearningChanged();
@@ -6836,6 +8583,8 @@ bool AppBackend::resolveInputLearningConflict(const QString &resolution)
         assigned = resolution == u"replace"_qs && setPovMapping(m_inputLearning.sourcePovHat,
             povDirectionIndex(m_inputLearning.sourcePovDirection), m_inputLearning.virtualButton, true);
         break;
+    case InputLearningKind::SignalFlowSource:
+        break;
     case InputLearningKind::None:
         break;
     }
@@ -6867,7 +8616,7 @@ void AppBackend::setAxisInverted(int physicalAxis, bool inverted)
         return;
     }
     (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].inverted = inverted;
-    persistAndApply();
+    persistAxisProcessorEdit(u"invert"_qs, physicalAxis);
 }
 
 void AppBackend::setAxisDeadzone(int physicalAxis, double deadzone)
@@ -6880,7 +8629,7 @@ void AppBackend::setAxisDeadzone(int physicalAxis, double deadzone)
     }
     (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].deadzone =
         std::clamp(static_cast<float>(deadzone), 0.0F, 0.95F);
-    persistAndApply();
+    persistAxisProcessorEdit(u"deadzone"_qs, physicalAxis);
 }
 
 void AppBackend::setAxisHysteresis(int physicalAxis, double hysteresis)
@@ -6893,7 +8642,7 @@ void AppBackend::setAxisHysteresis(int physicalAxis, double hysteresis)
     }
     (deviceMapping ? deviceMapping->axes : currentProfile().axes)[physicalAxis].hysteresis = std::clamp(
         static_cast<float>(hysteresis), 0.0F, 0.25F);
-    persistAndApply();
+    persistAxisProcessorEdit(u"center-hold"_qs, physicalAxis);
 }
 
 bool AppBackend::setAxisOutputLimits(int physicalAxis, double minimum, double maximum)
@@ -6921,7 +8670,7 @@ bool AppBackend::setAxisOutputLimits(int physicalAxis, double minimum, double ma
         mapping.centeredOutputMinimum = boundedMinimum;
         mapping.centeredOutputMaximum = boundedMaximum;
     }
-    persistAndApply();
+    persistAxisProcessorEdit(u"limits"_qs, physicalAxis);
     return true;
 }
 
@@ -6962,7 +8711,7 @@ void AppBackend::setCurveFamily(const QString &family)
     } else {
         return;
     }
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::setCurveStrength(double strength)
@@ -6972,7 +8721,7 @@ void AppBackend::setCurveStrength(double strength)
     const float bounded = std::clamp(static_cast<float>(strength), 0.0F, 1.0F);
     if (std::abs(mapping->curve.strength - bounded) < 0.0001F) return;
     mapping->curve.strength = bounded;
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::setCurveStandardPreset(const QString &presetId)
@@ -6982,7 +8731,7 @@ void AppBackend::setCurveStandardPreset(const QString &presetId)
     const CurveFamily family = mapping->curve.family == CurveFamily::SCurve
         ? CurveFamily::SCurve : CurveFamily::JCurve;
     mapping->curve = standardCurveDefinition(family, presetId);
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::applyAdvancedCurvePreset(const QString &presetId)
@@ -6991,7 +8740,7 @@ void AppBackend::applyAdvancedCurvePreset(const QString &presetId)
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return;
     mapping->curve = advancedCurveDefinition(presetId);
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 bool AppBackend::applyPersonalCurvePreset(const QString &presetId)
@@ -7010,7 +8759,7 @@ bool AppBackend::applyPersonalCurvePreset(const QString &presetId)
     mapping->curve.presetId = found->id;
     mapping->curve.sourcePresetId = found->id;
     mapping->curve.baseLabel = found->name;
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     appendEvent(u"Applied personal curve preset: "_qs + found->name);
     return true;
 }
@@ -7025,7 +8774,7 @@ void AppBackend::setCurvePointEditing(bool enabled)
     } else {
         mapping->curve.pointEditing = false;
     }
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::setCurveInterpolation(const QString &interpolation)
@@ -7034,7 +8783,7 @@ void AppBackend::setCurveInterpolation(const QString &interpolation)
     if (!mapping || !mapping->curve.pointEditing) return;
     mapping->curve.interpolation = interpolation.trimmed().compare(
         u"linear"_qs, Qt::CaseInsensitive) == 0 ? CurveInterpolation::Linear : CurveInterpolation::Smooth;
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::setCurvePointDensity(int density)
@@ -7043,7 +8792,7 @@ void AppBackend::setCurvePointDensity(int density)
     if (!mapping || !mapping->curve.pointEditing || !supportedCurvePointDensity(density)) return;
     const bool unipolar = axisIsOneSided(m_configuration.selectedAxisIndex);
     mapping->curve = resampleCurveDefinition(mapping->curve, unipolar, density);
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 void AppBackend::setCurveSymmetry(bool enabled)
@@ -7053,7 +8802,7 @@ void AppBackend::setCurveSymmetry(bool enabled)
         || axisIsOneSided(m_configuration.selectedAxisIndex)) return;
     mapping->curve.symmetry = enabled;
     normalizeCurveDefinition(mapping->curve, false);
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 bool AppBackend::setCurvePoint(int index, double input, double output)
@@ -7063,7 +8812,7 @@ bool AppBackend::setCurvePoint(int index, double input, double output)
     const bool changed = updateCurvePoint(mapping->curve,
         axisIsOneSided(m_configuration.selectedAxisIndex), index,
         static_cast<float>(input), static_cast<float>(output));
-    if (changed) persistAndApply();
+    if (changed) persistSelectedAxisProcessorEdit(u"curve"_qs);
     return changed;
 }
 
@@ -7073,7 +8822,7 @@ bool AppBackend::setCurvePointLocked(int index, bool locked)
     if (!mapping) return false;
     const bool changed = hotas::setCurvePointLocked(mapping->curve,
         axisIsOneSided(m_configuration.selectedAxisIndex), index, locked);
-    if (changed) persistAndApply();
+    if (changed) persistSelectedAxisProcessorEdit(u"curve"_qs);
     return changed;
 }
 
@@ -7085,7 +8834,7 @@ int AppBackend::addCurvePoint(double input, double output)
     if (!hotas::addCurvePoint(mapping->curve,
             axisIsOneSided(m_configuration.selectedAxisIndex),
             static_cast<float>(input), static_cast<float>(output), &selected)) return -1;
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     return selected;
 }
 
@@ -7095,7 +8844,7 @@ bool AppBackend::removeCurvePoint(int index)
     if (!mapping) return false;
     const bool changed = hotas::removeCurvePoint(mapping->curve,
         axisIsOneSided(m_configuration.selectedAxisIndex), index);
-    if (changed) persistAndApply();
+    if (changed) persistSelectedAxisProcessorEdit(u"curve"_qs);
     return changed;
 }
 
@@ -7104,7 +8853,7 @@ void AppBackend::resetCurveLinear()
     AxisMapping *mapping = selectedAxisMapping();
     if (!mapping) return;
     mapping->curve = linearCurveDefinition();
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
 }
 
 bool AppBackend::resetCurveToSource()
@@ -7123,7 +8872,7 @@ bool AppBackend::resetCurveToSource()
     } else {
         mapping->curve = linearCurveDefinition();
     }
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     return true;
 }
 
@@ -7142,7 +8891,7 @@ bool AppBackend::copyCurveFrom(const QString &profileId, int axisIndex)
         return false;
     }
     target->curve = curve;
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     appendEvent(u"Copied response curve from "_qs + source->name);
     return true;
 }
@@ -7281,7 +9030,7 @@ bool AppBackend::restoreCurveEditorSnapshot(const QString &snapshot)
     CurveDefinition restored = curveDefinitionFromJson(document.object(), unipolar);
     if (!curveDefinitionIsValid(restored, unipolar)) return false;
     mapping->curve = std::move(restored);
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     return true;
 }
 
@@ -7352,7 +9101,7 @@ bool AppBackend::applyCurvePreview()
     m_curvePreviewId.clear();
     m_curvePreviewLabel.clear();
     m_curvePreviewDefinition = linearCurveDefinition();
-    persistAndApply();
+    persistSelectedAxisProcessorEdit(u"curve"_qs);
     return true;
 }
 
@@ -11279,6 +13028,9 @@ void AppBackend::enterInputLearningArming()
     case InputLearningKind::Pov:
         m_inputLearning.message = u"RETURN THE HAT TO NEUTRAL…"_qs;
         break;
+    case InputLearningKind::SignalFlowSource:
+        m_inputLearning.message = u"RELEASE BUTTONS, CENTER HATS, AND HOLD AXES STEADY…"_qs;
+        break;
     case InputLearningKind::None:
         break;
     }
@@ -11318,6 +13070,8 @@ bool AppBackend::applyLearnedInput()
         assigned = setPovMapping(m_inputLearning.sourcePovHat,
             povDirectionIndex(m_inputLearning.sourcePovDirection), m_inputLearning.virtualButton, false);
         break;
+    case InputLearningKind::SignalFlowSource:
+        return false;
     case InputLearningKind::None:
         return false;
     }
@@ -11389,6 +13143,52 @@ void AppBackend::processInputLearning()
             m_inputLearning.message = u"MOVE THE HAT IN THE DESIRED DIRECTION."_qs;
             emit inputLearningChanged();
             return;
+        case InputLearningKind::SignalFlowSource: {
+            constexpr float stabilityTolerance = 0.03F;
+            bool axesStable = true;
+            for (int index = 0; index < kPhysicalAxisCount; ++index) {
+                const size_t slot = static_cast<size_t>(index);
+                if (!m_inputLearning.axisAvailable[slot]
+                    || m_inputLearning.axisActivity[slot] == PhysicalAxisActivity::Fixed) {
+                    continue;
+                }
+                const float current = runtime.normalized[slot].load();
+                if (std::abs(current - m_inputLearning.axisBaseline[slot]) > stabilityTolerance) {
+                    m_inputLearning.axisBaseline[slot] = current;
+                    axesStable = false;
+                }
+            }
+            bool buttonsReleased = true;
+            for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+                const size_t slot = static_cast<size_t>(index);
+                if (runtime.buttonAvailable[slot].load() && runtime.physicalButtonPressed[slot].load()) {
+                    buttonsReleased = false;
+                    break;
+                }
+            }
+            bool povsCentered = true;
+            for (int index = 0; index < std::min(povCount(), kMaximumPhysicalPovs); ++index) {
+                if (povDirectionFromRaw(runtime.povValues[static_cast<size_t>(index)].load())
+                    != PovDirection::Centered) {
+                    povsCentered = false;
+                    break;
+                }
+            }
+            if (!axesStable || !buttonsReleased || !povsCentered) {
+                m_inputLearning.armingStableSinceMs = 0;
+                return;
+            }
+            if (m_inputLearning.armingStableSinceMs == 0) {
+                m_inputLearning.armingStableSinceMs = now;
+                return;
+            }
+            if (now - m_inputLearning.armingStableSinceMs < 300) return;
+            captureInputLearningBaseline();
+            m_inputLearning.phase = InputLearningPhase::Waiting;
+            m_inputLearning.message = u"MOVE OR PRESS THE PHYSICAL CONTROL YOU WANT TO ROUTE."_qs;
+            emit inputLearningChanged();
+            return;
+        }
         case InputLearningKind::None:
             return;
         }
@@ -11447,6 +13247,57 @@ void AppBackend::processInputLearning()
             return;
         }
         return;
+    case InputLearningKind::SignalFlowSource: {
+        std::array<float, kPhysicalAxisCount> axisCurrent{};
+        std::array<bool, kMaximumPhysicalButtons> buttonCurrent{};
+        std::array<bool, kMaximumPhysicalButtons> buttonAvailable{};
+        std::array<int, kMaximumPhysicalPovs> povCurrent{};
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            axisCurrent[static_cast<size_t>(index)] = runtime.normalized[static_cast<size_t>(index)].load();
+        }
+        for (int index = 0; index < kMaximumPhysicalButtons; ++index) {
+            const size_t slot = static_cast<size_t>(index);
+            buttonCurrent[slot] = runtime.physicalButtonPressed[slot].load();
+            buttonAvailable[slot] = runtime.buttonAvailable[slot].load();
+        }
+        for (int index = 0; index < kMaximumPhysicalPovs; ++index) {
+            povCurrent[static_cast<size_t>(index)] = runtime.povValues[static_cast<size_t>(index)].load();
+        }
+        const SignalFlowInputSelection selection = selectSignalFlowInput(
+            m_inputLearning.axisBaseline, axisCurrent, m_inputLearning.axisAvailable,
+            m_inputLearning.axisActivity, m_inputLearning.buttonBaseline, buttonCurrent,
+            buttonAvailable, m_inputLearning.povBaseline, povCurrent, povCount());
+        if (selection.result == SignalFlowInputSelectionResult::Waiting) return;
+        if (selection.result == SignalFlowInputSelectionResult::Ambiguous) {
+            m_inputLearning.phase = InputLearningPhase::Ambiguous;
+            m_inputLearning.message = u"MULTIPLE INPUTS DETECTED — Move or press only the control you want to route."_qs;
+            emit inputLearningChanged();
+            return;
+        }
+        switch (selection.kind) {
+        case SignalFlowInputSourceKind::Axis:
+            m_inputLearning.sourceAxis = selection.index;
+            m_inputLearning.sourceLabel = learnedAxisLabel(selection.index);
+            break;
+        case SignalFlowInputSourceKind::Button:
+            m_inputLearning.sourceButton = selection.index + 1;
+            m_inputLearning.sourceLabel = learnedButtonLabel(m_inputLearning.sourceButton);
+            break;
+        case SignalFlowInputSourceKind::Pov:
+            m_inputLearning.sourcePovHat = selection.index + 1;
+            m_inputLearning.sourcePovDirection = static_cast<PovDirection>(selection.subIndex + 1);
+            m_inputLearning.sourceLabel = QString(u"POV %1 %2"_qs).arg(m_inputLearning.sourcePovHat)
+                .arg(povDirectionLabel(m_inputLearning.sourcePovDirection));
+            break;
+        case SignalFlowInputSourceKind::None:
+            return;
+        }
+        m_inputLearning.phase = InputLearningPhase::Assigned;
+        m_inputLearning.message = QString(u"Found %1. Choose a compatible virtual destination."_qs)
+            .arg(m_inputLearning.sourceLabel);
+        emit inputLearningChanged();
+        return;
+    }
     case InputLearningKind::None:
         return;
     }
@@ -11819,6 +13670,36 @@ void AppBackend::persistAndApply()
     // covers topology, profile, and output edits without adding work to the
     // DirectInput → MappingWorker → vJoy report path.
     scheduleActivationResolution(u"configuration changed"_qs);
+}
+
+void AppBackend::persistAxisProcessorEdit(const QString &kind, int physicalAxis)
+{
+    if (validAxis(physicalAxis)) {
+        const DeviceProfileMapping *mapping = editingDeviceMapping();
+        if (!findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) || mapping) {
+            signalFlowPropagateSharedProcessorSettings(&m_configuration, currentProfile().id,
+                mapping ? mapping->controllerRecordId : QString{}, kind, physicalAxis);
+        }
+    }
+    persistAndApply();
+}
+
+void AppBackend::persistSelectedAxisProcessorEdit(const QString &kind)
+{
+    persistAxisProcessorEdit(kind, m_configuration.selectedAxisIndex);
+}
+
+void AppBackend::propagateProfileAdaptiveResponseIfShared(const QString &scope,
+                                                          const QString &targetId,
+                                                          int physicalAxis)
+{
+    if (scope.trimmed().compare(u"profile"_qs, Qt::CaseInsensitive) != 0
+        || !validAxis(physicalAxis)) {
+        return;
+    }
+    const QString profileId = targetId.trimmed().isEmpty() ? currentProfile().id : targetId.trimmed();
+    signalFlowPropagateSharedProcessorSettings(&m_configuration, profileId, {},
+                                                u"adaptive-response"_qs, physicalAxis);
 }
 
 void AppBackend::rebuildSelectedAxisCurve()

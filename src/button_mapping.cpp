@@ -347,6 +347,48 @@ VirtualButtonStates mapButtonStates(const PhysicalButtonStates &physical,
     return virtualStates;
 }
 
+VirtualButtonStates mapSignalFlowDigitalStates(
+    const PhysicalButtonStates &physical, const PhysicalPovValues &rawValues, int povCount,
+    const RuntimeMappingConfiguration &mapping, const RuntimeButtonTargets &buttonOwnership,
+    const RuntimePovTargets &povOwnership, int vjoyButtonCapacity)
+{
+    VirtualButtonStates virtualStates{};
+    const int capacity = boundedCount(vjoyButtonCapacity, kMaximumVirtualButtons);
+    const auto applySource = [&mapping, &virtualStates, capacity](int sourceSlot) {
+        if (sourceSlot < 0 || sourceSlot >= kRuntimeSignalFlowDigitalSourceCount) return;
+        const size_t slot = static_cast<size_t>(sourceSlot);
+        const int offset = mapping.signalFlowDigitalRouteOffsets[slot];
+        const int count = mapping.signalFlowDigitalRouteCounts[slot];
+        if (offset < 0 || count < 0 || offset > mapping.signalFlowDigitalRouteCount
+            || count > mapping.signalFlowDigitalRouteCount - offset) {
+            return;
+        }
+        for (int index = 0; index < count; ++index) {
+            const int target = mapping.signalFlowDigitalRoutes[static_cast<size_t>(offset + index)]
+                .destinationButton;
+            if (target >= 1 && target <= capacity) {
+                virtualStates[static_cast<size_t>(target)] = true;
+            }
+        }
+    };
+    for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
+        if (!physical[static_cast<size_t>(source)]
+            || buttonOwnership[static_cast<size_t>(source)] == 0) {
+            continue;
+        }
+        applySource(signalFlowDigitalSourceSlot(SignalFlowPortKind::Button, source, -1));
+    }
+    const int hats = std::clamp(povCount, 0, kMaximumPhysicalPovs);
+    for (int hat = 0; hat < hats; ++hat) {
+        const int direction = povDirectionIndex(povDirectionFromRaw(rawValues[static_cast<size_t>(hat)]));
+        if (direction < 0 || povOwnership[static_cast<size_t>(hat)][static_cast<size_t>(direction)] == 0) {
+            continue;
+        }
+        applySource(signalFlowDigitalSourceSlot(SignalFlowPortKind::PovDirection, hat, direction));
+    }
+    return virtualStates;
+}
+
 RuntimePovTargets buildRuntimePovTargets(const PovBindings &bindings, int vjoyButtonCapacity)
 {
     return buildRuntimePovTargets(bindings, vjoyButtonCapacity, {});

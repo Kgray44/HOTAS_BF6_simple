@@ -52,6 +52,10 @@ Page {
     property var flightDeckProfilesPresentationState: ({})
     property var automationPresentationState: ({})
     property var curveEditorPresentationState: ({})
+    // Signal Flow keeps a transient selection/focus snapshot while the
+    // authoritative Curve or Adaptive Response editor is open. It is not a
+    // second configuration model and intentionally survives Loader teardown.
+    property var signalFlowPresentationState: ({})
     // Keep telemetry-shaped QVariant lists out of pages that cannot render
     // them. The backend still projects its bounded snapshot at its own rate.
     property var allAxes: (currentPage === 0 || currentPage === 2 || currentPage === 3 || currentPage === 9) ? backend.axes : []
@@ -70,7 +74,15 @@ Page {
     readonly property var profileTriggerBehaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var nativePovTargetChoices: backend.nativePovTargetChoices
     readonly property bool hasPhysicalInput: backend.physicalConnected && backend.axisCount > 0
-    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex)
+    readonly property var emptyAxisInfo: ({
+        index: -1, label: "", fixed: false, activityLabel: "", activityDetail: "", detail: "",
+        target: "Disabled", calibrated: 0, virtualRouted: false, virtualValid: false,
+        customName: "", hardwareLabel: "", rangeMode: "centered", outputAlias: "",
+        targetAvailable: false, inverted: false, deadzone: 0, hysteresis: 0, unipolar: false,
+        outputMinimum: -1, outputMaximum: 1, curveSummary: "Linear"
+    })
+    readonly property var selectedAxisInfo: root.axisAt(backend.selectedAxisIndex) || root.emptyAxisInfo
+    readonly property bool hasSelectedAxis: Boolean(root.axisAt(backend.selectedAxisIndex))
     readonly property int loadedPageCount: (overviewPageLoader.item ? 1 : 0)
         + (settingsPageLoader.item ? 1 : 0)
         + (profileLibraryLoader.item ? 1 : 0)
@@ -139,7 +151,9 @@ Page {
     function openFlightDeckPovLearning(virtualButton) { requestFlightDeckLearning("pov", virtualButton) }
     onFlightDeckLearningDialogChanged: dispatchFlightDeckLearning()
 
-    function axisAt(index) { return allAxes[index] }
+    function axisAt(index) {
+        return Number.isInteger(index) && index >= 0 && index < allAxes.length ? allAxes[index] : null
+    }
     function isPrimaryAxis(index) { return [0, 1, 5, 2].indexOf(index) >= 0 }
     function axisSelectorModel() {
         const choices = []
@@ -1267,9 +1281,13 @@ Page {
                 MouseArea { id: updateIndicatorMouse; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor; onClicked: backend.handoffToLauncher() }
                 ToolTip { visible: updateIndicatorMouse.containsMouse; delay: 350
-                    text: "HOTAS BF6 " + backend.updateAvailableVersion + " is available"
+                    text: "HOTAS BF6 " + (backend.updateAvailableVersion || "") + " is available"
                     background: Panel { color: theme.tooltip; border.color: theme.topGun ? theme.orange : theme.borderStrong }
-                    contentItem: Text { text: parent.text; color: theme.text; font.pixelSize: 10 } }
+                    contentItem: Text {
+                        text: "HOTAS BF6 " + (backend.updateAvailableVersion || "") + " is available"
+                        color: theme.text
+                        font.pixelSize: 10
+                    } }
             }
             Rectangle {
                 id: globalMappingControl
@@ -1519,7 +1537,7 @@ Page {
             FlightDeckOverview {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: root.currentPage = page
+                onNavigateToPage: function(page) { root.currentPage = page }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2
@@ -1691,7 +1709,7 @@ Page {
                 Item {
                     width: parent.width
                     height: axesWorkspace.implicitHeight
-                    visible: root.hasPhysicalInput && root.selectedAxisInfo
+                    visible: root.hasPhysicalInput && root.hasSelectedAxis
                     GridLayout {
                         id: axesWorkspace
                         width: parent.width
@@ -1703,7 +1721,7 @@ Page {
                             Layout.alignment: Qt.AlignTop
                             spacing: 14
                             Panel { id: axisIdentityPanel; Layout.fillWidth: true; Layout.preferredHeight: 144
-                                property var info: root.selectedAxisInfo
+                                property var info: root.selectedAxisInfo || root.emptyAxisInfo
                                 color: theme.topGun ? "#de0b1a1f" : theme.cockpitSurface; border.color: theme.topGun ? theme.borderStrong : theme.cockpitBorder
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
                                     RowLayout { Layout.fillWidth: true
@@ -1726,7 +1744,7 @@ Page {
                                 }
                             }
                             Panel { id: liveTelemetryPanel; Layout.fillWidth: true; Layout.preferredHeight: 122
-                                property var info: root.selectedAxisInfo
+                                property var info: root.selectedAxisInfo || root.emptyAxisInfo
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
                                         Text { text: "CALIBRATED INPUT"; color: theme.textMuted; font.pixelSize: 10; font.bold: true }
@@ -1741,11 +1759,11 @@ Page {
                                     }
                                 }
                             }
-                            CurveViewer { info: root.selectedAxisInfo }
+                            CurveViewer { info: root.selectedAxisInfo || root.emptyAxisInfo }
                         }
                         Panel {
                             id: processingPanel
-                            property var info: root.selectedAxisInfo
+                            property var info: root.selectedAxisInfo || root.emptyAxisInfo
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignTop
                             // Processing controls grow with their content so the
@@ -2479,6 +2497,12 @@ Page {
                     backendObject: backend
                     themeTokens: root.themeTokens
                     legacy: false
+                    presentationState: root.signalFlowPresentationState
+                    onNavigateRequested: function(page, axis, state) {
+                        root.signalFlowPresentationState = state
+                        if (axis >= 0) backend.setSelectedAxis(axis)
+                        root.currentPage = page
+                    }
                 }
             }
         }
@@ -2528,6 +2552,7 @@ Page {
     Dialog {
         id: deviceActionDialog
         modal: true
+        width: 420
         property string action: ""
         title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget all saved controllers?" : "Reset active-controller calibration?"
         standardButtons: Dialog.Cancel
@@ -2696,8 +2721,9 @@ Page {
                 return
             if (quickAssignDialog.opened && backend.inputLearning.phase === "assigned") quickAssignDialog.acceptAssignment()
             if (quickMapButtonDialog.opened && backend.inputLearning.phase === "assigned") quickMapButtonDialog.acceptAssignment()
-            if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()
-            if (!backend.inputLearning.active) inputLearningDialog.close()
+            if (backend.inputLearning.active && backend.inputLearning.kind !== "signal-flow"
+                    && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) inputLearningDialog.open()
+            if (!backend.inputLearning.active || backend.inputLearning.kind === "signal-flow") inputLearningDialog.close()
         }
     }
     Dialog {
@@ -2709,7 +2735,8 @@ Page {
         title: "LEARN INPUT"
         standardButtons: Dialog.NoButton
         header: Item { implicitHeight: 0 }
-        onClosed: if (backend.inputLearning.active && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
+        onClosed: if (backend.inputLearning.active && backend.inputLearning.kind !== "signal-flow"
+                       && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
         contentItem: Column { width: 368; spacing: 12
             Text { width: parent.width; text: "LEARN INPUT"; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
             Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: theme.textMuted; font.pixelSize: 11; font.bold: true }
@@ -2979,6 +3006,19 @@ Page {
  anchors.centerIn: parent
  modal: true
  width: 390
+ property string resolutionNotice: ""
+ function resolveConflict(decision) {
+     const result = backend.resolveAxisMappingConflict(root.conflictingAxis,
+                                                       root.conflictingTarget,
+                                                       decision,
+                                                       backend.signalFlowRevision)
+     if (result.success) {
+         resolutionNotice = ""
+         close()
+     } else {
+         resolutionNotice = String(result.message || "The route decision could not be applied.")
+     }
+ }
         title: "AXIS ROUTE CONFLICT"
  standardButtons: Dialog.NoButton
  header: Item { implicitHeight: 0 }
@@ -2986,14 +3026,17 @@ Page {
  spacing: 14
             Text { text: "AXIS ROUTE CONFLICT"; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 16; font.bold: true }
             Text { width: parent.width
- text: "This vJoy axis already has a source. Allowing it keeps both configured routes; the established row-order output policy resolves a shared live target."
+ text: "This vJoy axis already has a source. Replace it, or choose an explicit visible mixer. Signal Flow never creates a hidden analog merge."
  wrapMode: Text.WordWrap
  color: theme.cockpitText
  font.pixelSize: 12 }
+            Text { width: parent.width; visible: axisConflictDialog.resolutionNotice.length > 0
+ text: axisConflictDialog.resolutionNotice; wrapMode: Text.WordWrap
+ color: theme.topGun ? theme.orangeBright : theme.danger; font.pixelSize: 11 }
             Row { spacing: 8
-            CommandButton { label: "ALLOW"
- onTriggered: { backend.setMapping(root.conflictingAxis, root.conflictingTarget, true)
- axisConflictDialog.close() } }
+            CommandButton { label: "REPLACE"; onTriggered: axisConflictDialog.resolveConflict("replace") }
+            CommandButton { label: "AVERAGE"; onTriggered: axisConflictDialog.resolveConflict("average") }
+            CommandButton { label: "HIGHEST"; onTriggered: axisConflictDialog.resolveConflict("highest-magnitude") }
             CommandButton { label: "CANCEL"; subdued: true; onTriggered: axisConflictDialog.close() }
             }
         }
