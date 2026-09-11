@@ -448,6 +448,7 @@ Flickable {
                     clip: true
                     Canvas {
                         id: graph
+                        objectName: "flightDeckCurveGraph"
                         anchors.fill: parent
                         anchors.margins: tokens.space12
                         antialiasing: true
@@ -458,6 +459,15 @@ Flickable {
                         property var previewSamples: backendObject ? backendObject.curvePreviewCurve : []
                         property var effectiveSamples: backendObject ? backendObject.selectedAxisCurve : []
                         property var points: backendObject ? backendObject.selectedCurvePoints : []
+                        // The same UI-safe selected-axis snapshot that feeds
+                        // the established editors. These are visual markers
+                        // only: no live input enters the curve compiler.
+                        readonly property bool liveMarkerVisible: responseView
+                            && root.liveTelemetry
+                            && root.liveTelemetry.physicalInput !== undefined
+                            && root.liveTelemetry.finalOutput !== undefined
+                        readonly property real liveMarkerInput: Number(root.liveTelemetry.physicalInput || 0)
+                        readonly property real liveMarkerOutput: Number(root.liveTelemetry.finalOutput || 0)
                         property real domainMin: editorState.unipolar ? 0 : -1
                         property real xMin: domainMin
                         property real xMax: 1
@@ -507,6 +517,9 @@ Flickable {
                         onPreviewSamplesChanged: requestPaint()
                         onEffectiveSamplesChanged: requestPaint()
                         onPointsChanged: requestPaint()
+                        onLiveMarkerVisibleChanged: requestPaint()
+                        onLiveMarkerInputChanged: requestPaint()
+                        onLiveMarkerOutputChanged: requestPaint()
                         onWidthChanged: requestPaint()
                         onHeightChanged: requestPaint()
                         onPaint: {
@@ -537,6 +550,21 @@ Flickable {
                                         context.fillStyle = point.locked ? tokens.graphLockedPoint : index === selectedPoint ? tokens.graphSelectedPoint : tokens.graphPoint;
                                         context.beginPath(); context.arc(xFor(Number(point.input)), yFor(Number(point.output)), point.locked ? 5 : 4, 0, Math.PI * 2); context.fill();
                                     }
+                                }
+                                if (liveMarkerVisible && Number.isFinite(liveMarkerInput)
+                                    && Number.isFinite(liveMarkerOutput)) {
+                                    const markerX = xFor(liveMarkerInput);
+                                    const inputY = yFor(liveMarkerInput);
+                                    const outputY = yFor(liveMarkerOutput);
+                                    context.fillStyle = tokens.graphInput;
+                                    context.strokeStyle = tokens.graphFrame;
+                                    context.lineWidth = 2;
+                                    context.beginPath(); context.arc(markerX, inputY, 5, 0, Math.PI * 2);
+                                    context.fill(); context.stroke();
+                                    context.fillStyle = tokens.graphOutput;
+                                    context.strokeStyle = tokens.textPrimary;
+                                    context.beginPath(); context.arc(markerX, outputY, 4, 0, Math.PI * 2);
+                                    context.fill(); context.stroke();
                                 }
                             } else {
                                 trace(context, gainSamples, tokens.accent, 2.3, "gain", false);

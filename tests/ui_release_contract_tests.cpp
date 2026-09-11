@@ -31,7 +31,7 @@ private slots:
     void virtualOutputLayoutsAreExactAndTelemetryStaysTruthful();
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
-    void installerUpgradeAcceptanceTracksSchema24();
+    void installerUpgradeAcceptanceTracksSchema25();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -196,6 +196,8 @@ void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPain
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString standard = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/LegacyCurveEditor.qml"));
+    const QString flightDeck = sourceFile(QStringLiteral("qml/FlightDeckCurveEditor.qml"));
+    const QString axes = sourceFile(QStringLiteral("qml/FlightDeckAxes.qml"));
     QVERIFY(header.contains(QStringLiteral("curveAxisChoices READ curveAxisChoices NOTIFY stateChanged")));
     QVERIFY(header.contains(QStringLiteral("curveEditorTelemetry READ curveEditorTelemetry NOTIFY inputTelemetryChanged")));
     QVERIFY(backend.contains(QStringLiteral("QVariantMap AppBackend::curveEditorTelemetry() const")));
@@ -213,6 +215,13 @@ void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPain
         QVERIFY(editor.contains(QStringLiteral("trace(ctx, effective")));
         QVERIFY(editor.contains(QStringLiteral("\"output\", false)")));
     }
+    QVERIFY(flightDeck.contains(QStringLiteral("objectName: \"flightDeckCurveGraph\"")));
+    QVERIFY(flightDeck.contains(QStringLiteral("readonly property bool liveMarkerVisible")));
+    QVERIFY(flightDeck.contains(QStringLiteral("root.liveTelemetry.physicalInput")));
+    QVERIFY(flightDeck.contains(QStringLiteral("context.arc(markerX, inputY, 5")));
+    QVERIFY(flightDeck.contains(QStringLiteral("context.arc(markerX, outputY, 4")));
+    QVERIFY(!axes.contains(QStringLiteral("FlightDeckResponsePreview")));
+    QVERIFY(!axes.contains(QStringLiteral("STATIC RESPONSE PREVIEW")));
 }
 
 void UiReleaseContractTests::profileOverflowMenuUsesThemedControlContract()
@@ -374,7 +383,9 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(library.contains(QStringLiteral("PROFILE LIBRARY")));
     QVERIFY(library.contains(QStringLiteral("Profile Detail")));
     QVERIFY(library.contains(QStringLiteral("GAME DETECTION")));
-    QVERIFY(library.contains(QStringLiteral("WHEN THIS CATEGORY ACTIVATES")));
+    QVERIFY(library.contains(QStringLiteral("AUTOMATIC SELECTION")));
+    QVERIFY(!library.contains(QStringLiteral("WHEN THIS CATEGORY ACTIVATES")));
+    QVERIFY(!library.contains(QStringLiteral("restoreLastProfile")));
     QVERIFY(library.contains(QStringLiteral("RUNNING APPLICATIONS")));
     QVERIFY(library.contains(QStringLiteral("BROWSE FOR GAME")));
     QVERIFY(library.contains(QStringLiteral("IMPORT / EXPORT")));
@@ -535,6 +546,8 @@ void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSaf
     const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
     const QString rigHeader = sourceFile(QStringLiteral("src/device_rig.h"));
     const QString rigSource = sourceFile(QStringLiteral("src/device_rig.cpp"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
 
     // Successful vJoy API loads stay process-resident while the mapping worker
     // opens/closes DirectInput and output-device sessions.  Releasing output
@@ -564,6 +577,22 @@ void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSaf
     QVERIFY(worker.contains(QStringLiteral("evaluateDeviceRigRuntimeAvailability(plan, inputStates,")));
     QVERIFY(rigSource.contains(QStringLiteral("deactivateForRequiredLoss = disconnectBehavior")));
     QVERIFY(rigSource.contains(QStringLiteral("availability.mappingAllowed = mappingRequested")));
+
+    // Devices derives member use from the selected Profile's compiled routes,
+    // not from Device Rig membership. Its independent user-facing states must
+    // not collapse a connected-but-unused controller into "Disabled".
+    QVERIFY(backend.contains(QStringLiteral("compileDeviceRigRuntime(")));
+    QVERIFY(backend.contains(QStringLiteral("compiledMemberHasRoute")));
+    QVERIFY(backend.contains(QStringLiteral("{u\"inUse\"_qs, inUse}")));
+    QVERIFY(devices.contains(QStringLiteral("CONNECTED")));
+    QVERIFY(devices.contains(QStringLiteral("OFFLINE")));
+    QVERIFY(devices.contains(QStringLiteral("REQUIRED")));
+    QVERIFY(devices.contains(QStringLiteral("OPTIONAL")));
+    QVERIFY(devices.contains(QStringLiteral("IN USE BY CURRENT PROFILE")));
+    QVERIFY(devices.contains(QStringLiteral("UNUSED BY CURRENT PROFILE")));
+    QVERIFY(devices.contains(QStringLiteral("HIDDEN FROM GAMES")));
+    QVERIFY(devices.contains(QStringLiteral("VISIBLE TO GAMES")));
+    QVERIFY(devices.contains(QStringLiteral("ISOLATION NEEDS ATTENTION")));
 }
 
 void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableContracts()
@@ -808,23 +837,23 @@ void UiReleaseContractTests::buttonLearningIsDestinationFirstAndCardsShowLiveSig
     QVERIFY(!learningProcessing.contains(QStringLiteral("m_inputLearning.virtualButton = button")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema24()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema25()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 24")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v24")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v24")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 25")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v25")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v25")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v24")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v24")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v25")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v25")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v24")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v25")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 
@@ -922,6 +951,12 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(profiles.contains(QStringLiteral("displayName.indexOf(query)")));
     QVERIFY(profiles.contains(QStringLiteral("executable.indexOf(query)")));
     QVERIFY(profiles.contains(QStringLiteral("Clear the search to see all running applications")));
+    QVERIFY(profiles.contains(QStringLiteral("AUTOMATIC ACTIVATION")));
+    QVERIFY(profiles.contains(QStringLiteral("flightDeckCategoryActivationResolver")));
+    QVERIFY(profiles.contains(QStringLiteral("flightDeckProfileAutomaticPolicySelector")));
+    QVERIFY(profiles.contains(QStringLiteral("reorderCategoryAutomaticProfiles")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QVariantMap activationResolverState")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool resumeAutomaticActivation")));
     QVERIFY(standard.contains(QStringLiteral("root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("objectName: \"flightDeckCurveEditor\"")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("ACTIVE CURVE CONTEXT")));

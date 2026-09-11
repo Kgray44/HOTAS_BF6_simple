@@ -1026,6 +1026,19 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
         copied.enabled = true;
         const QString mappedLayout = layoutIds.value(copied.outputLayoutId);
         copied.outputLayoutId = mappedLayout.isEmpty() ? candidate.outputLayouts.front().id : mappedLayout;
+        // A Device Rig is an explicitly verified, machine-local relationship
+        // between physical controller records and output ownership. Its UUID
+        // cannot be meaningful on another computer, and neither a Rig name nor
+        // a controller display name is sufficient evidence to recreate it.
+        // Keep portable behavior, but make the destination Rig assignment an
+        // intentional destination-machine decision.
+        if (!copied.deviceRigId.isEmpty()) {
+            copied.deviceRigId.clear();
+            if (warnings) {
+                warnings->append(QString(u"%1: Device Rig assignment required; the imported Device Rig is machine-local and was not matched by name."_qs)
+                    .arg(copied.name));
+            }
+        }
         for (AxisMapping &axis : copied.axes) {
             if (!axis.curve.presetId.isEmpty() && curveIds.contains(axis.curve.presetId)) {
                 axis.curve.presetId = curveIds.value(axis.curve.presetId);

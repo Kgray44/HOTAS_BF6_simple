@@ -2156,7 +2156,7 @@ Page {
                         { c: "MAPPING", v: backend.mappingStatus, t: backend.mappingActive ? theme.ready : (backend.mappingRequested ? theme.warning : theme.textMuted),
                           note: backend.mappingActive ? "OUTPUT ACQUIRED" : (backend.mappingRequested ? "OUTPUT QUIESCED; WILL REACQUIRE" : "OUTPUT NEUTRALIZED") },
                         { c: "BASE PROFILE", v: backend.activeProfileName.toUpperCase(), t: theme.ivory,
-                          note: "PERSISTENT MANUAL SELECTION" },
+                          note: "SESSION MANUAL OVERRIDE; CLEARS ON CONTEXT CHANGE / RESTART" },
                         { c: "EFFECTIVE PROFILE", v: backend.effectiveProfileName.toUpperCase(), t: theme.ivory,
                           note: backend.profileSourceLabel.toUpperCase() },
                         { c: "PROFILE SWAP", v: backend.lastProfileSwapUs + " US", t: theme.ivory,

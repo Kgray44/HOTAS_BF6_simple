@@ -1,5 +1,7 @@
 #include "config_store.h"
 
+#include "activation_resolver.h"
+
 #include "axis_transform.h"
 #include "adaptive_response.h"
 #include "button_mapping.h"
@@ -22,7 +24,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 24;
+constexpr int kProfileSchemaVersion = 25;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -1119,6 +1121,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"name"_qs, profile.name},
         {u"categoryId"_qs, profile.categoryId},
         {u"enabled"_qs, profile.enabled},
+        {u"automaticSelectionMode"_qs, profileAutomaticSelectionModeKey(profile.automaticSelectionMode)},
         {u"deviceRigId"_qs, profile.deviceRigId},
         {u"outputLayoutId"_qs, profile.outputLayoutId},
         {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
@@ -1149,6 +1152,11 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     restored.name = name;
     restored.categoryId = json.value(u"categoryId"_qs).toString().trimmed().left(96);
     restored.enabled = json.value(u"enabled"_qs).toBool(true);
+    if (json.contains(u"automaticSelectionMode"_qs)
+        && !profileAutomaticSelectionModeFromKey(json.value(u"automaticSelectionMode"_qs).toString(),
+                                                  &restored.automaticSelectionMode)) {
+        return false;
+    }
     restored.deviceRigId = json.value(u"deviceRigId"_qs).toString().trimmed().left(96);
     restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     restored.curveTransitionSmoothingOverride = json.value(
@@ -1645,7 +1653,8 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8
         && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14
         && version != 15 && version != 16 && version != 17 && version != 18 && version != 19 && version != 20
-        && version != 21 && version != 22 && version != 23 && version != kProfileSchemaVersion) {
+        && version != 21 && version != 22 && version != 23 && version != 24
+        && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
     }
@@ -1806,6 +1815,12 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             namesByCategory.insert(scopedName);
         }
         configuration.automaticGameDetection = json.value(u"automaticGameDetection"_qs).toBool(true);
+        // Early V2.5.4 candidate builds persisted a manual session override.
+        // Schema 25 is not released, so consume the fields only as harmless
+        // legacy input and always clear them before runtime configuration is
+        // returned.  Manual choice now lives only in AppBackend's session.
+        configuration.activationManualOverride = false;
+        configuration.manualOverrideProfileId.clear();
     } else {
         // v2.1.0 deliberately performs no name-based game inference. Every
         // existing profile enters the neutral General category unchanged.
@@ -2171,6 +2186,27 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             configuration.deviceRigMigrationWarning = u"Existing controller configuration was preserved, but no Device Rig was created because the legacy controller identity was missing or ambiguous."_qs;
         }
     }
+    if (version < 25) {
+        // V2.5.4 establishes one resolver authority. Existing categories keep
+        // their explicit default as Preferred; remaining profiles become
+        // deterministic Fallback candidates in their saved category order.
+        // restore-last remains readable compatibility metadata but no longer
+        // competes with a hardware-aware automatic decision.
+        for (ProfileCategory &category : configuration.profileCategories) {
+            bool assignedPreferred = false;
+            for (const QString &profileId : category.profileIds) {
+                ControllerProfile *profile = findProfile(configuration, profileId);
+                if (!profile) continue;
+                const bool preferred = !assignedPreferred
+                    && (profileId == category.defaultProfileId || category.defaultProfileId.isEmpty());
+                profile->automaticSelectionMode = preferred
+                    ? ProfileAutomaticSelectionMode::Preferred : ProfileAutomaticSelectionMode::Fallback;
+                assignedPreferred = assignedPreferred || preferred;
+            }
+        }
+        configuration.activationManualOverride = false;
+        configuration.manualOverrideProfileId.clear();
+    }
     if (version < kProfileSchemaVersion) {
         seedBundledBattlefieldHelicopterProfile(&configuration);
     }
@@ -2242,12 +2278,23 @@ bool ConfigStore::portableAutomationFromJson(const QJsonObject &json, Automation
 
 QJsonObject ConfigStore::portableOutputLayoutToJson(const VirtualOutputLayout &layout)
 {
-    return outputLayoutToJson(layout);
+    // HidHide device ownership is an exact physical-device relationship on
+    // this Windows installation, not a portable output capability. Never
+    // include it in a Profile or Pack export.
+    VirtualOutputLayout portable = layout;
+    portable.hidHideDeviceInstanceId.clear();
+    portable.hidhideManaged = false;
+    return outputLayoutToJson(portable);
 }
 
 bool ConfigStore::portableOutputLayoutFromJson(const QJsonObject &json, VirtualOutputLayout *layout)
 {
-    return outputLayoutFromJson(json, layout);
+    if (!outputLayoutFromJson(json, layout)) return false;
+    // Defend the import boundary as well: a manually edited or older portable
+    // file cannot assign a source machine's HidHide ownership locally.
+    layout->hidHideDeviceInstanceId.clear();
+    layout->hidhideManaged = false;
+    return true;
 }
 
 QJsonArray ConfigStore::portableProfileTriggersToJson(const ProfileTriggerBindings &bindings)

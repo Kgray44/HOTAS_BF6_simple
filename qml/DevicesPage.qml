@@ -90,6 +90,7 @@ Page {
         return rigs.length > 0 ? rigs[0] : null
     }
     readonly property var selectedRig: rigFor(selectedRigId)
+    readonly property var configuredRig: rigFor(backendObject ? backendObject.activeDeviceRigId : "")
     function healthColor(key) {
         if (key === "ready") return readyColor
         if (key === "partial") return warningColor
@@ -419,9 +420,9 @@ Page {
                         Layout.fillWidth: true
                         ColumnLayout {
                             spacing: 2
-                            SmallLabel { text: "ACTIVE DEVICE RIG" }
+                            SmallLabel { text: configuredRig && configuredRig.inUse ? "MAPPING ROUTE IN USE" : "CONFIGURED MAPPING ROUTE" }
                             Text {
-                                text: backendObject ? backendObject.activeDeviceRigName : "No active Device Rig"
+                                text: configuredRig ? configuredRig.name : "No Device Rig configured"
                                 color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true
                             }
                         }
@@ -439,8 +440,8 @@ Page {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: selectedRig ? selectedRig.members.length + " inputs  →  " + selectedRig.outputs.length
-                              + (selectedRig.outputs.length === 1 ? " virtual output" : " virtual outputs")
+                        text: configuredRig ? configuredRig.members.length + " inputs  →  " + configuredRig.outputs.length
+                              + (configuredRig.outputs.length === 1 ? " virtual output" : " virtual outputs")
                                           : "Create a rig to keep a controller arrangement reusable across profiles."
                         color: themeTokens.text; font.pixelSize: 13
                     }
@@ -515,15 +516,11 @@ Page {
                             ThemedButton {
                                 objectName: "activateRigButton"
                                 theme: themeTokens
-                                visible: selectedRig && !selectedRig.active; text: "ACTIVATE"
+                                // Keep the header controls within the narrow Flight Deck viewport.
+                                // The action still resolves the whole profile/rig/output route atomically.
+                                visible: selectedRig && !selectedRig.configured; text: "ACTIVATE ROUTE"
                                 commandEnabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
-                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Device Rig activated", "This rig is now selected for mapping and setup.", "Device Rig could not be activated", "Check that the required controllers and output are available.") }
-                            }
-                            ThemedButton {
-                                objectName: "deactivateRigButton"
-                                theme: themeTokens; tone: "secondary"
-                                visible: selectedRig && selectedRig.active; text: "DEACTIVATE"
-                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.deactivateDeviceRig(rig.id), "Device Rig deactivated", "The rig is no longer selected for mapping.", "Device Rig could not be deactivated", "Refresh the Device Rig and try again.") }
+                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Compatible route activated", "Profile, Device Rig, and Virtual Output were selected together.", "Device Rig could not be activated", "Choose a compatible Profile and check its required controllers and output.") }
                             }
                             ThemedButton {
                                 objectName: "checkRigSetupButton"
@@ -583,10 +580,17 @@ Page {
                                         ColumnLayout {
                                             Layout.fillWidth: true; spacing: 1
                                             Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 13; font.bold: true }
-                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: editingTarget ? "EDITING TARGET · " + (modelData.connected ? "Connected" : "Saved · Offline") : modelData.ambiguous ? "Selection required" : !modelData.verified ? "Needs verification" : modelData.connected ? "Connected · Verified" : modelData.required ? "Required · Offline" : "Optional · Offline"; color: editingTarget ? themeTokens.orange : themeTokens.textMuted; font.pixelSize: 10; font.bold: editingTarget }
+                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: editingTarget ? "EDITING TARGET" : modelData.ambiguous ? "SELECTION REQUIRED" : !modelData.verified ? "NEEDS VERIFICATION" : "PHYSICAL DEVICE"; color: editingTarget ? themeTokens.orange : themeTokens.textMuted; font.pixelSize: 10; font.bold: editingTarget }
                                         }
                                         ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openDevice(modelData.id) }
                                         ThemedButton { theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; visible: selectedRig && selectedRig.members.length > 1; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.removeDeviceRigMember(rigId, modelData.id), "Physical controller removed", "The saved controller is no longer part of this Device Rig.", "Physical controller was not removed", "Refresh the Device Rig and try again.") } }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 10
+                                        SmallLabel { text: modelData.connected ? "CONNECTED" : "OFFLINE" }
+                                        SmallLabel { text: modelData.required ? "REQUIRED" : "OPTIONAL" }
+                                        SmallLabel { text: modelData.inUse ? "IN USE BY CURRENT PROFILE" : "UNUSED BY CURRENT PROFILE" }
+                                        Item { Layout.fillWidth: true }
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true; spacing: 10
@@ -607,11 +611,10 @@ Page {
                                         SmallLabel { text: "GAME VISIBILITY" }
                                         Text {
                                             Layout.fillWidth: true
-                                            text: !modelData.visibilityManaged ? "SETUP NEEDED"
-                                                  : !modelData.visibilityKnown ? "VERIFY"
+                                            text: modelData.isolationNeedsAttention ? "ISOLATION NEEDS ATTENTION"
                                                   : modelData.hiddenFromGames ? "HIDDEN FROM GAMES" : "VISIBLE TO GAMES"
-                                            color: !modelData.visibilityManaged || !modelData.visibilityKnown
-                                                   ? themeTokens.warning
+                                            color: modelData.isolationNeedsAttention
+                                                    ? themeTokens.warning
                                                    : modelData.hiddenFromGames ? themeTokens.ready : themeTokens.warning
                                             font.pixelSize: 10; font.bold: true; elide: Text.ElideRight
                                         }
@@ -627,6 +630,13 @@ Page {
                                                             rig.id, [modelData.id], !modelData.hiddenFromGames)
                                             }
                                         }
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Physical game visibility is controlled only here. Automatic profile selection never hides or shows this device."
+                                        color: themeTokens.textMuted
+                                        font.pixelSize: 9
+                                        wrapMode: Text.WordWrap
                                     }
                                     RowLayout {
                                         visible: selectedRig && selectedRig.outputs.length > 1
@@ -709,11 +719,15 @@ Page {
                     ColumnLayout {
                         id: automaticBehaviorContent
                         anchors.fill: parent; anchors.margins: 14; spacing: 10
-                        SmallLabel { text: "AUTOMATIC BEHAVIOR" }
+                        SmallLabel { text: "RESOLVER BEHAVIOR" }
                         Flow {
                             Layout.fillWidth: true; spacing: 12
                             ThemedCheckBox { theme: themeTokens; text: "Enabled"; checked: selectedRig ? selectedRig.enabled : false; onToggled: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigEnabled(rig.id, value), "Device Rig state updated", value ? "This rig is enabled." : "This rig is disabled.", "Device Rig state was not updated", "Refresh the Device Rig and try again.") } }
-                            ThemedCheckBox { theme: themeTokens; text: "Auto activate"; checked: selectedRig ? selectedRig.autoActivate : false; onToggled: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigAutoActivate(rig.id, value), "Automatic activation updated", value ? "HOTAS BF6 can select this rig when its devices are available." : "This rig will not activate automatically.", "Automatic activation was not updated", "Refresh the Device Rig and try again.") } }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Automatic game activation is controlled by this Category's ordered Profiles: Preferred candidates first, then Fallback. Legacy rig auto-activation, priority, and fallback values are retained for compatibility but do not override a Profile / Device Rig route."
+                            color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -723,20 +737,6 @@ Page {
                                 model: ["Suspend affected routes", "Deactivate rig", "Use fallback rig"]
                                 currentIndex: selectedRig ? Number(selectedRig.disconnectBehavior) : 0
                                 onActivated: function(index) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigDisconnectBehavior(rig.id, index), "Disconnect behavior updated", "The Device Rig will use the selected behavior when a controller disconnects.", "Disconnect behavior was not updated", "Refresh the Device Rig and try again.") }
-                            }
-                            Item { Layout.fillWidth: true }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            SmallLabel { text: "PRIORITY" }
-                            ThemedStepper { theme: themeTokens; value: selectedRig ? Number(selectedRig.activationPriority) : 50; from: 0; to: 100; onValueModified: function(value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigActivationPriority(rig.id, value), "Activation priority updated", "The Device Rig priority was saved.", "Activation priority was not updated", "Refresh the Device Rig and try again.") } }
-                            SmallLabel { text: "FALLBACK" }
-                            ThemedComboBox {
-                                id: fallbackPicker; theme: themeTokens; Layout.preferredWidth: 210
-                                model: [{ id: "", name: "No fallback" }].concat(rigs.filter(function(item) { return selectedRig && item.id !== selectedRig.id }))
-                                textRole: "name"; valueRole: "id"
-                                currentIndex: root.indexFor(model, selectedRig ? selectedRig.fallbackRigId : "")
-                                onActivated: function(index, value) { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.setDeviceRigFallback(rig.id, value), "Fallback Device Rig updated", value ? "A fallback rig was selected." : "No fallback rig is selected.", "Fallback Device Rig was not updated", "Refresh the Device Rig and try again.") }
                             }
                             Item { Layout.fillWidth: true }
                         }
@@ -1279,7 +1279,7 @@ Page {
                     visible: Boolean(outputDetailDialog.detail.managedVisibility && root.selectedRig)
                     text: outputDetailDialog.detail.hiddenFromGames ? "SHOW TO GAMES" : "HIDE FROM GAMES"
                     commandEnabled: outputDetailDialog.detail.hiddenFromGames || !root.selectedRig || !root.hasOutput(root.selectedRig, root.selectedOutputId)
-                                    || !root.selectedRig.active
+                                    || !(root.selectedRig.configured && root.selectedRig.inUse)
                     onTriggered: visibilityConfirmationDialog.openForOutputs(root.selectedRigId, [root.selectedOutputId], outputDetailDialog.detail.hiddenFromGames)
                 }
                 ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: root.reportBooleanAction(backendObject.openVjoyConfiguration(), "vJoy configuration opened", "Configure the requested Virtual Output, then return to Check Output.", "vJoy configuration could not open", "Install or repair the vJoy configuration tool, then try again.") }

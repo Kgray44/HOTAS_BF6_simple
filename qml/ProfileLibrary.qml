@@ -409,7 +409,7 @@ Flickable {
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
                             Text { Layout.fillWidth: true; text: "GAME DETECTION: " + (modelData.executableRules.length > 0 ? modelData.executableRules.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
-                            Text { Layout.fillWidth: true; text: "ACTIVATION: " + (modelData.restoreLastProfile ? "Restore last-used profile" : "Always use " + (modelData.defaultProfileName || "selected profile")); color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: "AUTOMATIC: category Profile order (Preferred, then Fallback)"; color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
                             Item { Layout.fillHeight: true }
                             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "OPEN"; subdued: true; onTriggered: root.openCategory(modelData.id) } }
                         }
@@ -449,7 +449,7 @@ Flickable {
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
                             Text { text: root.selectedCategory ? root.selectedCategory.profileCount + " Profiles" : ""; color: root.text; font.pixelSize: 14; font.bold: true }
-                            Text { text: root.selectedCategory && root.selectedCategory.restoreLastProfile ? "When detected, restores the last active profile." : "When detected, selects the category default profile."; color: root.muted; font.pixelSize: 9 }
+                            Text { text: "When detected, evaluates ordered Preferred Profiles, then Fallback Profiles."; color: root.muted; font.pixelSize: 9 }
                         }
                         ActionButton { label: "RENAME"; subdued: true; onTriggered: { renameCategoryDialog.categoryId = root.selectedCategoryId; renameCategoryDialog.categoryName = root.selectedCategory.name; renameCategoryDialog.open() } }
                         ActionButton { label: "EXPORT CATEGORY"; subdued: true; onTriggered: root.openTransfer("export", "category", "", root.selectedCategoryId) }
@@ -491,16 +491,10 @@ Flickable {
                         ActionButton { label: root.selectedCategory && root.selectedCategory.enabled ? "DISABLE" : "ENABLE"; subdued: true; actionEnabled: !root.selectedCategory || !root.selectedCategory.active; onTriggered: backendObject.setProfileCategoryEnabled(root.selectedCategoryId, !root.selectedCategory.enabled) }
                     }
                 }
-                Section { label: "WHEN THIS CATEGORY ACTIVATES" }
+                Section { label: "AUTOMATIC SELECTION" }
                 Card { Layout.fillWidth: true
-                    SelectionToggle { label: "Restore the last-used profile"; checked: root.selectedCategory ? root.selectedCategory.restoreLastProfile : true; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, checked) }
-                    Text { text: "Return to whichever profile was most recently active inside this category."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    SelectionToggle { label: "Always use a specific profile"; checked: root.selectedCategory ? !root.selectedCategory.restoreLastProfile : false; onToggled: backendObject.setCategoryRestoreLastProfile(root.selectedCategoryId, !checked) }
-                    Text { visible: root.selectedCategory && !root.selectedCategory.restoreLastProfile; text: "Choose the profile that should become active every time this category activates."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    RowLayout { visible: root.selectedCategory && !root.selectedCategory.restoreLastProfile; Layout.fillWidth: true
-                        Text { text: "PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                        ThemedComboBox { id: defaultCategoryProfile; Layout.fillWidth: true; model: root.profilesForCategory(root.selectedCategoryId); textRole: "name"; valueRole: "id"; currentIndex: { for (let i = 0; i < model.length; ++i) if (root.selectedCategory && model[i].id === root.selectedCategory.defaultProfileId) return i; return 0 } onActivated: backendObject.setCategoryDefaultProfile(root.selectedCategoryId, currentValue) }
-                    }
+                    Text { text: "Automatic selection follows the visible Category Profile order: eligible Preferred routes first, then eligible Fallback routes. Manual Only Profiles are excluded. Reorder Profiles or change their policy in Flight Deck Profiles."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Legacy default and restore-last metadata is retained only to preserve older configuration files; it does not compete with the Activation Resolver."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 Section { label: "CATEGORY PROFILES" }
                 Repeater { model: root.profilesForCategory(root.selectedCategoryId)
@@ -605,7 +599,7 @@ Flickable {
                         Text { text: "GAME / CATEGORY"; color: root.text; font.pixelSize: 11; font.bold: true }
                         Text { text: "Category: " + (root.detail.category || "General"); color: root.text; font.pixelSize: 10; font.bold: true }
                         Text { text: "Games: " + ((root.detail.categoryGames || []).length > 0 ? root.detail.categoryGames.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "When category activates: " + (root.detail.categoryActivationBehavior || "Restore the last-used profile"); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Automatic selection: ordered Preferred routes, then Fallback routes. Legacy category defaults do not control the resolver."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         ActionButton { label: "OPEN CATEGORY"; subdued: true; onTriggered: root.openCategory(root.detail.categoryId) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border

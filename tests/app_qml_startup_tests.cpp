@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonDocument>
 #include <QMetaObject>
 #include <QQmlComponent>
 #include <QQmlApplicationEngine>
@@ -1485,22 +1486,15 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     QMetaObject::invokeMethod(setupDialog, "close");
 
     const bool rigStartedActive = backend.activeDeviceRigId() == rigId;
-    const QString firstActivationControl = rigStartedActive ? QStringLiteral("deactivateRigButton")
-                                                            : QStringLiteral("activateRigButton");
-    if (!triggerDevicesControl(firstActivationControl,
-                               rigStartedActive ? QStringLiteral("Deactivate") : QStringLiteral("Activate"))) return false;
-    settlePresentation();
-    if (backend.activeDeviceRigId() == (rigStartedActive ? rigId : QString{})
-        || devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
-        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not report its result"));
-    }
-    const QString restoreActivationControl = rigStartedActive ? QStringLiteral("activateRigButton")
-                                                               : QStringLiteral("deactivateRigButton");
-    if (!triggerDevicesControl(restoreActivationControl,
-                               rigStartedActive ? QStringLiteral("Restore activation") : QStringLiteral("Deactivate"))) return false;
-    settlePresentation();
-    if ((backend.activeDeviceRigId() == rigId) != rigStartedActive) {
-        return failPresentationLifecycleTest(QStringLiteral("Device Rig activation control did not restore the fixture state"));
+    // V2.5.4 forbids changing only activeDeviceRigId. A non-active rig may
+    // invoke the coordinated activation command; an already-active route has
+    // no standalone DEACTIVATE control at all.
+    if (!rigStartedActive) {
+        if (!triggerDevicesControl(QStringLiteral("activateRigButton"), QStringLiteral("Activate compatible route"))) return false;
+        settlePresentation();
+        if (devices->property("actionFeedback").toMap().value(QStringLiteral("title")).toString().isEmpty()) {
+            return failPresentationLifecycleTest(QStringLiteral("Compatible Device Rig activation did not report its result"));
+        }
     }
 
     // Invoke the exact Devices-page helper that the EDIT THIS control calls.
@@ -3389,7 +3383,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     openFixtureCategory.evaluate();
     settlePresentation();
     if (openFixtureCategory.hasError() || profilesPage->property("view").toString() != QStringLiteral("category")
-        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryBehaviorSelector"))
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryActivationResolver"))
         || !captureShell(QStringLiteral("profiles-category"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Category fixture did not render")
             .arg(appearance));
@@ -3536,11 +3530,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 duplicate, move, rename, or delete command did not retain profile isolation")
             .arg(appearance));
     }
-    const QString unaffectedCategoryName = backend.activeCategoryName();
-    const QVariantMap unaffectedCategoryBefore = categoryWithName(unaffectedCategoryName);
-    if (!backend.setCategoryRestoreLastProfile(testCategoryId, false)
-        || !backend.setCategoryDefaultProfile(testCategoryId, firstId)
-        || !backend.setCategoryGameDetectionRules(testCategoryId, {QStringLiteral("flight-deck-test.exe")})) {
+    if (!backend.setCategoryGameDetectionRules(testCategoryId, {QStringLiteral("flight-deck-test.exe")})
+        || !backend.setProfileAutomaticSelectionMode(firstId, QStringLiteral("fallback"))
+        || !backend.setProfileAutomaticSelectionMode(secondId, QStringLiteral("preferred"))
+        || !backend.reorderCategoryAutomaticProfiles(testCategoryId, {secondId, firstId})) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 could not configure its category fixture")
             .arg(appearance));
     }
@@ -3564,21 +3557,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         activateButton->mapToScene(QPointF(activateButton->width() * 0.5, activateButton->height() * 0.5)).toPoint());
     settlePresentation();
     if (backend.activeProfileId() != secondId) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 explicit activation did not commit through AppBackend")
-            .arg(appearance));
+        const QVariantMap resolver = backend.activationResolverState();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 explicit activation did not commit through AppBackend "
+            "(expected=%2 actual=%3 rig=%4 resolver=%5)")
+            .arg(appearance, secondId, backend.activeProfileId(), backend.activeDeviceRigId(),
+                 QString::fromUtf8(QJsonDocument::fromVariant(resolver).toJson(QJsonDocument::Compact))));
     }
     QQmlExpression openCategoryForBehavior(qmlContext(profilesPage), profilesPage,
         QStringLiteral("openCategory('%1')").arg(testCategoryId));
     openCategoryForBehavior.evaluate();
     settlePresentation();
-    QObject *behaviorSelector = findVisualItemByObjectName(profilesItem,
-        QStringLiteral("flightDeckCategoryBehaviorSelector"));
-    if (openCategoryForBehavior.hasError() || !behaviorSelector
-        || !clickResponseComboRow(window, profilesPage, behaviorSelector, 0)
-        || !categoryWithName(testCategoryName).value(QStringLiteral("restoreLastProfile")).toBool()
-        || categoryWithName(unaffectedCategoryName).value(QStringLiteral("restoreLastProfile"))
-            != unaffectedCategoryBefore.value(QStringLiteral("restoreLastProfile"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 category behavior selector was not isolated")
+    const QVariantMap resolvedCategory = categoryWithName(testCategoryName);
+    if (openCategoryForBehavior.hasError()
+        || !findVisualItemByObjectName(profilesItem, QStringLiteral("flightDeckCategoryActivationResolver"))
+        || resolvedCategory.value(QStringLiteral("profileIds")).toStringList()
+            != QStringList{secondId, firstId}
+        || profileWithName(firstName).value(QStringLiteral("automaticSelectionMode")).toString()
+            != QStringLiteral("fallback")
+        || profileWithName(secondName).value(QStringLiteral("automaticSelectionMode")).toString()
+            != QStringLiteral("preferred")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 automatic activation policy was not isolated")
             .arg(appearance));
     }
     QQmlExpression openForDeepLinks(qmlContext(profilesPage), profilesPage,
@@ -3739,35 +3738,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     settlePresentation();
     const bool mappingSelectorVisible = findVisualItemByObjectName(axesItem,
         QStringLiteral("flightDeckMappingSelector_0")) != nullptr;
-    // The expanded editor can be taller than a minimum-height Flight Deck
-    // viewport. Scroll its real Flickable range before asserting the static
-    // preview, rather than relying on it to be eagerly created offscreen.
-    QQuickItem *responsePreview = nullptr;
-    const qreal maximumContentY = std::max<qreal>(0.0,
-        axesItem->property("contentHeight").toReal() - axesItem->height());
-    for (const qreal progress : {0.0, 0.25, 0.5, 0.75, 1.0}) {
-        axesItem->setProperty("contentY", maximumContentY * progress);
-        QTest::qWait(16);
-        settlePresentation();
-        responsePreview = findVisualItemByObjectName(axesItem,
-            QStringLiteral("flightDeckResponsePreview_0"));
-        if (responsePreview) break;
-    }
-    axesItem->setProperty("contentY", 0.0);
-    settlePresentation();
     if (configureAxis.hasError() || backend.selectedAxisIndex() != 0
         || axes->property("expandedAxisIndex").toInt() != 0
-        || !mappingSelectorVisible || !responsePreview) {
+        || !mappingSelectorVisible
+        || findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckResponsePreview_0"))) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Flight Deck %1 Axes configure flow did not select the authoritative axis or materialize its static preview "
-            "(qmlError=%2 selected=%3 expanded=%4 mapping=%5 preview=%6 visible=%7 size=%8x%9)")
+            "Flight Deck %1 Axes configure flow did not select the authoritative axis or retained a duplicate response graph "
+            "(qmlError=%2 selected=%3 expanded=%4 mapping=%5)")
             .arg(appearance).arg(configureAxis.hasError()).arg(backend.selectedAxisIndex())
             .arg(axes->property("expandedAxisIndex").toInt())
-            .arg(mappingSelectorVisible)
-            .arg(responsePreview != nullptr)
-            .arg(responsePreview ? responsePreview->isVisible() : false)
-            .arg(responsePreview ? responsePreview->width() : 0.0)
-            .arg(responsePreview ? responsePreview->height() : 0.0));
+            .arg(mappingSelectorVisible));
     }
     const QVariantMap axisLearningBefore = flightDeckConfigurationSnapshot(backend);
     auto *axisLearningButton = findVisualItemByObjectName(axesItem,
@@ -3878,6 +3858,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (adaptiveDeepLink.hasError() || surface->property("currentPage").toInt() != 9
         || backend.selectedAxisIndex() != 0) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axes Adaptive Response deep link did not preserve axis context")
+            .arg(appearance));
+    }
+    if (!selectPage(surface, 6)) return false;
+    QObject *curveEditor = pageItem(surface, 6);
+    auto *curveEditorItem = qobject_cast<QQuickItem *>(curveEditor);
+    QQuickItem *curveGraph = curveEditorItem ? findVisualItemByObjectName(
+        curveEditorItem, QStringLiteral("flightDeckCurveGraph")) : nullptr;
+    if (!curveEditor || curveEditor->objectName() != QStringLiteral("flightDeckCurveEditor")
+        || !curveGraph || !curveGraph->property("liveMarkerVisible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Curve Editor did not expose its live selected-axis marker")
             .arg(appearance));
     }
 

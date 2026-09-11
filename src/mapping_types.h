@@ -652,6 +652,15 @@ enum class DeviceRigDisconnectBehavior : int {
     UseFallback,
 };
 
+// The resolver deliberately uses a small, explicit policy vocabulary.  The
+// category order remains the durable tie-breaker; this setting only controls
+// whether a profile participates before or after fallback candidates.
+enum class ProfileAutomaticSelectionMode : int {
+    Preferred = 0,
+    Fallback,
+    ManualOnly,
+};
+
 struct DeviceRigMember {
     QString controllerRecordId;
     bool enabled = true;
@@ -703,6 +712,9 @@ struct ControllerProfile {
     // boundary and never reads categories while processing a report.
     QString categoryId;
     bool enabled = true;
+    // Control-plane-only activation policy. MappingWorker receives the
+    // resolved profile at a configuration boundary and never reads this.
+    ProfileAutomaticSelectionMode automaticSelectionMode = ProfileAutomaticSelectionMode::Preferred;
     // Empty means an unassigned portable/legacy profile.  A V2.4 migration
     // fills it only when an existing active controller can be proven.
     QString deviceRigId;
@@ -862,6 +874,12 @@ struct MapperConfiguration {
     // Detection is control-plane work sampled at a low frequency by
     // AppBackend. It is deliberately absent from RuntimeProfileCache.
     bool automaticGameDetection = true;
+    // Legacy candidate-schema input only.  V2.5.4 manual overrides are
+    // session-scoped AppBackend state and are intentionally never serialized.
+    // Retaining these fields lets an unreleased schema-25 candidate load
+    // safely, after which ConfigStore clears them.
+    bool activationManualOverride = false;
+    QString manualOverrideProfileId;
     std::vector<PersonalCurvePreset> personalCurvePresets;
     // Global physical-input profile controls. Runtime activation/latch state
     // is deliberately not persisted here.
@@ -1344,6 +1362,12 @@ RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguratio
                                                          const ControllerProfile &profile,
                                                          const DeviceProfileMapping &deviceMapping,
                                                          const SavedControllerRecord *record);
+// Profile Hold/Toggle controls are report-path overlays, not Device Rig
+// transitions. Resolve their compatibility at compile time so a physical
+// report can never create Profile B + Rig A.
+bool runtimeProfileControlTargetIsCompatible(const MapperConfiguration &configuration,
+                                             const RuntimeProfileCache &cache,
+                                             int targetProfileIndex);
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration);
 
 inline QString profileTriggerModeLabel(ProfileTriggerMode mode)

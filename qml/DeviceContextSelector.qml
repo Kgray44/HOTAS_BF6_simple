@@ -81,7 +81,7 @@ Item {
             DevicePanel { Layout.fillWidth: true; implicitHeight: 48; theme: control.theme; legacy: control.legacy; border.color: control.legacy ? "#52717c" : theme.border
                 Column { anchors.fill: parent; anchors.margins: 8; spacing: 2
                     Text { text: backendObject.editingDeviceRigName; color: theme.textStrong; font.pixelSize: 12; font.bold: true }
-                    Text { text: ((control.currentRig() || {}).healthLabel || "Offline") + " · " + control.connectedSummary() + (backendObject.editingDeviceRigId === backendObject.activeDeviceRigId ? "   ACTIVE RUNTIME" : ""); color: theme.textMuted; font.pixelSize: 9 }
+                    Text { text: ((control.currentRig() || {}).healthLabel || "Offline") + " · " + control.connectedSummary() + ((control.currentRig() || {}).inUse ? "   ROUTE IN USE" : ((control.currentRig() || {}).configured ? "   CONFIGURED" : "")); color: theme.textMuted; font.pixelSize: 9 }
                 }
             }
             Text { text: "VIEW / EDIT"; color: theme.textMuted; font.pixelSize: 9; font.bold: true; Layout.topMargin: 3 }

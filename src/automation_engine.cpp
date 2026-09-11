@@ -283,6 +283,11 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
                 if (!validProfileIndex(target.profileIndex, cache)) {
                     invalidate(*result, index, u"Target profile no longer exists."_qs);
                     valid = false;
+                } else if (!runtimeProfileControlTargetIsCompatible(configuration, cache,
+                                                                     target.profileIndex)) {
+                    invalidate(*result, index,
+                               u"Profile action targets a different Device Rig."_qs);
+                    valid = false;
                 }
                 hasProfileAction = true;
                 break;
@@ -724,6 +729,10 @@ const AutomationEvaluationResult &AutomationRuntime::evaluateLevelOnly(
         m_previousRuleActive[static_cast<size_t>(ruleIndex)] = matched;
         m_result.activeRules[static_cast<size_t>(ruleIndex)] = matched;
         if (matched) ++m_result.activeRuleCount;
+        // Invalid rules are diagnostics-only. In particular, a rejected
+        // cross-Rig Profile action must not create even an inactive report
+        // contribution that could be reconsidered by the trigger runtime.
+        if (!valid) continue;
         for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {
             const CompiledAutomationAction &action = rule.actions[static_cast<size_t>(actionIndex)];
             switch (action.type) {
@@ -858,6 +867,10 @@ const AutomationEvaluationResult &AutomationRuntime::evaluate(const AutomationIn
         }
         m_result.activeRules[static_cast<size_t>(ruleIndex)] = active;
         if (active) ++m_result.activeRuleCount;
+        // Keep invalid rules out of the report path entirely. Their compiler
+        // diagnostics remain visible, but no Profile/Rig-incompatible action
+        // is allowed to produce a runtime contribution.
+        if (!valid) continue;
         const bool startTap = triggered
             && (rule.activationMode != AutomationActivationMode::ToggleOnTrigger || active);
         for (int actionIndex = 0; actionIndex < rule.actionCount; ++actionIndex) {

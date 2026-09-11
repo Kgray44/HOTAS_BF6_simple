@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Hardware Compatibility
 
-**Current version: v2.5.3**
+**Current version: v2.5.4**
 
 This matrix records only supported states and evidence boundaries. “Expected / Unverified” is not a tested or endorsed claim.
 

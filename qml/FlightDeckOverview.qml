@@ -20,6 +20,7 @@ Flickable {
     readonly property var game: readinessModel ? readinessModel.game : ({})
     readonly property var profile: readinessModel ? readinessModel.profile : ({})
     readonly property var readinessState: readinessModel ? readinessModel.currentState : ({})
+    readonly property var activation: backend.activationResolverState
 
     FlightDeckTheme {
         id: deck
@@ -296,6 +297,21 @@ Flickable {
                 tone: game.tone || "informational"
                 actionLabel: "OPEN PROFILES"
                 onActionRequested: root.navigateToPage(5)
+            }
+            FlightDeckHealthCard {
+                objectName: "flightDeckHealthActivationResolver"
+                tokens: deck
+                eyebrow: "AUTOMATIC ACTIVATION"
+                title: activation.profileName ? activation.profileName + " · " + (activation.deviceRigName || "Device Rig") : "No automatic configuration"
+                detail: activation.explanation || "Checking the current Game / Application, profile, Device Rig, and virtual output."
+                tone: activation.valid ? "healthy" : "attention"
+                actionLabel: activation.manualOverride ? "RESUME AUTOMATIC" : "OPEN PROFILES"
+                onActionRequested: {
+                    if (activation.manualOverride)
+                        backend.resumeAutomaticActivation()
+                    else
+                        root.navigateToPage(5)
+                }
             }
             FlightDeckHealthCard {
                 objectName: "flightDeckHealthProfile"

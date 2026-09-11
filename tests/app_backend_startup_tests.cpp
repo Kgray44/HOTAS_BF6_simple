@@ -7,6 +7,55 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <memory>
+
+namespace {
+
+bool verifyActivationTransactionFaults()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString targetProfile = hotas::precisionProfileId();
+    const QString baselineProfile = hotas::normalProfileId();
+    const QString baselineRig = QStringLiteral("activation-transaction-rig");
+    const auto retainsBaseline = [&backend, &baselineProfile, &baselineRig]() {
+        return backend->activeProfileId() == baselineProfile
+            && backend->activeDeviceRigId() == baselineRig;
+    };
+    for (const QString &stage : {QStringLiteral("prepare"), QStringLiteral("visibility"),
+                                 QStringLiteral("persist"), QStringLiteral("reacquire")}) {
+        if (!backend->configureActivationTransactionFixtureForTest()) {
+            std::fprintf(stderr, "activation transaction fixture could not be configured\n");
+            return false;
+        }
+        backend->setActivationFaultInjectionsForTest({stage});
+        if (backend->activateProfile(targetProfile) || !retainsBaseline()
+            || backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
+            std::fprintf(stderr, "activation transaction did not retain the prior route at %s\n",
+                         stage.toUtf8().constData());
+            return false;
+        }
+    }
+    if (!backend->configureActivationTransactionFixtureForTest()) return false;
+    backend->setActivationFaultInjectionsForTest({QStringLiteral("reacquire"),
+                                                   QStringLiteral("rollback")});
+    if (backend->activateProfile(targetProfile) || !retainsBaseline()
+        || !backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
+        std::fprintf(stderr, "activation transaction did not expose the injected degraded rollback state\n");
+        return false;
+    }
+    if (!backend->configureActivationTransactionFixtureForTest()) return false;
+    backend->setActivationFaultInjectionsForTest({});
+    if (!backend->activateProfile(targetProfile)
+        || backend->activeProfileId() != targetProfile
+        || backend->activeDeviceRigId() != baselineRig
+        || backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
+        std::fprintf(stderr, "activation transaction normal path did not commit the full route\n");
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -18,6 +67,7 @@ int main(int argc, char *argv[])
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
 
     hotas::AppBackend backend;
+    if (!verifyActivationTransactionFaults()) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real
     // presentation lifecycle and then taking the visible steady-state sample.

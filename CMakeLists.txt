@@ -51,6 +51,8 @@ set(HOTAS_MAPPER_SOURCES
     src/input_learning.cpp
     src/profile_model.h
     src/profile_model.cpp
+    src/activation_resolver.h
+    src/activation_resolver.cpp
     src/profile_portability.h
     src/profile_portability.cpp
     src/profile_trigger_runtime.h
@@ -284,6 +286,8 @@ if (BUILD_TESTING)
         src/input_learning.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/profile_trigger_runtime.h
@@ -340,6 +344,12 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
+        src/device_rig.h
+        src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/config_store.h
@@ -454,6 +464,12 @@ if (BUILD_TESTING)
         src/automation_engine.cpp
         src/profile_model.h
         src/profile_model.cpp
+        src/activation_resolver.h
+        src/activation_resolver.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
+        src/device_rig.h
+        src/device_rig.cpp
         src/profile_portability.h
         src/profile_portability.cpp
         src/config_store.h
@@ -494,7 +510,7 @@ if (BUILD_TESTING)
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
-    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
     add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
     if (WIN32)
         set_tests_properties(app_backend_startup_tests PROPERTIES

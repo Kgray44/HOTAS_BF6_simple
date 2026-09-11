@@ -3,6 +3,7 @@
 #include "event_log.h"
 #include "app_issue.h"
 #include "app_health_service.h"
+#include "activation_resolver.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
 #include "device_rig.h"
@@ -206,6 +207,8 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList nativePovTargetChoices READ nativePovTargetChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList profileTriggerBehaviorChoices READ profileTriggerBehaviorChoices CONSTANT)
     Q_PROPERTY(bool automaticGameDetection READ automaticGameDetection NOTIFY stateChanged)
+    Q_PROPERTY(QVariantMap activationResolverState READ activationResolverState NOTIFY stateChanged)
+    Q_PROPERTY(bool manualActivationOverride READ manualActivationOverride NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap portableImportPreview READ portableImportPreview NOTIFY stateChanged)
     Q_PROPERTY(QString portableImportStatus READ portableImportStatus NOTIFY stateChanged)
     Q_PROPERTY(QStringList eventLog READ eventLog NOTIFY eventLogChanged)
@@ -265,6 +268,11 @@ public:
     // hardware nor reaches the DirectInput-to-vJoy report path.
     void setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
                                    int physicalPovCount, int continuousPovCapacity = 0);
+    // Deterministic transaction fixture and one-shot stage faults. They are
+    // compiled only into the isolated startup suites and cannot alter a
+    // production mapper, driver, or visibility transaction.
+    bool configureActivationTransactionFixtureForTest();
+    void setActivationFaultInjectionsForTest(const QStringList &stages);
 #endif
     QVariantList buttons() const;
     QVariantList povs() const;
@@ -404,6 +412,8 @@ public:
     QVariantList quickAssignAxisTargets() const;
     QVariantList quickMapButtonTargets() const;
     bool automaticGameDetection() const { return m_configuration.automaticGameDetection; }
+    QVariantMap activationResolverState() const;
+    bool manualActivationOverride() const { return m_manualActivationOverride; }
     QVariantMap portableImportPreview() const;
     QString portableImportStatus() const { return m_portableImportStatus; }
     QStringList eventLog() const { return m_events.entries(); }
@@ -540,6 +550,14 @@ public:
     Q_INVOKABLE bool setCategoryDefaultProfile(const QString &categoryId, const QString &profileId);
     Q_INVOKABLE bool setCategoryRestoreLastProfile(const QString &categoryId, bool restoreLastProfile);
     Q_INVOKABLE bool setCategoryGameDetectionRules(const QString &categoryId, const QStringList &rules);
+    Q_INVOKABLE bool setProfileAutomaticSelectionMode(const QString &profileId, const QString &mode);
+    Q_INVOKABLE bool reorderCategoryAutomaticProfiles(const QString &categoryId,
+                                                      const QStringList &profileIds);
+    Q_INVOKABLE bool assignProfileDeviceRig(const QString &profileId, const QString &rigId);
+    Q_INVOKABLE QVariantMap activationPreview(const QString &categoryId = {}) const;
+    Q_INVOKABLE QVariantMap explainActivation(const QString &categoryId = {}) const;
+    Q_INVOKABLE bool activateRecommendedConfiguration(const QString &categoryId = {});
+    Q_INVOKABLE bool resumeAutomaticActivation();
     Q_INVOKABLE QVariantList runningApplications() const;
     Q_INVOKABLE void refreshRunningApplications();
     Q_INVOKABLE void setAutomaticGameDetection(bool enabled);
@@ -872,6 +890,23 @@ private:
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
     void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
+    ActivationContext activationContext(const QString &categoryId = {},
+                                        ActivationIntent intent = ActivationIntent::Automatic,
+                                        const QString &requestedProfileId = {},
+                                        const QString &requestedRigId = {}) const;
+    ActivationDecision activationDecision(const QString &categoryId = {},
+                                          ActivationIntent intent = ActivationIntent::Automatic,
+                                          const QString &requestedProfileId = {},
+                                          const QString &requestedRigId = {}) const;
+    QVariantMap activationDecisionVariant(const ActivationDecision &decision) const;
+    void scheduleActivationResolution(const QString &reason);
+    void resolveActivationNow();
+    bool applyActivationDecision(const ActivationDecision &decision, ActivationIntent intent);
+    void clearManualActivationOverride(const QString &reason = {});
+    void sampleForegroundGameContext();
+    void updateRequiredDeviceDisconnectGrace();
+    bool commitActivationConfiguration(const MapperConfiguration &candidate);
+    bool consumeActivationFaultForTest(const QString &stage);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
     void releasePresentationResources();
@@ -1022,7 +1057,33 @@ private:
     QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
+    QTimer m_foregroundGameTimer;
+    QTimer m_requiredDisconnectGraceTimer;
+    QTimer m_activationResolveTimer;
+    QSet<QString> m_pendingActivationReasons;
     QStringList m_lastDetectedExecutables;
+    QString m_foregroundExecutableCandidate;
+    quint64 m_foregroundExecutableCandidateProcessId = 0;
+    QString m_stableForegroundExecutable;
+    quint64 m_stableForegroundExecutableProcessId = 0;
+    QElapsedTimer m_foregroundExecutableClock;
+    QHash<QString, qint64> m_requiredDeviceDisconnectStartedMs;
+    QString m_requiredDisconnectGraceRigId;
+    QString m_requiredDisconnectGraceProfileId;
+    QElapsedTimer m_activationControlPlaneClock;
+    quint64 m_configurationGeneration = 1;
+    quint64 m_inventoryGeneration = 0;
+    quint64 m_gameContextGeneration = 0;
+    bool m_manualActivationOverride = false;
+    QString m_manualOverrideProfileId;
+    QString m_manualOverrideCategoryId;
+    bool m_activationDegraded = false;
+#ifdef HOTAS_STARTUP_TESTING
+    QSet<QString> m_activationFaultInjections;
+    bool m_activationTransactionTestBypassDriverConfiguration = false;
+#endif
+    bool m_initialInventoryResolved = false;
+    bool m_initialGameContextResolved = false;
     QVariantList m_runningApplications;
     QHash<QString, QString> m_runningApplicationPathCache;
     QVariantList m_buttonUiModel;
