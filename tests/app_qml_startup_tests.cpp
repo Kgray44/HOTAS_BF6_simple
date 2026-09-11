@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFile>
@@ -2899,6 +2900,65 @@ bool verifyFlightDeckDialogHeaderGeometry(hotas::AppBackend &backend,
             "Flight Deck %1 repair dialog did not retain its title inset, scrollable body, and reachable actions")
             .arg(appearance));
     }
+    return true;
+}
+
+bool verifyFlightDeckPageNavigationPerformance(hotas::AppBackend &backend,
+                                               hotas::ThemeManager &themeManager,
+                                               const QString &appearance)
+{
+    struct PageSample {
+        int index;
+        const char *name;
+    };
+    constexpr std::array<PageSample, 11> pages{{
+        {8, "Overview"}, {2, "Devices"}, {0, "Axes"}, {1, "Buttons"},
+        {6, "Curve"}, {5, "Profiles"}, {9, "Adaptive"}, {7, "Automation"},
+        {11, "SignalFlow"}, {3, "Diagnostics"}, {4, "Settings"},
+    }};
+
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return failPresentationLifecycleTest(QStringLiteral("Flight Deck performance probe window did not load"));
+
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface) return failPresentationLifecycleTest(QStringLiteral("Flight Deck performance probe surface did not load"));
+
+    qint64 totalMilliseconds = 0;
+    qint64 maximumMilliseconds = 0;
+    for (const PageSample &page : pages) {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        if (!selectPage(surface, page.index)) return false;
+        const qint64 milliseconds = elapsed.elapsed();
+        totalMilliseconds += milliseconds;
+        maximumMilliseconds = std::max(maximumMilliseconds, milliseconds);
+        std::fprintf(stderr,
+            "flight_deck_page_navigation appearance=%s page=%s page_id=%d settle_ms=%lld loaded_pages=%d\n",
+            appearance.toUtf8().constData(), page.name, page.index,
+            static_cast<long long>(milliseconds), surface->property("loadedPageCount").toInt());
+        // The probe is intentionally a generous smoke threshold rather than a
+        // benchmark gate: it flags an obvious page-load stall while retaining
+        // the raw per-route timings for the qualification record.
+        if (milliseconds > 1500) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck performance probe page %1 exceeded the 1500 ms isolated navigation smoke limit (%2 ms)")
+                .arg(QString::fromLatin1(page.name)).arg(milliseconds));
+        }
+    }
+    std::fprintf(stderr,
+        "flight_deck_page_navigation_summary appearance=%s pages=%zu total_ms=%lld max_ms=%lld\n",
+        appearance.toUtf8().constData(), pages.size(), static_cast<long long>(totalMilliseconds),
+        static_cast<long long>(maximumMilliseconds));
     return true;
 }
 
@@ -7252,6 +7312,10 @@ int main(int argc, char *argv[])
     // fresh, inspectable screenshots after shared presentation changes.
     const bool flightDeckVisualOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_VISUAL_ONLY");
+    // A small, isolated route-by-route navigation probe for performance
+    // qualification. It does not substitute for a native interaction review.
+    const bool flightDeckPerformanceOnly = qEnvironmentVariableIsSet(
+        "HOTAS_QML_FLIGHT_DECK_PERF_ONLY");
     const bool signalFlowOnly = qEnvironmentVariableIsSet("HOTAS_QML_SIGNAL_FLOW_ONLY");
     if (adaptiveChoiceGeometryOnly || containmentGeometryOnly) {
         const bool geometrySafe = (!containmentGeometryOnly
@@ -7288,6 +7352,18 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return visualSafe ? 0 : 1;
+    }
+    if (flightDeckPerformanceOnly) {
+        backend.setVirtualAxisAvailabilityForTest(true);
+        bool performanceSafe = true;
+        for (const QString &appearance : {QStringLiteral("Dark"), QStringLiteral("Light")}) {
+            if (!verifyFlightDeckPageNavigationPerformance(backend, themeManager, appearance)) {
+                performanceSafe = false;
+                break;
+            }
+        }
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return performanceSafe ? 0 : 1;
     }
     if (signalFlowOnly) {
         const bool signalFlowSafe = verifySignalFlowQmlSurface(backend, themeManager);

@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.0**
+**Current version: v2.6.1**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.1 — Flight Deck performance optimization (candidate)
+
+Reduces avoidable Flight Deck control-plane and QML presentation work while preserving the canonical configuration authority, existing visuals, profile semantics, adaptive-response math, and the allocation-free DirectInput-to-vJoy report path.
+
+- Flight Deck Axes separates stable card configuration from the small live numeric stream, and profile-presentation text now changes only when its control-plane projection changes rather than on every input sample.
+- Response Lab keeps bounded live history in place, advances replay with a cursor, and decimates chart drawing to the visible pixel width without changing adaptive-response simulation or predictor behavior.
+- Signal Flow builds presentation-side route, port-membership, telemetry, and wire-geometry indexes so canvas and node lookups avoid repeated full-graph scans; geometry remains topology and layout driven.
+- The candidate adds source and startup contracts for those boundaries. It is not a protected-main merge, release tag, signed package, updater publication, public release, or physical controller-to-vJoy acceptance claim.
 
 ## v2.6.0 — Signal Flow
 

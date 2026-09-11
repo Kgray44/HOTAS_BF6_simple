@@ -39,6 +39,11 @@ struct PortableConfigurationBundle;
 
 class AppBackend final : public QObject {
     Q_OBJECT
+    // Flight Deck owns a stable axis-card tree.  Configuration and the tiny
+    // numeric stream are published independently so moving a stick never
+    // reconstructs labels, mappings, curve summaries, or editor controls.
+    Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
     // Curve Editor keeps this structural selector model separate from the
     // high-frequency axes telemetry list.
@@ -76,9 +81,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged)
     Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY stateChanged)
     Q_PROPERTY(QString activeCategoryName READ activeCategoryName NOTIFY stateChanged)
-    Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY inputTelemetryChanged)
-    Q_PROPERTY(QString effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY inputTelemetryChanged)
-    Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY inputTelemetryChanged)
+    // These are control-plane facts.  A physical axis sample must not wake the
+    // always-live Flight Deck shell merely to recompute profile text.
+    Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged)
+    Q_PROPERTY(QString effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged)
+    Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceId READ deviceId NOTIFY stateChanged)
@@ -232,6 +239,8 @@ public:
     explicit AppBackend(QObject *parent = nullptr);
     ~AppBackend() override;
 
+    QVariantList axisConfiguration() const;
+    QVariantList axisTelemetry() const;
     QVariantList axes() const;
     QVariantList curveAxisChoices() const;
     int selectedAxisIndex() const;
@@ -796,6 +805,7 @@ signals:
     void stateChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
+    void profilePresentationChanged();
     void buttonTelemetryChanged();
     void controllersChanged();
     void deviceRigsChanged();
@@ -974,6 +984,7 @@ private:
     QString signalFlowWorkspaceKey() const;
     bool saveSignalFlowPresentation();
     void sampleAdaptiveResponseHistory();
+    void publishProfilePresentationIfChanged();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
     void advanceAdaptiveResponseSimulator(float manualInput, const QString &scope,
                                           const QString &targetId, int physicalAxis,
@@ -1098,6 +1109,9 @@ private:
     // Canonical GUI-side desired Mapping state. It is updated synchronously
     // for every user click and reconciled from worker-side Automation changes.
     bool m_mappingDesired = false;
+    QString m_presentedEffectiveProfileName;
+    QString m_presentedEffectiveProfileDisplayName;
+    QString m_presentedProfileSourceLabel;
     // Only the deterministic Live Controller UI test sets this. It verifies
     // a suspended presentation state without asking the worker to acquire
     // vJoy or modify a physical device.

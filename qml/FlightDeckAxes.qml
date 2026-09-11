@@ -25,7 +25,11 @@ Flickable {
     signal requestQuickMap()
 
     readonly property bool usingPresentationOverride: axisPresentationOverride !== null
-    readonly property var axisItems: usingPresentationOverride ? axisPresentationOverride : backend.axes
+    // The card model is configuration-only.  Numeric values arrive in a tiny
+    // parallel list so a physical sample updates meters without replacing the
+    // Repeater model or reevaluating every card's editor bindings.
+    readonly property var axisItems: usingPresentationOverride ? axisPresentationOverride : backend.axisConfiguration
+    readonly property var axisTelemetryItems: usingPresentationOverride ? axisPresentationOverride : backend.axisTelemetry
     readonly property var outputChoices: backend.virtualAxisChoices
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0 ? inputDeviceNameOverride : (backend.deviceName || "Selected controller")
     readonly property bool hasVisibleAxes: visibleAxisCount() > 0
@@ -64,6 +68,17 @@ Flickable {
                 return axisItems[candidate];
         }
         return null;
+    }
+
+    function telemetryForIndex(index) {
+        const candidate = axisTelemetryItems[index];
+        if (candidate && Number(candidate.index) === Number(index))
+            return candidate;
+        for (let itemIndex = 0; itemIndex < axisTelemetryItems.length; ++itemIndex) {
+            if (Number(axisTelemetryItems[itemIndex].index) === Number(index))
+                return axisTelemetryItems[itemIndex];
+        }
+        return ({});
     }
 
     function sourceLabel(axis) {
@@ -317,6 +332,7 @@ Flickable {
         tokens: deck
         property var axis: ({})
         readonly property int axisIndex: Number(axis.index)
+        readonly property var telemetry: root.telemetryForIndex(axisIndex)
         readonly property bool expanded: root.expandedAxisIndex === axisIndex
         readonly property var adaptiveState: root.adaptiveStateFor(axisIndex)
         readonly property bool adaptiveEnabled: Boolean(adaptiveState.effective && adaptiveState.effective.enabled)
@@ -420,7 +436,7 @@ Flickable {
                 FlightDeckAxisValueMeter {
                     tokens: deck
                     caption: axis.unipolar ? "NORMALIZED INPUT" : "NORMALIZED INPUT"
-                    value: Number(axis.calibrated)
+                    value: Number(card.telemetry.calibrated)
                     valid: true
                     unipolar: Boolean(axis.unipolar)
                     Layout.fillWidth: true
@@ -428,8 +444,8 @@ Flickable {
                 FlightDeckAxisValueMeter {
                     tokens: deck
                     caption: "FINAL VIRTUAL OUTPUT"
-                    value: Number(axis.virtualValue)
-                    valid: Boolean(axis.virtualValid)
+                    value: Number(card.telemetry.virtualValue)
+                    valid: Boolean(card.telemetry.virtualValid)
                     unipolar: Boolean(axis.unipolar)
                     unavailableText: axis.target === "Disabled" ? "Disabled" : "Unavailable"
                     Layout.fillWidth: true

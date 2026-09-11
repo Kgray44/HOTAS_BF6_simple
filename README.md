@@ -2,12 +2,12 @@
 
 # HOTAS BF6 Simple
 
-**Current version: v2.6.0**
+**Current version: v2.6.1**
 [Version Overview](docs/Version_Overview.md) · [Complete Features](docs/Features.md)
 
 A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.
 
-HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. V2.6.0 adds a durable canonical Signal Flow workspace: routes, processors, mixers, and graph presentation remain one configuration while Legacy, Standard, Top Gun, Day Ops, and the native Flight Deck provide focused projections and editing surfaces. Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude decision; no hidden fan-in is introduced. The Signal Flow control plane, device topology, verification, themes, and Flight Deck presentation remain outside the allocation-free DirectInput-to-vJoy report path.
+HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. The V2.6.1 Flight Deck performance candidate separates stable presentation configuration from live telemetry, bounds Response Lab rendering work, and indexes Signal Flow presentation data while preserving the existing configuration authority, mapping semantics, and allocation-free DirectInput-to-vJoy report path.
 
 ## Product gallery
 

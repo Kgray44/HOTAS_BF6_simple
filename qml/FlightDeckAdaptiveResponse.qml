@@ -38,6 +38,7 @@ Flickable {
     property bool liveRecording: false
     property bool liveReplaying: false
     property var historySamples: []
+    property int historyRevision: 0
     property int historyLastSequence: 0
     property int historyInspectIndex: -1
     property bool simulatorPaused: true
@@ -48,6 +49,9 @@ Flickable {
     property int simulatorLastSequence: 0
     property var simulatorSamples: []
     property var simulatorDisplaySamples: []
+    property int simulatorRevision: 0
+    property int simulatorDisplayCount: 0
+    property int simulatorReplayCursor: 0
     property var simulatorRecordingSamples: []
     property int replaySlowdown: 1
     property real replayPresentationMs: 0
@@ -76,6 +80,14 @@ Flickable {
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     property var comparisonTestLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     property var responseLabSamples: responseLabSource === "live" ? historySamples : simulatorDisplaySamples
+    readonly property int historySampleCount: {
+        historyRevision;
+        return historySamples.length;
+    }
+    readonly property int responseLabSampleCount: responseLabSource === "live"
+        ? historySampleCount : simulatorDisplayCount
+    readonly property int responseLabRevision: responseLabSource === "live"
+        ? historyRevision : simulatorRevision
     property var responseLabTelemetry: responseLabSource === "live" ? telemetry : simulatorCurrentSample()
 
     contentWidth: width
@@ -344,12 +356,16 @@ Flickable {
         responseLabSource = source;
         historyLastSequence = 0;
         historySamples = [];
+        historyRevision += 1;
         historyPaused = false;
         liveRecording = false;
         liveReplaying = false;
         simulatorLastSequence = 0;
         simulatorSamples = [];
         simulatorDisplaySamples = [];
+        simulatorDisplayCount = 0;
+        simulatorReplayCursor = 0;
+        simulatorRevision += 1;
         if (source === "live")
             refreshHistory(true);
     }
@@ -359,18 +375,21 @@ Flickable {
             return;
         const update = backendObject.adaptiveResponseHistorySince(reset ? 0 : historyLastSequence, historyWindowSeconds);
         const incoming = update.samples || [];
+        let changed = false;
         if (reset || update.reset) {
             historySamples = incoming;
+            changed = true;
         } else if (incoming.length > 0) {
-            const updated = historySamples.slice(0);
             for (let index = 0; index < incoming.length; ++index)
-                updated.push(incoming[index]);
+                historySamples.push(incoming[index]);
             const maximum = Math.max(180, historyWindowSeconds * 100);
-            if (updated.length > maximum)
-                updated.splice(0, updated.length - maximum);
-            historySamples = updated;
+            if (historySamples.length > maximum)
+                historySamples.splice(0, historySamples.length - maximum);
+            changed = true;
         }
         historyLastSequence = Number(update.newestSequence || historyLastSequence);
+        if (changed)
+            historyRevision += 1;
         if (!historyPaused)
             historyInspectIndex = historySamples.length - 1;
     }
@@ -378,29 +397,33 @@ Flickable {
     function refreshSimulator(reset) {
         const update = backendObject.adaptiveResponseSimulatorHistorySince(reset ? 0 : simulatorLastSequence);
         const incoming = update.samples || [];
+        let changed = false;
         if (reset || update.reset) {
             simulatorSamples = incoming;
+            changed = true;
         } else if (incoming.length > 0) {
-            const updated = simulatorSamples.slice(0);
             for (let index = 0; index < incoming.length; ++index)
-                updated.push(incoming[index]);
-            if (updated.length > 900)
-                updated.splice(0, updated.length - 900);
-            simulatorSamples = updated;
+                simulatorSamples.push(incoming[index]);
+            if (simulatorSamples.length > 900)
+                simulatorSamples.splice(0, simulatorSamples.length - 900);
+            changed = true;
         }
         simulatorLastSequence = Number(update.newestSequence || simulatorLastSequence);
-        simulatorDisplaySamples = simulatorSamples.slice(0);
+        simulatorDisplaySamples = simulatorSamples;
+        simulatorDisplayCount = simulatorSamples.length;
+        if (changed)
+            simulatorRevision += 1;
     }
 
     function sampleSimulator() {
         backendObject.adaptiveResponseSimulatorStepAtContext(simulatorInput, editScope, selectedTargetId(), backendObject.selectedAxisIndex, simulatorSourceRate);
-        refreshSimulator(false);
     }
 
     function simulatorCurrentSample() {
-        if (!simulatorDisplaySamples || simulatorDisplaySamples.length === 0)
+        const count = Math.min(simulatorDisplayCount, simulatorDisplaySamples ? simulatorDisplaySamples.length : 0);
+        if (!simulatorDisplaySamples || count === 0)
             return ({});
-        return simulatorDisplaySamples[simulatorDisplaySamples.length - 1] || ({});
+        return simulatorDisplaySamples[count - 1] || ({});
     }
 
     function startReplay() {
@@ -410,32 +433,32 @@ Flickable {
         simulatorReplaying = true;
         simulatorPaused = false;
         replayPresentationMs = 0;
-        simulatorDisplaySamples = [simulatorRecordingSamples[0]];
+        simulatorReplayCursor = 1;
+        simulatorDisplaySamples = simulatorRecordingSamples;
+        simulatorDisplayCount = simulatorReplayCursor;
+        simulatorRevision += 1;
     }
 
     function updateReplayPresentation() {
         if (!simulatorReplaying || simulatorPaused || simulatorRecordingSamples.length === 0)
             return;
-        replayPresentationMs += 16;
+        replayPresentationMs += 33;
         const originalElapsed = replayPresentationMs / Math.max(1, replaySlowdown);
-        const replayed = [];
-        for (let index = 0; index < simulatorRecordingSamples.length; ++index) {
-            const sample = simulatorRecordingSamples[index];
-            if (numericOr(sample.recordedElapsedMs, 0) <= originalElapsed)
-                replayed.push(sample);
-            else
-                break;
-        }
-        simulatorDisplaySamples = replayed.length > 0 ? replayed : [simulatorRecordingSamples[0]];
+        while (simulatorReplayCursor < simulatorRecordingSamples.length
+                && numericOr(simulatorRecordingSamples[simulatorReplayCursor].recordedElapsedMs, 0) <= originalElapsed)
+            simulatorReplayCursor += 1;
+        simulatorDisplayCount = Math.max(1, simulatorReplayCursor);
+        simulatorRevision += 1;
         if (originalElapsed >= numericOr(simulatorRecordingSamples[simulatorRecordingSamples.length - 1].recordedElapsedMs, 0)) {
             simulatorPaused = true;
             simulatorReplaying = false;
         }
     }
 
-    function magnitude(samples, fields, minimum) {
+    function magnitude(samples, fields, minimum, sampleLimit) {
         let maximum = minimum;
-        for (let index = 0; index < samples.length; ++index) {
+        const count = Math.max(0, Math.min(sampleLimit === undefined ? samples.length : sampleLimit, samples.length));
+        for (let index = 0; index < count; ++index) {
             for (let field = 0; field < fields.length; ++field)
                 maximum = Math.max(maximum, Math.abs(numericOr(samples[index][fields[field]], 0)));
         }
@@ -443,7 +466,8 @@ Flickable {
     }
 
     function responseLabMagnitude(fields, minimum) {
-        return magnitude(responseLabSamples || [], fields, minimum);
+        responseLabRevision;
+        return magnitude(responseLabSamples || [], fields, minimum, responseLabSampleCount);
     }
 
     function metricMilliseconds(value) {
@@ -922,12 +946,14 @@ Flickable {
         setPreview();
         historyLastSequence = 0;
         historySamples = [];
+        historyRevision += 1;
         if (responseLabSource === "live")
             refreshHistory(true);
     }
     onHistoryWindowSecondsChanged: {
         historyLastSequence = 0;
         historySamples = [];
+        historyRevision += 1;
         if (responseLabSource === "live")
             refreshHistory(true);
     }
@@ -962,10 +988,10 @@ Flickable {
     Timer {
         interval: 33
         repeat: true
-        running: root.visible && root.responseLabSource === "live" && root.liveReplaying && root.historySamples.length > 0
+        running: root.visible && root.responseLabSource === "live" && root.liveReplaying && root.historySampleCount > 0
         onTriggered: {
             const next = root.historyInspectIndex + 1;
-            if (next >= root.historySamples.length) {
+            if (next >= root.historySampleCount) {
                 root.liveReplaying = false;
                 root.historyPaused = true;
             } else {
@@ -974,14 +1000,14 @@ Flickable {
         }
     }
     Timer {
-        interval: 16
+        interval: 33
         repeat: true
         triggeredOnStart: true
         running: root.visible && root.responseLabSource === "interactive" && root.responseLabNearViewport && !root.simulatorPaused && !root.simulatorReplaying
         onTriggered: root.sampleSimulator()
     }
     Timer {
-        interval: 16
+        interval: 33
         repeat: true
         running: root.visible && root.responseLabSource === "interactive" && root.responseLabNearViewport && root.simulatorReplaying && !root.simulatorPaused
         onTriggered: root.updateReplayPresentation()
@@ -1289,12 +1315,20 @@ Flickable {
     component InstrumentGraph: Canvas {
         id: graph
         property var samples: []
+        // A graph observes a revision rather than requiring callers to clone
+        // a JavaScript sample array merely to wake Canvas.
+        property int sampleRevision: samples === root.responseLabSamples
+            ? root.responseLabRevision : samples === root.historySamples ? root.historyRevision : 0
+        property int sampleLimit: samples === root.responseLabSamples
+            ? root.responseLabSampleCount : samples ? samples.length : 0
         property var series: []
         property real lowerBound: -1
         property real upperBound: 1
         property bool drawInspectionCursor: false
         antialiasing: true
         onSamplesChanged: requestPaint()
+        onSampleRevisionChanged: requestPaint()
+        onSampleLimitChanged: requestPaint()
         onSeriesChanged: requestPaint()
         onLowerBoundChanged: requestPaint()
         onUpperBoundChanged: requestPaint()
@@ -1326,7 +1360,8 @@ Flickable {
                 ctx.lineTo(horizontalPadding + plotWidth, zero);
                 ctx.stroke();
             }
-            if (!samples || samples.length === 0)
+            const sampleCount = Math.max(0, Math.min(sampleLimit, samples ? samples.length : 0));
+            if (!samples || sampleCount === 0)
                 return;
             ctx.save();
             ctx.beginPath();
@@ -1337,20 +1372,34 @@ Flickable {
                 ctx.strokeStyle = descriptor.color;
                 ctx.lineWidth = descriptor.width || 2;
                 ctx.beginPath();
-                for (let index = 0; index < samples.length; ++index) {
+                // More points than horizontal pixels cannot add visual
+                // fidelity.  Decimate at draw time while preserving the last
+                // sample and its original horizontal position.
+                const sampleStride = Math.max(1, Math.ceil(sampleCount / Math.max(1, Math.floor(plotWidth))));
+                let drewFinalSample = false;
+                for (let index = 0; index < sampleCount; index += sampleStride) {
                     const point = samples[index] || ({});
                     const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(point[descriptor.field], 0)));
-                    const x = horizontalPadding + index * plotWidth / Math.max(1, samples.length - 1);
+                    const x = horizontalPadding + index * plotWidth / Math.max(1, sampleCount - 1);
                     const y = verticalPadding + plotHeight * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound));
                     if (index === 0)
                         ctx.moveTo(x, y);
                     else
                         ctx.lineTo(x, y);
+                    drewFinalSample = index === sampleCount - 1;
+                }
+                if (!drewFinalSample && sampleCount > 1) {
+                    const index = sampleCount - 1;
+                    const point = samples[index] || ({});
+                    const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(point[descriptor.field], 0)));
+                    const x = horizontalPadding + index * plotWidth / Math.max(1, sampleCount - 1);
+                    const y = verticalPadding + plotHeight * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound));
+                    ctx.lineTo(x, y);
                 }
                 ctx.stroke();
             }
             if (drawInspectionCursor && root.historyPaused && root.historyInspectIndex >= 0) {
-                const x = horizontalPadding + root.historyInspectIndex * plotWidth / Math.max(1, samples.length - 1);
+                const x = horizontalPadding + root.historyInspectIndex * plotWidth / Math.max(1, sampleCount - 1);
                 ctx.strokeStyle = deck.attention;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -3189,6 +3238,7 @@ Flickable {
                                         root.historyPaused = false;
                                         root.historyLastSequence = 0;
                                         root.historySamples = [];
+                                        root.historyRevision += 1;
                                         root.refreshHistory(true);
                                     } else {
                                         root.simulatorReplaying = false;
@@ -3218,7 +3268,7 @@ Flickable {
                             DeckButton {
                                 text: "REPLAY"
                                 subdued: !(root.responseLabSource === "live" ? root.liveReplaying : root.simulatorReplaying)
-                                enabled: root.responseLabSource === "live" ? root.historySamples.length > 0 : backendObject.adaptiveResponseSimulatorRecording().length > 0
+                                enabled: root.responseLabSource === "live" ? root.historySampleCount > 0 : backendObject.adaptiveResponseSimulatorRecording().length > 0
                                 onClicked: {
                                     if (root.responseLabSource === "live") {
                                         root.liveRecording = false;
@@ -3255,6 +3305,7 @@ Flickable {
                                         root.historyPaused = true;
                                         root.historyLastSequence = 0;
                                         root.historySamples = [];
+                                        root.historyRevision += 1;
                                         root.historyInspectIndex = -1;
                                     } else {
                                         backendObject.adaptiveResponseSimulatorClear();
@@ -3264,6 +3315,9 @@ Flickable {
                                         root.simulatorLastSequence = 0;
                                         root.simulatorSamples = [];
                                         root.simulatorDisplaySamples = [];
+                                        root.simulatorDisplayCount = 0;
+                                        root.simulatorReplayCursor = 0;
+                                        root.simulatorRevision += 1;
                                     }
                                 }
                             }
@@ -3387,7 +3441,7 @@ Flickable {
                             }
                         }
                         RowLayout {
-                            visible: root.responseLabSource === "live" && root.historyPaused && root.historySamples.length > 1
+                            visible: root.responseLabSource === "live" && root.historyPaused && root.historySampleCount > 1
                             width: parent.width
                             spacing: deck.space12
                             Text {
@@ -3402,7 +3456,7 @@ Flickable {
                                 objectName: "adaptiveHistoryInspect"
                                 Layout.fillWidth: true
                                 from: 0
-                                to: Math.max(0, root.historySamples.length - 1)
+                                to: Math.max(0, root.historySampleCount - 1)
                                 stepSize: 1
                                 value: Math.max(0, root.historyInspectIndex)
                                 background: Rectangle {
@@ -3432,7 +3486,7 @@ Flickable {
                                 onMoved: root.historyInspectIndex = Math.round(value)
                             }
                             Text {
-                                text: (Math.max(0, root.historyInspectIndex) + 1) + " / " + root.historySamples.length
+                                text: (Math.max(0, root.historyInspectIndex) + 1) + " / " + root.historySampleCount
                                 color: deck.attention
                                 font.family: deck.telemetryFont
                                 font.pixelSize: 10
@@ -3584,7 +3638,7 @@ Flickable {
                         }
                     }
                     Text {
-                        text: root.responseLabSamples.length + " BOUNDED SAMPLES"
+                        text: root.responseLabSampleCount + " BOUNDED SAMPLES"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 8

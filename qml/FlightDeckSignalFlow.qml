@@ -39,6 +39,14 @@ Item {
     property var routeExplanation: ({})
     property bool xrayMode: false
     property var wireGeometry: []
+    // Rebuild these static indexes only when canonical graph topology changes.
+    // The 10 Hz Live sampler updates a tiny lookup map rather than making
+    // each painted route scan the complete telemetry list.
+    property var routeById: ({})
+    property var routeMembershipByInput: ({})
+    property var routeMembershipByOutput: ({})
+    property var routeLiveById: ({})
+    property var wireGeometryByRouteId: ({})
     property var retiringWireGeometry: []
     property real wireReveal: 1.0
     property real wireRetire: 1.0
@@ -68,10 +76,7 @@ Item {
         return ({})
     }
     function routeForId(id) {
-        const routes = graph.routes || []
-        for (let index = 0; index < routes.length; ++index)
-            if (String(routes[index].id || "") === String(id || "")) return routes[index]
-        return ({})
+        return routeById[String(id || "")] || ({})
     }
     function axisForRoute(route) {
         if (!route || String(route.kind || "") !== "axis") return -1
@@ -203,14 +208,8 @@ Item {
     }
     function ports(kind) { return node(kind).ports || [] }
     function routesForPort(port, isOutput) {
-        const matches = []
-        const routes = graph.routes || []
-        for (let i = 0; i < routes.length; ++i) {
-            const route = routes[i]
-            if ((isOutput ? route.destinationPortId : route.sourcePortId) === port.id)
-                matches.push(route)
-        }
-        return matches
+        const membership = isOutput ? routeMembershipByOutput : routeMembershipByInput
+        return membership[String(port && port.id || "")] || []
     }
     function routeHasProblem(route) { return String(route.health || "ready") !== "ready" }
     function portMatchesState(port, isOutput, state) {
@@ -273,9 +272,41 @@ Item {
         return port.kind === "button"
     }
     function routeLive(route) {
+        return routeLiveById[String(route && route.id || "")] || ({ "active": false, "value": 0 })
+    }
+    function rebuildGraphIndexes() {
+        const routes = graph.routes || []
+        const nextRoutes = ({})
+        const nextInputMembership = ({})
+        const nextOutputMembership = ({})
+        for (let index = 0; index < routes.length; ++index) {
+            const route = routes[index]
+            const id = String(route.id || "")
+            if (id.length > 0) nextRoutes[id] = route
+            const inputId = String(route.sourcePortId || "")
+            const outputId = String(route.destinationPortId || "")
+            if (inputId.length > 0) {
+                if (!nextInputMembership[inputId]) nextInputMembership[inputId] = []
+                nextInputMembership[inputId].push(route)
+            }
+            if (outputId.length > 0) {
+                if (!nextOutputMembership[outputId]) nextOutputMembership[outputId] = []
+                nextOutputMembership[outputId].push(route)
+            }
+        }
+        routeById = nextRoutes
+        routeMembershipByInput = nextInputMembership
+        routeMembershipByOutput = nextOutputMembership
+    }
+    function rebuildLiveTelemetryIndex() {
+        const next = ({})
         const entries = liveTelemetry.routes || []
-        for (let i = 0; i < entries.length; ++i) if (entries[i].id === route.id) return entries[i]
-        return ({ "active": false, "value": 0 })
+        for (let index = 0; index < entries.length; ++index) {
+            const entry = entries[index]
+            const id = String(entry.id || "")
+            if (id.length > 0) next[id] = entry
+        }
+        routeLiveById = next
     }
     function routeIsLive(route) { return Boolean(routeLive(route).active) }
     function routeMatchesSearch(route) {
@@ -553,6 +584,10 @@ Item {
             })
         }
         wireGeometry = next
+        const indexedGeometry = ({})
+        for (let index = 0; index < next.length; ++index)
+            indexedGeometry[String(next[index].routeId || "")] = next[index]
+        wireGeometryByRouteId = indexedGeometry
         if (diagram) diagram.requestPaint()
     }
     function restartWireMotion() {
@@ -581,7 +616,7 @@ Item {
     }
     function focusCurrentSelection() {
         const selectedId = inspectedRoute && inspectedRoute.id ? String(inspectedRoute.id) : ""
-        const geometry = wireGeometry.filter(function(entry) { return entry.routeId === selectedId })[0]
+        const geometry = wireGeometryByRouteId[String(selectedId || "")]
         if (!geometry) { fitGraph(); return }
         const focusX = Number(geometry.focusX === undefined ? (geometry.startX + geometry.endX) * 0.5 : geometry.focusX)
         const focusY = Number(geometry.focusY === undefined ? (geometry.startY + geometry.endY) * 0.5 : geometry.focusY)
@@ -1010,6 +1045,7 @@ Item {
             return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
         })
         nodePositions = ({})
+        rebuildGraphIndexes()
         rebuildWireGeometry()
         restartWireMotion()
     }
@@ -1021,7 +1057,10 @@ Item {
     onSourceChanged: if (diagram) diagram.requestPaint()
     onInspectedNodeChanged: if (diagram) diagram.requestPaint()
     onModeChanged: if (diagram) diagram.requestPaint()
-    onLiveTelemetryChanged: if (diagram) diagram.requestPaint()
+    onLiveTelemetryChanged: {
+        rebuildLiveTelemetryIndex()
+        if (diagram) diagram.requestPaint()
+    }
     onSignalFocusChanged: if (diagram) diagram.requestPaint()
     onXrayModeChanged: if (diagram) diagram.requestPaint()
     onReducedMotionChanged: {
@@ -1065,6 +1104,8 @@ Item {
         }
     }
     Component.onCompleted: {
+        rebuildGraphIndexes()
+        rebuildLiveTelemetryIndex()
         Qt.callLater(restoreWorkspace)
         Qt.callLater(restorePresentationState)
         Qt.callLater(applyBackendFocus)
