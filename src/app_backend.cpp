@@ -6231,14 +6231,24 @@ QVariantMap AppBackend::signalFlowGraph() const
             .arg(QString::number(result.value(u"maximumLead"_qs).toDouble(), 'f', 2)));
         return result;
     };
-    const auto annotateProcessorSettings = [&adaptiveSummaryFor](QVariantMap *detail,
+    const auto annotateProcessorSettings = [&adaptiveSummaryFor, &profile](QVariantMap *detail,
                                                                    const QString &semantic,
                                                                    const DeviceProfileMapping *scopeMapping,
                                                                    int axis) {
-        if (!detail || semantic != u"adaptive-response"_qs) return;
-        const QVariantMap adaptive = adaptiveSummaryFor(scopeMapping, axis);
-        detail->insert(u"adaptiveSettings"_qs, adaptive);
-        detail->insert(u"settingsSummary"_qs, adaptive.value(u"summary"_qs));
+        if (!detail) return;
+        if (semantic == u"curve"_qs && axis >= 0 && axis < kPhysicalAxisCount) {
+            const AxisMappings &sourceAxes = scopeMapping ? scopeMapping->axes : profile.axes;
+            const CurveDefinition &curve = sourceAxes[static_cast<size_t>(axis)].curve;
+            detail->insert(u"settingsSummary"_qs, curveDefinitionSummary(curve));
+            detail->insert(u"curveFamily"_qs, curveFamilyLabel(curve.family));
+            detail->insert(u"curveStrength"_qs, curve.family == CurveFamily::Linear ? 0.0 : curve.strength);
+            return;
+        }
+        if (semantic == u"adaptive-response"_qs) {
+            const QVariantMap adaptive = adaptiveSummaryFor(scopeMapping, axis);
+            detail->insert(u"adaptiveSettings"_qs, adaptive);
+            detail->insert(u"settingsSummary"_qs, adaptive.value(u"summary"_qs));
+        }
     };
     QSet<QString> emittedProcessors;
     const auto addProcessor = [&](const QString &processorId, int axis, float order) {
@@ -6317,6 +6327,38 @@ QVariantMap AppBackend::signalFlowGraph() const
         applyLayout(&node, layoutFor(processorId, 340.0F + order * 162.0F, 115.0F + std::max(axis, 0) * 92.0F));
         nodes.append(node);
         return nodeId;
+    };
+    const auto projectCanonicalSegments = [](const SignalFlowRoute &route,
+                                              const QString &routeId,
+                                              const QString &sourceNodeId,
+                                              const QString &sourceEndpointId,
+                                              const QString &destinationNodeId,
+                                              const QString &destinationEndpointId) {
+        QVariantList projected;
+        for (int index = 0; index < static_cast<int>(route.segments.size()); ++index) {
+            const SignalFlowRouteSegment &segment = route.segments[static_cast<size_t>(index)];
+            const bool first = index == 0;
+            const bool last = index == static_cast<int>(route.segments.size()) - 1;
+            const auto nodeForEndpoint = [&sourceNodeId, &destinationNodeId, first, last](const QString &endpoint,
+                                                                                            bool sourceSide) {
+                if (endpoint.startsWith(u"sf-port:"_qs)) {
+                    return QString(u"processor:%1"_qs).arg(endpoint.section(u':', 1, 1));
+                }
+                return sourceSide ? (first ? sourceNodeId : QString{})
+                                  : (last ? destinationNodeId : QString{});
+            };
+            projected.append(QVariantMap{{u"id"_qs, segment.id},
+                {u"routeId"_qs, routeId},
+                {u"canonicalSourceEndpointId"_qs, segment.sourceEndpointId},
+                {u"canonicalDestinationEndpointId"_qs, segment.destinationEndpointId},
+                {u"sourceEndpointId"_qs, first ? sourceEndpointId : segment.sourceEndpointId},
+                {u"destinationEndpointId"_qs, last ? destinationEndpointId : segment.destinationEndpointId},
+                {u"sourceNodeId"_qs, nodeForEndpoint(segment.sourceEndpointId, true)},
+                {u"destinationNodeId"_qs, nodeForEndpoint(segment.destinationEndpointId, false)},
+                {u"ordinal"_qs, index},
+                {u"insertable"_qs, route.sourceKind == SignalFlowPortKind::Axis && route.enabled}});
+        }
+        return projected;
     };
 
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -6582,8 +6624,8 @@ QVariantMap AppBackend::signalFlowGraph() const
         const bool effective = route.enabled && mappingActive() && inputConnected && destinationAvailable && vjoyReady();
         const QString routeIdentifier = route.id.isEmpty() ? route.identityKey : route.id;
         routes.append(QVariantMap{{u"id"_qs, routeIdentifier},
-                                  {u"routeSegmentId"_qs, QString(u"sfseg1:%1:%2"_qs)
-                                      .arg(m_configurationGeneration).arg(routeIdentifier)},
+                                  {u"routeSegmentId"_qs, route.segments.empty()
+                                      ? QString{} : route.segments.front().id},
                                   {u"kind"_qs, route.sourceKind == SignalFlowPortKind::Axis ? u"axis"_qs
                                       : route.sourceKind == SignalFlowPortKind::Button ? u"button"_qs
                                       : route.sourceKind == SignalFlowPortKind::PovDirection ? u"pov"_qs : u"native-pov"_qs},
@@ -6601,6 +6643,10 @@ QVariantMap AppBackend::signalFlowGraph() const
                                   {u"destinationSubIndex"_qs, route.destinationSubIndex},
                                   {u"destinationLabel"_qs, destinationLabel},
                                   {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails},
+                                  {u"segments"_qs, projectCanonicalSegments(route, routeIdentifier, inputNodeId,
+                                      inputEndpointId(route.sourceKind, route.sourceIndex, route.sourceSubIndex),
+                                      outputNodeId, outputEndpointId(route.destinationKind, route.destinationIndex,
+                                                                     route.destinationSubIndex))},
                                   {u"viaNodeId"_qs, viaNodeId},
                                   {u"configured"_qs, true}, {u"enabled"_qs, route.enabled},
                                   {u"effective"_qs, effective}, {u"primaryProjection"_qs, route.primaryProjection},
@@ -6827,8 +6873,8 @@ QVariantMap AppBackend::signalFlowGraph() const
             }
             const QString routeIdentifier = route.id.isEmpty() ? route.identityKey : route.id;
             routes.append(QVariantMap{{u"id"_qs, routeIdentifier},
-                {u"routeSegmentId"_qs, QString(u"sfseg1:%1:%2"_qs)
-                    .arg(m_configurationGeneration).arg(routeIdentifier)},
+                {u"routeSegmentId"_qs, route.segments.empty()
+                    ? QString{} : route.segments.front().id},
                 {u"kind"_qs, route.sourceKind == SignalFlowPortKind::Axis ? u"axis"_qs
                     : route.sourceKind == SignalFlowPortKind::Button ? u"button"_qs
                     : route.sourceKind == SignalFlowPortKind::PovDirection ? u"pov"_qs : u"native-pov"_qs},
@@ -6843,6 +6889,10 @@ QVariantMap AppBackend::signalFlowGraph() const
                 {u"destinationSubIndex"_qs, route.destinationSubIndex},
                 {u"destinationLabel"_qs, routeDestinationLabel(route)},
                 {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails}, {u"viaNodeId"_qs, viaNodeId},
+                {u"segments"_qs, projectCanonicalSegments(route, routeIdentifier, scopeNodeId,
+                    scopedInputEndpointId(scopeId, route.sourceKind, route.sourceIndex, route.sourceSubIndex),
+                    outputNodeId, outputEndpointId(route.destinationKind, route.destinationIndex,
+                                                   route.destinationSubIndex))},
                 {u"configured"_qs, true}, {u"enabled"_qs, route.enabled},
                 {u"effective"_qs, route.enabled && mappingActive() && scopeConnected && destinationAvailable && vjoyReady()},
                 {u"primaryProjection"_qs, route.primaryProjection}, {u"health"_qs, health},
@@ -6864,6 +6914,51 @@ QVariantMap AppBackend::signalFlowGraph() const
             {u"scopeEditable"_qs, !scopeMissing}};
         applyLayout(&scopeNode, layoutFor(scopeNodeId, 80.0F, 160.0F + (scopeIndex + 1) * 238.0F));
         nodes.append(scopeNode);
+    }
+
+    // Processor cards own the exact canonical endpoints used by the route
+    // segments above.  This is intentionally assembled from the persisted
+    // projection, after all Device Rig routes are known, rather than from a
+    // QML-local processor-path shadow model.
+    QHash<QString, QVariantList> processorPorts;
+    const auto appendProcessorPort = [&processorPorts](const QVariantMap &routeMap,
+                                                        const QVariantMap &segmentMap,
+                                                        const QString &endpoint,
+                                                        const QString &direction) {
+        if (!endpoint.startsWith(u"sf-port:"_qs)) return;
+        const QString processorId = endpoint.section(u':', 1, 1);
+        if (processorId.isEmpty()) return;
+        QVariantList &ports = processorPorts[QString(u"processor:%1"_qs).arg(processorId)];
+        for (const QVariant &candidate : ports) {
+            if (candidate.toMap().value(u"endpointId"_qs).toString() == endpoint) return;
+        }
+        ports.append(QVariantMap{{u"id"_qs, endpoint}, {u"endpointId"_qs, endpoint},
+            {u"ownerNodeId"_qs, QString(u"processor:%1"_qs).arg(processorId)},
+            {u"direction"_qs, direction}, {u"routeId"_qs, routeMap.value(u"id"_qs)},
+            {u"routeSegmentId"_qs, segmentMap.value(u"id"_qs)},
+            {u"label"_qs, direction == u"input"_qs ? u"IN"_qs : u"OUT"_qs},
+            {u"accessibleDescription"_qs, QString(u"%1 port for %2 to %3"_qs)
+                .arg(direction == u"input"_qs ? u"Input"_qs : u"Output"_qs,
+                     routeMap.value(u"sourceLabel"_qs).toString(),
+                     routeMap.value(u"destinationLabel"_qs).toString())}});
+    };
+    for (const QVariant &routeValue : routes) {
+        const QVariantMap routeMap = routeValue.toMap();
+        for (const QVariant &segmentValue : routeMap.value(u"segments"_qs).toList()) {
+            const QVariantMap segmentMap = segmentValue.toMap();
+            appendProcessorPort(routeMap, segmentMap,
+                segmentMap.value(u"canonicalSourceEndpointId"_qs).toString(), u"output"_qs);
+            appendProcessorPort(routeMap, segmentMap,
+                segmentMap.value(u"canonicalDestinationEndpointId"_qs).toString(), u"input"_qs);
+        }
+    }
+    for (int nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex) {
+        QVariantMap node = nodes.at(nodeIndex).toMap();
+        if (node.value(u"kind"_qs).toString() != u"processor"_qs) continue;
+        const QVariantList ports = processorPorts.value(node.value(u"id"_qs).toString());
+        node.insert(u"ports"_qs, ports);
+        node.insert(u"channelCount"_qs, ports.size() / 2);
+        nodes[nodeIndex] = node;
     }
 
     const int inputRouteCount = static_cast<int>(std::count_if(routes.cbegin(), routes.cend(),
@@ -7717,6 +7812,82 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
     return signalFlowActionResult(true, u"Route disconnected"_qs, description, id);
 }
 
+QVariantMap AppBackend::signalFlowInsertProcessor(const QString &segmentId,
+                                                   const QString &processorKind,
+                                                   qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Processor was not inserted"_qs,
+            u"The visible wire changed while the insertion was being prepared. No topology was changed."_qs,
+            segmentId.trimmed());
+    }
+    reconcileSignalFlowState(&m_configuration);
+    const QString requestedSegment = segmentId.trimmed();
+    QString routeId;
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        const auto found = std::find_if(route.segments.cbegin(), route.segments.cend(),
+            [&requestedSegment](const SignalFlowRouteSegment &segment) {
+                return segment.id == requestedSegment;
+            });
+        if (found != route.segments.cend()) {
+            routeId = route.id;
+            break;
+        }
+    }
+    if (routeId.isEmpty()) {
+        return signalFlowActionResult(false, u"Processor target expired"_qs,
+            u"That wire segment no longer exists in the current canonical topology. Review the graph and try again."_qs,
+            requestedSegment);
+    }
+    // The existing processor mutation owns focused-editor projection, runtime
+    // compilation, persistence, and undo.  Its route target has now been
+    // resolved from a real canonical segment rather than a route-lane proxy.
+    return signalFlowToggleProcessor(routeId, processorKind, true, expectedRevision);
+}
+
+QVariantMap AppBackend::signalFlowRemoveOrBypassProcessor(const QString &processorId,
+                                                           qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Processor was not removed"_qs,
+            u"The graph changed while this processor was selected. No topology was changed."_qs,
+            processorId.trimmed());
+    }
+    reconcileSignalFlowState(&m_configuration);
+    const QString id = processorId.trimmed();
+    const auto identity = std::find_if(m_configuration.signalFlow.processorIdentities.cbegin(),
+        m_configuration.signalFlow.processorIdentities.cend(), [&id](const SignalFlowIdentityRecord &candidate) {
+            return candidate.active && candidate.id == id;
+        });
+    if (identity == m_configuration.signalFlow.processorIdentities.cend()) {
+        return signalFlowActionResult(false, u"Processor is no longer available"_qs,
+            u"The selected processor is not present in the current canonical topology."_qs, id);
+    }
+    if (identity->key.startsWith(u"processor:mixer:"_qs)) {
+        return signalFlowActionResult(false, u"Mixer bypass requires a visible decision"_qs,
+            u"A mixer cannot be silently bypassed because that could create an implicit analog merge. Choose an explicit replacement or disconnect path instead."_qs,
+            id);
+    }
+    if (identity->key.startsWith(u"processor:shared:"_qs)) {
+        return signalFlowActionResult(false, u"Shared processor needs an explicit resolution"_qs,
+            u"Split the shared channel or choose a shared-processor action before removal. Other channels will not be changed silently."_qs,
+            id);
+    }
+    QString routeId;
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        if (route.processorPath.contains(id)) {
+            routeId = route.id;
+            break;
+        }
+    }
+    if (routeId.isEmpty()) {
+        return signalFlowActionResult(false, u"Processor has no bypass path"_qs,
+            u"No safe single-path route was found for this processor."_qs, id);
+    }
+    const QString kind = identity->key.section(u':', -1);
+    return signalFlowToggleProcessor(routeId, kind, false, expectedRevision);
+}
+
 QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
                                                    const QString &processorKind, bool enabled,
                                                    qulonglong expectedRevision)
@@ -7734,21 +7905,24 @@ QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
             u"Signal Flow can add Curve, Deadzone, Center Hold, Invert, Output Limits, or Adaptive Response to an axis route."_qs,
             routeId.trimmed());
     }
-    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
-    if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
-        return signalFlowActionResult(false, u"Choose one physical input first"_qs,
-            u"Select one source before editing a processor in this multi-device Device Rig."_qs,
-            routeId.trimmed());
-    }
     reconcileSignalFlowState(&m_configuration);
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
-    if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
+    if (!route || route->profileId != profile.id
         || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
         || route->sourceIndex >= kPhysicalAxisCount) {
         return signalFlowActionResult(false, u"Processor target is unavailable"_qs,
             u"Choose a current axis route. Button and POV routes do not have an axis conditioning chain."_qs,
+            routeId.trimmed());
+    }
+    // The graph owns the physical endpoint.  Resolve its profile mapping here
+    // instead of requiring the operator to switch the legacy editing scope.
+    const QString controllerId = route->controllerRecordId;
+    DeviceProfileMapping *deviceMapping = controllerId.isEmpty()
+        ? editingDeviceMappingForWrite() : &ensureDeviceProfileMapping(profile, controllerId);
+    if (!deviceMapping && !controllerId.isEmpty()) {
+        return signalFlowActionResult(false, u"Processor owner is unavailable"_qs,
+            u"The physical source that owns this route is no longer available in the current profile."_qs,
             routeId.trimmed());
     }
     const auto shared = std::find_if(m_configuration.signalFlow.sharedProcessors.cbegin(),

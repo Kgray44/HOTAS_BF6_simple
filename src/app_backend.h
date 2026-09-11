@@ -762,6 +762,14 @@ public:
     Q_INVOKABLE QVariantMap signalFlowToggleProcessor(const QString &routeId,
                                                        const QString &processorKind, bool enabled,
                                                        qulonglong expectedRevision);
+    // Phase 2 targets the canonical edge shown under the pointer.  The
+    // segment id is durable for the current topology and is revalidated at
+    // commit; QML never manufactures a processor-on-wire relationship.
+    Q_INVOKABLE QVariantMap signalFlowInsertProcessor(const QString &segmentId,
+                                                       const QString &processorKind,
+                                                       qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowRemoveOrBypassProcessor(const QString &processorId,
+                                                               qulonglong expectedRevision);
     // A shared processor is a canonical, source-owned relation. The first
     // route is its owner; later selected axis routes receive the same durable
     // focused setting at the next configuration boundary.

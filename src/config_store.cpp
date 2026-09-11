@@ -146,6 +146,12 @@ QJsonObject signalFlowRouteToJson(const SignalFlowRoute &route)
     for (const QString &processor : route.processorPath) {
         processors.append(processor.trimmed().left(96));
     }
+    QJsonArray segments;
+    for (const SignalFlowRouteSegment &segment : route.segments) {
+        segments.append(QJsonObject{{u"id"_qs, segment.id.trimmed().left(160)},
+                                    {u"sourceEndpointId"_qs, segment.sourceEndpointId.trimmed().left(192)},
+                                    {u"destinationEndpointId"_qs, segment.destinationEndpointId.trimmed().left(192)}});
+    }
     return {{u"identityKey"_qs, route.identityKey.trimmed().left(320)},
             {u"id"_qs, route.id.trimmed().left(96)},
             {u"profileId"_qs, route.profileId.trimmed().left(96)},
@@ -159,7 +165,8 @@ QJsonObject signalFlowRouteToJson(const SignalFlowRoute &route)
             {u"primaryProjection"_qs, route.primaryProjection},
             {u"implicitDefault"_qs, route.implicitDefault},
             {u"enabled"_qs, route.enabled},
-            {u"processorPath"_qs, processors}};
+            {u"processorPath"_qs, processors},
+            {u"segments"_qs, segments}};
 }
 
 bool signalFlowRouteFromJson(const QJsonObject &json, SignalFlowRoute *route)
@@ -202,6 +209,29 @@ bool signalFlowRouteFromJson(const QJsonObject &json, SignalFlowRoute *route)
         if (processor.isEmpty() || processors.contains(processor)) return false;
         processors.insert(processor);
         restored.processorPath.append(processor);
+    }
+    // Segments were introduced as additive canonical topology.  Older
+    // schema-28 documents omit them and are deterministically repaired by
+    // reconcileSignalFlowState; malformed supplied edges are rejected rather
+    // than becoming a graph-local fallback.
+    if (json.contains(u"segments"_qs)) {
+        const QJsonValue segmentValue = json.value(u"segments"_qs);
+        if (!segmentValue.isArray() || segmentValue.toArray().size() > kMaximumSignalFlowProcessorPath * 2 + 1) {
+            return false;
+        }
+        QSet<QString> segmentIds;
+        for (const QJsonValue &value : segmentValue.toArray()) {
+            if (!value.isObject()) return false;
+            const QJsonObject object = value.toObject();
+            SignalFlowRouteSegment segment;
+            segment.id = object.value(u"id"_qs).toString().trimmed().left(160);
+            segment.sourceEndpointId = object.value(u"sourceEndpointId"_qs).toString().trimmed().left(192);
+            segment.destinationEndpointId = object.value(u"destinationEndpointId"_qs).toString().trimmed().left(192);
+            if (segment.id.isEmpty() || segment.sourceEndpointId.isEmpty()
+                || segment.destinationEndpointId.isEmpty() || segmentIds.contains(segment.id)) return false;
+            segmentIds.insert(segment.id);
+            restored.segments.push_back(std::move(segment));
+        }
     }
     *route = std::move(restored);
     return true;

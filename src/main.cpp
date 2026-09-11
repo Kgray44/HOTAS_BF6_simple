@@ -60,7 +60,8 @@ int main(int argc, char *argv[])
     // intentionally distinct from startup smoke: it isolates QSettings and
     // asks AppBackend to keep its smoke-safe hardware boundary, but still
     // enters the normal event loop for native pointer review.
-    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation");
+    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation")
+        || hasArgument(argc, argv, "--isolated-presentation-signal-flow");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
     if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established

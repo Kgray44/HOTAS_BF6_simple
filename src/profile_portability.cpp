@@ -1120,6 +1120,9 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             route.profileId = importedProfileId;
             route.id.clear();
             route.processorPath.clear();
+            // Imported routes receive a new durable identity, so their edge
+            // ids/endpoints must be rebuilt for that destination topology.
+            route.segments.clear();
             route.identityKey = route.primaryProjection
                 ? signalFlowRouteIdentityKey(*importedProfile, route.controllerRecordId,
                     routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex)

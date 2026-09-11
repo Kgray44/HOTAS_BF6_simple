@@ -6110,6 +6110,35 @@ QVariantList signalFlowStressPorts(const QString &prefix)
     return ports;
 }
 
+QVariantList signalFlowFixtureSegments(const QString &routeId, const QString &sourceNodeId,
+                                       const QString &sourceEndpointId,
+                                       const QString &destinationNodeId,
+                                       const QString &destinationEndpointId,
+                                       const QVariantList &processorNodeIds = {})
+{
+    QVariantList segments;
+    QString currentNodeId = sourceNodeId;
+    QString currentEndpointId = sourceEndpointId;
+    int ordinal = 0;
+    const auto appendSegment = [&](const QString &nextNodeId, const QString &nextEndpointId) {
+        segments.append(QVariantMap{{QStringLiteral("id"),
+                                     QStringLiteral("fixture-segment:%1:%2").arg(routeId).arg(ordinal++)},
+                                    {QStringLiteral("sourceNodeId"), currentNodeId},
+                                    {QStringLiteral("destinationNodeId"), nextNodeId},
+                                    {QStringLiteral("sourceEndpointId"), currentEndpointId},
+                                    {QStringLiteral("destinationEndpointId"), nextEndpointId}});
+        currentNodeId = nextNodeId;
+        currentEndpointId = nextEndpointId;
+    };
+    for (const QVariant &processorNodeId : processorNodeIds) {
+        const QString processor = processorNodeId.toString();
+        appendSegment(processor, QStringLiteral("fixture-port:%1:%2:in").arg(processor, routeId));
+        currentEndpointId = QStringLiteral("fixture-port:%1:%2:out").arg(processor, routeId);
+    }
+    appendSegment(destinationNodeId, destinationEndpointId);
+    return segments;
+}
+
 QVariantMap signalFlowVisualStressGraph()
 {
     const QVariantList sourcePorts = signalFlowStressPorts(QStringLiteral("stress-input"));
@@ -6141,7 +6170,7 @@ QVariantMap signalFlowVisualStressGraph()
         node = value;
     }
     const auto route = [](const QString &id, const QString &sourcePortId, const QString &destinationPortId,
-                          const QVariantList &processors = {}) {
+                           const QVariantList &processors = {}) {
         return QVariantMap{{QStringLiteral("id"), id},
             {QStringLiteral("sourceNodeId"), QStringLiteral("stress-input")},
             {QStringLiteral("destinationNodeId"), QStringLiteral("stress-output")},
@@ -6150,7 +6179,9 @@ QVariantMap signalFlowVisualStressGraph()
             {QStringLiteral("sourceLabel"), sourcePortId}, {QStringLiteral("destinationLabel"), destinationPortId},
             {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
             {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
-            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}}};
+            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}},
+            {QStringLiteral("segments"), signalFlowFixtureSegments(id, QStringLiteral("stress-input"),
+                sourcePortId, QStringLiteral("stress-output"), destinationPortId, processors)}};
     };
     QVariantList routes{
         route(QStringLiteral("stress-under-card"), QStringLiteral("stress-input:0"), QStringLiteral("stress-output:0")),
@@ -6236,7 +6267,7 @@ QVariantMap signalFlowNormalHotasGraph()
             {QStringLiteral("connected"), true}, {QStringLiteral("ports"), outputPorts},
             {QStringLiteral("portGroups"), outputGroups}}};
     const auto route = [](const QString &id, const QString &sourceNodeId, const QString &sourcePortId,
-                           const QString &destinationPortId, const QVariantList &processors = {}) {
+                            const QString &destinationPortId, const QVariantList &processors = {}) {
         return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("sourceNodeId"), sourceNodeId},
             {QStringLiteral("destinationNodeId"), QStringLiteral("normal-output")},
             {QStringLiteral("sourcePortId"), sourcePortId}, {QStringLiteral("destinationPortId"), destinationPortId},
@@ -6244,7 +6275,9 @@ QVariantMap signalFlowNormalHotasGraph()
             {QStringLiteral("sourceLabel"), sourcePortId}, {QStringLiteral("destinationLabel"), destinationPortId},
             {QStringLiteral("kind"), QStringLiteral("axis")}, {QStringLiteral("enabled"), true},
             {QStringLiteral("effective"), true}, {QStringLiteral("health"), QStringLiteral("ready")},
-            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}}};
+            {QStringLiteral("processors"), processors}, {QStringLiteral("processorDetails"), QVariantList{}},
+            {QStringLiteral("segments"), signalFlowFixtureSegments(id, sourceNodeId, sourcePortId,
+                QStringLiteral("normal-output"), destinationPortId, processors)}};
     };
     return QVariantMap{{QStringLiteral("nodes"), nodes},
         {QStringLiteral("routes"), QVariantList{
@@ -6784,8 +6817,15 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 return failPresentationLifecycleTest(QStringLiteral(
                     "Signal Flow direct-route explanation or bounded live telemetry did not reflect canonical state"));
             }
-            const QVariantMap addedProcessor = backend.signalFlowToggleProcessor(
-                routeId, QStringLiteral("curve"), true, backend.signalFlowRevision());
+            const QVariantList directSegments = directRoute->toMap().value(QStringLiteral("segments")).toList();
+            const QString curveInsertSegmentId = directSegments.isEmpty() ? QString{}
+                : directSegments.constFirst().toMap().value(QStringLiteral("id")).toString();
+            const QVariantMap addedProcessor = backend.signalFlowInsertProcessor(
+                curveInsertSegmentId, QStringLiteral("curve"), backend.signalFlowRevision());
+            const qulonglong revisionAfterCurveInsert = backend.signalFlowRevision();
+            const QVariantMap staleProcessorInsert = backend.signalFlowInsertProcessor(
+                curveInsertSegmentId, QStringLiteral("adaptive-response"),
+                revisionAfterCurveInsert > 0 ? revisionAfterCurveInsert - 1 : 0);
             const QVariantMap processedGraph = backend.signalFlowGraph();
             const QVariantList processedRoutes = processedGraph.value(QStringLiteral("routes")).toList();
             const auto processedRoute = std::find_if(processedRoutes.cbegin(), processedRoutes.cend(),
@@ -6798,7 +6838,9 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 && std::any_of(processorDetails.cbegin(), processorDetails.cend(), [](const QVariant &entry) {
                         return entry.toMap().value(QStringLiteral("semantic")).toString() == QStringLiteral("curve");
                     });
-            if (!addedProcessor.value(QStringLiteral("success")).toBool() || !curveVisible
+            if (curveInsertSegmentId.isEmpty() || !addedProcessor.value(QStringLiteral("success")).toBool()
+                || staleProcessorInsert.value(QStringLiteral("success")).toBool()
+                || backend.signalFlowRevision() != revisionAfterCurveInsert || !curveVisible
                 || !backend.focusIssueTarget(QStringLiteral("signalFlowRoute"), routeId)) {
                 return failPresentationLifecycleTest(QStringLiteral(
                     "Signal Flow processor insertion or exact App Health route focus did not preserve canonical identity"));
@@ -6847,8 +6889,12 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 return failPresentationLifecycleTest(QStringLiteral(
                     "Signal Flow Curve full-settings return did not restore its graph route context"));
             }
-            const QVariantMap addedAdaptive = backend.signalFlowToggleProcessor(
-                routeId, QStringLiteral("adaptive-response"), true, backend.signalFlowRevision());
+            const QVariantList curveSegments = processedRoute == processedRoutes.cend() ? QVariantList{}
+                : processedRoute->toMap().value(QStringLiteral("segments")).toList();
+            const QString adaptiveInsertSegmentId = curveSegments.isEmpty() ? QString{}
+                : curveSegments.constLast().toMap().value(QStringLiteral("id")).toString();
+            const QVariantMap addedAdaptive = backend.signalFlowInsertProcessor(
+                adaptiveInsertSegmentId, QStringLiteral("adaptive-response"), backend.signalFlowRevision());
             settlePresentation();
             const QVariantList adaptiveRoutes = backend.signalFlowGraph().value(QStringLiteral("routes")).toList();
             const auto adaptiveRoute = std::find_if(adaptiveRoutes.cbegin(), adaptiveRoutes.cend(),
@@ -6879,7 +6925,7 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             ).arg(routeId));
             const bool adaptiveSettingsOpened = openAdaptiveSettings.evaluate().toBool();
             settlePresentation();
-            if (!addedAdaptive.value(QStringLiteral("success")).toBool() || !adaptiveSummaryVisible
+            if (adaptiveInsertSegmentId.isEmpty() || !addedAdaptive.value(QStringLiteral("success")).toBool() || !adaptiveSummaryVisible
                 || adaptiveTopology.hasError() || !adaptiveTopologyVisible
                 || openAdaptiveSettings.hasError() || !adaptiveSettingsOpened
                 || surface->property("currentPage").toInt() != 9 || backend.selectedAxisIndex() != 6

@@ -20,6 +20,13 @@ ApplicationWindow {
     visible: !presentationHeadless
     title: "HOTAS BF6"
     property var flightDeckLearningDialog: null
+    // Qualification-only launch target.  It is paired with main.cpp's
+    // isolated-presentation mode, so a reviewer can inspect the real Flight
+    // Deck Signal Flow surface without inheriting user settings or activating
+    // physical input/output services. Normal launches keep their current
+    // experience and Overview startup page.
+    readonly property bool isolatedSignalFlowPresentation:
+        Qt.application.arguments.indexOf("--isolated-presentation-signal-flow") >= 0
     onClosing: function(close) {
         if (backend.keepRunningInTray && backend.trayAvailable) {
             close.accepted = false
@@ -33,6 +40,8 @@ ApplicationWindow {
     // window boundary whenever Flight Deck is active.
     font.family: themeManager.currentExperience === "Flight Deck" ? "Segoe UI" : shellTheme.displayFont
     Component.onCompleted: {
+        if (isolatedSignalFlowPresentation)
+            themeManager.setCurrentExperience("Flight Deck")
         refreshTrayTheme()
         syncFlightDeckLearningDialog()
     }
@@ -81,5 +90,9 @@ ApplicationWindow {
         sourceComponent: themeManager.currentExperience === "Flight Deck"
             ? flightDeckSurface
             : (themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface)
+        onLoaded: {
+            if (shell.isolatedSignalFlowPresentation && item && item.currentPage !== undefined)
+                item.currentPage = 11
+        }
     }
 }

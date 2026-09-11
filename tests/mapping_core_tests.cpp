@@ -854,6 +854,7 @@ private slots:
     void signalFlowTopologySupportsFanOutAndExplicitMixers();
     void signalFlowDigitalAndNativePovFanOutCompileToFixedTables();
     void signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSettings();
+    void signalFlowCanonicalSegmentsPersistStableProcessorPorts();
     void signalFlowMixerRuntimeModesAreDeterministic();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
@@ -3928,6 +3929,99 @@ void MappingCoreTests::signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSett
     QVERIFY(axis0Curve->id != axis1Curve->id);
 }
 
+void MappingCoreTests::signalFlowCanonicalSegmentsPersistStableProcessorPorts()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.axes[0].curve = standardCurveDefinition(CurveFamily::SCurve, 0.63F);
+    profile.adaptiveResponse.axes[0].settings.enabled = true;
+    reconcileSignalFlowState(&configuration);
+
+    const auto routeIt = std::find_if(configuration.signalFlow.routes.cbegin(),
+        configuration.signalFlow.routes.cend(), [](const SignalFlowRoute &route) {
+            return route.enabled && route.sourceKind == SignalFlowPortKind::Axis
+                && route.sourceIndex == 0 && route.primaryProjection;
+        });
+    QVERIFY(routeIt != configuration.signalFlow.routes.cend());
+    QVERIFY(routeIt->processorPath.size() >= 2);
+    QCOMPARE(routeIt->segments.size(), routeIt->processorPath.size() + size_t{1});
+
+    QStringList segmentIds;
+    QString expectedSource = QStringLiteral("sf-endpoint:%1:source").arg(routeIt->id);
+    for (size_t index = 0; index < routeIt->segments.size(); ++index) {
+        const SignalFlowRouteSegment &segment = routeIt->segments[index];
+        QVERIFY(!segment.id.isEmpty());
+        QCOMPARE(segment.sourceEndpointId, expectedSource);
+        QVERIFY(!segment.destinationEndpointId.isEmpty());
+        segmentIds.append(segment.id);
+        expectedSource = index + 1 == routeIt->segments.size()
+            ? QString{} : QStringLiteral("sf-port:%1:%2:out")
+                .arg(routeIt->processorPath.at(static_cast<qsizetype>(index)), routeIt->id);
+        if (index + 1 < routeIt->segments.size()) {
+            QCOMPARE(segment.destinationEndpointId,
+                     QStringLiteral("sf-port:%1:%2:in")
+                         .arg(routeIt->processorPath.at(static_cast<qsizetype>(index)), routeIt->id));
+        }
+    }
+    QVERIFY(routeIt->segments.back().destinationEndpointId.endsWith(QStringLiteral(":destination")));
+
+    // A topology projection is control-plane-only: compilation continues to
+    // consume the existing fixed runtime tables and has identical outputs.
+    const RuntimeMappingConfiguration compiledWithSegments = compileActiveProfile(configuration);
+    MapperConfiguration compatibilityProjection = configuration;
+    for (SignalFlowRoute &route : compatibilityProjection.signalFlow.routes) route.segments.clear();
+    const RuntimeMappingConfiguration compiledWithoutSegments = compileActiveProfile(compatibilityProjection);
+    QCOMPARE(compiledWithSegments.signalFlowAxisRouteCount,
+             compiledWithoutSegments.signalFlowAxisRouteCount);
+    QCOMPARE(compiledWithSegments.signalFlowDigitalRouteCount,
+             compiledWithoutSegments.signalFlowDigitalRouteCount);
+    std::array<bool, kPhysicalAxisCount> available{};
+    available.fill(true);
+    std::array<float, kPhysicalAxisCount> transformed{};
+    transformed[0] = 0.42F;
+    std::array<bool, kVirtualAxisSlotCount> targets{};
+    targets.fill(true);
+    targets[0] = false;
+    const VirtualAxisOutputPlan withSegments = buildVirtualAxisOutputPlan(
+        compiledWithSegments, available, transformed, targets, 0.0F);
+    const VirtualAxisOutputPlan withoutSegments = buildVirtualAxisOutputPlan(
+        compiledWithoutSegments, available, transformed, targets, 0.0F);
+    for (int axis = 0; axis < kVirtualAxisSlotCount; ++axis) {
+        QCOMPARE(withSegments.values[axis], withoutSegments.values[axis]);
+        QCOMPARE(withSegments.sourceIndexes[axis], withoutSegments.sourceIndexes[axis]);
+    }
+
+    bool valid = false;
+    const QJsonObject serialized = ConfigStore::toJson(configuration);
+    const QJsonArray persistedRoutes = serialized.value(QStringLiteral("signalFlow")).toObject()
+        .value(QStringLiteral("routes")).toArray();
+    const auto persistedRoute = std::find_if(persistedRoutes.cbegin(), persistedRoutes.cend(),
+        [&routeIt](const QJsonValue &candidate) {
+            return candidate.toObject().value(QStringLiteral("id")).toString() == routeIt->id;
+        });
+    QVERIFY(persistedRoute != persistedRoutes.cend());
+    QCOMPARE(persistedRoute->toObject().value(QStringLiteral("segments")).toArray().size(),
+             static_cast<qsizetype>(routeIt->segments.size()));
+    MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
+    QVERIFY(valid);
+    const SignalFlowRoute *restoredRoute = findSignalFlowRouteById(restored.signalFlow, routeIt->id);
+    QVERIFY(restoredRoute);
+    QCOMPARE(restoredRoute->segments.size(), routeIt->segments.size());
+    for (size_t index = 0; index < restoredRoute->segments.size(); ++index) {
+        QCOMPARE(restoredRoute->segments[index].id, segmentIds.at(static_cast<qsizetype>(index)));
+    }
+
+    // Reconciliation/reload must preserve the same durable route and edge
+    // identities when settings did not change.
+    reconcileSignalFlowState(&restored);
+    const SignalFlowRoute *reconciled = findSignalFlowRouteById(restored.signalFlow, routeIt->id);
+    QVERIFY(reconciled);
+    QCOMPARE(reconciled->segments.size(), segmentIds.size());
+    for (size_t index = 0; index < reconciled->segments.size(); ++index) {
+        QCOMPARE(reconciled->segments[index].id, segmentIds.at(static_cast<qsizetype>(index)));
+    }
+}
+
 void MappingCoreTests::signalFlowTopologySupportsFanOutAndExplicitMixers()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -4049,6 +4143,15 @@ void MappingCoreTests::signalFlowDigitalAndNativePovFanOutCompileToFixedTables()
     QVERIFY(buttonPrimary != configuration.signalFlow.routes.cend());
     QVERIFY(povPrimary != configuration.signalFlow.routes.cend());
     QVERIFY(nativePrimary != configuration.signalFlow.routes.cend());
+    // Non-axis routes are still truthful graph edges. They carry a direct
+    // canonical segment instead of disappearing merely because they have no
+    // axis-conditioning processor chain.
+    for (const auto route : {buttonPrimary, povPrimary, nativePrimary}) {
+        QCOMPARE(route->processorPath.size(), size_t{0});
+        QCOMPARE(route->segments.size(), size_t{1});
+        QVERIFY(route->segments.front().sourceEndpointId.endsWith(QStringLiteral(":source")));
+        QVERIFY(route->segments.front().destinationEndpointId.endsWith(QStringLiteral(":destination")));
+    }
 
     SignalFlowRoute buttonFanOut = *buttonPrimary;
     buttonFanOut.destinationIndex = 6;

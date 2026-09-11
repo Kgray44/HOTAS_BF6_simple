@@ -22,6 +22,10 @@ Item {
     property var graph: backendObject ? backendObject.signalFlowGraph : ({})
     property var source: ({})
     property var inspectedRoute: ({})
+    // Selection remembers the canonical edge under the pointer, not a
+    // graph-local midpoint. It is restored with the route after a focused
+    // editor round trip whenever that edge still exists.
+    property string selectedSegmentId: ""
     // Deck cards select into the same truthful inspector rather than acting
     // as decorative scenery around the routing controls.
     property var inspectedNode: ({})
@@ -43,6 +47,7 @@ Item {
     property var wireBuckets: ({})
     property var portAnchors: ({})
     property string hoveredRouteId: ""
+    property string hoveredSegmentId: ""
     // Diagnostic-only lifecycle counters.  They make event-driven rendering
     // observable in tests without adding product logging.
     property int canvasPaintCount: 0
@@ -60,6 +65,7 @@ Item {
     property var dragWire: ({ "active": false, "source": ({}), "x": 0, "y": 0 })
     property var connectionPreview: ({})
     property string pendingProcessorRouteId: ""
+    property string pendingProcessorSegmentId: ""
     readonly property string semanticDensity: {
         const requested = graph.workspace && graph.workspace.densityMode || "compact"
         if (zoom <= 0.62) return "overview"
@@ -112,6 +118,7 @@ Item {
         return ({
             "version": 1,
             "inspectedRouteId": String(inspectedRoute && inspectedRoute.id || ""),
+            "selectedSegmentId": selectedSegmentId,
             "inspectedNodeId": String(inspectedNode && inspectedNode.id || ""),
             "sourceId": String(source && source.id || ""),
             "mode": mode,
@@ -147,6 +154,7 @@ Item {
         const restoredRoute = routeForId(presentationState.inspectedRouteId)
         if (restoredRoute && restoredRoute.id) {
             inspectedRoute = restoredRoute
+            selectedSegmentId = String(presentationState.selectedSegmentId || "")
             inspectedNode = ({})
             source = ({})
             notice = "Returned to the selected Signal Flow route."
@@ -185,6 +193,7 @@ Item {
         }
         const normalized = String(semantic || "").toLowerCase()
         const page = normalized === "curve" ? 6 : normalized === "adaptive-response" ? 9 : 0
+        if (route && route.controllerRecordId) backendObject.setActiveController(String(route.controllerRecordId))
         backendObject.setSelectedAxis(axis)
         const state = capturePresentationState()
         notice = normalized === "adaptive-response"
@@ -503,9 +512,10 @@ Item {
     function clearDestinationPreview(port) {
         if (!port || String(connectionPreview.portId || "") === String(port.id || "")) connectionPreview = ({})
     }
-    function previewProcessorTarget(route) {
-        if (!route || !route.id || String(route.id) === String(inspectedRoute && inspectedRoute.id || "")) return
+    function previewProcessorTarget(route, segmentId) {
+        if (!route || !route.id || !segmentId) return
         pendingProcessorRouteId = String(route.id)
+        pendingProcessorSegmentId = String(segmentId)
         processorHysteresis.restart()
     }
     function searchResultCount() {
@@ -656,6 +666,7 @@ Item {
             for (let point = 1; point < points.length; ++point) {
                 let distance = pointToSegmentDistance(x, y, points[point - 1], points[point])
                 if (String(entry.routeId || "") === hoveredRouteId) distance -= 0.75
+                if (String(entry.routeSegmentId || "") === pendingProcessorSegmentId) distance -= 5.0
                 if (distance < bestDistance) { bestDistance = distance; best = entry }
             }
         }
@@ -664,7 +675,12 @@ Item {
     function updateWireHover(x, y) {
         const hit = hitWire(x, y)
         const next = hit ? String(hit.routeId || "") : ""
-        if (hoveredRouteId !== next) { hoveredRouteId = next; if (diagram) diagram.requestPaint() }
+        const nextSegment = hit ? String(hit.routeSegmentId || "") : ""
+        if (hoveredRouteId !== next || hoveredSegmentId !== nextSegment) {
+            hoveredRouteId = next
+            hoveredSegmentId = nextSegment
+            if (diagram) diagram.requestPaint()
+        }
     }
     function obstaclePlan(startX, startY, endX, endY, excludedIds) {
         const left = Math.min(startX, endX)
@@ -724,48 +740,48 @@ Item {
             if (!input || !output) continue
             const inputPosition = nodePosition(input, 50, 150)
             const outputPosition = nodePosition(output, 1190, 150)
-            const excludedIds = ({})
-            excludedIds[String(input.id || "")] = true
-            excludedIds[String(output.id || "")] = true
-            const processorIds = route.processors || []
-            const processorWaypoints = []
-            for (let processorIndex = 0; processorIndex < processorIds.length; ++processorIndex) {
-                const processor = nodeById[String(processorIds[processorIndex] || "")]
-                if (!processor) continue
-                const position = nodePosition(processor, 430 + processorIndex * 184, 180)
-                const processorId = String(processor.id || processor.objectId || "")
-                excludedIds[processorId] = true
-                processorWaypoints.push({ "id": processorId, "leftX": position.x,
-                    "rightX": position.x + 180, "y": position.y + 40 })
-            }
+            const canonicalSegments = route.segments || []
+            if (canonicalSegments.length === 0) continue
             const segments = []
-            const sourceAnchor = registeredPortAnchor(route, true,
-                ({ "x": inputPosition.x + graphCardWidth(input), "y": inputPosition.y + 52 + stableLane(route.sourcePortId, 13) * 6 }))
-            const destinationAnchor = registeredPortAnchor(route, false,
-                ({ "x": outputPosition.x, "y": outputPosition.y + 52 + stableLane(route.destinationPortId + route.id, 18) * 5 }))
-            let currentX = sourceAnchor.x
-            let currentY = sourceAnchor.y
-            for (let processorIndex = 0; processorIndex < processorWaypoints.length; ++processorIndex) {
-                const waypoint = processorWaypoints[processorIndex]
-                const obstacle = obstaclePlan(currentX, currentY, waypoint.leftX, waypoint.y, excludedIds)
-                segments.push({ "startX": currentX, "startY": currentY, "endX": waypoint.leftX,
-                    "endY": waypoint.y, "hasDetour": obstacle.hasDetour,
-                    "detourY": obstacle.detourY, "underCard": obstacle.underCard })
-                currentX = waypoint.rightX
-                currentY = waypoint.y
+            for (let segmentIndex = 0; segmentIndex < canonicalSegments.length; ++segmentIndex) {
+                const canonical = canonicalSegments[segmentIndex]
+                const sourceNode = nodeById[String(canonical.sourceNodeId || "")] || input
+                const destinationNode = nodeById[String(canonical.destinationNodeId || "")] || output
+                const sourcePosition = nodePosition(sourceNode, inputPosition.x, inputPosition.y)
+                const destinationPosition = nodePosition(destinationNode, outputPosition.x, outputPosition.y)
+                const sourceEndpoint = String(canonical.sourceEndpointId || "")
+                const destinationEndpoint = String(canonical.destinationEndpointId || "")
+                // Port anchors are recorded by the real card delegates.  The
+                // fallback only covers the one layout pass before those
+                // delegates report their geometry.
+                const sourceAnchor = portAnchors[sourceEndpoint] || ({
+                    "x": sourcePosition.x + graphCardWidth(sourceNode),
+                    "y": sourcePosition.y + Math.min(graphCardHeight(sourceNode) * 0.5,
+                        48 + stableLane(sourceEndpoint, 13) * 6) })
+                const destinationAnchor = portAnchors[destinationEndpoint] || ({
+                    "x": destinationPosition.x,
+                    "y": destinationPosition.y + Math.min(graphCardHeight(destinationNode) * 0.5,
+                        48 + stableLane(destinationEndpoint, 13) * 6) })
+                const excludedIds = ({})
+                excludedIds[String(sourceNode.id || "")] = true
+                excludedIds[String(destinationNode.id || "")] = true
+                const obstacle = obstaclePlan(sourceAnchor.x, sourceAnchor.y, destinationAnchor.x,
+                    destinationAnchor.y, excludedIds)
+                segments.push({ "id": String(canonical.id || ""), "routeSegmentId": String(canonical.id || ""),
+                    "startX": sourceAnchor.x, "startY": sourceAnchor.y,
+                    "endX": destinationAnchor.x, "endY": destinationAnchor.y,
+                    "hasDetour": obstacle.hasDetour, "detourY": obstacle.detourY,
+                    "underCard": obstacle.underCard })
             }
-            const finalX = destinationAnchor.x
-            const finalY = destinationAnchor.y
-            const finalObstacle = obstaclePlan(currentX, currentY, finalX, finalY, excludedIds)
-            segments.push({ "startX": currentX, "startY": currentY, "endX": finalX,
-                "endY": finalY, "hasDetour": finalObstacle.hasDetour,
-                "detourY": finalObstacle.detourY, "underCard": finalObstacle.underCard })
+            const sourceAnchor = ({ "x": segments[0].startX, "y": segments[0].startY })
+            const finalX = segments[segments.length - 1].endX
+            const finalY = segments[segments.length - 1].endY
             const focusSegment = segments[Math.floor(segments.length * 0.5)]
             const lane = Number(fanOutLanes[String(route.id || i)] || 0)
             const entry = {
                 "route": route,
                 "routeId": String(route.id || ""),
-                "routeSegmentId": String(route.routeSegmentId || route.id || ""),
+                "routeSegmentId": String(canonicalSegments[0].id || route.id || ""),
                 "startX": sourceAnchor.x,
                 "startY": sourceAnchor.y,
                 "endX": finalX,
@@ -776,7 +792,7 @@ Item {
                 "bundleCount": 1,
                 "drawBundleTrunk": false,
                 "bundleX": inputPosition.x + graphCardWidth(input),
-                "processorCount": processorWaypoints.length,
+                "processorCount": Math.max(0, canonicalSegments.length - 1),
                 "lane": lane
             }
             for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
@@ -797,7 +813,7 @@ Item {
                         const key = bx + ":" + by
                         if (!buckets[key]) buckets[key] = []
                         buckets[key].push({ "route": route, "routeId": entry.routeId,
-                            "routeSegmentId": entry.routeSegmentId, "points": segment.points })
+                            "routeSegmentId": segment.routeSegmentId, "points": segment.points })
                     }
                 }
             }
@@ -1072,8 +1088,13 @@ Item {
             splitSharedProcessor(kind)
             return
         }
-        const result = backendObject.signalFlowToggleProcessor(String(inspectedRoute.id), kind,
-            !processorEnabled(kind), Number(graph.revision || 0))
+        const detail = processorDetail(kind)
+        const enabled = processorEnabled(kind)
+        const segments = inspectedRoute.segments || []
+        const segmentId = selectedSegmentId || (segments.length > 0 ? String(segments[0].id || "") : "")
+        const result = enabled
+            ? backendObject.signalFlowRemoveOrBypassProcessor(String(detail.id || ""), Number(graph.revision || 0))
+            : backendObject.signalFlowInsertProcessor(segmentId, kind, Number(graph.revision || 0))
         announce(result, "Processor change was not applied.")
         if (result && result.success) processorDialog.close()
     }
@@ -1083,6 +1104,16 @@ Item {
             Number(graph.revision || 0))
         announce(result, "Shared processor was not split.")
         if (result && result.success) processorDialog.close()
+    }
+    function removeSelectedProcessor() {
+        if (!inspectedNode || inspectedNode.kind !== "processor" || !inspectedNode.objectId) return
+        const result = backendObject.signalFlowRemoveOrBypassProcessor(String(inspectedNode.objectId),
+            Number(graph.revision || 0))
+        announce(result, "Processor was not removed.")
+        if (result && result.success) {
+            selectedSegmentId = ""
+            inspectedNode = ({})
+        }
     }
     function openShareProcessorDialog() {
         if (!inspectedRoute || !inspectedRoute.id) return
@@ -1390,6 +1421,7 @@ Item {
             for (let index = 0; index < routes.length; ++index) {
                 if (String(routes[index].id || "") !== root.pendingProcessorRouteId) continue
                 root.inspectedRoute = routes[index]
+                root.selectedSegmentId = root.pendingProcessorSegmentId
                 root.inspectedNode = ({})
                 root.source = ({})
                 break
@@ -1916,10 +1948,24 @@ Item {
                                     const segments = entry.segments || []
                                     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
                                         const segment = segments[segmentIndex]
+                                        const segmentSelected = String(root.selectedSegmentId || "") === String(segment.routeSegmentId || "")
+                                        const segmentHovered = String(root.hoveredSegmentId || "") === String(segment.routeSegmentId || "")
+                                        const segmentPreview = String(root.pendingProcessorSegmentId || "") === String(segment.routeSegmentId || "")
                                         drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
-                                            color, lineWidth, alpha, Number(entry.lane === undefined
+                                            segmentSelected || segmentPreview ? deck.attention : segmentHovered ? deck.focus : color,
+                                            segmentSelected || segmentPreview ? Math.max(3.8, lineWidth) : segmentHovered ? Math.max(3.1, lineWidth) : lineWidth,
+                                            alpha, Number(entry.lane === undefined
                                                 ? root.stableLane(route.id, 9) - 4 : entry.lane), dashed,
                                             root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
+                                        if (segmentPreview) {
+                                            context.save()
+                                            context.globalAlpha = 0.96
+                                            context.fillStyle = deck.attention
+                                            context.font = "bold 9px " + deck.telemetryFont
+                                            context.fillText("INSERT", (segment.startX + segment.endX) * 0.5 + 8,
+                                                (segment.startY + segment.endY) * 0.5 - 7)
+                                            context.restore()
+                                        }
                                     }
                                 }
                                 if (root.dragWire && root.dragWire.active) {
@@ -1957,12 +2003,47 @@ Item {
                                     return
                                 }
                                 root.inspectedRoute = hit.route
+                                root.selectedSegmentId = String(hit.routeSegmentId || "")
                                 root.inspectedNode = ({})
                                 root.source = ({})
                                 if (mouse.button === Qt.RightButton) {
                                     deckRouteContextMenu.targetRoute = hit.route
                                     deckRouteContextMenu.open()
                                 }
+                            }
+                        }
+                        // Processor chips target the same cached segment
+                        // geometry used by Canvas and pointer selection. No
+                        // surrogate lane or invisible drop strip participates.
+                        DropArea {
+                            anchors.fill: parent
+                            z: 1
+                            keys: ["signal-flow-processor"]
+                            onEntered: function(drag) {
+                                const hit = root.hitWire(drag.x, drag.y)
+                                if (hit) root.previewProcessorTarget(hit.route, String(hit.routeSegmentId || ""))
+                            }
+                            onPositionChanged: function(drag) {
+                                const hit = root.hitWire(drag.x, drag.y)
+                                if (hit) root.previewProcessorTarget(hit.route, String(hit.routeSegmentId || ""))
+                            }
+                            onExited: {
+                                root.pendingProcessorRouteId = ""
+                                root.pendingProcessorSegmentId = ""
+                            }
+                            onDropped: function(drop) {
+                                const hit = root.hitWire(drop.x, drop.y)
+                                root.pendingProcessorRouteId = ""
+                                root.pendingProcessorSegmentId = ""
+                                if (!hit || !hit.route || !hit.routeSegmentId || !drop.source || !drop.source.processorKind) return
+                                root.inspectedRoute = hit.route
+                                root.inspectedNode = ({})
+                                root.selectedSegmentId = String(hit.routeSegmentId)
+                                const result = backendObject.signalFlowInsertProcessor(String(hit.routeSegmentId),
+                                    String(drop.source.processorKind), Number(root.graph.revision || 0))
+                                root.announce(result, "Processor was not inserted.")
+                                if (result && result.success) processorDialog.close()
+                                drop.accepted = true
                             }
                         }
                         FlightDeckCard {
@@ -2078,12 +2159,48 @@ Item {
                                     Text { text: modelData.detail; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
                                     Text { visible: Boolean(modelData.shared); text: "SHARED · " + Number(modelData.sharedChannelCount || 0) + " CHANNELS"; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
                                     Repeater {
-                                        model: modelData.shared ? Math.min(4, Number(modelData.sharedChannelCount || 0)) : 0
+                                        // The labels mirror the actual paired port rows below;
+                                        // they are not decorative processor dots.
+                                        model: modelData.shared ? Math.min(4, Number(modelData.channelCount || 0)) : 0
                                         delegate: Row {
                                             spacing: 3
-                                            Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: deck.informational }
-                                            Text { text: "channel " + (index + 1) + "  →"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8 }
-                                            Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: deck.healthy }
+                                            Text { text: "CHANNEL " + (index + 1) + " · IN / OUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8 }
+                                        }
+                                    }
+                                }
+                                Repeater {
+                                    // These markers own the exact endpoint ids that the
+                                    // canonical segments reference. Their larger hit area
+                                    // stays keyboard/pointer discoverable while the visual
+                                    // port remains compact.
+                                    model: modelData.ports || []
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        readonly property bool inputPort: String(modelData.direction || "") === "input"
+                                        readonly property real sceneX: processorNode.x + x + width / 2
+                                        readonly property real sceneY: processorNode.y + y + height / 2
+                                        width: 10; height: 10; radius: 5
+                                        x: inputPort ? -width / 2 : processorNode.width - width / 2
+                                        y: 34 + Math.floor(index / 2) * 18
+                                        z: 5
+                                        color: inputPort ? deck.informational : deck.healthy
+                                        border.color: deck.applicationBackground
+                                        border.width: 2
+                                        Accessible.name: String(modelData.label || (inputPort ? "Processor input" : "Processor output"))
+                                        Accessible.description: String(modelData.accessibleDescription || "Canonical Signal Flow processor port")
+                                        function registerAnchor() { root.notePortAnchor(modelData, sceneX, sceneY) }
+                                        Component.onCompleted: registerAnchor()
+                                        onSceneXChanged: registerAnchor()
+                                        onSceneYChanged: registerAnchor()
+                                        MouseArea {
+                                            anchors.centerIn: parent
+                                            width: 30; height: 30
+                                            hoverEnabled: true
+                                            onClicked: {
+                                                root.inspectedNode = processorNode.modelData
+                                                root.inspectedRoute = root.routeForId(modelData.routeId)
+                                                root.selectedSegmentId = String(modelData.routeSegmentId || "")
+                                            }
                                         }
                                     }
                                 }
@@ -2173,14 +2290,24 @@ Item {
                                         id: processorDrop
                                         anchors.fill: parent
                                         keys: ["signal-flow-processor"]
-                                        onEntered: function(drag) { root.previewProcessorTarget(modelData) }
-                                        onExited: function(drag) { if (root.pendingProcessorRouteId === String(modelData.id || "")) root.pendingProcessorRouteId = "" }
+                                        onEntered: function(drag) {
+                                            const segments = modelData.segments || []
+                                            if (segments.length > 0) root.previewProcessorTarget(modelData, String(segments[0].id || ""))
+                                        }
+                                        onExited: function(drag) {
+                                            if (root.pendingProcessorRouteId === String(modelData.id || "")) {
+                                                root.pendingProcessorRouteId = ""
+                                                root.pendingProcessorSegmentId = ""
+                                            }
+                                        }
                                         onDropped: function(drop) {
                                             if (drop.source && drop.source.processorKind) {
                                                 root.inspectedRoute = modelData
                                                 root.inspectedNode = ({})
-                                                const result = backendObject.signalFlowToggleProcessor(String(modelData.id),
-                                                    String(drop.source.processorKind), true, Number(root.graph.revision || 0))
+                                                const segments = modelData.segments || []
+                                                const result = backendObject.signalFlowInsertProcessor(
+                                                    segments.length > 0 ? String(segments[0].id || "") : "",
+                                                    String(drop.source.processorKind), Number(root.graph.revision || 0))
                                                 root.announce(result, "Processor was not inserted.")
                                                 drop.accepted = true
                                             }
@@ -2241,6 +2368,7 @@ Item {
                     }
                     Text { text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode && root.inspectedNode.id ? root.inspectedNode.label : "Select a route or destination"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: String(root.inspectedNode.detail || "") + (root.inspectedNode.capabilitySummary ? "\n" + root.inspectedNode.capabilitySummary : ""); color: root.inspectedNode && root.inspectedNode.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"); text: "PROCESSOR ID · " + String(root.inspectedNode.objectId || "") + "\nPORTS · " + Number(root.inspectedNode.channelCount || 0) + " channel pair" + (Number(root.inspectedNode.channelCount || 0) === 1 ? "" : "s"); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                     Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: Number(root.inspectedNode.routeCount || 0) + " configured route" + (Number(root.inspectedNode.routeCount || 0) === 1 ? "" : "s") + (root.inspectedNode.connected ? " · READY" : " · OFFLINE / UNAVAILABLE"); color: root.inspectedNode && root.inspectedNode.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: root.inspectedNode && root.inspectedNode.kind === "input" ? "Open input setup" : "Open output setup"; helpText: "Open Devices & setup while preserving this Flight Deck Signal Flow card selection for return."; Layout.fillWidth: true; onClicked: root.openCardSettings(root.inspectedNode) }
                     Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: root.inspectedRoute && root.inspectedRoute.processors && root.inspectedRoute.processors.length ? "Conditioning nodes: " + root.inspectedRoute.processors.length + (root.inspectedRoute.viaNodeId ? " · explicit mixer" : "") : "Direct route — no visible conditioning node."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -2250,6 +2378,8 @@ Item {
                     DeckButton { text: "Explain route"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; onClicked: root.explainRoute() }
                     DeckButton { text: "Open Curve Editor"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "curve")); helpText: "Open the authoritative Curve Editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("curve", root.inspectedRoute) }
                     DeckButton { text: "Open Adaptive Response"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "adaptive-response")); helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("adaptive-response", root.inspectedRoute) }
+                    DeckButton { text: root.inspectedNode && root.inspectedNode.semantic === "curve" ? "Open Curve Editor" : "Open Adaptive Response"; visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && (root.inspectedNode.semantic === "curve" || root.inspectedNode.semantic === "adaptive-response")); Layout.fillWidth: true; onClicked: root.openNodeSettings(root.inspectedNode) }
+                    DeckButton { text: "Remove processor"; destructive: true; visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.removeSelectedProcessor() }
                     DeckButton { text: "Processor palette"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: processorDialog.open() }
                     DeckButton { text: "Share active processor…"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openShareProcessorDialog() }
                     DeckButton { text: "Disconnect selected"; destructive: true; helpText: "Remove this canonical route. Shortcut: Delete."; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
@@ -2585,7 +2715,7 @@ Item {
         title: "Processor palette"
         contentItem: ColumnLayout {
             spacing: deck.space8
-            Text { Layout.fillWidth: true; text: "Drag a processor chip onto a route lane, or click it to atomically add/remove it from the selected source chain. The same source setting is visible in its focused editor."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Drag a processor chip onto the highlighted visible wire, or click it to apply the same atomic action to the selected canonical segment. Focused settings stay authoritative."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Flow {
                 Layout.fillWidth: true; spacing: deck.space8
                 Repeater {

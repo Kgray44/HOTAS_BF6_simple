@@ -1155,44 +1155,70 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
                                                                             route.identityKey);
         route.id = identity && identity->active ? identity->id : QString{};
         route.processorPath.clear();
-        if (!route.enabled || route.sourceKind != SignalFlowPortKind::Axis) continue;
-        const ControllerProfile *profile = findProfile(*configuration, route.profileId);
-        if (!profile) continue;
-        const DeviceProfileMapping *mapping = route.controllerRecordId.isEmpty() ? nullptr
-            : findDeviceProfileMapping(*profile, route.controllerRecordId);
-        const AxisMappings &axes = mapping ? mapping->axes : profile->axes;
-        if (route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount) continue;
-        const AxisMapping &axis = axes[static_cast<size_t>(route.sourceIndex)];
-        const auto appendProcessor = [&](bool active, const QString &kind) {
-            if (!active) return;
-            const SignalFlowSharedProcessor *shared = sharedProcessorForAxis(
-                state, route.profileId, route.controllerRecordId, kind, route.sourceIndex);
-            const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
-                state.processorIdentities,
-                shared ? shared->identityKey
-                    : processorKey(*profile, route.controllerRecordId, route.sourceIndex, kind));
-            if (processor && processor->active && !route.processorPath.contains(processor->id)) {
-                route.processorPath.append(processor->id);
+        // Persist the actual edges around every processor.  The old route
+        // plus processorPath representation is retained as the compatibility
+        // projection consumed by focused editors/runtime compilation, but it
+        // is no longer the only topology available to the graph.  Every
+        // processor now has a durable, route-channel-specific IN and OUT
+        // endpoint and every visible leg has its own canonical id.
+        route.segments.clear();
+        if (!route.enabled || route.id.isEmpty()) continue;
+        if (route.sourceKind == SignalFlowPortKind::Axis) {
+            const ControllerProfile *profile = findProfile(*configuration, route.profileId);
+            if (!profile || route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount) continue;
+            const DeviceProfileMapping *mapping = route.controllerRecordId.isEmpty() ? nullptr
+                : findDeviceProfileMapping(*profile, route.controllerRecordId);
+            const AxisMappings &axes = mapping ? mapping->axes : profile->axes;
+            const AxisMapping &axis = axes[static_cast<size_t>(route.sourceIndex)];
+            const auto appendProcessor = [&](bool active, const QString &kind) {
+                if (!active) return;
+                const SignalFlowSharedProcessor *shared = sharedProcessorForAxis(
+                    state, route.profileId, route.controllerRecordId, kind, route.sourceIndex);
+                const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
+                    state.processorIdentities,
+                    shared ? shared->identityKey
+                        : processorKey(*profile, route.controllerRecordId, route.sourceIndex, kind));
+                if (processor && processor->active && !route.processorPath.contains(processor->id)) {
+                    route.processorPath.append(processor->id);
+                }
+            };
+            appendProcessor(axis.rangeMode == AxisRangeMode::OneSided, u"domain"_qs);
+            appendProcessor(hasNonDefaultDeadzone(axis), u"deadzone"_qs);
+            appendProcessor(hasNonDefaultCenterHold(axis), u"center-hold"_qs);
+            appendProcessor(axis.inverted, u"invert"_qs);
+            appendProcessor(hasNonDefaultCurve(axis), u"curve"_qs);
+            appendProcessor(hasNonDefaultLimits(axis), u"limits"_qs);
+            appendProcessor(adaptiveResponseEnabled(*configuration, *profile, mapping, route.sourceIndex),
+                            u"adaptive-response"_qs);
+            for (const SignalFlowMixer &mixer : state.mixers) {
+                if (!mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled
+                    || mixer.profileId != route.profileId
+                    || mixer.controllerRecordId != route.controllerRecordId
+                    || mixer.destinationAxis != route.destinationIndex) continue;
+                const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
+                    state.processorIdentities, mixer.identityKey);
+                if (processor && processor->active) route.processorPath.append(processor->id);
+                break;
             }
-        };
-        appendProcessor(axis.rangeMode == AxisRangeMode::OneSided, u"domain"_qs);
-        appendProcessor(hasNonDefaultDeadzone(axis), u"deadzone"_qs);
-        appendProcessor(hasNonDefaultCenterHold(axis), u"center-hold"_qs);
-        appendProcessor(axis.inverted, u"invert"_qs);
-        appendProcessor(hasNonDefaultCurve(axis), u"curve"_qs);
-        appendProcessor(hasNonDefaultLimits(axis), u"limits"_qs);
-        appendProcessor(adaptiveResponseEnabled(*configuration, *profile, mapping, route.sourceIndex),
-                        u"adaptive-response"_qs);
-        for (const SignalFlowMixer &mixer : state.mixers) {
-            if (!mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled
-                || mixer.profileId != route.profileId
-                || mixer.controllerRecordId != route.controllerRecordId
-                || mixer.destinationAxis != route.destinationIndex) continue;
-            const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
-                state.processorIdentities, mixer.identityKey);
-            if (processor && processor->active) route.processorPath.append(processor->id);
-            break;
         }
+        QString currentEndpoint = QString(u"sf-endpoint:%1:source"_qs).arg(route.id);
+        int ordinal = 0;
+        const auto appendSegment = [&route, &currentEndpoint, &ordinal](const QString &nextEndpoint) {
+            if (nextEndpoint.isEmpty()) return;
+            route.segments.push_back(SignalFlowRouteSegment{
+                QString(u"sfseg:%1:%2"_qs).arg(route.id).arg(ordinal++),
+                currentEndpoint,
+                nextEndpoint});
+            currentEndpoint = nextEndpoint;
+        };
+        for (const QString &processorId : route.processorPath) {
+            if (processorId.isEmpty()) continue;
+            const QString input = QString(u"sf-port:%1:%2:in"_qs).arg(processorId, route.id);
+            const QString output = QString(u"sf-port:%1:%2:out"_qs).arg(processorId, route.id);
+            appendSegment(input);
+            currentEndpoint = output;
+        }
+        appendSegment(QString(u"sf-endpoint:%1:destination"_qs).arg(route.id));
     }
 }
 

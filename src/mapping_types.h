@@ -878,6 +878,17 @@ struct SignalFlowIdentityRecord {
     bool active = false;
 };
 
+// A route segment is a canonical control-plane edge.  It is deliberately not
+// a QML paint primitive: the ids name the endpoints that are persisted with
+// the route and are used for hit testing, insertion preconditions, undo, and
+// focused-editor reconciliation.  The DirectInput worker continues to consume
+// the bounded compiled mapping tables, not this graph representation.
+struct SignalFlowRouteSegment {
+    QString id;
+    QString sourceEndpointId;
+    QString destinationEndpointId;
+};
+
 struct SignalFlowRoute {
     // identityKey resolves through routeIdentities. `id` is persisted as an
     // integrity check and direct deep-link payload, and is reconciled to that
@@ -902,7 +913,11 @@ struct SignalFlowRoute {
     // legacy controls must preserve the same explicit/default semantics.
     bool implicitDefault = false;
     bool enabled = true;
+    // The ordered processor path remains the compact runtime/configuration
+    // compatibility projection.  `segments` is the canonical edge topology
+    // that makes each processor input and output a real graph endpoint.
     QStringList processorPath;
+    std::vector<SignalFlowRouteSegment> segments;
 };
 
 struct SignalFlowMixer {
