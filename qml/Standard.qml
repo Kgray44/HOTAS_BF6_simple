@@ -1598,6 +1598,13 @@ Page {
                 presentationState: root.flightDeckProfilesPresentationState
                 onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
                 onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToDeviceRig: function(rigId) {
+                    // This is a presentation deep link only.  FlightDeckDevices
+                    // establishes its ordinary editing/view context and never
+                    // calls activateDeviceRig while opening the target.
+                    root.flightDeckDevicesContext = "rig:" + rigId
+                    root.currentPage = 2
+                }
                 onNavigateToAutomation: function(automationId) {
                     root.flightDeckAutomationContext = automationId
                     root.currentPage = 7

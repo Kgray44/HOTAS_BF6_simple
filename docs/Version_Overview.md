@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.5.4**
+**Current version: v2.5.5**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.5.5 — Flight Deck Device Rig management
+
+Completes the canonical Device Rig workflow inside Flight Deck while preserving the V2.5.4 Activation Resolver and the allocation-free DirectInput-to-vJoy report path.
+
+- Flight Deck Devices now has a first-class Device Rigs section with readiness, configured/in-use state, required and optional controller summaries, Virtual Output assignment, and clear Create, Open Details, and Set Active actions.
+- The native create and details flows use AppBackend's existing Device Rig commands for multi-controller membership, Required/Optional state, output assignment, rename, activation, verification, and safe deletion; no Flight-Deck-specific Rig model or persistence store was added.
+- Profiles now provide an Open Rig route to Flight Deck Rig Details. The deep link establishes only the shared viewing/editing context and never activates the referenced Rig.
+- Rig editing continues to feed the canonical Profile and Activation Resolver state immediately. Optional offline controllers remain non-blocking; required unavailable, ambiguous, or unverified controllers remain ineligible according to backend policy.
+- Flight Deck Rig forms, details, confirmations, transient feedback, and supported-width QML lifecycle coverage keep controls reachable and acknowledge normal actions without leaving permanent banners over the page.
 
 ## v2.5.4 — Hardware-aware Activation Resolver (candidate)
 

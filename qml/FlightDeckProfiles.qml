@@ -29,6 +29,9 @@ Flickable {
     property string actionNoticeTone: "informational"
 
     signal navigateToPage(int page)
+    // A Profile may point to a Device Rig, but inspecting that relationship
+    // is intentionally view-only.  The Flight Deck shell owns the route.
+    signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
     signal presentationStateCaptured(var state)
@@ -95,17 +98,27 @@ Flickable {
     }
     function profilesForCategory(id) {
         const result = [];
+        const includedIds = ({});
         const category = categoryById(id);
         const orderedIds = category ? (category.profileIds || []) : [];
         for (let ordered = 0; ordered < orderedIds.length; ++ordered) {
             const profile = profileById(orderedIds[ordered]);
-            if (profile && String(profile.categoryId || "") === String(id || ""))
+            const profileId = profile ? String(profile.id || "") : "";
+            if (profile && profileId.length > 0
+                    && String(profile.categoryId || "") === String(id || "")
+                    && !includedIds[profileId]) {
                 result.push(profile);
+                includedIds[profileId] = true;
+            }
         }
         for (let index = 0; index < profiles.length; ++index) {
-            if (String(profiles[index].categoryId || "") === String(id || "")
-                    && result.indexOf(profiles[index]) < 0)
-                result.push(profiles[index]);
+            const profile = profiles[index];
+            const profileId = String(profile.id || "");
+            if (String(profile.categoryId || "") === String(id || "")
+                    && profileId.length > 0 && !includedIds[profileId]) {
+                result.push(profile);
+                includedIds[profileId] = true;
+            }
         }
         return result;
     }
@@ -1695,9 +1708,15 @@ Flickable {
                                 wrapMode: Text.WordWrap
                             }
                             DeckButton {
-                                text: "OPEN DEVICES"
+                                objectName: "flightDeckOpenAssignedRig"
+                                text: root.selectedDetail.deviceRigId ? "OPEN RIG" : "OPEN DEVICES"
                                 subdued: true
-                                onClicked: root.navigateToPage(10)
+                                onClicked: {
+                                    if (root.selectedDetail.deviceRigId)
+                                        root.navigateToDeviceRig(String(root.selectedDetail.deviceRigId))
+                                    else
+                                        root.navigateToPage(2)
+                                }
                             }
                         }
                     }
