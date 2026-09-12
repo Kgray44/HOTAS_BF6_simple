@@ -7346,6 +7346,11 @@ bool verifySignalFlowOwnerReviewSoak(QObject *page, QQuickWindow *window, int du
     page->setProperty("nodePositions", QVariantMap{});
     page->setProperty("graph", signalFlowOwnerReviewGraph());
     settlePresentation();
+    // Phase 4 keeps reduced motion semantically visible (rather than making
+    // structural changes instantaneous). Allow the short structural window
+    // to finish before comparing cached geometry to delegate-owned ports.
+    QTest::qWait(page->property("motionStructuralDuration").toInt() + 20);
+    settlePresentation();
     if (!requestAndVerify(QStringLiteral("owner soak initial"))) {
         restore();
         return false;
@@ -7356,6 +7361,7 @@ bool verifySignalFlowOwnerReviewSoak(QObject *page, QQuickWindow *window, int du
     bool resourceBaselineCaptured = false;
     constexpr int resourceWarmupOperations = 5;
     const int rebuildsBefore = page->property("geometryRebuildCount").toInt();
+    const int paintsBefore = page->property("canvasPaintCount").toInt();
     QElapsedTimer elapsed;
     elapsed.start();
     int operations = 0;
@@ -7410,6 +7416,12 @@ bool verifySignalFlowOwnerReviewSoak(QObject *page, QQuickWindow *window, int du
             viewport->setProperty("contentX", static_cast<qreal>((operations * 19) % 180));
             viewport->setProperty("contentY", static_cast<qreal>((operations * 11) % 120));
         }
+        // The fixture mutates groups and density in the same turn as a drag.
+        // Reduced Motion now presents those semantic structural changes over
+        // its short, deterministic interval; validate the settled delegate
+        // anchors rather than sampling an intentionally in-progress frame.
+        QTest::qWait(page->property("motionStructuralDuration").toInt() + 20);
+        settlePresentation();
         if (!actionError.isEmpty() || !actionApplied || !requestAndVerify(QStringLiteral("owner soak %1").arg(operations))) {
             restore();
             return failPresentationLifecycleTest(QStringLiteral("Signal Flow owner soak action failed at %1: %2")
@@ -7448,9 +7460,10 @@ bool verifySignalFlowOwnerReviewSoak(QObject *page, QQuickWindow *window, int du
         && samples > operations && failures == 0 && maxError <= 0.01;
     const QString resultLog = QStringLiteral(
         "signal_flow_owner_soak seconds=%1 operations=%2 samples=%3 failures=%4 max_error=%5 "
-        "rebuilds=%6 private_mb=%7->%8 working_set_mb=%9->%10 handles=%11->%12 gdi=%13->%14 user=%15->%16 objects=%17->%18")
+        "rebuilds=%6 canvas_paints=%7 private_mb=%8->%9 working_set_mb=%10->%11 handles=%12->%13 gdi=%14->%15 user=%16->%17 objects=%18->%19")
         .arg(elapsedMilliseconds / 1000.0, 0, 'f', 1).arg(operations).arg(samples).arg(failures)
         .arg(maxError, 0, 'f', 6).arg(page->property("geometryRebuildCount").toInt() - rebuildsBefore)
+        .arg(page->property("canvasPaintCount").toInt() - paintsBefore)
         .arg(resourcesBefore.memory.privateBytes / static_cast<qreal>(mib), 0, 'f', 1)
         .arg(resourcesAfter.memory.privateBytes / static_cast<qreal>(mib), 0, 'f', 1)
         .arg(resourcesBefore.memory.workingSetBytes / static_cast<qreal>(mib), 0, 'f', 1)
@@ -7590,9 +7603,17 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         "(function() {"
         " reducedMotion = false; wireReveal = 1; wireRetire = 1;"
         " retiringWireGeometry = [wireGeometry[0]]; restartWireMotion();"
-        " const animated = wireReveal === 0 && wireRetire === 0;"
-        " reducedMotion = true; restartWireMotion();"
-        " return animated && wireReveal === 1 && wireRetire === 1 && retiringWireGeometry.length === 0;"
+        " const animated = wireReveal === 1 && wireRetire === 0"
+        "   && motionFastDuration >= 80 && motionFastDuration <= 120"
+        "   && motionStructuralDuration >= 150 && motionStructuralDuration <= 220"
+        "   && motionLayoutDuration >= 250 && motionLayoutDuration <= 400;"
+        " reducedMotion = true; retiringWireGeometry = [wireGeometry[0]]; restartWireMotion();"
+        " const reducedSemantic = motionFastDuration > 0 && motionStructuralDuration > 0"
+        "   && motionLayoutDuration > 0 && motionFastDuration < motionStructuralDuration"
+        "   && motionStructuralDuration < motionLayoutDuration;"
+        " return animated && reducedSemantic && typeof applyAutoLayout === 'function'"
+        "   && wireReveal === 1 && wireRetire === 0"
+        "   && retiringWireGeometry.length === 1;"
         "})()"));
     const bool motionVisible = motionContract.evaluate().toBool() && !motionContract.hasError();
     QQmlExpression topologyHandoff(qmlContext(page), page, QStringLiteral(
@@ -7607,7 +7628,8 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         " const next = Object.assign({}, graph); next.routes = (graph.routes || []).concat([added]); graph = next;"
         " const previous = reflowSourceSegment(before.routeId, before.segments[0].routeSegmentId);"
         " return wireReveal === 1 && wireAppearancePending && wireAppear === 0 && previous"
-        "   && !wireIsAppearing(before.routeId) && wireIsAppearing(added.id);"
+        "   && !wireIsAppearing(before.routeId) && wireIsAppearing(added.id)"
+        "   && routeArrival === 0 && Object.keys(arrivingDestinationPortIds).length > 0;"
         "})()"));
     const bool topologyHandoffSmooth = topologyHandoff.evaluate().toBool() && !topologyHandoff.hasError();
     // This is a synthetic page-owned graph. Toggle its style in QML, then
@@ -7820,6 +7842,28 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 "Signal Flow %1 did not preserve cached geometry across a live sample (error=%2)")
                 .arg(theme)
                 .arg(cachedGeometry.hasError() ? cachedGeometry.error().toString() : QStringLiteral("none")));
+        }
+
+        QQmlExpression motionSurface(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const original = reducedMotion; reducedMotion = false;"
+            " const full = motionFastDuration >= 80 && motionFastDuration <= 120"
+            "   && motionStructuralDuration >= 150 && motionStructuralDuration <= 220"
+            "   && motionLayoutDuration >= 250 && motionLayoutDuration <= 400;"
+            " reducedMotion = true;"
+            " const reduced = motionFastDuration > 0 && motionStructuralDuration > 0"
+            "   && motionLayoutDuration > 0 && motionFastDuration < motionStructuralDuration"
+            "   && motionStructuralDuration < motionLayoutDuration;"
+            " reducedMotion = original;"
+            " return full && reduced && typeof applyAutoLayout === 'function'"
+            "   && typeof wireIsAppearing === 'function';"
+            "})()"));
+        const bool motionSurfaceReady = motionSurface.evaluate().toBool();
+        if (motionSurface.hasError() || !motionSurfaceReady) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not expose the Phase 4 motion language (error=%2)")
+                .arg(theme).arg(motionSurface.hasError()
+                    ? motionSurface.error().toString() : QStringLiteral("none")));
         }
 
         QQmlExpression interactionSurface(qmlContext(page), page, QStringLiteral(

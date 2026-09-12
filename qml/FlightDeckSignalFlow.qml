@@ -106,7 +106,23 @@ Item {
     readonly property real snapGridSize: 48
     readonly property real snapGridThreshold: 12
     readonly property real alignmentSnapThreshold: 10
+    readonly property real alignmentSnapHysteresis: 4
     readonly property int snapSettleDuration: 100
+    property var alignmentGuideHysteresis: ({})
+    // Phase 4 motion language.  These semantic families intentionally avoid
+    // a collection of unrelated local literals.  Reduced Motion is shortened
+    // rather than erased where a concise transition still explains causality.
+    readonly property int motionFastDuration: reducedMotion ? 50 : 100
+    readonly property int motionStructuralDuration: reducedMotion ? 80 : 190
+    readonly property int motionLayoutDuration: reducedMotion ? 120 : 320
+    property bool autoLayoutMotionActive: false
+    property int wireReflowDuration: motionStructuralDuration
+    property var renderedNodeIds: ({})
+    property var appearingNodeIds: ({})
+    property real nodeAppear: 1.0
+    property var arrivingDestinationPortIds: ({})
+    property real routeArrival: 1.0
+    property real inspectorContentReveal: 1.0
     // Presentation-only continuity for source-first learning. The canonical
     // graph remains owned by AppBackend.
     property string learnedSourcePortId: ""
@@ -150,6 +166,36 @@ Item {
     signal navigateRequested(int page, int axis, var state)
 
     function normalized(value) { return String(value || "").toLowerCase() }
+    function nodeMotionDuration(nodeData) {
+        if (autoLayoutMotionActive) return motionLayoutDuration
+        // Direct manipulation owns its card position and must keep its cached
+        // wire endpoints exact. Only a release-time snap receives a short
+        // settle; an ordinary drag release commits without a second drift.
+        return nodeIsSnapSettling(nodeData) ? motionFastDuration : 0
+    }
+    function routeDestinationKey(route) {
+        return String(route && (route.destinationEndpointId || route.destinationPortId) || "")
+    }
+    function routeDestinationAcknowledged(port) {
+        const key = String(port && (port.endpointId || port.id) || "")
+        return key.length > 0 && Boolean(arrivingDestinationPortIds[key])
+    }
+    function nodeIsAppearing(nodeData) {
+        return Boolean(appearingNodeIds[nodeIdentity(nodeData)])
+            || Boolean(appearingNodeIds[nodeStorageIdentity(nodeData)])
+    }
+    function nodeAppearanceOpacity(nodeData) {
+        return nodeIsAppearing(nodeData) ? 0.84 + 0.16 * nodeAppear : 1.0
+    }
+    function beginRouteDestinationAcknowledgement() {
+        if (Object.keys(arrivingDestinationPortIds).length === 0) return
+        routeArrival = 0
+        routeArrivalAnimation.restart()
+    }
+    function restartInspectorMotion() {
+        inspectorContentReveal = 0
+        inspectorContentAnimation.restart()
+    }
     function node(kind) {
         const nodes = graph.nodes || []
         for (let i = 0; i < nodes.length; ++i) if (nodes[i].kind === kind) return nodes[i]
@@ -512,6 +558,11 @@ Item {
         return hadRouting
     }
     function armSource(port, beginDrag) {
+        if (autoLayoutMotionActive) {
+            notice = "Auto Layout is settling. Wait for the graph to finish moving."
+            noticeError = false
+            return false
+        }
         if (!port || !port.id) return false
         if (mode === "effective" || !graph.editable) {
             notice = "Effective view is read-only. Switch to Configured to edit this route."
@@ -558,7 +609,13 @@ Item {
     // card stays unmistakable, and destination cards advertise whether they
     // are compatible candidates or the current hovered target.
     function routingNodeState(nodeData) {
-        if (!nodeData || !source || !source.id) return ""
+        if (!nodeData) return ""
+        // Selection remains distinct from every routing state.  A selected
+        // card is an inspection decision, never an armed source or candidate.
+        if (!source || !source.id) {
+            return inspectedNode && inspectedNode.id && nodeMatchesId(nodeData, inspectedNode.id)
+                ? "selected" : ""
+        }
         const sourceOwnerId = portOwnerNodeId(source)
         if (sourceOwnerId && nodeMatchesId(nodeData, sourceOwnerId)) return "source"
         const previewOwnerId = String(connectionPreview && connectionPreview.ownerNodeId || "")
@@ -576,6 +633,7 @@ Item {
         if (state === "target") return deck.attention
         if (state === "candidate") return deck.focus
         if (state === "blocked") return deck.attention
+        if (state === "selected") return deck.healthy
         return deck.border
     }
     function routingNodeBorderWidth(state) {
@@ -584,7 +642,7 @@ Item {
     function routingNodeSurface(baseColor, state) {
         if (!state) return baseColor
         const emphasis = state === "target" || state === "blocked" ? deck.attention
-            : state === "source" ? deck.accent : deck.focus
+            : state === "source" ? deck.accent : state === "selected" ? deck.healthy : deck.focus
         const amount = state === "candidate" ? 0.08 : 0.14
         return Qt.rgba(baseColor.r * (1 - amount) + emphasis.r * amount,
             baseColor.g * (1 - amount) + emphasis.g * amount,
@@ -947,6 +1005,31 @@ Item {
         return Math.abs(proposed - Number(value)) <= snapGridThreshold
             ? ({ "value": proposed, "guide": proposed, "label": "grid" }) : null
     }
+    function stabilizeAlignmentCandidate(nodeData, axis, freeValue, candidate) {
+        if (!isLiveNodeDrag(nodeData)) return candidate
+        const nodeKey = nodeIdentity(nodeData)
+        const key = nodeKey + "|" + axis
+        const previous = alignmentGuideHysteresis[key]
+        let stable = candidate
+        // Keep a current guide a few logical pixels past its acquisition
+        // threshold. A materially closer relationship still replaces it, but
+        // two nearly-equal candidates do not make the guide flicker.
+        if (previous && Math.abs(Number(previous.value) - Number(freeValue))
+                <= alignmentSnapThreshold + alignmentSnapHysteresis) {
+            const currentDistance = stable ? Number(stable.distance || Number.POSITIVE_INFINITY)
+                : Number.POSITIVE_INFINITY
+            const previousDistance = Math.abs(Number(previous.value) - Number(freeValue))
+            if (!stable || previousDistance <= currentDistance + alignmentSnapHysteresis)
+                stable = ({ "value": Number(previous.value), "guide": Number(previous.guide),
+                    "distance": previousDistance, "label": String(previous.label || "alignment") })
+        }
+        const next = ({})
+        for (const existingKey in alignmentGuideHysteresis) next[existingKey] = alignmentGuideHysteresis[existingKey]
+        if (stable) next[key] = stable
+        else delete next[key]
+        alignmentGuideHysteresis = next
+        return stable
+    }
     function nodeSnapCandidate(nodeData, x, y, bypass) {
         const freeX = Number(x)
         const freeY = Number(y)
@@ -984,6 +1067,8 @@ Item {
             considerY(position.y + (otherSize.height - size.height) * 0.5,
                 position.y + otherSize.height * 0.5, "horizontal center")
         }
+        alignmentX = stabilizeAlignmentCandidate(nodeData, "x", freeX, alignmentX)
+        alignmentY = stabilizeAlignmentCandidate(nodeData, "y", freeY, alignmentY)
         const gridX = alignmentX ? null : snapGridValue(freeX)
         const gridY = alignmentY ? null : snapGridValue(freeY)
         const snappedX = alignmentX ? alignmentX.value : gridX ? gridX.value : freeX
@@ -1011,6 +1096,7 @@ Item {
     function clearNodeSnapPreview() {
         nodeSnapPreview = ({})
         snapDragAltBypass = false
+        alignmentGuideHysteresis = ({})
     }
     function markNodeSnapSettling(nodeData) {
         const next = ({})
@@ -1027,7 +1113,7 @@ Item {
     }
     Timer {
         id: snapSettlingTimer
-        interval: root.reducedMotion ? 1 : root.snapSettleDuration + 12
+        interval: root.motionFastDuration + 12
         repeat: false
         onTriggered: root.snapSettlingNodeIds = ({})
     }
@@ -1425,8 +1511,8 @@ Item {
     function wireIsAppearing(routeId) {
         return Boolean(appearingWireRouteIds[String(routeId || "")])
     }
-    function prepareWireReflow() {
-        if (reducedMotion || !wireGeometry || wireGeometry.length === 0) {
+    function prepareWireReflow(duration) {
+        if (!wireGeometry || wireGeometry.length === 0) {
             reflowWireGeometry = []
             reflowWireSegmentIndex = ({})
             wireReflowPending = false
@@ -1434,6 +1520,8 @@ Item {
             return
         }
         wireReflowAnimation.stop()
+        wireReflowDuration = Number(duration || (autoLayoutMotionActive
+            ? motionLayoutDuration : motionStructuralDuration))
         reflowWireGeometry = snapshotWireGeometry(wireGeometry)
         reflowWireSegmentIndex = indexReflowWireSegments(reflowWireGeometry)
         wireReflowPending = reflowWireGeometry.length > 0
@@ -1495,7 +1583,7 @@ Item {
         wireNodeSegmentRefs = nodeSegmentRefs
         if (wireReflowPending) {
             wireReflowPending = false
-            if (reflowWireGeometry.length > 0 && !reducedMotion) {
+            if (reflowWireGeometry.length > 0) {
                 wireReflow = 0
                 wireReflowAnimation.restart()
             } else {
@@ -1511,6 +1599,9 @@ Item {
             } else {
                 wireAppear = 1
                 appearingWireRouteIds = ({})
+                // In Reduced Motion, the completed route is immediately
+                // truthful and its destination supplies the concise cue.
+                beginRouteDestinationAcknowledgement()
             }
         }
         if (diagram) diagram.requestPaint()
@@ -1620,7 +1711,7 @@ Item {
         // Snapshot the exact live wire the user just moved. The final cache
         // pass is allowed to route around nearby cards, but it will hand over
         // through a short geometry morph instead of popping to the new path.
-        prepareWireReflow()
+        prepareWireReflow(candidate.changed ? motionFastDuration : motionStructuralDuration)
         if (candidate.changed) markNodeSnapSettling(nodeData)
         // Keep the last pointer position live until `liveNodePositions` is
         // cleared below. That makes the following short animation genuinely
@@ -1662,8 +1753,10 @@ Item {
     function restartWireMotion() {
         if (reducedMotion) {
             wireReveal = 1
-            wireRetire = 1
-            retiringWireGeometry = []
+            if (retiringWireGeometry.length > 0) {
+                wireRetire = 0
+                wireRetireAnimation.restart()
+            } else wireRetire = 1
             return
         }
         wireReveal = 0
@@ -1698,6 +1791,22 @@ Item {
         saveTimer.restart()
         notice = "Centered the selected route."
         noticeError = false
+    }
+    function applyAutoLayout() {
+        if (!graph.editable || (graph.workspace && graph.workspace.layoutLocked)) return false
+        if (routingActive) cancelRouting("Connection cancelled while Auto Layout rearranges the graph.", true)
+        // The backend remains authoritative and commits immediately.  This
+        // flag only gives the already-cached presentation geometry/card
+        // bindings the shared layout timing while that change arrives.
+        autoLayoutMotionActive = true
+        layoutMotionTimer.restart()
+        const result = backendObject.signalFlowAutoLayout()
+        announce(result, "Auto-layout was not applied.")
+        if (!result || !result.success) {
+            autoLayoutMotionActive = false
+            layoutMotionTimer.stop()
+        }
+        return Boolean(result && result.success)
     }
     function sourcePortFromLearning(learning) {
         if (!learning || String(learning.kind || "") !== "signal-flow") return null
@@ -2161,12 +2270,42 @@ Item {
     onGraphChanged: {
         const nextRouteIds = ({})
         const nextRoutes = graph.routes || []
+        const nextNodeIds = ({})
+        const nextNodes = graph.nodes || []
+        const appearingNodes = ({})
+        const hadRenderedNodes = Object.keys(renderedNodeIds).length > 0
+        for (let index = 0; index < nextNodes.length; ++index) {
+            const nodeData = nextNodes[index] || ({})
+            const identity = nodeIdentity(nodeData)
+            const storedIdentity = nodeStorageIdentity(nodeData)
+            if (identity) nextNodeIds[identity] = true
+            if (storedIdentity) nextNodeIds[storedIdentity] = true
+            if (hadRenderedNodes && identity && !renderedNodeIds[identity]
+                    && (!storedIdentity || !renderedNodeIds[storedIdentity])) {
+                appearingNodes[identity] = true
+                if (storedIdentity) appearingNodes[storedIdentity] = true
+            }
+        }
+        renderedNodeIds = nextNodeIds
+        appearingNodeIds = appearingNodes
+        if (Object.keys(appearingNodes).length > 0) {
+            nodeAppear = 0
+            nodeAppearanceAnimation.restart()
+        } else nodeAppear = 1
         // Node placement and workspace saves update the graph too.  They do
         // not change a route, so replaying the reveal animation would blank
         // otherwise live wires immediately after a card is dropped.
         const topologyChanged = routeTopologySignature(nextRoutes) !== renderedRouteTopologySignature()
         for (let index = 0; index < nextRoutes.length; ++index)
             nextRouteIds[String(nextRoutes[index].id || "")] = true
+        if (inspectedRoute && inspectedRoute.id && !nextRouteIds[String(inspectedRoute.id)]) {
+            inspectedRoute = ({})
+            selectedSegmentId = ""
+        }
+        if (inspectedNode && inspectedNode.id && !nextNodeIds[String(inspectedNode.id || "")]
+                && !nextNodeIds[String(inspectedNode.objectId || "")]) {
+            inspectedNode = ({})
+        }
         if (topologyChanged) {
             const previousRouteIds = ({})
             const previousGeometry = wireGeometry || []
@@ -2176,15 +2315,23 @@ Item {
             }
             // Topology changes also reflow surviving routes. Keep their exact
             // last curve so the stable cache can use the normal geometry morph.
-            prepareWireReflow()
+            prepareWireReflow(autoLayoutMotionActive ? motionLayoutDuration : motionStructuralDuration)
             retiringWireGeometry = snapshotWireGeometry(previousGeometry).filter(function(entry) {
                 return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
             })
             const appearing = ({})
+            const acknowledgements = ({})
             for (let index = 0; index < nextRoutes.length; ++index) {
                 const routeId = String(nextRoutes[index].id || "")
-                if (routeId.length > 0 && !previousRouteIds[routeId]) appearing[routeId] = true
+                if (routeId.length > 0 && !previousRouteIds[routeId]) {
+                    appearing[routeId] = true
+                    const destinationKey = routeDestinationKey(nextRoutes[index])
+                    if (destinationKey.length > 0) acknowledgements[destinationKey] = true
+                }
             }
+            routeArrivalAnimation.stop()
+            arrivingDestinationPortIds = acknowledgements
+            routeArrival = Object.keys(acknowledgements).length > 0 ? 0 : 1
             appearingWireRouteIds = appearing
             wireAppearancePending = Object.keys(appearing).length > 0
             wireAppear = wireAppearancePending ? 0 : 1
@@ -2192,13 +2339,7 @@ Item {
             wireRevealAnimation.stop()
             wireReveal = 1
             wireRetireAnimation.stop()
-            if (reducedMotion) {
-                wireRetire = 1
-                retiringWireGeometry = []
-                wireAppear = 1
-                wireAppearancePending = false
-                appearingWireRouteIds = ({})
-            } else if (retiringWireGeometry.length > 0) {
+            if (retiringWireGeometry.length > 0) {
                 wireRetire = 0
                 wireRetireAnimation.restart()
             } else wireRetire = 1
@@ -2246,6 +2387,7 @@ Item {
     onInspectedRouteChanged: {
         if (routingActive && inspectedRoute && inspectedRoute.id)
             cancelRouting("Connection cancelled because a route was selected.", true)
+        restartInspectorMotion()
         if (diagram) diagram.requestPaint()
     }
     onHoveredRouteIdChanged: if (diagram) diagram.requestPaint()
@@ -2253,6 +2395,7 @@ Item {
     onInspectedNodeChanged: {
         if (routingActive && inspectedNode && inspectedNode.id)
             cancelRouting("Connection cancelled because a card was selected.", true)
+        restartInspectorMotion()
         if (diagram) diagram.requestPaint()
     }
     onModeChanged: {
@@ -2266,6 +2409,12 @@ Item {
     onXrayModeChanged: if (diagram) diagram.requestPaint()
     onReducedMotionChanged: {
         if (reducedMotion) {
+            wireRevealAnimation.stop()
+            wireRetireAnimation.stop()
+            wireReflowAnimation.stop()
+            wireAppearAnimation.stop()
+            routeArrivalAnimation.stop()
+            nodeAppearanceAnimation.stop()
             wireReveal = 1
             wireRetire = 1
             retiringWireGeometry = []
@@ -2276,6 +2425,10 @@ Item {
             wireAppear = 1
             wireAppearancePending = false
             appearingWireRouteIds = ({})
+            routeArrival = 1
+            arrivingDestinationPortIds = ({})
+            nodeAppear = 1
+            appearingNodeIds = ({})
         }
         if (diagram) diagram.requestPaint()
     }
@@ -2369,13 +2522,20 @@ Item {
         onTriggered: { root.notice = ""; root.noticeError = false }
     }
 
+    Timer {
+        id: layoutMotionTimer
+        interval: root.motionLayoutDuration + 40
+        repeat: false
+        onTriggered: root.autoLayoutMotionActive = false
+    }
+
     NumberAnimation {
         id: wireRevealAnimation
         target: root
         property: "wireReveal"
         from: 0
         to: 1
-        duration: 220
+        duration: root.motionStructuralDuration
         easing.type: Easing.OutCubic
     }
     NumberAnimation {
@@ -2384,7 +2544,7 @@ Item {
         property: "wireRetire"
         from: 0
         to: 1
-        duration: 170
+        duration: root.motionStructuralDuration
         easing.type: Easing.InCubic
         onStopped: if (root.wireRetire >= 0.999) root.retiringWireGeometry = []
     }
@@ -2394,8 +2554,10 @@ Item {
         property: "wireReflow"
         from: 0
         to: 1
-        duration: 260
-        easing.type: Easing.InOutCubic
+        duration: root.wireReflowDuration
+        // Match card-size and layout movement so cached wire interpolation
+        // remains attached to the visible ports for the whole transition.
+        easing.type: Easing.OutCubic
         onStopped: if (root.wireReflow >= 0.999) {
             root.reflowWireGeometry = []
             root.reflowWireSegmentIndex = ({})
@@ -2407,9 +2569,41 @@ Item {
         property: "wireAppear"
         from: 0
         to: 1
-        duration: 260
-        easing.type: Easing.InOutCubic
-        onStopped: if (root.wireAppear >= 0.999) root.appearingWireRouteIds = ({})
+        duration: root.motionStructuralDuration
+        easing.type: Easing.OutCubic
+        onStopped: if (root.wireAppear >= 0.999) {
+            root.appearingWireRouteIds = ({})
+            root.beginRouteDestinationAcknowledgement()
+        }
+    }
+    NumberAnimation {
+        id: routeArrivalAnimation
+        target: root
+        property: "routeArrival"
+        from: 0
+        to: 1
+        duration: root.motionFastDuration
+        easing.type: Easing.OutCubic
+        onStopped: if (root.routeArrival >= 0.999) root.arrivingDestinationPortIds = ({})
+    }
+    NumberAnimation {
+        id: nodeAppearanceAnimation
+        target: root
+        property: "nodeAppear"
+        from: 0
+        to: 1
+        duration: root.motionStructuralDuration
+        easing.type: Easing.OutCubic
+        onStopped: if (root.nodeAppear >= 0.999) root.appearingNodeIds = ({})
+    }
+    NumberAnimation {
+        id: inspectorContentAnimation
+        target: root
+        property: "inspectorContentReveal"
+        from: 0
+        to: 1
+        duration: root.motionStructuralDuration
+        easing.type: Easing.OutCubic
     }
 
     Timer {
@@ -2553,14 +2747,19 @@ Item {
         readonly property bool routingEmphasized: sourceSelected || previewedDestination || routingCandidate
         implicitHeight: 28
         opacity: destination && root.routingActive && !routingCandidate && !previewedDestination ? 0.48 : 1.0
-        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
+        Behavior on opacity { NumberAnimation { duration: root.motionFastDuration } }
         Accessible.name: (destination ? "Destination " : "Source ") + String(port.label || "port")
         Accessible.description: destination
             ? "Click or drop a compatible source here to create a canonical route."
             : "Click or drag from this physical endpoint to route it."
         function updateAnchor() {
             if (!port || !endpointKey || !scene || !visible) return
-            const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
+            // Bind cached wire geometry to the painted port center, not its
+            // larger interaction target. Layouts may distribute that target
+            // on a half-pixel while the dot remains the visual attachment.
+            const visual = destination ? destinationDot : sourceDot
+            if (!visual) return
+            const point = visual.mapToItem(scene, visual.width * 0.5, visual.height * 0.5)
             root.notePortAnchor(port, point.x, point.y)
         }
         // A group expansion moves this row after its own x/y notifications.
@@ -2596,7 +2795,7 @@ Item {
             border.width: graphPortRow.sourceSelected || graphPortRow.previewedDestination ? 2 : 1
             border.color: graphPortRow.previewedDestination ? deck.attention
                 : graphPortRow.sourceSelected ? deck.accent : deck.focus
-            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+            Behavior on color { ColorAnimation { duration: root.motionFastDuration } }
         }
         RowLayout {
             anchors.fill: parent
@@ -2614,7 +2813,21 @@ Item {
                         : Qt.rgba(deck.focus.r, deck.focus.g, deck.focus.b, 0.18)
                     border.width: 1
                     border.color: graphPortRow.previewedDestination ? deck.attention : deck.focus
-                    Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                    Behavior on opacity { NumberAnimation { duration: root.motionFastDuration } }
+                }
+                // The committed wire reaches the actual destination first;
+                // this short ring is the acknowledgement, not a second route
+                // or an alternate hit target.
+                Rectangle {
+                    anchors.centerIn: parent
+                    visible: root.routeDestinationAcknowledged(graphPortRow.port)
+                    width: destinationDot.width + 10 + root.routeArrival * 14
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 2
+                    border.color: deck.healthy
+                    opacity: visible ? 0.72 * (1 - root.routeArrival) : 0
                 }
                 Rectangle {
                     id: destinationDot
@@ -2628,7 +2841,7 @@ Item {
                     border.width: graphPortRow.previewedDestination ? 3 : graphPortRow.compatibleTarget ? 2 : 1
                     border.color: graphPortRow.previewedDestination ? deck.attention
                         : graphPortRow.compatibleTarget ? deck.focus : deck.border
-                    Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 110; easing.type: Easing.OutCubic } }
+                    Behavior on width { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                 }
             }
             Text {
@@ -2672,7 +2885,7 @@ Item {
                             ? deck.accent : graphPortRow.port.mapped ? deck.informational : deck.textMuted
                     border.width: graphPortRow.sourceSelected ? 3 : 1
                     border.color: graphPortRow.sourceSelected ? deck.accent : deck.focus
-                    Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 110; easing.type: Easing.OutCubic } }
+                    Behavior on width { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                 }
             }
         }
@@ -2926,7 +3139,7 @@ Item {
                     // The card body claims a drag on press so it can update
                     // its incident wires synchronously. Do not let the graph
                     // viewport steal that already-claimed pointer to pan.
-                    interactive: !root.liveDragNodeId && !(root.dragWire && root.dragWire.active)
+                    interactive: !root.autoLayoutMotionActive && !root.liveDragNodeId && !(root.dragWire && root.dragWire.active)
                     onMovementEnded: saveTimer.restart()
                     ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -3314,18 +3527,19 @@ Item {
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 80, 120).x)
                             y: Number(root.nodePosition(nodeData, 80, 120).y)
-                            Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(inputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(inputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(inputNode.nodeData); easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(inputNode.nodeData); easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), inputCardContent.implicitHeight + contentPadding * 2)
+                            Behavior on height { NumberAnimation { duration: root.motionStructuralDuration; easing.type: Easing.OutCubic } }
                             z: routingState.length > 0 ? 3 : 2
-                            opacity: root.xrayMode ? 0.58 : 1.0
-                            Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
+                            opacity: (root.xrayMode ? 0.58 : 1.0) * root.nodeAppearanceOpacity(nodeData)
+                            Behavior on opacity { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: root.routingNodeSurface(deck.secondarySurface, routingState)
                             border.width: root.routingNodeBorderWidth(routingState)
                             border.color: root.routingNodeBorderColor(routingState)
-                            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                            Behavior on color { ColorAnimation { duration: root.motionFastDuration } }
                             Column {
                                 id: inputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -3347,7 +3561,7 @@ Item {
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
                                 onPressed: function(mouse) {
-                                    if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                    if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                     nodeStartX = inputNode.x; nodeStartY = inputNode.y
@@ -3391,20 +3605,20 @@ Item {
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 80, 120).x)
                                 y: Number(root.nodePosition(modelData, 80, 120).y)
-                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: Math.max(root.graphCardHeight(modelData), secondaryCardContent.implicitHeight + contentPadding * 2)
                                 z: routingState.length > 0 ? 3 : 2
-                                opacity: root.xrayMode ? 0.58 : 1.0
-                                Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
+                                opacity: (root.xrayMode ? 0.58 : 1.0) * root.nodeAppearanceOpacity(modelData)
+                                Behavior on opacity { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
                                 color: root.routingNodeSurface(modelData.missingReference
                                     ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface,
                                     routingState)
                                 border.width: root.routingNodeBorderWidth(routingState)
                                 border.color: root.routingNodeBorderColor(routingState)
-                                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                                Behavior on color { ColorAnimation { duration: root.motionFastDuration } }
                                 Column {
                                     id: secondaryCardContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -3424,7 +3638,7 @@ Item {
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
                                     onPressed: function(mouse) {
-                                        if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                        if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                         nodeStartX = secondaryInputNode.x; nodeStartY = secondaryInputNode.y
@@ -3467,19 +3681,19 @@ Item {
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 680, 120).x)
                                 y: Number(root.nodePosition(modelData, 680, 120).y)
-                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: root.graphCardHeight(modelData)
                                 z: routingState.length > 0 ? 3 : 2
-                                opacity: root.xrayMode ? 0.58 : 1.0
-                                Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
-                                Behavior on height { NumberAnimation { duration: root.reducedMotion ? 0 : 190; easing.type: Easing.OutCubic } }
+                                opacity: (root.xrayMode ? 0.58 : 1.0) * root.nodeAppearanceOpacity(modelData)
+                                Behavior on opacity { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
+                                Behavior on height { NumberAnimation { duration: root.motionStructuralDuration; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
                                 color: root.routingNodeSurface(deck.elevatedSurface, routingState)
                                 border.width: root.routingNodeBorderWidth(routingState)
                                 border.color: root.routingNodeBorderColor(routingState)
-                                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                                Behavior on color { ColorAnimation { duration: root.motionFastDuration } }
                                 ColumnLayout {
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: 4
                                     z: 1
@@ -3554,7 +3768,7 @@ Item {
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
                                     onPressed: function(mouse) {
-                                        if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                        if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                         nodeStartX = processorNode.x; nodeStartY = processorNode.y
@@ -3595,18 +3809,19 @@ Item {
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 1320, 120).x)
                             y: Number(root.nodePosition(nodeData, 1320, 120).y)
-                            Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(outputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(outputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(outputNode.nodeData); easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(outputNode.nodeData); easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), outputCardContent.implicitHeight + contentPadding * 2)
+                            Behavior on height { NumberAnimation { duration: root.motionStructuralDuration; easing.type: Easing.OutCubic } }
                             z: routingState.length > 0 ? 3 : 2
-                            opacity: root.xrayMode ? 0.58 : 1.0
-                            Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
+                            opacity: (root.xrayMode ? 0.58 : 1.0) * root.nodeAppearanceOpacity(nodeData)
+                            Behavior on opacity { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: root.routingNodeSurface(deck.secondarySurface, routingState)
                             border.width: root.routingNodeBorderWidth(routingState)
                             border.color: root.routingNodeBorderColor(routingState)
-                            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                            Behavior on color { ColorAnimation { duration: root.motionFastDuration } }
                             Column {
                                 id: outputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -3626,7 +3841,7 @@ Item {
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
                                 onPressed: function(mouse) {
-                                    if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                    if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                     nodeStartX = outputNode.x; nodeStartY = outputNode.y
@@ -3742,17 +3957,27 @@ Item {
 
             FlightDeckCard {
                 tokens: deck
-                // Contextual inspector: it explains the current selection and
-                // releases its width entirely when no object is selected.
-                visible: root.width >= 1600 && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
-                    || Boolean(root.inspectedNode && root.inspectedNode.id))
-                Layout.preferredWidth: Math.max(220, Math.min(305, root.width * 0.25))
+                // Contextual inspector: its reserved space is released when
+                // inactive, while its content crossfades rather than making a
+                // selected object appear to jump to a different panel.
+                readonly property bool inspectorActive: root.width >= 1600
+                    && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
+                        || Boolean(root.inspectedNode && root.inspectedNode.id))
+                visible: root.width >= 1600
+                enabled: inspectorActive
+                clip: true
+                opacity: inspectorActive ? 1 : 0
+                Layout.minimumWidth: 0
+                Layout.maximumWidth: inspectorActive ? Math.max(220, Math.min(305, root.width * 0.25)) : 0
+                Layout.preferredWidth: inspectorActive ? Math.max(220, Math.min(305, root.width * 0.25)) : 0
                 Layout.fillHeight: true
                 contentPadding: deck.cardPaddingTechnical
+                Behavior on opacity { NumberAnimation { duration: root.motionStructuralDuration; easing.type: Easing.OutCubic } }
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: parent.contentPadding
                     spacing: deck.space8
+                    opacity: root.inspectorContentReveal
                     RowLayout {
                         Layout.fillWidth: true
                         Text { text: "INSPECTOR"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
@@ -3939,7 +4164,7 @@ Item {
         title: "Signal Flow tools"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         MenuItem { text: "Fit graph"; onTriggered: root.fitGraph() }
-        MenuItem { text: "Auto-layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.announce(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
+        MenuItem { text: "Auto-layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.applyAutoLayout() }
         MenuItem { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onTriggered: root.toggleLayoutLocked() }
         MenuItem { text: "Snap to Grid"; checkable: true; checked: root.snapToGridEnabled; onTriggered: root.toggleSnapToGrid() }
         MenuSeparator {}
@@ -3984,7 +4209,7 @@ Item {
         }
         MenuItem { text: "Center selection"; enabled: Boolean(root.inspectedRoute && root.inspectedRoute.id); onTriggered: root.focusCurrentSelection() }
         MenuSeparator {}
-        MenuItem { text: "Auto-layout unpinned cards"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.announce(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
+        MenuItem { text: "Auto-layout unpinned cards"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.applyAutoLayout() }
     }
 
     Menu {

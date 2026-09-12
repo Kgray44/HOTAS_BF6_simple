@@ -1,6 +1,7 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
+import QtQuick.Window 6.5
 
 // Signal Flow is deliberately a control-plane editor.  Its graph is a
 // projection of AppBackend's persisted mapping state; it neither samples HID
@@ -56,6 +57,8 @@ Item {
     property var retiringWireGeometry: []
     property real wireReveal: 1.0
     property real wireRetire: 1.0
+    property var appearingWireRouteIds: ({})
+    property real wireAppear: 1.0
     property var nodePositions: ({})
     // Snapping is deliberately a transient layout aid.  The card keeps its
     // exact pointer position while pressed; this object only describes the
@@ -68,7 +71,15 @@ Item {
     readonly property real snapGridSize: 40
     readonly property real snapGridThreshold: 10
     readonly property real alignmentSnapThreshold: 10
+    readonly property real alignmentSnapHysteresis: 4
     readonly property int snapSettleDuration: 100
+    property var alignmentGuideHysteresis: ({})
+    // The non-Flight Deck experiences share the same motion semantics while
+    // retaining their own visual identity and component hierarchy.
+    readonly property int motionFastDuration: reducedMotion ? 50 : 100
+    readonly property int motionStructuralDuration: reducedMotion ? 80 : 190
+    readonly property int motionLayoutDuration: reducedMotion ? 120 : 320
+    property bool autoLayoutMotionActive: false
     // A source-first learn gesture owns this short-lived visual state only.
     // It is not stored in the canonical topology or in the workspace.
     property string learnedSourcePortId: ""
@@ -437,6 +448,13 @@ Item {
         return ({ "x": Number(node.x === undefined ? fallbackX : node.x),
                   "y": Number(node.y === undefined ? fallbackY : node.y) })
     }
+    function nodeMotionDuration(node) {
+        if (autoLayoutMotionActive) return motionLayoutDuration
+        return nodeIsSnapSettling(node) ? motionFastDuration : 0
+    }
+    function wireIsAppearing(routeId) {
+        return Boolean(appearingWireRouteIds[String(routeId || "")])
+    }
     function snapNodeKey(node) {
         return String(node && (node.objectId || node.id) || "")
     }
@@ -454,6 +472,29 @@ Item {
         const proposed = Math.round(Number(value) / snapGridSize) * snapGridSize
         return Math.abs(proposed - Number(value)) <= snapGridThreshold
             ? ({ "value": proposed, "guide": proposed, "label": "grid" }) : null
+    }
+    function stabilizeAlignmentCandidate(node, axis, freeValue, candidate) {
+        if (!nodeIsSnapDragging(node)) return candidate
+        const key = snapNodeKey(node) + "|" + axis
+        const previous = alignmentGuideHysteresis[key]
+        let stable = candidate
+        // Retain a guide slightly beyond acquisition so equivalent nearby
+        // alignments do not flicker as the pointer crosses their boundary.
+        if (previous && Math.abs(Number(previous.value) - Number(freeValue))
+                <= alignmentSnapThreshold + alignmentSnapHysteresis) {
+            const currentDistance = stable ? Number(stable.distance || Number.POSITIVE_INFINITY)
+                : Number.POSITIVE_INFINITY
+            const previousDistance = Math.abs(Number(previous.value) - Number(freeValue))
+            if (!stable || previousDistance <= currentDistance + alignmentSnapHysteresis)
+                stable = ({ "value": Number(previous.value), "guide": Number(previous.guide),
+                    "distance": previousDistance, "label": String(previous.label || "alignment") })
+        }
+        const next = ({})
+        for (const existingKey in alignmentGuideHysteresis) next[existingKey] = alignmentGuideHysteresis[existingKey]
+        if (stable) next[key] = stable
+        else delete next[key]
+        alignmentGuideHysteresis = next
+        return stable
     }
     function nodeSnapCandidate(node, x, y, bypass) {
         const freeX = Number(x)
@@ -491,6 +532,8 @@ Item {
             considerY(position.y + (otherSize.height - size.height) * 0.5,
                 position.y + otherSize.height * 0.5, "horizontal center")
         }
+        alignmentX = stabilizeAlignmentCandidate(node, "x", freeX, alignmentX)
+        alignmentY = stabilizeAlignmentCandidate(node, "y", freeY, alignmentY)
         const gridX = alignmentX ? null : snapGridValue(freeX)
         const gridY = alignmentY ? null : snapGridValue(freeY)
         const snappedX = alignmentX ? alignmentX.value : gridX ? gridX.value : freeX
@@ -512,6 +555,7 @@ Item {
         snapDragNodeId = snapNodeKey(node)
         snapDragAltBypass = Boolean(altBypass)
         nodeSnapPreview = ({})
+        alignmentGuideHysteresis = ({})
     }
     function updateNodeSnapPreview(node, x, y, altBypass) {
         if (snapNodeKey(node) !== snapDragNodeId) return ({})
@@ -525,6 +569,7 @@ Item {
         nodeSnapPreview = ({})
         snapDragNodeId = ""
         snapDragAltBypass = false
+        alignmentGuideHysteresis = ({})
         if (candidate.changed) {
             const next = ({})
             for (const id in snapSettlingNodeIds) next[id] = snapSettlingNodeIds[id]
@@ -538,6 +583,7 @@ Item {
         nodeSnapPreview = ({})
         snapDragNodeId = ""
         snapDragAltBypass = false
+        alignmentGuideHysteresis = ({})
     }
     function nodeIsSnapSettling(node) {
         return Boolean(snapSettlingNodeIds[snapNodeKey(node)])
@@ -547,7 +593,7 @@ Item {
     }
     Timer {
         id: snapSettlingTimer
-        interval: root.reducedMotion ? 1 : root.snapSettleDuration + 12
+        interval: root.motionFastDuration + 12
         repeat: false
         onTriggered: root.snapSettlingNodeIds = ({})
     }
@@ -673,14 +719,16 @@ Item {
         if (wireCanvas) wireCanvas.requestPaint()
     }
     function restartWireMotion() {
-        if (reducedMotion) {
-            wireReveal = 1
-            wireRetire = 1
-            retiringWireGeometry = []
-            return
+        // Existing routes stay visible. Only newly committed durable IDs draw
+        // in, so one connection never blanks unrelated topology.
+        wireReveal = 1
+        if (!reducedMotion && Object.keys(appearingWireRouteIds).length > 0) {
+            wireAppear = 0
+            wireAppearAnimation.restart()
+        } else {
+            wireAppear = 1
+            appearingWireRouteIds = ({})
         }
-        wireReveal = 0
-        wireRevealAnimation.restart()
         if (retiringWireGeometry.length > 0) {
             wireRetire = 0
             wireRetireAnimation.restart()
@@ -696,6 +744,19 @@ Item {
         workspaceSaveTimer.restart()
         feedback = "Graph fit to the current workspace."
         feedbackError = false
+    }
+    function applyAutoLayout() {
+        if (!graph.editable || (graph.workspace && graph.workspace.layoutLocked)) return false
+        if (routingActive) cancelRouting("Connection cancelled while Auto Layout rearranges the graph.", true)
+        autoLayoutMotionActive = true
+        layoutMotionTimer.restart()
+        const result = backendObject.signalFlowAutoLayout()
+        showResult(result, "Auto-layout was not applied.")
+        if (!result || !result.success) {
+            autoLayoutMotionActive = false
+            layoutMotionTimer.stop()
+        }
+        return Boolean(result && result.success)
     }
     function focusCurrentSelection() {
         const selectedId = selectedRoute && selectedRoute.id ? String(selectedRoute.id) : ""
@@ -869,6 +930,11 @@ Item {
         return hadRouting
     }
     function armSource(port, beginDrag) {
+        if (autoLayoutMotionActive) {
+            feedback = "Auto Layout is settling. Wait for the graph to finish moving."
+            feedbackError = false
+            return false
+        }
         if (!port || !port.id) return false
         if (viewMode === "effective" || !graph.editable) {
             feedback = "Effective view is read-only. Switch to Configured to edit this route."
@@ -1378,11 +1444,24 @@ Item {
     onGraphChanged: {
         const nextRouteIds = ({})
         const nextRoutes = graph.routes || []
+        const previousRouteIds = ({})
+        const previousGeometry = wireGeometry || []
+        for (let index = 0; index < previousGeometry.length; ++index) {
+            const routeId = String(previousGeometry[index] && previousGeometry[index].routeId || "")
+            if (routeId.length > 0) previousRouteIds[routeId] = true
+        }
         for (let index = 0; index < nextRoutes.length; ++index)
             nextRouteIds[String(nextRoutes[index].id || "")] = true
-        retiringWireGeometry = (wireGeometry || []).filter(function(entry) {
+        retiringWireGeometry = previousGeometry.filter(function(entry) {
             return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
         })
+        const appearing = ({})
+        for (let index = 0; index < nextRoutes.length; ++index) {
+            const routeId = String(nextRoutes[index].id || "")
+            if (routeId.length > 0 && !previousRouteIds[routeId]) appearing[routeId] = true
+        }
+        appearingWireRouteIds = appearing
+        if (selectedRoute && selectedRoute.id && !nextRouteIds[String(selectedRoute.id)]) selectedRoute = ({})
         nodePositions = ({})
         cancelNodeSnapDrag()
         rebuildWireGeometry()
@@ -1414,14 +1493,20 @@ Item {
     onXrayModeChanged: if (wireCanvas) wireCanvas.requestPaint()
     onReducedMotionChanged: {
         if (reducedMotion) {
+            wireRevealAnimation.stop()
+            wireRetireAnimation.stop()
+            wireAppearAnimation.stop()
             wireReveal = 1
             wireRetire = 1
             retiringWireGeometry = []
+            wireAppear = 1
+            appearingWireRouteIds = ({})
         }
         if (wireCanvas) wireCanvas.requestPaint()
     }
     onWireRevealChanged: if (wireCanvas) wireCanvas.requestPaint()
     onWireRetireChanged: if (wireCanvas) wireCanvas.requestPaint()
+    onWireAppearChanged: if (wireCanvas) wireCanvas.requestPaint()
     onLiveModeChanged: if (wireCanvas) wireCanvas.requestPaint()
     onDragWireChanged: if (wireCanvas) wireCanvas.requestPaint()
     onRouteStateFilterChanged: if (wireCanvas) wireCanvas.requestPaint()
@@ -1471,7 +1556,9 @@ Item {
         id: liveSampleTimer
         interval: 100
         repeat: true
-        running: root.liveMode || root.signalFocus || root.viewMode === "effective"
+        running: root.visible && (!root.Window.window || (root.Window.window.active
+            && root.Window.window.visibility !== Window.Minimized))
+            && (root.liveMode || root.signalFocus || root.viewMode === "effective")
         onTriggered: root.liveTelemetry = backendObject.signalFlowLiveTelemetry()
     }
 
@@ -1501,13 +1588,20 @@ Item {
         onTriggered: root.rebuildWireGeometry()
     }
 
+    Timer {
+        id: layoutMotionTimer
+        interval: root.motionLayoutDuration + 40
+        repeat: false
+        onTriggered: root.autoLayoutMotionActive = false
+    }
+
     NumberAnimation {
         id: wireRevealAnimation
         target: root
         property: "wireReveal"
         from: 0
         to: 1
-        duration: 220
+        duration: root.motionStructuralDuration
         easing.type: Easing.OutCubic
     }
     NumberAnimation {
@@ -1516,9 +1610,19 @@ Item {
         property: "wireRetire"
         from: 0
         to: 1
-        duration: 170
+        duration: root.motionStructuralDuration
         easing.type: Easing.InCubic
         onStopped: if (root.wireRetire >= 0.999) root.retiringWireGeometry = []
+    }
+    NumberAnimation {
+        id: wireAppearAnimation
+        target: root
+        property: "wireAppear"
+        from: 0
+        to: 1
+        duration: root.motionStructuralDuration
+        easing.type: Easing.OutCubic
+        onStopped: if (root.wireAppear >= 0.999) root.appearingWireRouteIds = ({})
     }
 
     component FlowButton: Button {
@@ -1567,7 +1671,7 @@ Item {
         activeFocusOnTab: true
         opacity: output && root.routingActive && !compatible
             && !(root.connectionPreview && root.connectionPreview.portId === String(port.id || "")) ? 0.5 : 1.0
-        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
+        Behavior on opacity { NumberAnimation { duration: root.motionFastDuration } }
         Rectangle {
             anchors.fill: parent
             radius: 4
@@ -1780,7 +1884,7 @@ Item {
                 FlowButton { text: "Learn destination"; helpText: "Choose a virtual destination first, then move the physical control that should drive it."; enabled: root.graph.editable && root.viewMode === "configured"; onClicked: learnDialog.open() }
                 FlowButton { text: "Alias"; helpText: "Assign a profile-local friendly name without changing the vJoy target."; enabled: root.graph.editable && root.viewMode === "configured"; onClicked: aliasDialog.open() }
                 FlowButton { text: "Fit"; helpText: "Fit the current workspace into the graph viewport. Shortcut: Home."; onClicked: root.keyboardAction("fit") }
-                FlowButton { text: "Auto-layout"; helpText: "Arrange unpinned cards with the stable bounded layout."; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onClicked: root.showResult(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
+                FlowButton { text: "Auto-layout"; helpText: "Arrange unpinned cards with the stable bounded layout."; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onClicked: root.applyAutoLayout() }
                 FlowButton { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; helpText: "Prevent accidental card dragging while preserving each saved placement."; onClicked: root.toggleLayoutLocked() }
                 FlowButton { text: root.snapToGridEnabled ? "Snap to Grid: on" : "Snap to Grid: off"; helpText: "Suggest nearby grid or card alignment on release. Hold Alt for one exact free placement."; onClicked: root.toggleSnapToGrid() }
                 FlowButton { text: "Density: " + ((root.graph.workspace && root.graph.workspace.densityMode) || "detailed"); helpText: "Cycle detailed, compact, and overview port density. Shortcut: D."; onClicked: root.cycleDensityMode() }
@@ -2014,13 +2118,15 @@ Item {
                                     const width = root.selectedRoute && root.selectedRoute.id === route.id ? 3 : live ? 2.75 : 2
                                     const alpha = root.routeVisualAlpha(route, live)
                                     const dashed = root.routeHasProblem(route)
+                                    const entryReveal = root.wireIsAppearing(entry.routeId)
+                                        ? root.wireAppear : root.wireReveal
                                     if (entry.drawBundleTrunk) {
                                         const trunkEndX = entry.bundleX
                                         drawWire(ctx, entry.startX, entry.startY, trunkEndX, entry.startY, color,
                                             Math.min(5.0, width + entry.bundleCount * 0.35), alpha, 0, true,
-                                            root.wireReveal, false, 0, false)
+                                            entryReveal, false, 0, false)
                                         ctx.save()
-                                        ctx.globalAlpha = alpha * root.wireReveal
+                                        ctx.globalAlpha = alpha * entryReveal
                                         ctx.fillStyle = root.graphLabel
                                         ctx.font = "bold 9px sans-serif"
                                         ctx.fillText(String(entry.bundleCount) + "×", trunkEndX + 5, entry.startY - 5)
@@ -2031,7 +2137,7 @@ Item {
                                         const segment = segments[segmentIndex]
                                         drawWire(ctx, segment.startX, segment.startY, segment.endX, segment.endY,
                                             color, width, alpha, root.stableLane(route.id, 5) - 2, dashed,
-                                            root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
+                                            entryReveal, segment.hasDetour, segment.detourY, segment.underCard)
                                     }
                                 }
                                 if (root.dragWire && root.dragWire.active) {
@@ -2095,16 +2201,16 @@ Item {
                                 y: Number(node.y || 0)
                                 onXChanged: root.noteNodePosition(node.objectId, x, y)
                                 onYChanged: root.noteNodePosition(node.objectId, x, y)
-                                Behavior on x { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(node) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(node) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.nodeMotionDuration(node); easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.nodeMotionDuration(node); easing.type: Easing.OutCubic } }
                                 width: node.kind === "processor" ? 155 : 238
                                 height: node.kind === "processor"
                                     ? 82 + Math.max(0, Number(node.sharedChannelCount || 0) - 1) * 20
                                     : Math.min(620, 86 + portColumn.implicitHeight)
-                                Behavior on height { NumberAnimation { duration: root.reducedMotion ? 0 : 190; easing.type: Easing.OutCubic } }
+                                Behavior on height { NumberAnimation { duration: root.motionStructuralDuration; easing.type: Easing.OutCubic } }
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
-                                Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110; easing.type: Easing.OutCubic } }
+                                Behavior on opacity { NumberAnimation { duration: root.motionFastDuration; easing.type: Easing.OutCubic } }
                                 radius: root.themeTokens.controlRadius || 5
                                 color: node.kind === "input" ? Qt.rgba(root.graphInput.r, root.graphInput.g, root.graphInput.b, 0.10)
                                      : node.kind === "output" ? Qt.rgba(root.graphOutput.r, root.graphOutput.g, root.graphOutput.b, 0.10)
@@ -2164,10 +2270,14 @@ Item {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton
                                     propagateComposedEvents: true
-                                    drag.target: root.viewMode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? flowNode : null
+                                    drag.target: !root.autoLayoutMotionActive && root.viewMode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? flowNode : null
                                     drag.axis: Drag.XAndYAxis
                                     enabled: true
                                     onPressed: function(mouse) {
+                                        if (root.autoLayoutMotionActive) {
+                                            mouse.accepted = false
+                                            return
+                                        }
                                         root.beginNodeSnapDrag(node, Boolean(mouse.modifiers & Qt.AltModifier))
                                         mouse.accepted = false
                                     }
@@ -2532,7 +2642,7 @@ Item {
         MenuItem {
             text: "Auto-layout unpinned cards"
             enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked)
-            onTriggered: root.showResult(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.")
+            onTriggered: root.applyAutoLayout()
         }
     }
 
