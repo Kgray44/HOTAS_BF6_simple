@@ -500,7 +500,9 @@ AppBackend::AppBackend(QObject *parent)
         pending.physicalSummary = QStringLiteral("A prior automatic setup transaction needs physical-controller recovery verification.");
         pending.hidhideSummary = QStringLiteral("HOTAS BF6 retained a narrow recovery record; connect the controller and use Undo Automatic Repair if visibility was not restored.");
         pending.status = QStringLiteral("RECOVERY PENDING — A prior automatic setup did not reach physical-controller verification.");
-        pending.lastChecked = QDateTime::currentDateTime();
+        // This is intentionally not an inspection result. In particular, the
+        // default HidHide fields must never be projected as "unavailable"
+        // simply because a previous process ended during a repair.
         m_readiness.adoptPlan(std::move(pending));
     }
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
@@ -5564,6 +5566,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
     bool requiredAmbiguous = false;
     bool requiredUnverified = false;
     bool optionalUnverified = false;
+    QString connectedRecoveryRecordId;
+    QString connectedRecoveryName;
     if (!rig) {
         const SetupTruthStatus state = checking ? SetupTruthStatus::Checking
             : SetupTruthStatus::WaitingForUser;
@@ -5607,6 +5611,10 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
             if (member.required && ambiguous) requiredAmbiguous = true;
             if (connected && !verified && member.required) requiredUnverified = true;
             if (connected && !verified && !member.required) optionalUnverified = true;
+            if (connected && member.required && connectedRecoveryRecordId.isEmpty()) {
+                connectedRecoveryRecordId = member.controllerRecordId;
+                connectedRecoveryName = name;
+            }
             if (connected && !verified) {
                 addIssue(u"PhysicalDeviceUnverified"_qs, u"Controller verification"_qs,
                     member.required ? SetupTruthStatus::Repairable : SetupTruthStatus::Attention,
@@ -5625,17 +5633,28 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         else if (requiredOffline) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"Reconnect every required controller, then run Check & Repair Setup."_qs; }
         addGroup(u"physical"_qs, u"Physical input"_qs, physicalState, physicalDetail,
             QVariantMap{{u"members"_qs, physicalMembers}});
+        const bool recoveryProofPending = m_readiness.hasPendingRecovery();
         SetupTruthStatus verificationState = checking ? SetupTruthStatus::Checking
             : requiredUnverified ? SetupTruthStatus::Repairable
+            : recoveryProofPending && !connectedRecoveryRecordId.isEmpty() ? SetupTruthStatus::Repairable
             : optionalUnverified ? SetupTruthStatus::Attention
             : requiredOffline ? SetupTruthStatus::WaitingForUser : SetupTruthStatus::Ready;
         addGroup(u"verification"_qs, u"Controller verification"_qs, verificationState,
             checking ? u"Checking persisted identity against the live controller."_qs
             : requiredUnverified ? u"A required connected controller can be verified without changing vJoy or HidHide."_qs
+            : recoveryProofPending && !connectedRecoveryRecordId.isEmpty()
+                ? u"A prior automatic repair needs one fresh exact-controller proof; HidHide and vJoy state are shown separately."_qs
             : optionalUnverified ? u"An optional connected controller has not yet been committed as verified."_qs
             : requiredOffline ? u"Verification requires the selected controller to be connected."_qs
             : u"Every required connected controller has a saved verification record."_qs,
             QVariantMap{{u"members"_qs, physicalMembers}});
+        if (recoveryProofPending && !requiredUnverified && !connectedRecoveryRecordId.isEmpty()) {
+            addIssue(u"RecoveryVerificationPending"_qs, u"Controller verification"_qs,
+                SetupTruthStatus::Repairable, u"Finish post-repair controller verification"_qs,
+                connectedRecoveryName + u" needs a fresh exact identity and live-input proof before HOTAS BF6 can retire its prior repair recovery record."_qs,
+                true, false, u"Verify the exact controller and complete recovery proof"_qs,
+                QVariantMap{{u"recordId"_qs, connectedRecoveryRecordId}});
+        }
     }
 
     // A rig may have multiple enabled outputs. Keep an independent evidence
@@ -6043,10 +6062,11 @@ QVariantMap AppBackend::repairSetupHealth()
         u"Fresh driver and controller read-back will determine the final setup truth."_qs);
     for (const QVariant &value : issues) {
         const QVariantMap issue = value.toMap();
-        if (issue.value(u"code"_qs).toString() != u"PhysicalDeviceUnverified"_qs
+        const QString code = issue.value(u"code"_qs).toString();
+        if ((code != u"PhysicalDeviceUnverified"_qs && code != u"RecoveryVerificationPending"_qs)
             || !issue.value(u"repairable"_qs).toBool() || !approved(issue.value(u"id"_qs).toString())) continue;
         const QString recordId = issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString();
-        const QString attemptKey = u"PhysicalDeviceUnverified:"_qs + recordId;
+        const QString attemptKey = u"ControllerIdentityProof:"_qs + recordId;
         if (m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
         m_setupConvergenceAttemptedIssues.insert(attemptKey);
         m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
@@ -13047,20 +13067,11 @@ void AppBackend::startVerification(VerificationMode mode)
                 appendEvent(u"Prior automatic setup recovery was reconciled after fresh controller and driver read-back proof"_qs);
             }
             if (m_readiness.hasPendingRecovery()) {
-                // A process restart between the privileged change and fresh
-                // DirectInput proof must stay visible even when the current
-                // device inspection happens to look healthy. The retained
-                // journal exposes only this app's own reversible entries.
-                ControllerReadinessPlan pending = m_readiness.plan();
-                pending.state = ControllerReadinessState::Attention;
-                pending.isChecking = false;
-                pending.physicalStatus = VerificationSubsystemState::Attention;
-                pending.hidhideStatus = VerificationSubsystemState::Attention;
-                pending.physicalSummary = QStringLiteral("A prior automatic setup did not complete fresh physical-controller verification.");
-                pending.hidhideSummary = QStringLiteral("A narrow recovery record is available. Use Undo Automatic Repair after confirming the selected controller is connected.");
-                pending.status = QStringLiteral("RECOVERY PENDING — Review the previous automatic setup and Undo Automatic Repair if needed.");
-                pending.lastChecked = QDateTime::currentDateTime();
-                m_readiness.adoptPlan(std::move(pending));
+                // Preserve the fresh plan's physical, HidHide, and vJoy facts.
+                // A recovery journal records an unfinished safety proof, not a
+                // failed driver inspection. buildSetupTruthSnapshot projects
+                // it as a separate controller-verification operation.
+                appendEvent(u"Prior automatic setup still awaits a fresh exact-controller and live-input proof"_qs);
             }
             m_verificationInProgress = false;
             appendEvent(restored
@@ -13080,7 +13091,7 @@ void AppBackend::startVerification(VerificationMode mode)
                     const bool physicalReady = m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready;
                     const bool identityMatches = saved && ControllerReadinessService::samePhysicalController(
                         expected, observedPhysical);
-                    if (saved && physicalReady && identityMatches
+                    if (saved && physicalReady && identityMatches && !m_readiness.hasPendingRecovery()
                         && rememberCurrentController(setupVerificationRecordId)) {
                         appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
                     } else {
@@ -13093,6 +13104,9 @@ void AppBackend::startVerification(VerificationMode mode)
                         } else if (!identityMatches) {
                             m_setupConvergenceIdentityVerificationFailure =
                                 u"The active controller did not match the selected saved physical identity."_qs;
+                        } else if (m_readiness.hasPendingRecovery()) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"The controller identity matched, but the required fresh DirectInput report after the earlier repair was not observed. Move a control and retry; HidHide and vJoy were not changed."_qs;
                         } else {
                             m_setupConvergenceIdentityVerificationFailure =
                                 u"The matching controller was proven, but HOTAS BF6 could not persist its verification record."_qs;

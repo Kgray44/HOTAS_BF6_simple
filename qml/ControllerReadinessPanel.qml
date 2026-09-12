@@ -43,6 +43,28 @@ Item {
         return warningColor
     }
     function hasRepair() { return (snapshot.repairPlan || []).length > 0 }
+    function modeHeading() {
+        if (session.mode === "CHECKING") return "CHECKING YOUR SETUP"
+        if (session.mode === "CHECKING FINAL STATE") return "VERIFYING FINAL SETUP STATE"
+        if (session.mode === "RESULTS") return "SETUP CHECK COMPLETE"
+        if (session.mode === "REPAIRING") return "REPAIRING SETUP"
+        if (session.mode === "WAITING FOR USER") return "WAITING FOR YOU"
+        if (session.mode === "COMPLETE") return "SETUP REPAIRED"
+        if (session.mode === "FAILED") return "SETUP NEEDS ATTENTION"
+        if (session.mode === "CANCELLED") return "SETUP REPAIR CANCELLED"
+        return snapshot.overallStatus || "CHECKING"
+    }
+    function modeDetail() {
+        if (session.mode === "CHECKING") return "Reading the exact controller, Device Rig outputs, HidHide, and mapping without changing configuration."
+        if (session.mode === "CHECKING FINAL STATE") return "Performing a new full read-back. The final state is not inferred from the before snapshot."
+        if (session.mode === "RESULTS") return Number(session.completedStepCount || 0) + " checks completed. These frozen results are the authority for repair."
+        if (session.mode === "REPAIRING") return "Applying only the approved setup repairs and recording every result."
+        if (session.mode === "WAITING FOR USER") return "The current repair is paused for your required confirmation or reconnect action."
+        if (session.mode === "COMPLETE") return "A fresh final inspection confirmed the repaired setup."
+        if (session.mode === "FAILED") return "A fresh final inspection found remaining setup work. Review the completed and failed steps below."
+        if (session.mode === "CANCELLED") return "The approved repair was cancelled; the final read-back below remains authoritative."
+        return snapshot.rigName ? ("Complete setup truth for " + snapshot.rigName) : "Check physical input, saved verification, virtual output, isolation, and mapping."
+    }
     function sessionProgressPercent() {
         const value = Number(session.progressPercent)
         return isNaN(value) ? 0 : Math.max(0, Math.min(100, value))
@@ -87,9 +109,9 @@ Item {
             ColumnLayout {
                 id: titleColumn; anchors.fill: parent; anchors.margins: 15; spacing: 5
                 Text { visible: root.showTitle; text: "SETUP HEALTH & REPAIR"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
-                Text { text: root.snapshot.overallStatus || "CHECKING"; color: root.stateColor(root.snapshot.overallStatus || "CHECKING"); font.pixelSize: 20; font.bold: true }
-                Text { Layout.fillWidth: true; text: root.snapshot.rigName ? ("Complete setup truth for " + root.snapshot.rigName) : "Check physical input, saved verification, virtual output, isolation, and mapping."; color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                Text { visible: !!root.snapshot.timestamp; text: root.checkedAge() + "  ·  " + root.snapshot.timestamp; color: root.mutedColor; font.pixelSize: 9 }
+                Text { text: root.modeHeading(); color: root.stateColor(root.snapshot.overallStatus || "CHECKING"); font.pixelSize: 20; font.bold: true }
+                Text { Layout.fillWidth: true; text: root.modeDetail(); color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                Text { visible: !root.session.active && !!root.snapshot.timestamp; text: root.checkedAge() + "  ·  " + root.snapshot.timestamp; color: root.mutedColor; font.pixelSize: 9 }
             }
         }
         Rectangle {
@@ -124,7 +146,7 @@ Item {
                 spacing: 8
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "STAGE PROGRESS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                    Text { text: root.session.active ? "STAGE PROGRESS" : (root.session.mode === "RESULTS" ? "CHECK RESULTS" : "REPAIR RESULTS"); color: root.mutedColor; font.pixelSize: 9; font.bold: true }
                     Item { Layout.fillWidth: true }
                     Text { text: setupStageTimeline.completed + " OF " + setupStageTimeline.total + " COMPLETE"; color: root.textColor; font.pixelSize: 9; font.bold: true }
                 }
@@ -149,14 +171,18 @@ Item {
                 Text {
                     objectName: "setupProgressPercent"
                     Layout.fillWidth: true
-                    text: root.session.progressLabel || ("Stage 1 of " + setupStageTimeline.total + " · " + root.sessionProgressPercent() + "%")
+                    text: root.session.active
+                        ? (root.session.progressLabel || ("Stage 1 of " + setupStageTimeline.total + " · " + root.sessionProgressPercent() + "%"))
+                        : (setupStageTimeline.completed + " completed checks")
                     color: root.checkingColor
                     font.pixelSize: 10
                     font.bold: true
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: "Progress is based on completed setup stages, not an estimate of elapsed time."
+                    text: root.session.active
+                        ? "Progress is based on completed setup stages, not an estimate of elapsed time."
+                        : "No step is active. These are the completed results from this setup session."
                     color: root.mutedColor
                     font.pixelSize: 9
                     wrapMode: Text.WordWrap
