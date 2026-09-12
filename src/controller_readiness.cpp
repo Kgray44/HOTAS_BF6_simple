@@ -1835,6 +1835,52 @@ bool ControllerReadinessService::recoverFromPhysicalAccessFailure()
     return restored;
 }
 
+bool ControllerReadinessService::reconcilePendingRecoveryAfterVerifiedReadback(
+    const PhysicalControllerCapabilities &observedPhysical)
+{
+    // A journal is deliberately retained after a process exit between an
+    // approved change and the original post-change proof. It must not become
+    // a permanent readiness failure once a later, independent full check has
+    // proved the same safety conditions. Conversely, never infer that proof
+    // from a connected device or a successful CLI command alone.
+    if (!m_journal.available || m_transactionActive
+        || m_plan.verificationMode != VerificationMode::Full) {
+        return false;
+    }
+
+    const bool hidHideWasChanged = m_journal.mapperWasAdded
+        || m_journal.controllerWasHidden || m_journal.cloakWasEnabled;
+    if (hidHideWasChanged) {
+        if (!observedPhysical.connected || !observedPhysical.inputReportsReceived
+            || !m_plan.physical.connected
+            || !samePhysicalController(m_plan.physical, observedPhysical)
+            || m_plan.physicalStatus != VerificationSubsystemState::Ready) {
+            return false;
+        }
+
+        const HidHideCapabilities &hidhide = m_plan.hidhide;
+        if (!hidhide.inspectionComplete || !hidhide.installed || !hidhide.cliAvailable
+            || !hidhide.serviceReady) {
+            return false;
+        }
+        if (m_journal.mapperWasAdded && !hidhide.mapperAllowlisted) return false;
+        if (m_journal.controllerWasHidden
+            && (!hidhide.selectedControllerResolved || !hidhide.selectedControllerHidden)) {
+            return false;
+        }
+        if (m_journal.cloakWasEnabled && (!hidhide.cloakKnown || !hidhide.cloaked)) return false;
+    }
+
+    if (m_journal.vjoyChanged
+        && (!m_plan.vjoy.inspectionComplete || m_plan.vjoyNeedsChanges)) {
+        return false;
+    }
+
+    m_journal = {};
+    clearRecoveryJournal();
+    return true;
+}
+
 bool ControllerReadinessService::allowlistMapperOnly()
 {
     if (m_transactionActive || !m_plan.hidhide.installed || m_plan.hidhide.mapperAllowlisted) return false;

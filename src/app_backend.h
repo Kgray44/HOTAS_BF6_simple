@@ -1062,7 +1062,7 @@ private:
                                               const QString &scopeId) const;
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
-    void rememberCurrentController(const QString &expectedRecordId = {});
+    bool rememberCurrentController(const QString &expectedRecordId = {});
     void tryAutoSwitchVerifiedController();
     void refreshTrayStatus();
     void rebuildSelectedAxisCurve();
@@ -1202,6 +1202,7 @@ private:
     QString m_setupRepairSessionReport;
     QSet<QString> m_setupConvergenceAttemptedIssues;
     bool m_setupConvergenceIdentityVerificationFailed = false;
+    QString m_setupConvergenceIdentityVerificationFailure;
     bool m_setupConvergenceVJoyRepairFailed = false;
     bool m_setupConvergenceHidHideRepairFailed = false;
     bool m_setupConvergenceCancelled = false;

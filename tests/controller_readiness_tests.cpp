@@ -350,6 +350,7 @@ private slots:
     void currentCandidateExecutableMustBeAllowlistedAndReadBack();
     void transientHidHideGamingProbeRetriesAndRemainsRepairable();
     void physicalControllerContainerIdentitySurvivesReenumeration();
+    void interruptedHidHideRepairReconcilesOnlyAfterFreshProof();
     void automaticRepairConvergesWithoutChangingUnrelatedHidHideRules();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
@@ -1135,6 +1136,29 @@ void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenum
     // even if it happens to share a product family.
     after.hidContainerId = QStringLiteral("{C4CE6D3A-3A34-4F8B-80E1-987654321ABC}");
     QVERIFY(!ControllerReadinessService::samePhysicalController(before, after));
+}
+
+void ControllerReadinessTests::interruptedHidHideRepairReconcilesOnlyAfterFreshProof()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    QVERIFY(service.applyHidHideConfiguration());
+    QVERIFY(service.hasPendingRecovery());
+
+    PhysicalControllerCapabilities observed = connectedController();
+    QVERIFY(!service.reconcilePendingRecoveryAfterVerifiedReadback(observed));
+    QVERIFY(service.hasPendingRecovery());
+
+    observed.inputReportsReceived = true;
+    QVERIFY(service.reconcilePendingRecoveryAfterVerifiedReadback(observed));
+    QVERIFY(!service.hasPendingRecovery());
 }
 
 void ControllerReadinessTests::automaticRepairConvergesWithoutChangingUnrelatedHidHideRules()

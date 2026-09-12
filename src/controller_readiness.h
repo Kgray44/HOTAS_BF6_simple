@@ -353,6 +353,12 @@ public:
         const QStringList &instanceIds, bool hidden) const;
     ManagedVisibilityTransactionResult applyManagedVirtualOutputVisibility(
         const QStringList &instanceIds, bool hidden) const;
+    // An interrupted automatic repair leaves a narrow, app-owned recovery
+    // journal. A later full inspection may retire it only when fresh
+    // DirectInput and driver read-back prove every recorded change is already
+    // safe. This does not mutate HidHide or vJoy.
+    bool reconcilePendingRecoveryAfterVerifiedReadback(
+        const PhysicalControllerCapabilities &observedPhysical);
     bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }

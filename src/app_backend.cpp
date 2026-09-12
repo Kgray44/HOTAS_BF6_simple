@@ -5972,7 +5972,9 @@ QVariantMap AppBackend::checkSetupHealth()
     m_setupRepairProgress.clear();
     m_setupConvergenceAttemptedIssues.clear();
     m_setupConvergenceIdentityVerificationFailed = false;
+    m_setupConvergenceIdentityVerificationFailure.clear();
     m_setupConvergenceVJoyRepairFailed = false;
+    m_setupConvergenceHidHideRepairFailed = false;
     m_setupConvergenceCancelled = false;
     m_setupConvergenceCurrentIssueId.clear();
     m_setupTruthBeforeSnapshot.clear();
@@ -6005,6 +6007,7 @@ QVariantMap AppBackend::repairSetupHealth()
         m_setupConvergenceFinished = {};
         m_setupConvergenceAttemptedIssues.clear();
         m_setupConvergenceIdentityVerificationFailed = false;
+        m_setupConvergenceIdentityVerificationFailure.clear();
         m_setupConvergenceVJoyRepairFailed = false;
         m_setupConvergenceHidHideRepairFailed = false;
         m_setupConvergenceCancelled = false;
@@ -6195,8 +6198,11 @@ void AppBackend::continueSetupConvergence()
         const QString stepId = u"repair:"_qs + m_setupConvergenceCurrentIssueId;
         if (m_setupConvergenceIdentityVerificationFailed || !verified) {
             m_setupConvergenceIdentityVerificationFailed = true;
+            const QString detail = m_setupConvergenceIdentityVerificationFailure.isEmpty()
+                ? u"The exact saved controller did not complete identity verification. The remaining approved repairs will still be processed."_qs
+                : m_setupConvergenceIdentityVerificationFailure;
             updateSetupRepairProgress(stepId, u"FAILED"_qs,
-                u"The exact saved controller did not complete identity verification. The remaining approved repairs will still be processed."_qs,
+                detail,
                 u"IDENTITY NOT COMMITTED"_qs, QVariantMap{{u"recordId"_qs, recordId}});
         } else {
             updateSetupRepairProgress(stepId, u"SUCCEEDED"_qs,
@@ -13036,6 +13042,10 @@ void AppBackend::startVerification(VerificationMode mode)
         QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId,
                                          setupVerificationRecordId] () mutable {
             m_readiness.adoptPlan(std::move(plan));
+            const PhysicalControllerCapabilities observedPhysical = currentPhysicalCapabilities();
+            if (m_readiness.reconcilePendingRecoveryAfterVerifiedReadback(observedPhysical)) {
+                appendEvent(u"Prior automatic setup recovery was reconciled after fresh controller and driver read-back proof"_qs);
+            }
             if (m_readiness.hasPendingRecovery()) {
                 // A process restart between the privileged change and fresh
                 // DirectInput proof must stay visible even when the current
@@ -13056,7 +13066,7 @@ void AppBackend::startVerification(VerificationMode mode)
             appendEvent(restored
                 ? QString(u"Controller verification complete: %1"_qs).arg(m_readiness.plan().status)
                 : u"Controller verification complete, but mapping restoration failed"_qs);
-            if (mode == VerificationMode::Full && restored && currentPhysicalCapabilities().connected) {
+            if (mode == VerificationMode::Full && restored && observedPhysical.connected) {
                 if (!setupVerificationRecordId.isEmpty()) {
                     if (m_pendingSetupVerificationRecordId == setupVerificationRecordId)
                         m_pendingSetupVerificationRecordId.clear();
@@ -13067,12 +13077,28 @@ void AppBackend::startVerification(VerificationMode mode)
                         expected.hidInstanceId = saved->hidInstanceId;
                         expected.hidContainerId = saved->hidContainerId;
                     }
-                    if (saved && m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready
-                        && ControllerReadinessService::samePhysicalController(expected, currentPhysicalCapabilities())) {
-                        rememberCurrentController(setupVerificationRecordId);
+                    const bool physicalReady = m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready;
+                    const bool identityMatches = saved && ControllerReadinessService::samePhysicalController(
+                        expected, observedPhysical);
+                    if (saved && physicalReady && identityMatches
+                        && rememberCurrentController(setupVerificationRecordId)) {
                         appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
                     } else {
-                        appendEvent(u"Selected controller setup did not establish a matching physical identity"_qs);
+                        m_setupConvergenceIdentityVerificationFailed = true;
+                        if (!saved) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"The saved controller record is no longer available to persist."_qs;
+                        } else if (!physicalReady) {
+                            m_setupConvergenceIdentityVerificationFailure = m_readiness.plan().physicalSummary;
+                        } else if (!identityMatches) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"The active controller did not match the selected saved physical identity."_qs;
+                        } else {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"The matching controller was proven, but HOTAS BF6 could not persist its verification record."_qs;
+                        }
+                        appendEvent(QString(u"Selected controller setup did not commit identity: %1"_qs)
+                            .arg(m_setupConvergenceIdentityVerificationFailure));
                     }
                 } else if (m_readiness.plan().state == ControllerReadinessState::Ready) {
                     rememberCurrentController();
@@ -13459,24 +13485,25 @@ ControllerVJoyRequirements AppBackend::currentVjoyRequirements() const
     return result;
 }
 
-void AppBackend::rememberCurrentController(const QString &expectedRecordId)
+bool AppBackend::rememberCurrentController(const QString &expectedRecordId)
 {
     const DiscoveredController *controller = discoveredController(deviceId());
-    if (!controller || controller->virtualDevice) return;
+    if (!controller || controller->virtualDevice) return false;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
     QString existingId = match.ambiguous ? QString{} : match.recordId;
     if (!expectedRecordId.isEmpty()) {
         const SavedControllerRecord *expected = savedControllerRecord(expectedRecordId);
         PhysicalControllerCapabilities remembered;
-        if (!expected) return;
+        if (!expected) return false;
         remembered.directInputId = expected->lastDirectInputId;
         remembered.hidInstanceId = expected->hidInstanceId;
         remembered.hidContainerId = expected->hidContainerId;
         PhysicalControllerCapabilities observed;
         observed.directInputId = controller->directInputId;
         observed.hidInstanceId = controller->hidInstanceId;
+        observed.hidContainerId = controller->hidContainerId;
         observed.connected = controller->connected;
-        if (!ControllerReadinessService::samePhysicalController(remembered, observed)) return;
+        if (!ControllerReadinessService::samePhysicalController(remembered, observed)) return false;
         existingId = expectedRecordId;
     }
     ControllerVJoyRequirements verifiedRequirements = currentVjoyRequirements();
@@ -13492,23 +13519,30 @@ void AppBackend::rememberCurrentController(const QString &expectedRecordId)
     SavedControllerRecord record = ControllerManager::verifiedRecord(*controller, m_configuration.calibration,
                                                                       verifiedRequirements, existingId);
     record.axisActivity = m_configuration.axisActivity;
+    MapperConfiguration candidate = m_configuration;
     if (!existingId.isEmpty()) {
-        for (SavedControllerRecord &existing : m_configuration.savedControllers) {
+        bool updated = false;
+        for (SavedControllerRecord &existing : candidate.savedControllers) {
             if (existing.id != existingId) continue;
             record.ownedHidHideDeviceInstances = existing.ownedHidHideDeviceInstances;
             existing = std::move(record);
-            m_configuration.activeControllerRecordId = existingId;
+            candidate.activeControllerRecordId = existingId;
+            updated = true;
             break;
         }
+        if (!updated) return false;
     } else {
-        m_configuration.savedControllers.push_back(std::move(record));
-        m_configuration.activeControllerRecordId = m_configuration.savedControllers.back().id;
+        candidate.savedControllers.push_back(std::move(record));
+        candidate.activeControllerRecordId = candidate.savedControllers.back().id;
     }
-    m_configuration.preferredDeviceId = controller->directInputId;
-    ConfigStore::save(m_configuration);
+    candidate.preferredDeviceId = controller->directInputId;
+    if (!ConfigStore::save(candidate)) return false;
+    m_configuration = std::move(candidate);
+    ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
     rebuildControllerUiModel();
     appendEvent(QString(u"Verified controller remembered: %1"_qs).arg(controller->name));
+    return true;
 }
 
 bool AppBackend::setActiveController(const QString &recordId)
