@@ -21,6 +21,35 @@ Flickable {
     readonly property var profile: readinessModel ? readinessModel.profile : ({})
     readonly property var readinessState: readinessModel ? readinessModel.currentState : ({})
     readonly property var activation: backend.activationResolverState
+    // Setup Health is a frozen, shared projection. Do not replay the older
+    // readiness presentation while Devices shows the same rig's session.
+    readonly property var setupTruth: backend.setupTruthSnapshot || ({})
+
+    function setupGroup(id) {
+        const groups = setupTruth.groups || []
+        for (let index = 0; index < groups.length; ++index) {
+            if (String(groups[index].id || "") === id)
+                return groups[index]
+        }
+        return { title: "Checking", detail: "Setup truth has not completed a fresh inspection.", status: "CHECKING", severity: "checking" }
+    }
+
+    function setupTone(statusOrGroup) {
+        const group = typeof statusOrGroup === "string" ? ({}) : (statusOrGroup || {})
+        const severity = String(group.severity || "").toUpperCase()
+        const status = typeof statusOrGroup === "string" ? statusOrGroup : String(group.status || "")
+        const normalized = String(status || "").toUpperCase()
+        if (severity === "READY" || normalized === "READY") return "healthy"
+        if (severity === "ERROR" || normalized === "FAILED" || normalized === "UNAVAILABLE"
+                || normalized === "UNKNOWN / INSPECTION FAILED") return "fault"
+        if (severity === "ATTENTION" || severity === "WAITING" || normalized === "ACTION NEEDED"
+                || normalized === "WAITING FOR USER" || normalized === "ATTENTION") return "attention"
+        return "informational"
+    }
+
+    readonly property var setupPhysical: setupGroup("physical")
+    readonly property var setupOutput: setupGroup("vjoy")
+    readonly property var setupIsolation: setupGroup("isolation")
 
     FlightDeckTheme {
         id: deck
@@ -45,9 +74,9 @@ Flickable {
     }
 
     function overviewMessage() {
-        if (!readinessModel)
-            return "Checking current system status.";
-        return readiness.detail || "Checking current system status.";
+        return setupTruth.overallStatus
+            ? "Shared setup truth for " + String(setupTruth.rigName || "the selected Device Rig") + "."
+            : "Checking current setup status.";
     }
 
     ColumnLayout {
@@ -72,8 +101,8 @@ Flickable {
             }
             FlightDeckStatusChip {
                 tokens: deck
-                label: readiness.label || "CHECKING"
-                tone: readiness.tone || "informational"
+                label: setupTruth.overallStatus || "CHECKING"
+                tone: root.setupTone(setupTruth.overallStatus || "CHECKING")
                 visible: root.wide
             }
         }
@@ -103,8 +132,8 @@ Flickable {
                             font.bold: true
                         }
                         Text {
-                            text: readiness.label || "CHECKING"
-                            color: deck.statusColor(readiness.tone || "informational")
+                            text: setupTruth.overallStatus || "CHECKING"
+                            color: deck.statusColor(root.setupTone(setupTruth.overallStatus || "CHECKING"))
                             font.family: deck.displayFont
                             font.pixelSize: root.wide ? 22 : 18
                             font.bold: true
@@ -114,7 +143,7 @@ Flickable {
                         tokens: deck
                         label: readinessState.mappingStatus || backend.mappingStatus
                         value: readinessState.mappingActive ? "LIVE" : "STANDBY"
-                        tone: readiness.tone || "informational"
+                        tone: root.setupTone(setupTruth.overallStatus || "CHECKING")
                     }
                 }
 
@@ -262,9 +291,9 @@ Flickable {
                 objectName: "flightDeckHealthInput"
                 tokens: deck
                 eyebrow: "PHYSICAL INPUT"
-                title: input.title || "Checking"
-                detail: input.detail || ""
-                tone: input.tone || "informational"
+                title: setupPhysical.title || "Checking"
+                detail: setupPhysical.detail || ""
+                tone: root.setupTone(setupPhysical)
                 actionLabel: "OPEN SETUP"
                 onActionRequested: root.navigateToDevices("controllers")
             }
@@ -272,9 +301,9 @@ Flickable {
                 objectName: "flightDeckHealthOutput"
                 tokens: deck
                 eyebrow: "VIRTUAL OUTPUT"
-                title: output.title || "Checking"
-                detail: output.detail || ""
-                tone: output.tone || "informational"
+                title: setupOutput.title || "Checking"
+                detail: setupOutput.detail || ""
+                tone: root.setupTone(setupOutput)
                 actionLabel: "OPEN VIRTUAL OUTPUT"
                 onActionRequested: root.navigateToDevices("virtual-output")
             }
@@ -282,9 +311,9 @@ Flickable {
                 objectName: "flightDeckHealthIsolation"
                 tokens: deck
                 eyebrow: "HIDHIDE ISOLATION"
-                title: isolation.title || "Checking"
-                detail: isolation.detail || ""
-                tone: isolation.tone || "informational"
+                title: setupIsolation.title || "Checking"
+                detail: setupIsolation.detail || ""
+                tone: root.setupTone(setupIsolation)
                 actionLabel: "OPEN ISOLATION"
                 onActionRequested: root.navigateToDevices("isolation")
             }

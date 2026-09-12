@@ -23,7 +23,22 @@ Flickable {
     readonly property color dangerColor: legacy ? "#c98e97" : theme.danger
     readonly property color primaryColor: legacy ? "#8ec8d0" : theme.orangeBright
     readonly property bool narrow: width < 900
+    // The overview's setup card must render the same frozen truth as the
+    // modal, rather than re-deriving a potentially different legacy summary.
+    readonly property var setupTruth: backend.setupTruthSnapshot || ({})
     signal setupRequested()
+
+    function checkState(check) { return String((check || {}).status || (check || {}).state || "CHECKING") }
+    function checkTitle(check) { return String((check || {}).title || (check || {}).name || "Setup") }
+    function checkDetail(check) { return String((check || {}).detail || (check || {}).message || "Current setup status") }
+    function checkTone(check) {
+        const severity = String((check || {}).severity || "").toLowerCase()
+        const state = root.checkState(check).toUpperCase()
+        if (severity === "ready" || state === "READY") return root.readyColor
+        if (severity === "error" || state === "FAILED" || state === "UNAVAILABLE"
+                || state === "UNKNOWN / INSPECTION FAILED") return root.dangerColor
+        return root.warningColor
+    }
 
     function statusLabel() {
         if (!backend.physicalConnected) return "WAITING FOR INPUT"
@@ -92,18 +107,16 @@ Flickable {
             anchors.fill: parent; anchors.margins: 9; spacing: 8
             Rectangle {
                 width: 8; height: 8; radius: theme.topGun ? 0 : 4
-                color: check.severity === "ready" ? root.readyColor
-                     : check.severity === "error" ? root.dangerColor : root.warningColor
+                color: root.checkTone(check)
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 1
-                Text { Layout.fillWidth: true; text: check.name; color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                Text { Layout.fillWidth: true; text: check.message || "Current setup status"; color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: root.checkTitle(check); color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: root.checkDetail(check); color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
             }
             StatusBadge {
-                label: check.state
-                tone: check.severity === "ready" ? root.readyColor
-                      : check.severity === "error" ? root.dangerColor : root.warningColor
+                label: root.checkState(check)
+                tone: root.checkTone(check)
             }
         }
     }
@@ -199,7 +212,7 @@ Flickable {
                 RowLayout { Layout.fillWidth: true
                     StatusBadge { label: backend.activeDeviceRigId !== "" ? "ACTIVE" : "NOT SELECTED"; tone: backend.activeDeviceRigId !== "" ? root.readyColor : root.warningColor }
                     StatusBadge { label: backend.physicalConnected ? "INPUT CONNECTED" : "INPUT OFFLINE"; tone: backend.physicalConnected ? root.readyColor : root.warningColor }
-                    StatusBadge { label: backend.controllerReadinessState; tone: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor }
+                    StatusBadge { label: root.setupTruth.overallStatus || "CHECKING"; tone: root.checkTone({ status: root.setupTruth.overallStatus || "CHECKING" }) }
                     Item { Layout.fillWidth: true }
                 }
                 Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Create or manage Device Rigs in Devices, then run Check Setup."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
@@ -224,9 +237,9 @@ Flickable {
             }
         }
 
-        Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness"; accent: backend.controllerReadinessState === "READY" ? root.readyColor : root.warningColor
+        Panel { objectName: "systemReadinessPanel"; Layout.fillWidth: true; eyebrow: "SETUP HEALTH"; title: "System readiness · " + (root.setupTruth.overallStatus || "CHECKING"); accent: root.checkTone({ status: root.setupTruth.overallStatus || "CHECKING" })
             ColumnLayout { objectName: "systemReadinessList"; Layout.fillWidth: true; spacing: 8
-                Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: backend.controllerReadinessChecks
+                Repeater { id: systemReadinessRepeater; objectName: "systemReadinessRepeater"; model: root.setupTruth.groups || []
                     delegate: ReadinessCheck {
                         required property var modelData
                         check: modelData

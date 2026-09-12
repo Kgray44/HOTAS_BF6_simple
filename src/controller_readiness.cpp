@@ -177,6 +177,19 @@ QString decodeProcessOutput(const QByteArray &bytes)
     return QString::fromLocal8Bit(bytes);
 }
 
+QString vJoyConfigurationAxisToken(VirtualAxis axis)
+{
+    // vJoyConfig's display spelling ("Slider 0") is not its command-line
+    // spelling. Passing the display label makes an elevated repair appear to
+    // run, but the driver rejects its required slider axes. Keep this adapter
+    // at the driver boundary; UI labels remain human-readable everywhere else.
+    switch (axis) {
+    case VirtualAxis::Slider0: return QStringLiteral("Sl0");
+    case VirtualAxis::Slider1: return QStringLiteral("Sl1");
+    default: return virtualAxisLabel(axis);
+    }
+}
+
 } // namespace
 
 SetupProcessResult WindowsSetupProcessRunner::run(const QString &program, const QStringList &arguments,
@@ -1465,7 +1478,7 @@ QStringList ControllerReadinessService::vjoyConfigurationArguments(const VJoyCap
     QStringList arguments{QString::number(before.deviceId), QStringLiteral("-f"), QStringLiteral("-a")};
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         if (requirements.axes[static_cast<size_t>(index)]) {
-            arguments.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+            arguments.append(vJoyConfigurationAxisToken(static_cast<VirtualAxis>(index)));
         }
     }
     arguments << QStringLiteral("-b") << QString::number(requirements.buttons);

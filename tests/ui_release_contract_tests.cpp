@@ -633,6 +633,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     const QString assistant = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString flightDeckDevices = sourceFile(QStringLiteral("qml/FlightDeckDevices.qml"));
+    const QString flightDeckOverview = sourceFile(QStringLiteral("qml/FlightDeckOverview.qml"));
     const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
@@ -726,6 +727,10 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("SetupConvergenceStage::Results")));
     QVERIFY(backend.contains(QStringLiteral("applyScopedVJoyRepair")));
     QVERIFY(backend.contains(QStringLiteral("m_setupTruthBeforeSnapshot = m_setupTruthSnapshot")));
+    QVERIFY(readiness.contains(QStringLiteral("QString vJoyConfigurationAxisToken(VirtualAxis axis)")));
+    QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider0: return QStringLiteral(\"Sl0\")")));
+    QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider1: return QStringLiteral(\"Sl1\")")));
+    QVERIFY(readiness.contains(QStringLiteral("arguments.append(vJoyConfigurationAxisToken")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));
@@ -739,6 +744,13 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(flightDeckDevices.contains(QStringLiteral("onRepairRequested: repairConfirmation.open()")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("model: root.setupRepairPlan")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("setupTruth.repairPlan")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("backend.setupTruthSnapshot")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupPhysical: setupGroup(\"physical\")")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupOutput: setupGroup(\"vjoy\")")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupIsolation: setupGroup(\"isolation\")")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("label: setupTruth.overallStatus || \"CHECKING\"")));
+    QVERIFY(overview.contains(QStringLiteral("model: root.setupTruth.groups || []")));
+    QVERIFY(overview.contains(QStringLiteral("backend.setupTruthSnapshot")));
     QVERIFY(standard.contains(QStringLiteral("showTitle: false")));
     QVERIFY(legacy.contains(QStringLiteral("showTitle: false")));
     QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
