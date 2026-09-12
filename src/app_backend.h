@@ -146,6 +146,12 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList setupAssistantIssues READ setupAssistantIssues NOTIFY stateChanged)
     Q_PROPERTY(QVariantList setupAssistantSteps READ setupAssistantSteps NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantSummary READ setupAssistantSummary NOTIFY stateChanged)
+    // The single authoritative Devices setup projection. It is a frozen,
+    // typed control-plane inspection result, not a summary parsed from QML.
+    Q_PROPERTY(QVariantMap setupTruthSnapshot READ setupTruthSnapshot NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList setupRepairProgress READ setupRepairProgress NOTIFY stateChanged)
+    Q_PROPERTY(QString setupRepairSessionReport READ setupRepairSessionReport NOTIFY stateChanged)
+    Q_PROPERTY(bool setupRepairSessionActive READ setupRepairSessionActive NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
     Q_PROPERTY(QString setupAssistantScopeId READ setupAssistantScopeId NOTIFY stateChanged)
@@ -365,6 +371,10 @@ public:
     QVariantList setupAssistantIssues() const;
     QVariantList setupAssistantSteps() const;
     QVariantMap setupAssistantSummary() const;
+    QVariantMap setupTruthSnapshot() const;
+    QVariantList setupRepairProgress() const;
+    QString setupRepairSessionReport() const;
+    bool setupRepairSessionActive() const;
     QVariantMap setupAssistantLiveTest() const;
     QString setupAssistantScopeType() const;
     QString setupAssistantScopeId() const;
@@ -670,6 +680,11 @@ public:
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();
+    // Devices uses these as its only normal setup authority. The historical
+    // per-card actions remain compatibility/advanced routes only.
+    Q_INVOKABLE QVariantMap checkSetupHealth();
+    Q_INVOKABLE QVariantMap repairSetupHealth();
+    Q_INVOKABLE bool copySetupHealthDiagnostics();
     Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
                                                              const QString &scopeId = {});
     // Completes the selected saved controller's exact-identity verification.
@@ -1072,6 +1087,7 @@ private:
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
     void startVerification(VerificationMode mode);
+    bool applyControllerReadinessForConfiguration(const MapperConfiguration &configuration);
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
     void observeControllerReconnect();
     void reconcileControllerReconnect(const PhysicalControllerCapabilities &physical);
@@ -1081,8 +1097,20 @@ private:
                                   int calibratedAxisCount);
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
     void refreshVirtualOutputReadiness(const QString &layoutId);
+    // A complete rig can target more than the currently selected Profile
+    // output.  These probes stay on the setup control plane and never alter
+    // the active output or MappingWorker configuration.
+    void refreshSelectedRigOutputReadiness();
     const ControllerReadinessPlan *virtualOutputReadinessPlan(const QString &layoutId) const;
     ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
+    QVariantMap buildSetupTruthSnapshot() const;
+    void captureSetupTruthSnapshot(bool finalSnapshot = false);
+    void continueSetupConvergence();
+    void appendSetupRepairProgress(const QString &id, const QString &subsystem,
+                                   const QString &title, const QString &status,
+                                   const QString &detail = {}, bool requiresElevation = false,
+                                   bool requiresReconnect = false);
+    void completeSetupConvergence(const QString &finalState = {});
 
     enum class CalibrationStageState {
         Idle,
@@ -1133,6 +1161,19 @@ private:
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
     QString m_pendingSetupVerificationRecordId;
+    // A repair session contains only control-plane state. The worker still
+    // owns DirectInput reports and never observes this bookkeeping.
+    enum class SetupConvergenceStage { Idle, Checking, VerifyingIdentity, RepairingDrivers, FinalChecking, WaitingForReconnect };
+    SetupConvergenceStage m_setupConvergenceStage = SetupConvergenceStage::Idle;
+    QString m_setupConvergenceSessionId;
+    QDateTime m_setupConvergenceStarted;
+    QVariantMap m_setupTruthSnapshot;
+    QVariantMap m_setupTruthBeforeSnapshot;
+    QVariantMap m_setupTruthAfterSnapshot;
+    QVariantList m_setupRepairProgress;
+    QString m_setupRepairSessionReport;
+    QSet<QString> m_setupConvergenceAttemptedIssues;
+    bool m_setupConvergenceIdentityVerificationFailed = false;
     // Output inspection is explicit and scoped.  A rig/device check must not
     // accidentally change another saved output's readiness presentation.
     QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;

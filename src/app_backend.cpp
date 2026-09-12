@@ -16,11 +16,14 @@
 #include "profile_portability.h"
 #include "response_curve.h"
 #include "signal_flow_model.h"
+#include "setup_truth.h"
 
 #include <QCoreApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QLocale>
 #include <QNetworkReply>
@@ -3660,6 +3663,32 @@ void AppBackend::refreshVirtualOutputReadiness(const QString &layoutId)
     m_virtualOutputReadinessPlans.insert(layout->id, plan);
 }
 
+void AppBackend::refreshSelectedRigOutputReadiness()
+{
+    const DeviceRig *rig = activeDeviceRig();
+    if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
+        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    }
+    if (!rig) return;
+
+    QSet<QString> inspected;
+    for (const DeviceRigOutputTarget &target : rig->outputs) {
+        if (!target.enabled || target.outputLayoutId.isEmpty() || inspected.contains(target.outputLayoutId)) continue;
+        inspected.insert(target.outputLayoutId);
+        // The full verifier has already inspected the active output on its
+        // worker thread. Preserve that exact read-back rather than spawning a
+        // redundant utility process. Other enabled rig outputs are inspected
+        // independently so one ready Device 1 cannot mask Device 2.
+        if (const VirtualOutputLayout *active = activeOutputLayout(); active
+            && active->id == target.outputLayoutId
+            && m_readiness.plan().vjoy.deviceId == active->requirements.deviceId) {
+            m_virtualOutputReadinessPlans.insert(active->id, m_readiness.plan());
+        } else {
+            refreshVirtualOutputReadiness(target.outputLayoutId);
+        }
+    }
+}
+
 QString AppBackend::createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
                                     const QString &outputLayoutId)
 {
@@ -5465,6 +5494,546 @@ QVariantMap AppBackend::setupAssistantSummary() const
         {u"scopeType"_qs, m_setupAssistantScopeType}, {u"scopeId"_qs, m_setupAssistantScopeId},
         {u"primaryAction"_qs, primaryIssue.value(u"recommendedAction"_qs, u"done"_qs)},
         {u"primaryActionLabel"_qs, primaryIssue.value(u"recommendedActionLabel"_qs, u"DONE"_qs)}};
+}
+
+QVariantMap AppBackend::buildSetupTruthSnapshot() const
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    const bool checking = m_verificationInProgress || plan.isChecking;
+    const bool inspected = plan.lastChecked.isValid()
+        && plan.lastChecked.secsTo(now) <= 20;
+    const auto statusValue = [](SetupTruthStatus status) {
+        return setupTruthStatusLabel(status);
+    };
+    const auto severity = [](SetupTruthStatus status) {
+        return status == SetupTruthStatus::Ready ? u"ready"_qs
+            : status == SetupTruthStatus::Checking ? u"checking"_qs
+            : status == SetupTruthStatus::Unknown ? u"unknown"_qs
+            : status == SetupTruthStatus::Failed || status == SetupTruthStatus::Unavailable ? u"error"_qs
+            : status == SetupTruthStatus::WaitingForUser ? u"waiting"_qs : u"attention"_qs;
+    };
+    QVariantList groups;
+    QVariantList issues;
+    QVariantList repairPlan;
+    const auto addGroup = [&](const QString &id, const QString &title, SetupTruthStatus status,
+                              const QString &detail, const QVariantMap &evidence = {}) {
+        groups.append(QVariantMap{{u"id"_qs, id}, {u"title"_qs, title},
+            {u"status"_qs, statusValue(status)}, {u"severity"_qs, severity(status)},
+            {u"detail"_qs, detail}, {u"evidence"_qs, evidence}});
+    };
+    const auto addIssue = [&](const QString &code, const QString &subsystem, SetupTruthStatus status,
+                              const QString &title, const QString &detail, bool automatic,
+                              bool elevated, const QString &action, const QVariantMap &evidence = {}) {
+        const QString id = code + u":"_qs + QString::number(issues.size() + 1);
+        const QString recordId = evidence.value(u"recordId"_qs).toString();
+        const QString layoutId = evidence.value(u"layoutId"_qs).toString();
+        const QString affectedId = !recordId.isEmpty() ? recordId : layoutId;
+        issues.append(QVariantMap{{u"id"_qs, id}, {u"code"_qs, code}, {u"subsystem"_qs, subsystem},
+            {u"severity"_qs, statusValue(status)}, {u"title"_qs, title}, {u"explanation"_qs, detail},
+            {u"repairable"_qs, automatic}, {u"automatic"_qs, automatic},
+            {u"requiresElevation"_qs, elevated}, {u"proposedRepair"_qs, action},
+            {u"requiresReconnect"_qs, code == u"HidHideMismatch"_qs},
+            {u"risk"_qs, elevated ? u"Scoped driver configuration with mandatory read-back."_qs
+                                     : u"No driver configuration is required."_qs},
+            {u"manualFallback"_qs, automatic ? u"Review diagnostics if the scoped repair cannot complete."_qs
+                                                 : u"Review technical diagnostics, then run another read-only check."_qs},
+            {u"navigationTarget"_qs, subsystem}, {u"affectedObjectIds"_qs, QStringList{affectedId}},
+            {u"evidence"_qs, evidence}});
+        if (automatic) repairPlan.append(QVariantMap{{u"id"_qs, id}, {u"subsystem"_qs, subsystem},
+            {u"title"_qs, action}, {u"requiresElevation"_qs, elevated}, {u"status"_qs, u"WAITING"_qs}});
+    };
+
+    const DeviceRig *rig = activeDeviceRig();
+    if (!rig && !m_configuration.editingDeviceRigId.isEmpty())
+        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    if (!rig) {
+        const auto enabled = std::find_if(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
+            [](const DeviceRig &candidate) { return candidate.enabled; });
+        if (enabled != m_configuration.deviceRigs.cend()) rig = &*enabled;
+    }
+
+    const DeviceRigStatus *rigStatus = nullptr;
+    if (rig) {
+        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
+            [rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
+        if (found != m_deviceRigStatuses.cend()) rigStatus = &*found;
+    }
+    QVariantList physicalMembers;
+    bool requiredOffline = false;
+    bool requiredAmbiguous = false;
+    bool requiredUnverified = false;
+    bool optionalUnverified = false;
+    if (!rig) {
+        const SetupTruthStatus state = checking ? SetupTruthStatus::Checking
+            : SetupTruthStatus::WaitingForUser;
+        addGroup(u"physical"_qs, u"Physical input"_qs, state,
+            checking ? u"Reading physical controller inventory."_qs : u"Select or create a Device Rig to inspect its physical inputs."_qs);
+        addGroup(u"verification"_qs, u"Controller verification"_qs, state,
+            checking ? u"Waiting for the Device Rig inspection."_qs : u"A selected Device Rig is required."_qs);
+    } else {
+        for (const DeviceRigMember &member : rig->members) {
+            if (!member.enabled) continue;
+            const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            const bool ambiguous = rigStatus && rigStatus->ambiguousMemberIds.contains(member.controllerRecordId);
+            const auto discovered = std::find_if(m_discoveredControllers.cbegin(), m_discoveredControllers.cend(),
+                [this, &member](const DiscoveredController &candidate) {
+                    if (!candidate.connected || candidate.virtualDevice) return false;
+                    const ControllerMatch match = ControllerManager::match(candidate, m_configuration.savedControllers);
+                    return !match.ambiguous && match.recordId == member.controllerRecordId;
+                });
+            const bool connected = !ambiguous && discovered != m_discoveredControllers.cend();
+            const bool reports = connected && discovered->directInputId == deviceId()
+                && currentPhysicalCapabilities().inputReportsReceived;
+            const bool verified = record && !record->lastVerified.isEmpty();
+            const QString name = record ? record->displayName : u"Unknown saved controller"_qs;
+            const QString identity = connected ? discovered->hidInstanceId
+                : record ? record->hidInstanceId : QString{};
+            physicalMembers.append(QVariantMap{{u"recordId"_qs, member.controllerRecordId}, {u"name"_qs, name},
+                {u"required"_qs, member.required}, {u"connected"_qs, connected}, {u"directInputAcquired"_qs, connected && discovered->directInputId == deviceId()},
+                {u"inputReportsReceived"_qs, reports}, {u"identityVerified"_qs, verified},
+                {u"lastVerified"_qs, record ? record->lastVerified : QString{}},
+                {u"savedHidIdentity"_qs, record ? record->hidInstanceId : QString{}},
+                {u"observedHidIdentity"_qs, identity},
+                {u"identityMatch"_qs, connected}, {u"ambiguous"_qs, ambiguous},
+                {u"axisCount"_qs, record ? record->axisCount : 0},
+                {u"buttons"_qs, record ? record->buttonCount : 0},
+                {u"povs"_qs, record ? record->povCount : 0},
+                {u"meaningfulInputObserved"_qs, connected && currentPhysicalCapabilities().directInputId == discovered->directInputId
+                    && m_worker.runtime().meaningfulInputSequence.load(std::memory_order_relaxed) > 0},
+                {u"calibrationRequired"_qs, connected && currentPhysicalCapabilities().directInputId == discovered->directInputId
+                    && calibrationNeedsSetup(currentPhysicalCapabilities())}});
+            if (member.required && !connected) requiredOffline = true;
+            if (member.required && ambiguous) requiredAmbiguous = true;
+            if (connected && !verified && member.required) requiredUnverified = true;
+            if (connected && !verified && !member.required) optionalUnverified = true;
+            if (connected && !verified) {
+                addIssue(u"PhysicalDeviceUnverified"_qs, u"Controller verification"_qs,
+                    member.required ? SetupTruthStatus::Repairable : SetupTruthStatus::Attention,
+                    u"Controller identity has not been committed"_qs,
+                    name + u" is connected with an exact saved identity, but its verification timestamp is empty."_qs,
+                    member.required, false, u"Verify and save this exact controller identity"_qs,
+                    QVariantMap{{u"recordId"_qs, member.controllerRecordId}, {u"observedIdentity"_qs, identity},
+                                {u"lastVerified"_qs, record ? record->lastVerified : QString{}}});
+            }
+        }
+        SetupTruthStatus physicalState = SetupTruthStatus::Ready;
+        QString physicalDetail = u"Every required controller is connected."_qs;
+        if (checking) { physicalState = SetupTruthStatus::Checking; physicalDetail = u"Resolving exact DirectInput and HID identities."_qs; }
+        else if (!m_controllerInventoryInitialized) { physicalState = SetupTruthStatus::Unknown; physicalDetail = u"Controller inventory has not completed a fresh inspection."_qs; }
+        else if (requiredAmbiguous) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"More than one discovered controller matches a saved Device Rig member."_qs; }
+        else if (requiredOffline) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"Reconnect every required controller, then run Check & Repair Setup."_qs; }
+        addGroup(u"physical"_qs, u"Physical input"_qs, physicalState, physicalDetail,
+            QVariantMap{{u"members"_qs, physicalMembers}});
+        SetupTruthStatus verificationState = checking ? SetupTruthStatus::Checking
+            : requiredUnverified ? SetupTruthStatus::Repairable
+            : optionalUnverified ? SetupTruthStatus::Attention
+            : requiredOffline ? SetupTruthStatus::WaitingForUser : SetupTruthStatus::Ready;
+        addGroup(u"verification"_qs, u"Controller verification"_qs, verificationState,
+            checking ? u"Checking persisted identity against the live controller."_qs
+            : requiredUnverified ? u"A required connected controller can be verified without changing vJoy or HidHide."_qs
+            : optionalUnverified ? u"An optional connected controller has not yet been committed as verified."_qs
+            : requiredOffline ? u"Verification requires the selected controller to be connected."_qs
+            : u"Every required connected controller has a saved verification record."_qs,
+            QVariantMap{{u"members"_qs, physicalMembers}});
+    }
+
+    // A rig may have multiple enabled outputs. Keep an independent evidence
+    // record for each descriptor; never let the currently active profile's
+    // vJoy device make another selected-rig output look healthy.
+    QVariantList outputEvidence;
+    SetupTruthStatus vjoyState = SetupTruthStatus::Ready;
+    QString vjoyDetail = u"Every enabled Device Rig output has fresh descriptor evidence."_qs;
+    bool anyOutput = false;
+    QSet<QString> outputIds;
+    const auto inspectOutput = [&](const QString &layoutId, bool enabled) {
+        if (!enabled || layoutId.isEmpty() || outputIds.contains(layoutId)) return;
+        outputIds.insert(layoutId);
+        anyOutput = true;
+        const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+        const ControllerReadinessPlan *outputPlan = virtualOutputReadinessPlan(layoutId);
+        SetupTruthStatus state = SetupTruthStatus::Unknown;
+        QString detail = u"No fresh inspection has completed for this virtual output."_qs;
+        if (!layout) {
+            state = SetupTruthStatus::Unavailable;
+            detail = u"The Device Rig references a virtual output layout that no longer exists."_qs;
+        } else if (checking) {
+            state = SetupTruthStatus::Checking;
+            detail = QString(u"Reading vJoy Device %1 descriptor."_qs).arg(layout->requirements.deviceId);
+        } else if (!outputPlan || !outputPlan->lastChecked.isValid()
+                   || outputPlan->lastChecked.secsTo(now) > 20) {
+            state = SetupTruthStatus::Unknown;
+        } else if (!outputPlan->vjoy.installed) {
+            state = SetupTruthStatus::Unavailable;
+            detail = outputPlan->vjoy.diagnostic;
+        } else if (!outputPlan->vjoy.inspectionComplete) {
+            state = SetupTruthStatus::Unknown;
+            detail = u"vJoy inspection did not complete every required supported read."_qs;
+        } else if (outputPlan->vjoyNeedsChanges && outputPlan->vjoy.busy && !outputPlan->vjoy.ownedByHotasBf6) {
+            state = SetupTruthStatus::WaitingForUser;
+            detail = outputPlan->vjoySummary;
+        } else if (outputPlan->vjoyNeedsChanges && outputPlan->vjoyCanApply) {
+            state = SetupTruthStatus::Repairable;
+            detail = outputPlan->vjoySummary;
+        } else if (outputPlan->vjoyNeedsChanges) {
+            state = SetupTruthStatus::Attention;
+            detail = outputPlan->vjoySummary;
+        } else {
+            state = SetupTruthStatus::Ready;
+            detail = outputPlan->vjoySummary;
+        }
+        if (setupTruthStatusPriority(state) < setupTruthStatusPriority(vjoyState)) {
+            vjoyState = state;
+            vjoyDetail = detail;
+        }
+        const VJoyCapabilities capabilities = outputPlan ? outputPlan->vjoy : VJoyCapabilities{};
+        // A Device Rig can retain a reference to a deleted layout.  That is
+        // an inspectable, user-repairable configuration defect, not a reason
+        // for setup diagnostics to dereference a null layout and crash.
+        const MapperOutputRequirements requirements = outputPlan ? outputPlan->requirements
+            : layout ? ControllerReadinessService::requirementsFor(layout->requirements)
+                     : MapperOutputRequirements{};
+        outputEvidence.append(QVariantMap{{u"layoutId"_qs, layoutId}, {u"layoutName"_qs, layout ? layout->name : u"Missing output"_qs},
+            {u"status"_qs, statusValue(state)}, {u"detail"_qs, detail}, {u"deviceId"_qs, layout ? layout->requirements.deviceId : 0},
+            {u"installed"_qs, capabilities.installed}, {u"devicePresent"_qs, capabilities.devicePresent},
+            {u"busy"_qs, capabilities.busy}, {u"ownedByHotasBf6"_qs, capabilities.ownedByHotasBf6},
+            {u"outputReportsSucceeding"_qs, capabilities.outputReportsSucceeding}, {u"buttons"_qs, capabilities.buttons},
+            {u"continuousPovs"_qs, capabilities.continuousPovs}, {u"discretePovs"_qs, capabilities.discretePovs},
+            {u"requiredButtons"_qs, requirements.buttons}, {u"requiredContinuousPovs"_qs, requirements.continuousPovs},
+            {u"requiredDiscretePovs"_qs, requirements.discretePovs}, {u"forceFeedbackKnown"_qs, capabilities.forceFeedbackKnown},
+            {u"rollbackSnapshotAvailable"_qs, !capabilities.devicePresent || !capabilities.restoreCommand.isEmpty()},
+            {u"rawDescriptor"_qs, capabilities.descriptorReport}, {u"rawConfiguration"_qs, capabilities.configurationReport},
+            {u"rawDeviceList"_qs, capabilities.deviceListReport}, {u"rawInspection"_qs, capabilities.diagnostic}});
+        if (state == SetupTruthStatus::Repairable) {
+            addIssue(u"VJoyDescriptorMismatch"_qs, u"Virtual output"_qs, state,
+                QString(u"%1 needs a safe vJoy descriptor repair"_qs).arg(layout->name), detail, true, true,
+                u"Configure this vJoy descriptor and prove it by read-back"_qs,
+                QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId}});
+        } else if (state == SetupTruthStatus::Unknown) {
+            addIssue(u"VJoyInspectionFailed"_qs, u"Virtual output"_qs, state,
+                QString(u"%1 vJoy inspection is incomplete"_qs).arg(layout ? layout->name : u"Virtual output"_qs), detail,
+                false, false, u"Review vJoy diagnostics and run Check again"_qs,
+                QVariantMap{{u"layoutId"_qs, layoutId}});
+        }
+    };
+    if (rig) {
+        for (const DeviceRigOutputTarget &target : rig->outputs) inspectOutput(target.outputLayoutId, target.enabled);
+    } else if (const VirtualOutputLayout *active = activeOutputLayout()) {
+        inspectOutput(active->id, true);
+    }
+    if (!anyOutput) {
+        vjoyState = checking ? SetupTruthStatus::Checking : SetupTruthStatus::WaitingForUser;
+        vjoyDetail = checking ? u"Waiting for Device Rig output selection."_qs
+                              : u"Select an enabled Virtual Output in the Device Rig before setup can inspect vJoy."_qs;
+    }
+    addGroup(u"vjoy"_qs, u"Virtual output"_qs, vjoyState, vjoyDetail,
+        QVariantMap{{u"outputs"_qs, outputEvidence}});
+
+    SetupTruthStatus hidState = SetupTruthStatus::Unknown;
+    QString hidDetail = u"No fresh HidHide inspection has completed."_qs;
+    if (checking) { hidState = SetupTruthStatus::Checking; hidDetail = u"Reading HidHide service, allowlist, cloak state, and device collections."_qs; }
+    else if (inspected && !plan.hidhide.installed) { hidState = SetupTruthStatus::Unavailable; hidDetail = plan.hidhide.diagnostic; }
+    else if (inspected && !plan.hidhide.inspectionComplete) { hidState = SetupTruthStatus::Unknown; hidDetail = plan.hidhide.diagnostic.isEmpty() ? u"HidHide inspection did not complete every required supported read."_qs : plan.hidhide.diagnostic; }
+    else if (inspected && !plan.hidhide.cloakKnown) { hidState = SetupTruthStatus::Unknown; hidDetail = plan.hidhide.diagnostic.isEmpty() ? u"HidHide did not return a readable cloak state."_qs : plan.hidhide.diagnostic; }
+    else if (inspected && plan.hidhideNeedsChanges && plan.hidhideCanApply) { hidState = SetupTruthStatus::Repairable; hidDetail = plan.hidhideSummary; }
+    else if (inspected && plan.hidhideNeedsChanges) { hidState = SetupTruthStatus::Attention; hidDetail = plan.hidhideSummary; }
+    else if (inspected) { hidState = SetupTruthStatus::Ready; hidDetail = plan.hidhideSummary; }
+    addGroup(u"isolation"_qs, u"Device isolation"_qs, hidState, hidDetail,
+        QVariantMap{{u"cloakKnown"_qs, plan.hidhide.cloakKnown}, {u"cloaked"_qs, plan.hidhide.cloaked},
+            {u"mapperExecutable"_qs, plan.hidhide.mapperExecutable}, {u"mapperAllowlisted"_qs, plan.hidhide.mapperAllowlisted},
+            {u"resolvedCollections"_qs, plan.hidhide.selectedControllerInstanceIds},
+            {u"hiddenCollections"_qs, plan.hidhide.hiddenDeviceInstanceIds}, {u"rawCloakState"_qs, plan.hidhide.cloakReport},
+            {u"rawAppList"_qs, plan.hidhide.appListReport}, {u"rawGamingDevices"_qs, plan.hidhide.gamingDevicesReport},
+            {u"rawHiddenDevices"_qs, plan.hidhide.deviceListReport}, {u"rawInspection"_qs, plan.hidhide.diagnostic}});
+    if (hidState == SetupTruthStatus::Repairable) addIssue(u"HidHideMismatch"_qs, u"Device isolation"_qs,
+        hidState, u"HidHide needs a scoped repair"_qs, hidDetail, true, true,
+        u"Allowlist HOTAS BF6, hide only the resolved physical collections, and read everything back"_qs);
+    else if (hidState == SetupTruthStatus::Unknown) addIssue(u"HidHideInspectionFailed"_qs, u"Device isolation"_qs,
+        hidState, u"HidHide inspection is incomplete"_qs, hidDetail, false, false, u"Review the failed inspection and run Check again"_qs);
+
+    SetupTruthStatus mappingState = checking ? SetupTruthStatus::Checking : SetupTruthStatus::Ready;
+    QString mappingDetail = checking ? u"Checking mapping and Device Rig routing."_qs : u"The selected Device Rig routing compiles."_qs;
+    if (rig) {
+        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+        if (!checking && !compiled.valid) { mappingState = SetupTruthStatus::Attention; mappingDetail = compiled.issue; }
+    }
+    addGroup(u"mapping"_qs, u"Mapping"_qs, mappingState, mappingDetail,
+        QVariantMap{{u"requested"_qs, m_worker.mappingRequested()}, {u"active"_qs, m_worker.runtime().mappingActive.load()},
+                    {u"vjoyOwned"_qs, plan.vjoy.ownedByHotasBf6}, {u"outputReports"_qs, plan.vjoy.outputReportsSucceeding}});
+
+    SetupTruthStatus overall = SetupTruthStatus::Ready;
+    for (const QVariant &value : groups) {
+        const QString label = value.toMap().value(u"status"_qs).toString();
+        const SetupTruthStatus current = label == u"FAILED"_qs ? SetupTruthStatus::Failed
+            : label == u"UNKNOWN / INSPECTION FAILED"_qs ? SetupTruthStatus::Unknown
+            : label == u"UNAVAILABLE"_qs ? SetupTruthStatus::Unavailable
+            : label == u"ACTION NEEDED"_qs ? SetupTruthStatus::Repairable
+            : label == u"WAITING FOR USER"_qs ? SetupTruthStatus::WaitingForUser
+            : label == u"ATTENTION"_qs ? SetupTruthStatus::Attention
+            : label == u"CHECKING"_qs ? SetupTruthStatus::Checking : SetupTruthStatus::Ready;
+        if (setupTruthStatusPriority(current) < setupTruthStatusPriority(overall)) overall = current;
+    }
+    QString diagnostics = QString(u"HOTAS BF6 SETUP DIAGNOSTICS\nGenerated: %1\nVersion: %2\nWindows: %3\nSnapshot: %4\nExecutable: %5\nRig: %6\nProfile: %7\nMapping requested: %8\nMapping active: %9\n\n"_qs)
+        .arg(now.toString(Qt::ISODate), QString::fromLatin1(HOTAS_BF6_VERSION),
+             QSysInfo::prettyProductName(),
+             m_setupConvergenceSessionId.isEmpty() ? u"ad-hoc-check"_qs : m_setupConvergenceSessionId,
+             QCoreApplication::applicationFilePath(), rig ? rig->name : u"None"_qs,
+             activeProfileName(), m_worker.mappingRequested() ? u"yes"_qs : u"no"_qs,
+             m_worker.runtime().mappingActive.load() ? u"yes"_qs : u"no"_qs);
+    for (const QVariant &value : groups) {
+        const QVariantMap group = value.toMap();
+        diagnostics += QString(u"%1\n%2\n%3\n\n"_qs).arg(group.value(u"title"_qs).toString(),
+            group.value(u"status"_qs).toString(), group.value(u"detail"_qs).toString());
+    }
+    for (const QVariant &value : issues) {
+        const QVariantMap issue = value.toMap();
+        diagnostics += QString(u"ISSUE %1\n%2\n%3\n\n"_qs).arg(issue.value(u"code"_qs).toString(),
+            issue.value(u"title"_qs).toString(), issue.value(u"explanation"_qs).toString());
+    }
+    diagnostics += u"RAW VJOY / HIDHIDE EVIDENCE\n"_qs;
+    for (const QVariant &value : outputEvidence) {
+        const QVariantMap output = value.toMap();
+        diagnostics += QString(u"\nVJOY %1 (Device %2)\nDescriptor:\n%3\nConfiguration snapshot:\n%4\nDevice list:\n%5\n"_qs)
+            .arg(output.value(u"layoutName"_qs).toString(), output.value(u"deviceId"_qs).toString(),
+                 output.value(u"rawDescriptor"_qs).toString(), output.value(u"rawConfiguration"_qs).toString(),
+                 output.value(u"rawDeviceList"_qs).toString());
+    }
+    diagnostics += QString(u"\nHIDHIDE\nCloak state:\n%1\nAllowlist:\n%2\nGaming devices:\n%3\nHidden devices:\n%4\nInspection failures:\n%5\n"_qs)
+        .arg(plan.hidhide.cloakReport, plan.hidhide.appListReport, plan.hidhide.gamingDevicesReport,
+             plan.hidhide.deviceListReport, plan.hidhide.inspectionFailures.join(u"\n"_qs));
+    return QVariantMap{{u"snapshotId"_qs, m_setupConvergenceSessionId.isEmpty() ? u"ad-hoc-check"_qs : m_setupConvergenceSessionId},
+        {u"timestamp"_qs, now.toString(Qt::ISODate)}, {u"version"_qs, QString::fromLatin1(HOTAS_BF6_VERSION)},
+        {u"executable"_qs, QCoreApplication::applicationFilePath()},
+        {u"rigId"_qs, rig ? rig->id : QString{}}, {u"rigName"_qs, rig ? rig->name : QString{}},
+        {u"profileId"_qs, m_configuration.activeProfileId}, {u"profileName"_qs, activeProfileName()},
+        {u"overallStatus"_qs, statusValue(overall)}, {u"groups"_qs, groups}, {u"issues"_qs, issues},
+        {u"repairPlan"_qs, repairPlan}, {u"diagnostics"_qs, diagnostics}, {u"fresh"_qs, inspected}};
+}
+
+QVariantMap AppBackend::setupTruthSnapshot() const
+{
+    return m_setupTruthSnapshot.isEmpty() ? buildSetupTruthSnapshot() : m_setupTruthSnapshot;
+}
+
+QVariantList AppBackend::setupRepairProgress() const { return m_setupRepairProgress; }
+QString AppBackend::setupRepairSessionReport() const { return m_setupRepairSessionReport; }
+bool AppBackend::setupRepairSessionActive() const { return m_setupConvergenceStage != SetupConvergenceStage::Idle; }
+
+void AppBackend::appendSetupRepairProgress(const QString &id, const QString &subsystem, const QString &title,
+                                           const QString &status, const QString &detail,
+                                           bool requiresElevation, bool requiresReconnect)
+{
+    m_setupRepairProgress.append(QVariantMap{{u"id"_qs, id}, {u"subsystem"_qs, subsystem}, {u"title"_qs, title},
+        {u"status"_qs, status}, {u"detail"_qs, detail}, {u"requiresElevation"_qs, requiresElevation},
+        {u"requiresReconnect"_qs, requiresReconnect}, {u"timestamp"_qs, QDateTime::currentDateTime().toString(Qt::ISODate)}});
+}
+
+void AppBackend::captureSetupTruthSnapshot(bool finalSnapshot)
+{
+    m_setupTruthSnapshot = buildSetupTruthSnapshot();
+    if (finalSnapshot) m_setupTruthAfterSnapshot = m_setupTruthSnapshot;
+}
+
+QVariantMap AppBackend::checkSetupHealth()
+{
+    if (m_verificationInProgress) return actionResult(false, u"Setup check is already running"_qs,
+        u"HOTAS BF6 is still inspecting the selected setup."_qs, u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+    m_setupConvergenceStage = SetupConvergenceStage::Checking;
+    m_setupConvergenceSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_setupConvergenceStarted = QDateTime::currentDateTime();
+    m_setupRepairProgress.clear();
+    m_setupConvergenceAttemptedIssues.clear();
+    m_setupConvergenceIdentityVerificationFailed = false;
+    m_setupTruthBeforeSnapshot.clear();
+    m_setupTruthAfterSnapshot.clear();
+    m_setupRepairSessionReport.clear();
+    m_virtualOutputReadinessPlans.clear();
+    appendSetupRepairProgress(u"inspect"_qs, u"Setup"_qs, u"Inspecting complete setup"_qs, u"RUNNING"_qs,
+        u"No configuration changes are made during this check."_qs);
+    verifyHotasSetup();
+    // Publish CHECKING only after the verifier has actually entered its
+    // read-only worker phase. A previous READY plan must never remain visible
+    // as current during a new check.
+    m_setupTruthSnapshot = buildSetupTruthSnapshot();
+    emit stateChanged();
+    return actionResult(true, u"Checking complete setup"_qs,
+        u"HOTAS BF6 is reading physical input, saved verification, vJoy, HidHide, and mapping without changing configuration."_qs,
+        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::repairSetupHealth()
+{
+    if (m_verificationInProgress) return actionResult(false, u"Setup is still checking"_qs,
+        u"Wait for the read-only check to finish before approving repair."_qs, u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+    if (m_setupTruthSnapshot.isEmpty()) captureSetupTruthSnapshot();
+    if (m_setupConvergenceSessionId.isEmpty()) {
+        m_setupConvergenceSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        m_setupConvergenceStarted = QDateTime::currentDateTime();
+        m_setupConvergenceAttemptedIssues.clear();
+        m_setupConvergenceIdentityVerificationFailed = false;
+    }
+    if (m_setupTruthBeforeSnapshot.isEmpty()) m_setupTruthBeforeSnapshot = m_setupTruthSnapshot;
+    const QVariantList issues = m_setupTruthSnapshot.value(u"issues"_qs).toList();
+    for (const QVariant &value : issues) {
+        const QVariantMap issue = value.toMap();
+        if (issue.value(u"code"_qs).toString() != u"PhysicalDeviceUnverified"_qs
+            || !issue.value(u"repairable"_qs).toBool()) continue;
+        const QString recordId = issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString();
+        const QString attemptKey = u"PhysicalDeviceUnverified:"_qs + recordId;
+        if (m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
+        m_setupConvergenceAttemptedIssues.insert(attemptKey);
+        m_setupConvergenceStage = SetupConvergenceStage::VerifyingIdentity;
+        appendSetupRepairProgress(u"verify-"_qs + recordId, u"Controller verification"_qs,
+            u"Verifying exact saved controller identity"_qs, u"RUNNING"_qs,
+            u"Acquiring the matching DirectInput controller and committing verification only after identity proof."_qs);
+        const QVariantMap verification = completeSetupAssistantDevice(recordId);
+        // A disconnected or unavailable saved target is an immediate, honest
+        // outcome from the legacy exact-acquisition entry point. Do not leave
+        // the central convergence session showing an endless verification
+        // spinner when no asynchronous worker was started.
+        if (!verification.value(u"ok"_qs).toBool()) {
+            m_setupConvergenceIdentityVerificationFailed = true;
+            QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+        }
+        return verification;
+    }
+    for (const QVariant &value : issues) {
+        const QVariantMap issue = value.toMap();
+        if (issue.value(u"code"_qs).toString() != u"VJoyDescriptorMismatch"_qs
+            || !issue.value(u"repairable"_qs).toBool()) continue;
+        const QString layoutId = issue.value(u"evidence"_qs).toMap().value(u"layoutId"_qs).toString();
+        const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+        const QString attemptKey = u"VJoyDescriptorMismatch:"_qs + layoutId;
+        if (!layout || m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
+        m_setupConvergenceAttemptedIssues.insert(attemptKey);
+        MapperConfiguration outputConfiguration = m_configuration;
+        outputConfiguration.vjoyDeviceId = layout->requirements.deviceId;
+        m_setupConvergenceStage = SetupConvergenceStage::RepairingDrivers;
+        appendSetupRepairProgress(u"vjoy-"_qs + layoutId, u"Virtual output"_qs,
+            QString(u"Repairing %1 vJoy descriptor"_qs).arg(layout->name), u"RUNNING"_qs,
+            u"Applying the displayed scoped descriptor repair, preserving its rollback snapshot and verifying read-back."_qs,
+            true);
+        if (applyControllerReadinessForConfiguration(outputConfiguration)) {
+            return actionResult(true, u"Repairing virtual output"_qs,
+                u"HOTAS BF6 is applying the approved vJoy repair and will re-inspect the complete Device Rig."_qs,
+                u"virtualOutput"_qs, layoutId, u"wait"_qs, {}, {}, true);
+        }
+    }
+    if (m_readiness.plan().canApplyAutomatically) {
+        m_setupConvergenceStage = SetupConvergenceStage::RepairingDrivers;
+        appendSetupRepairProgress(u"driver-repair"_qs, u"Driver setup"_qs, u"Repairing approved driver configuration"_qs,
+            u"RUNNING"_qs, u"Applying only the displayed scoped repairs, followed by authoritative read-back."_qs, true);
+        if (applyControllerReadiness()) return actionResult(true, u"Repairing setup"_qs,
+            u"HOTAS BF6 is applying the approved repair plan and will re-inspect every subsystem afterwards."_qs,
+            u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+    }
+    m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
+    appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
+        u"RUNNING"_qs, u"Final health is based only on fresh read-back evidence."_qs);
+    verifyHotasSetup();
+    return actionResult(true, u"Verifying final setup state"_qs,
+        u"No additional automatic mutation is needed; HOTAS BF6 is recomputing setup health from scratch."_qs,
+        u"application"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+bool AppBackend::copySetupHealthDiagnostics()
+{
+    const QString report = m_setupRepairSessionReport.isEmpty()
+        ? setupTruthSnapshot().value(u"diagnostics"_qs).toString() : m_setupRepairSessionReport;
+    if (report.isEmpty()) return false;
+    QGuiApplication::clipboard()->setText(report);
+    appendEvent(u"Setup Truth diagnostics copied to the clipboard"_qs);
+    return true;
+}
+
+void AppBackend::completeSetupConvergence(const QString &finalState)
+{
+    captureSetupTruthSnapshot(true);
+    const QString state = finalState.isEmpty() ? m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() : finalState;
+    appendSetupRepairProgress(u"complete"_qs, u"Setup"_qs, u"Setup convergence complete"_qs,
+        state == u"READY"_qs ? u"SUCCEEDED"_qs : u"FAILED"_qs,
+        state == u"READY"_qs ? u"Fresh read-back verified the final setup state."_qs
+                               : u"Fresh read-back found remaining setup work; review the exact issue below."_qs);
+    QString operations;
+    for (const QVariant &value : m_setupRepairProgress) {
+        const QVariantMap operation = value.toMap();
+        operations += QString(u"[%1] %2 — %3\n%4\n\n"_qs)
+            .arg(operation.value(u"timestamp"_qs).toString(), operation.value(u"status"_qs).toString(),
+                 operation.value(u"title"_qs).toString(), operation.value(u"detail"_qs).toString());
+    }
+    m_setupRepairSessionReport = QString(u"HOTAS BF6 SETUP REPAIR SESSION\nSession ID: %1\nStarted: %2\nFinished: %3\n\nBEFORE\n%4\n\nOPERATIONS\n%5\n\nAFTER\n%6\n\nFINAL\n%7"_qs)
+        .arg(m_setupConvergenceSessionId, m_setupConvergenceStarted.toString(Qt::ISODate),
+             QDateTime::currentDateTime().toString(Qt::ISODate),
+             m_setupTruthBeforeSnapshot.value(u"diagnostics"_qs).toString(),
+             operations, m_setupTruthAfterSnapshot.value(u"diagnostics"_qs).toString(), state);
+    m_setupConvergenceStage = SetupConvergenceStage::Idle;
+    emit stateChanged();
+}
+
+void AppBackend::continueSetupConvergence()
+{
+    if (m_verificationInProgress) return;
+    if (m_setupConvergenceStage == SetupConvergenceStage::Checking) {
+        refreshSelectedRigOutputReadiness();
+        captureSetupTruthSnapshot();
+        appendSetupRepairProgress(u"inspect"_qs, u"Setup"_qs, u"Inspecting complete setup"_qs, u"SUCCEEDED"_qs,
+            u"Read-only inspection completed; review the frozen results and repair plan."_qs);
+        m_setupConvergenceStage = SetupConvergenceStage::Idle;
+        emit stateChanged();
+        return;
+    }
+    if (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity) {
+        captureSetupTruthSnapshot();
+        const QVariantList currentIssues = m_setupTruthSnapshot.value(u"issues"_qs).toList();
+        const bool stillUnverified = std::any_of(currentIssues.cbegin(), currentIssues.cend(), [this](const QVariant &value) {
+            const QVariantMap issue = value.toMap();
+            return issue.value(u"code"_qs).toString() == u"PhysicalDeviceUnverified"_qs
+                && issue.value(u"repairable"_qs).toBool()
+                && m_setupConvergenceAttemptedIssues.contains(u"PhysicalDeviceUnverified:"_qs
+                    + issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString());
+        });
+        if (m_setupConvergenceIdentityVerificationFailed || stillUnverified) {
+            appendSetupRepairProgress(u"verify-failed"_qs, u"Controller verification"_qs,
+                u"Exact controller verification did not complete"_qs, u"FAILED"_qs,
+                u"No driver repair was attempted. Reconnect the exact controller, close competing controller software, then run Check & Repair Setup again."_qs);
+            m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
+            verifyHotasSetup();
+            return;
+        }
+        appendSetupRepairProgress(u"verify-complete"_qs, u"Controller verification"_qs,
+            u"Verifying exact saved controller identity"_qs, u"SUCCEEDED"_qs,
+            u"Saved identity verification finished; re-inspecting the remaining setup state."_qs);
+        // Continue through the same repair authority so a verified controller
+        // can immediately advance to any still-required vJoy/HidHide repair.
+        m_setupConvergenceStage = SetupConvergenceStage::Idle;
+        repairSetupHealth();
+        return;
+    }
+    if (m_setupConvergenceStage == SetupConvergenceStage::RepairingDrivers) {
+        if (m_readiness.reconnectVerificationPending()) {
+            m_setupConvergenceStage = SetupConvergenceStage::WaitingForReconnect;
+            appendSetupRepairProgress(u"reconnect"_qs, u"Device isolation"_qs, u"Reconnect controller"_qs,
+                u"WAITING FOR USER"_qs, u"Unplug and reconnect the exact selected controller, then move a control."_qs,
+                false, true);
+            emit stateChanged();
+            return;
+        }
+        appendSetupRepairProgress(u"driver-repair"_qs, u"Driver setup"_qs, u"Repairing approved driver configuration"_qs,
+            m_readiness.plan().state == ControllerReadinessState::Ready ? u"SUCCEEDED"_qs : u"FAILED"_qs,
+            m_readiness.plan().status, true);
+        // The central authority may have just repaired one of several rig
+        // outputs. Rebuild the frozen typed view before selecting the next
+        // safely repairable item; no QML state decides this sequencing.
+        refreshSelectedRigOutputReadiness();
+        captureSetupTruthSnapshot();
+        m_setupConvergenceStage = SetupConvergenceStage::Idle;
+        repairSetupHealth();
+        return;
+    }
+    if (m_setupConvergenceStage == SetupConvergenceStage::FinalChecking) {
+        refreshSelectedRigOutputReadiness();
+        completeSetupConvergence();
+    }
 }
 
 QVariantList AppBackend::appIssues() const
@@ -12026,6 +12595,10 @@ void AppBackend::reconcileControllerReconnect(const PhysicalControllerCapabiliti
                 rememberCurrentController();
             }
             emit stateChanged();
+            if (m_setupConvergenceStage == SetupConvergenceStage::WaitingForReconnect) {
+                m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
+                QTimer::singleShot(0, this, &AppBackend::verifyHotasSetup);
+            }
         }, Qt::QueuedConnection);
     });
     m_verificationThread = thread;
@@ -12162,6 +12735,11 @@ void AppBackend::startVerification(VerificationMode mode)
                 }
             }
             emit stateChanged();
+            if (m_setupConvergenceStage == SetupConvergenceStage::Checking
+                || m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity
+                || m_setupConvergenceStage == SetupConvergenceStage::FinalChecking) {
+                QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+            }
         }, Qt::QueuedConnection);
     });
     m_verificationThread = thread;
@@ -12196,11 +12774,15 @@ bool AppBackend::calibrationNeedsSetup(const PhysicalControllerCapabilities &phy
 
 bool AppBackend::applyControllerReadiness()
 {
+    return applyControllerReadinessForConfiguration(m_configuration);
+}
+
+bool AppBackend::applyControllerReadinessForConfiguration(const MapperConfiguration &configuration)
+{
     if (m_verificationInProgress) return false;
     // The worker owns vJoy while mapping normally. Release it before the
     // privileged control-plane transaction, then restore the prior user choice.
     const bool mappingWasRequested = m_worker.mappingRequested();
-    const MapperConfiguration configuration = m_configuration;
     const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
     ControllerReadinessPlan waiting = m_readiness.plan();
     waiting.state = ControllerReadinessState::AwaitingPermission;
@@ -12354,6 +12936,9 @@ bool AppBackend::applyControllerReadiness()
                 }
             }
             emit stateChanged();
+            if (m_setupConvergenceStage == SetupConvergenceStage::RepairingDrivers) {
+                QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+            }
         }, Qt::QueuedConnection);
     });
     m_verificationThread = thread;
@@ -12717,6 +13302,10 @@ void AppBackend::startExplicitNewControllerVerification(const QString &directInp
                 }
                 appendEvent(QString(u"Could not acquire %1 for setup; no fresh DirectInput report arrived"_qs)
                     .arg(displayName));
+                if (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity) {
+                    m_setupConvergenceIdentityVerificationFailed = true;
+                    QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+                }
             }
             emit stateChanged();
         }, Qt::QueuedConnection);

@@ -1341,7 +1341,7 @@ Page {
             active: root.currentPage === 8
             sourceComponent: Component {
                 OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: true
-                    onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+                    onSetupRequested: controllerSetupDialog.open() }
             }
         }
         Loader {
@@ -1362,16 +1362,8 @@ Page {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
                     onVerificationRequested: function(rigId, deviceId, outputId) {
+                        if (rigId !== "") backend.setEditingDeviceContext(rigId, deviceId !== "" ? [deviceId] : [])
                         controllerSetupDialog.open()
-                        if (outputId && outputId !== "") {
-                            backend.startSetupAssistantCheckForScope("virtualOutput", outputId)
-                        } else if (deviceId !== "") {
-                            if (rigId !== "") backend.setEditingDeviceContext(rigId, [deviceId])
-                            backend.startSetupAssistantCheckForScope("device", deviceId)
-                        } else if (rigId !== "") {
-                            backend.setEditingDeviceContext(rigId, [])
-                            backend.startSetupAssistantCheckForScope("deviceRig", rigId)
-                        } else backend.startSetupAssistantCheckForScope("application")
                     }
                     onCalibrationRequested: function(deviceId) {
                         if (backend.beginCalibrationForDevice(deviceId)) {
@@ -2176,6 +2168,7 @@ Page {
     }
     Dialog {
         id: controllerSetupDialog
+        onOpened: backend.checkSetupHealth()
         objectName: "controllerSetupDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent
@@ -2189,7 +2182,7 @@ Page {
             id: setupAssistantHeader
             theme: root.adaptiveThemeTokens
             legacy: true
-            heading: "HOTAS BF6 SETUP ASSISTANT"
+            heading: "SETUP HEALTH & REPAIR"
             detail: backend.activeDeviceRigName
             dialog: controllerSetupDialog
         }
@@ -2201,7 +2194,8 @@ Page {
             contentWidth: width
             contentHeight: setupAssistantPanel.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
-            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; activityMonitoring: controllerSetupDialog.visible
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; showTitle: false; activityMonitoring: controllerSetupDialog.visible
                 onCloseRequested: controllerSetupDialog.close()
                 onCalibrationRequested: {
                     root.setupAssistantReturnAfterCalibration = true

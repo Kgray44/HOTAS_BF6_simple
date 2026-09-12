@@ -2,291 +2,169 @@ import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 
-// A control-plane assistant: it turns readiness state into one understandable
-// next action. The mapper still owns every DirectInput and vJoy operation.
+// The single Devices setup surface. It renders the typed Setup Truth snapshot
+// and never infers driver state or repair eligibility from display text.
 Item {
     id: root
-    objectName: "setupAssistant"
+    objectName: "setupHealthAndRepair"
     property var backendObject
     property var themeTokens: null
     property bool legacy: false
     property bool activityMonitoring: false
-    property bool detailsExpanded: false
-    property bool technicalDetailsExpanded: false
-    property int liveTick: 0
-    property string focusedStepId: ""
-    property var actionResult: ({})
-    readonly property var summary: backendObject ? backendObject.setupAssistantSummary : ({})
-    readonly property var issues: backendObject ? backendObject.setupAssistantIssues : []
-    readonly property var steps: backendObject ? backendObject.setupAssistantSteps : []
-    readonly property var primaryIssue: summary.primaryIssue || (issues.length > 0 ? issues[0] : ({}))
-    readonly property var liveTest: {
-        liveTick
-        return backendObject ? backendObject.setupAssistantLiveTest : ({ active: false, complete: false, steps: [] })
-    }
-    readonly property color panelColor: themeTokens ? themeTokens.panel : "#1a1d23"
-    readonly property color insetColor: themeTokens ? themeTokens.panelInset : "#10171b"
-    readonly property color borderColor: themeTokens ? themeTokens.border : "#435660"
-    readonly property color textColor: themeTokens ? themeTokens.text : "#e8eeee"
-    readonly property color mutedColor: themeTokens ? themeTokens.textMuted : "#9dafb4"
-    readonly property color readyColor: themeTokens ? themeTokens.ready : "#8fd5c9"
-    readonly property color warningColor: themeTokens ? themeTokens.warning : "#d4ad69"
-    readonly property color dangerColor: themeTokens ? themeTokens.danger : "#ca9090"
-    readonly property int radius: themeTokens ? themeTokens.panelRadius : 4
+    // Hosts with an established native confirmation surface (Flight Deck)
+    // retain their own chrome; Standard and Legacy use the fully themed
+    // shared confirmation below.
+    property bool useHostRepairConfirmation: false
+    property bool showTitle: true
     signal closeRequested()
     signal calibrationRequested()
+    signal repairRequested()
+    readonly property var snapshot: backendObject ? backendObject.setupTruthSnapshot : ({})
+    readonly property var progress: backendObject ? backendObject.setupRepairProgress : []
+    function token(name, fallback) { return themeTokens && themeTokens[name] !== undefined ? themeTokens[name] : fallback }
+    readonly property color panelColor: token("panel", token("elevatedSurface", "#1a1d23"))
+    readonly property color insetColor: token("panelInset", token("secondarySurface", "#10171b"))
+    readonly property color borderColor: token("border", "#435660")
+    readonly property color textColor: token("text", token("textPrimary", "#e8eeee"))
+    readonly property color mutedColor: token("textMuted", token("textSecondary", "#9dafb4"))
+    readonly property color readyColor: token("ready", token("healthy", "#8fd5c9"))
+    readonly property color checkingColor: token("informational", token("cyan", "#72baf0"))
+    readonly property color warningColor: token("warning", token("attention", "#d4ad69"))
+    readonly property color dangerColor: token("danger", token("fault", "#ca9090"))
+    readonly property int radius: token("panelRadius", token("radiusCard", 4))
 
-    implicitWidth: 680
-    implicitHeight: assistantColumn.implicitHeight
-
-    function stateColor(state) {
-        if (state === "READY" || state === "ready") return readyColor
-        if (state === "ERROR" || state === "error" || state === "offline") return dangerColor
-        if (state === "optional" || state === "listening" || state === "skipped") return mutedColor
+    function stateColor(status) {
+        if (status === "READY" || status === "SUCCEEDED") return readyColor
+        if (status === "CHECKING") return checkingColor
+        if (status === "UNKNOWN / INSPECTION FAILED") return mutedColor
+        if (status === "FAILED" || status === "UNAVAILABLE") return dangerColor
         return warningColor
     }
-    function activeGuidedStep() {
-        for (let i = 0; i < steps.length; ++i) if (steps[i].id === focusedStepId) return i
-        for (let i = 0; i < steps.length; ++i) if (steps[i].state === "current") return i
-        return 0
+    function hasRepair() { return (snapshot.repairPlan || []).length > 0 }
+    function currentStep() {
+        for (let i = progress.length - 1; i >= 0; --i)
+            if (progress[i].status === "RUNNING" || progress[i].status === "WAITING FOR USER") return progress[i]
+        return progress.length > 0 ? progress[progress.length - 1] : ({})
     }
-    function focusGuidedStep(index) {
-        if (index < 0 || index >= steps.length) return
-        focusedStepId = steps[index].id
-        detailsExpanded = true
-    }
-    function showActionResult(result) {
-        actionResultDismissTimer.stop()
-        actionResult = result || ({ success: false, title: "Action did not complete", message: "Try checking setup again." })
-        if (!actionResult.inProgress && !actionResult.persistent)
-            actionResultDismissTimer.restart()
-    }
-    function clearCompletedProgress() {
-        if (actionResult && actionResult.inProgress
-                && (!backendObject || !backendObject.controllerSetupInProgress))
-            actionResult = ({})
-    }
-    function performPrimaryAction() {
-        if (!backendObject) return
-        const action = summary.primaryAction || "check-again"
-        if (action === "done") { closeRequested(); return }
-        if (action === "hide-from-games") { fixConfirmation.open(); return }
-        if (action === "set-up-device") {
-            showActionResult(backendObject.completeSetupAssistantDevice(primaryIssue.affectedObjectId || summary.scopeId || ""))
-            return
-        }
-        if (action === "start-live-test") { showActionResult(backendObject.startSetupAssistantLiveTest()); detailsExpanded = true; return }
-        if (action === "start-calibration") { calibrationRequested(); return }
-        if (action === "setup-vjoy" || action === "reconfigure-output") {
-            const opened = backendObject.openVjoyConfiguration()
-            showActionResult({ success: opened, title: opened ? "vJoy configuration opened" : "vJoy configuration could not open",
-                message: opened ? "Configure the requested virtual controller, then return here and choose Check Again." : "Install or repair the vJoy configuration tool, then try again." })
-            return
-        }
-        if (action === "setup-hidhide") {
-            const opened = backendObject.openHidHideConfiguration()
-            showActionResult({ success: opened, title: opened ? "Game visibility setup opened" : "Game visibility setup could not open",
-                message: opened ? "Complete the game visibility setup, then return here and choose Check Again." : "Install or repair HidHide, then try again." })
-            return
-        }
-        if (action === "review-routing") {
-            detailsExpanded = true
-            showActionResult({ success: true, title: "Review routing", message: "The routing details below identify the controls that need attention." })
-            return
-        }
-        showActionResult(backendObject.startSetupAssistantCheck())
-    }
-    function performStepAction(step) {
-        if (!backendObject || !step) return
-        const action = step.action || ""
-        if (action === "hide-from-games") { fixConfirmation.open(); return }
-        if (action === "start-calibration") { calibrationRequested(); return }
-        if (action === "skip-calibration") {
-            showActionResult(backendObject.skipCalibrationForSetup(root.summary.scopeId || ""))
-            return
-        }
-        if (action === "start-live-test") {
-            showActionResult(backendObject.startSetupAssistantLiveTest())
-            return
-        }
-        if (action !== "") root.performPrimaryAction()
-    }
-    onStepsChanged: {
-        for (let i = 0; i < steps.length; ++i) {
-            if (steps[i].state === "current") {
-                focusedStepId = steps[i].id
-                return
-            }
-        }
-        if (steps.length > 0 && focusedStepId === "") focusedStepId = steps[0].id
-    }
-    onSummaryChanged: clearCompletedProgress()
-
-    Connections {
-        target: root.backendObject
-        function onStateChanged() { root.clearCompletedProgress() }
+    function checkedAge() {
+        if (!snapshot.timestamp) return "Not checked yet"
+        const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(snapshot.timestamp)) / 1000))
+        if (seconds < 5) return "Checked just now"
+        if (seconds < 60) return "Checked " + seconds + " seconds ago"
+        return "Checked " + Math.floor(seconds / 60) + " minute" + (Math.floor(seconds / 60) === 1 ? "" : "s") + " ago"
     }
 
-    Timer {
-        id: actionResultDismissTimer
-        interval: 5000
-        repeat: false
-        onTriggered: root.actionResult = ({})
-    }
-
-    Timer {
-        interval: 180; repeat: true
-        // Activity is passive evidence, not a gated test session. This only
-        // refreshes the visible control-plane projection of existing atomics.
-        running: root.backendObject && root.activityMonitoring
-        onTriggered: root.liveTick++
-    }
-
+    implicitWidth: 720
+    implicitHeight: content.implicitHeight
     ColumnLayout {
-        id: assistantColumn
+        id: content
         width: parent.width
         spacing: 12
-
         Rectangle {
-            objectName: "setupAssistantSummary"
             Layout.fillWidth: true
-            Layout.preferredHeight: summaryColumn.implicitHeight + 30
-            color: root.insetColor; border.color: root.stateColor(root.summary.state); radius: root.radius
+            Layout.preferredHeight: titleColumn.implicitHeight + 30
+            color: root.insetColor; border.color: root.stateColor(root.snapshot.overallStatus || "CHECKING"); radius: root.radius
             ColumnLayout {
-                id: summaryColumn
-                anchors.fill: parent; anchors.margins: 15; spacing: 5
-                RowLayout {
-                    Layout.fillWidth: true
-                    Rectangle { width: 10; height: 10; radius: root.radius > 2 ? 5 : 1; color: root.stateColor(root.summary.state) }
-                    Text { Layout.fillWidth: true; text: root.summary.state || "CHECKING"; color: root.stateColor(root.summary.state); font.pixelSize: 10; font.bold: true }
-                    Text { text: root.summary.scope || "HOTAS BF6"; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight }
-                }
-                Text { Layout.fillWidth: true; text: root.summary.title || "Checking your setup"; color: root.textColor; font.pixelSize: 20; font.bold: true; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: root.summary.message || "HOTAS BF6 is preparing the Setup Assistant."; color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                id: titleColumn; anchors.fill: parent; anchors.margins: 15; spacing: 5
+                Text { visible: root.showTitle; text: "SETUP HEALTH & REPAIR"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                Text { text: root.snapshot.overallStatus || "CHECKING"; color: root.stateColor(root.snapshot.overallStatus || "CHECKING"); font.pixelSize: 20; font.bold: true }
+                Text { Layout.fillWidth: true; text: root.snapshot.rigName ? ("Complete setup truth for " + root.snapshot.rigName) : "Check physical input, saved verification, virtual output, isolation, and mapping."; color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                Text { visible: !!root.snapshot.timestamp; text: root.checkedAge() + "  ·  " + root.snapshot.timestamp; color: root.mutedColor; font.pixelSize: 9 }
             }
         }
-
-        ThemedActionFeedback {
-            objectName: "setupAssistantActionResult"
-            Layout.fillWidth: true
-            result: root.actionResult
+        Rectangle {
+            visible: root.currentStep().title !== undefined
+            Layout.fillWidth: true; Layout.preferredHeight: visible ? progressColumn.implicitHeight + 20 : 0
+            color: root.panelColor; border.color: root.stateColor(root.currentStep().status || "RUNNING"); radius: root.radius
+            ColumnLayout {
+                id: progressColumn; anchors.fill: parent; anchors.margins: 10; spacing: 3
+                Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                Text { text: root.currentStep().title || "Checking setup"; color: root.textColor; font.pixelSize: 12; font.bold: true }
+                Text { Layout.fillWidth: true; text: root.currentStep().detail || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                Text { visible: !!root.currentStep().requiresReconnect; text: "RECONNECT CONTROLLER"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
+                Text { visible: !!root.currentStep().requiresReconnect; text: root.backendObject && root.backendObject.controllerDisconnectObserved ? "Disconnect observed. Reconnect the exact controller and move a control." : "Disconnect the exact controller, reconnect it, then move a control."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            }
+        }
+        Repeater {
+            model: root.snapshot.groups || []
+            delegate: Rectangle {
+                required property var modelData
+                Layout.fillWidth: true; Layout.preferredHeight: groupRow.implicitHeight + 18
+                color: root.panelColor; border.color: root.borderColor; radius: root.radius
+                RowLayout {
+                    id: groupRow; anchors.fill: parent; anchors.margins: 9; spacing: 9
+                    Rectangle { width: 8; height: 8; radius: 4; color: root.stateColor(modelData.status) }
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 2
+                        Text { text: modelData.title; color: root.textColor; font.pixelSize: 11; font.bold: true }
+                        Text { Layout.fillWidth: true; text: modelData.detail; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    }
+                    Text { text: modelData.status; color: root.stateColor(modelData.status); font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignRight; wrapMode: Text.WordWrap; Layout.preferredWidth: 150 }
+                }
+            }
+        }
+        Rectangle {
+            visible: (root.snapshot.issues || []).length > 0
+            Layout.fillWidth: true; Layout.preferredHeight: visible ? issueColumn.implicitHeight + 20 : 0
+            color: root.insetColor; border.color: root.warningColor; radius: root.radius
+            ColumnLayout {
+                id: issueColumn; anchors.fill: parent; anchors.margins: 10; spacing: 6
+                Text { text: "REPAIR PLAN"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
+                Repeater { model: root.snapshot.issues || []
+                    delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + modelData.title + " — " + modelData.explanation; color: root.textColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                }
+            }
+        }
+        Flow {
+            Layout.fillWidth: true; spacing: 8
+            ThemedButton { theme: root.themeTokens; text: "↻"; compact: true; tone: "secondary"; commandEnabled: root.backendObject && !root.backendObject.setupRepairSessionActive; onTriggered: root.backendObject.checkSetupHealth() }
+            ThemedButton { theme: root.themeTokens; text: root.hasRepair() ? "REPAIR " + root.snapshot.repairPlan.length + " ISSUE" + (root.snapshot.repairPlan.length === 1 ? "" : "S") : "CHECK & REPAIR SETUP"; emphasis: root.hasRepair() ? "warning" : "ready"; commandEnabled: root.backendObject && !root.backendObject.setupRepairSessionActive; onTriggered: { if (!root.hasRepair()) root.backendObject.checkSetupHealth(); else if (root.useHostRepairConfirmation) root.repairRequested(); else repairConfirmation.open() } }
+            ThemedButton { theme: root.themeTokens; text: "COPY FULL DIAGNOSTICS"; tone: "secondary"; commandEnabled: root.backendObject; onTriggered: root.backendObject.copySetupHealthDiagnostics() }
+            ThemedButton { theme: root.themeTokens; text: "DONE"; tone: "secondary"; onTriggered: root.closeRequested() }
+        }
+    }
+    Dialog {
+        id: repairConfirmation
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        focus: true
+        title: ""
+        standardButtons: Dialog.NoButton
+        padding: 16
+        width: Math.min(560, Math.max(320, (parent ? parent.width : 560) - 36))
+        height: Math.min(implicitHeight, Math.max(260, (parent ? parent.height : 650) - 36))
+        header: ThemedDialogHeader {
+            id: repairConfirmationHeader
             theme: root.themeTokens
             legacy: root.legacy
+            heading: "Repair setup"
+            dialog: repairConfirmation
         }
-
-        ColumnLayout {
-            Layout.fillWidth: true; spacing: 7; visible: root.summary.state === "READY"
-            Repeater { model: root.summary.readyItems || []
-                delegate: Text { required property var modelData; Layout.fillWidth: true; text: "✓ " + modelData; color: root.textColor; font.pixelSize: 11 }
-            }
-            ColumnLayout { Layout.fillWidth: true; spacing: 3; visible: (root.liveTest.steps || []).length > 0
-                Text { text: "ACTIVITY"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                Repeater { model: root.liveTest.steps || []
-                    delegate: RowLayout { required property var modelData; Layout.fillWidth: true; spacing: 7
-                        Rectangle { width: 7; height: 7; radius: 4; color: modelData.state === "ready" ? root.readyColor : modelData.state === "offline" ? root.dangerColor : root.mutedColor }
-                        Text { Layout.fillWidth: true; text: modelData.title + " · " + modelData.message; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight }
-                        Text { text: modelData.state === "ready" ? "INPUT DETECTED" : modelData.state === "offline" ? "OFFLINE" : "LISTENING"; color: modelData.state === "ready" ? root.readyColor : modelData.state === "offline" ? root.dangerColor : root.mutedColor; font.pixelSize: 9; font.bold: true }
-                    }
-                }
-            }
-            Text { Layout.fillWidth: true; visible: !!root.summary.secondaryMessage; text: root.summary.secondaryMessage || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true; spacing: 8
-            ThemedButton { theme: root.themeTokens; text: root.summary.primaryActionLabel || "CHECK SETUP"; emphasis: "ready"
-                commandEnabled: root.backendObject && !root.backendObject.controllerSetupInProgress; onTriggered: root.performPrimaryAction() }
-            ThemedButton { theme: root.themeTokens; text: root.detailsExpanded ? "HIDE ALL SETUP STEPS" : "VIEW ALL SETUP STEPS"; tone: "secondary"; onTriggered: root.detailsExpanded = !root.detailsExpanded }
-            ThemedButton { visible: root.detailsExpanded; theme: root.themeTokens; text: "BACK"; compact: true; tone: "secondary"; commandEnabled: root.activeGuidedStep() > 0; onTriggered: root.focusGuidedStep(root.activeGuidedStep() - 1) }
-            ThemedButton { visible: root.detailsExpanded; theme: root.themeTokens; text: "NEXT"; compact: true; tone: "secondary"; commandEnabled: root.activeGuidedStep() + 1 < root.steps.length; onTriggered: root.focusGuidedStep(root.activeGuidedStep() + 1) }
-            Item { Layout.fillWidth: true }
-            ThemedButton { theme: root.themeTokens; text: root.summary.state === "READY" ? "DONE" : "CLOSE"; tone: "secondary"; onTriggered: root.closeRequested() }
-        }
-
-        ColumnLayout {
-            objectName: "setupAssistantGuidedSteps"
-            visible: root.detailsExpanded
-            Layout.fillWidth: true; spacing: 12
-            Rectangle { Layout.fillWidth: true; visible: root.activeGuidedStep() < root.steps.length && root.steps[root.activeGuidedStep()].blocked; Layout.preferredHeight: visible ? focusedStepMessage.implicitHeight + 18 : 0; color: root.insetColor; border.color: root.warningColor; radius: root.radius
-                Text { id: focusedStepMessage; anchors.fill: parent; anchors.margins: 9; text: root.steps[root.activeGuidedStep()].message; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            }
-            Repeater {
-                model: root.steps
-                delegate: Rectangle {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: setupStepContents.implicitHeight + 22
-                    color: root.panelColor
-                    border.color: modelData.state === "current" ? root.warningColor : root.borderColor
-                    radius: root.radius
-                    ColumnLayout {
-                        id: setupStepContents
-                        anchors.fill: parent; anchors.margins: 11; spacing: 6
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { text: "STEP " + modelData.order + "  ·  " + modelData.title + (modelData.optional ? "  ·  OPTIONAL" : ""); color: root.mutedColor; font.pixelSize: 10; font.bold: true }
-                            Item { Layout.fillWidth: true }
-                            ThemedButton { theme: root.themeTokens; compact: true; tone: "secondary"; text: (modelData.state || "waiting").toUpperCase(); onTriggered: root.focusGuidedStep(index) }
-                        }
-                        Text { Layout.fillWidth: true; text: modelData.message; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                        Text { Layout.fillWidth: true; visible: (modelData.id === "physical" || modelData.id === "device") && (root.summary.state === "OFFLINE" || (root.backendObject && root.backendObject.controllerDisconnectObserved)); text: "RECONNECT CONTROLLER\nReconnect the required physical controller, then choose Check Setup."; color: root.warningColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap }
-                        RowLayout { Layout.fillWidth: true; visible: modelData.action !== "" && (modelData.state === "current" || modelData.id === "calibration")
-                            ThemedButton { theme: root.themeTokens; text: modelData.actionLabel || "CONTINUE"; emphasis: "ready"; commandEnabled: root.backendObject && (modelData.action !== "hide-from-games" || modelData.issue.automaticallyFixable); onTriggered: root.performStepAction(modelData) }
-                            ThemedButton { theme: root.themeTokens; visible: modelData.id === "calibration" && modelData.optional; text: "USE DEFAULT RANGE"; tone: "secondary"; commandEnabled: root.backendObject; onTriggered: root.showActionResult(root.backendObject.skipCalibrationForSetup(root.summary.scopeId || "")) }
-                            Item { Layout.fillWidth: true }
-                        }
-                    }
-                }
-            }
-        }
-
-        ThemedButton { theme: root.themeTokens; Layout.alignment: Qt.AlignLeft; text: root.technicalDetailsExpanded ? "HIDE TECHNICAL DETAILS" : "VIEW TECHNICAL DETAILS"; tone: "secondary"; onTriggered: root.technicalDetailsExpanded = !root.technicalDetailsExpanded }
-        Rectangle { visible: root.technicalDetailsExpanded; Layout.fillWidth: true; Layout.preferredHeight: visible ? technicalColumn.implicitHeight + 22 : 0; color: root.insetColor; border.color: root.borderColor; radius: root.radius
-            ColumnLayout { id: technicalColumn; anchors.fill: parent; anchors.margins: 11; spacing: 5
-                Text { text: "TECHNICAL DETAILS"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
-                Text { Layout.fillWidth: true; text: "ISSUE  ·  " + (root.primaryIssue.code || "None"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: "TARGET  ·  " + (root.summary.scope || "HOTAS BF6"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "CURRENT STATE  ·  " + (root.backendObject ? root.backendObject.controllerReadinessStatus : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "LAST CHECK  ·  " + (root.backendObject ? root.backendObject.controllerReadinessLastChecked : "Not recorded"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Text { visible: root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig"; Layout.fillWidth: true; text: "Virtual controller: " + (root.backendObject ? root.backendObject.activeOutputLayoutDescriptor : "Unavailable"); color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                Repeater { model: (root.summary.scopeType === "application" || root.summary.scopeType === "deviceRig") && root.backendObject ? root.backendObject.controllerReadinessChecks : []
-                    delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.name + "  ·  " + modelData.state + "\n" + modelData.message; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                }
-                Repeater { model: root.issues
-                    delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.technicalDetails; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                }
-                ThemedButton { theme: root.themeTokens; text: "COPY DIAGNOSTICS"; tone: "secondary"; Layout.alignment: Qt.AlignLeft
-                    onTriggered: { const copied = root.backendObject && root.backendObject.copyControllerDiagnostics(); root.showActionResult({ success: copied, title: copied ? "Diagnostics copied" : "Diagnostics could not be copied", message: copied ? "The current setup evidence is ready to paste into a support request." : "Check the current setup state, then try copying diagnostics again." }) } }
-            }
-        }
-    }
-
-    Popup {
-        id: fixConfirmation
-        objectName: "setupAssistantFixConfirmation"
-        parent: Overlay.overlay
-        modal: true
-        width: Math.min(560, root.width)
-        anchors.centerIn: parent
-        padding: 0
-        closePolicy: Popup.NoAutoClose
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: root.radius }
-        contentItem: ColumnLayout {
-            width: parent.width; spacing: 12
-            ThemedDialogHeader { Layout.fillWidth: true; theme: root.themeTokens; legacy: root.legacy; heading: "Fix setup?"; detail: "Review the managed change before it runs"; dialog: fixConfirmation }
-            Text { Layout.fillWidth: true; text: "HOTAS BF6 will keep reading your physical controller, apply the recommended game-visibility change, and leave unrelated devices alone."; color: root.textColor; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                ThemedButton { theme: root.themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: fixConfirmation.close() }
-                ThemedButton { theme: root.themeTokens; text: "APPLY FIX"; emphasis: "ready"; onTriggered: {
-                    fixConfirmation.close()
-                    root.showActionResult({ success: true, inProgress: true, title: "Applying game visibility...", message: "Checking and updating only the selected saved controller." })
-                    Qt.callLater(function() { root.showActionResult(root.backendObject.applySetupAssistantIssueAction(root.primaryIssue.id)) })
-                } }
+        contentItem: Flickable {
+            width: parent.width
+            implicitHeight: Math.min(repairConfirmationContent.implicitHeight,
+                                     Math.max(180, (repairConfirmation.parent ? repairConfirmation.parent.height : 650)
+                                              - repairConfirmationHeader.implicitHeight - repairConfirmation.padding * 2 - 36))
+            contentWidth: width
+            contentHeight: repairConfirmationContent.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ColumnLayout {
+                id: repairConfirmationContent
+                width: parent.width
+                spacing: 10
+                Text { Layout.fillWidth: true; text: "HOTAS BF6 will apply only the scoped repair plan shown above, then perform a fresh read-back of the complete selected Device Rig. Windows may ask for administrator approval."; color: root.textColor; wrapMode: Text.WordWrap; font.pixelSize: 11 }
+                Text { Layout.fillWidth: true; text: root.snapshot.repairPlan.length + " safe repair" + (root.snapshot.repairPlan.length === 1 ? " is" : "s are") + " ready. Existing unrelated HidHide rules and the current mapping choice are preserved."; color: root.mutedColor; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    ThemedButton { theme: root.themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: repairConfirmation.close() }
+                    ThemedButton { theme: root.themeTokens; text: "REPAIR " + root.snapshot.repairPlan.length + " ISSUE" + (root.snapshot.repairPlan.length === 1 ? "" : "S"); emphasis: "warning"; onTriggered: { repairConfirmation.close(); root.backendObject.repairSetupHealth() } }
+                }
             }
         }
     }
-
-    // Retain the shared dialog contract used by release checks without
-    // exposing a second visible workflow.
-    Dialog { id: preservedDialogContract; visible: false; standardButtons: Dialog.NoButton }
 }

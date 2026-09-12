@@ -303,9 +303,19 @@ Flickable {
         }
     }
 
-    Dialog { id: readinessDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(740, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18
+    Dialog { id: readinessDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(740, root.width - 36); height: Math.min(readinessScroll.implicitHeight + 36, root.height - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18; onOpened: backend.checkSetupHealth()
         background: Rectangle { color: root.panelColor; border.color: root.accentColor; radius: theme.topGun ? 1 : theme.panelRadius }
-        contentItem: ControllerReadinessPanel { width: parent.width; backendObject: backend; themeTokens: theme; legacy: root.legacy; onCloseRequested: readinessDialog.close() }
+        contentItem: Flickable {
+            id: readinessScroll
+            width: parent.width
+            implicitHeight: Math.min(readinessPanel.implicitHeight, Math.max(220, root.height - 72))
+            contentWidth: width
+            contentHeight: readinessPanel.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ControllerReadinessPanel { id: readinessPanel; width: parent.width; backendObject: backend; themeTokens: theme; legacy: root.legacy; onCloseRequested: readinessDialog.close() }
+        }
     }
     Dialog { id: detectedControllerDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(560, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18
         property var targetDirectInputIds: []

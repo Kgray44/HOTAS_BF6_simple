@@ -784,20 +784,26 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
     result.reportValid = !report.trimmed().isEmpty();
     result.installed = result.reportValid;
     result.configurationUtilityAvailable = result.reportValid;
-    result.busy = lower.contains(QStringLiteral("state:")) && lower.contains(QStringLiteral("busy"));
-    result.devicePresent = lower.contains(QStringLiteral("device:"))
+    // vJoy 2.1.9 emits the supported human-readable form "Device 1 FREE"
+    // (without colons), while earlier releases used "Device: 1". Treat both
+    // formats as descriptors; otherwise a healthy native installation is
+    // falsely read as an absent zero-button device.
+    const QRegularExpression deviceLine(QStringLiteral("(?im)\\bdevice\\s*:?[\\t ]*%1\\b")
+        .arg(deviceId));
+    result.busy = deviceLine.match(report).hasMatch() && lower.contains(QStringLiteral("busy"));
+    result.devicePresent = deviceLine.match(report).hasMatch()
         && !lower.contains(QStringLiteral("does not exist")) && !lower.contains(QStringLiteral("not configured"));
     result.driverReady = result.devicePresent && !lower.contains(QStringLiteral("driver is disabled"))
         && !lower.contains(QStringLiteral("not enabled"));
-    const QString buttons = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)buttons\\s*:\\s*(\\d+)")));
+    const QString buttons = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)buttons\\s*:?[\\t ]*(\\d+)")));
     result.buttons = buttons.toInt();
     const QString continuous = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)contin(?:u|o)ous\\s+POVs?\\s*:\\s*(\\d+)")));
+        QStringLiteral("(?im)contin(?:u|o)ous\\s+POVs?\\s*:?[\\t ]*(\\d+)")));
     result.continuousPovs = continuous.toInt();
     const QString discrete = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)desc(?:r|re)ete\\s+POVs?\\s*:\\s*(\\d+)")));
+        QStringLiteral("(?im)desc(?:r|re)ete\\s+POVs?\\s*:?[\\t ]*(\\d+)")));
     result.discretePovs = discrete.toInt();
-    const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:\\s*([^\\r\\n]+)")));
+    const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:?[\\t ]*([^\\r\\n]+)")));
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         const VirtualAxis axis = static_cast<VirtualAxis>(index);
         const QString name = virtualAxisLabel(axis);
@@ -817,12 +823,16 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
         });
     }
     const QString ffb = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)FFB\\s+Effects?\\s*:\\s*([^\\r\\n]+)")));
+        QStringLiteral("(?im)FFB(?:\\s+All)?\\s+Effects?\\s*:?[\\t ]*([^\\r\\n]*)")));
     if (!ffb.isEmpty()) {
         result.forceFeedbackKnown = true;
         if (ffb.compare(QStringLiteral("none"), Qt::CaseInsensitive) != 0) {
             result.forceFeedbackEffects = ffb.split(QRegularExpression(QStringLiteral("[\\s,]+")), Qt::SkipEmptyParts);
         }
+    } else if (lower.contains(QStringLiteral("ffb all effects"))) {
+        // This exact spelling has no delimiter or payload in vJoy 2.1.9.
+        result.forceFeedbackKnown = true;
+        result.forceFeedbackEffects = {QStringLiteral("all")};
     }
     result.diagnostic = report.trimmed();
     return result;
@@ -875,6 +885,7 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
         return result;
     }
     result = parseVJoyReport(report.output, deviceId);
+    result.descriptorReport = report.output;
     result.installed = true;
     result.configurationUtilityAvailable = true;
     if (!report.succeeded() && result.diagnostic.isEmpty()) result.diagnostic = report.error;
@@ -883,31 +894,44 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
     // narrow device-1 snapshot for rollback. Never use vJoyConfig -r.
     const SetupProcessResult command = runVJoy(false,
         {QStringLiteral("-t"), QStringLiteral("-c"), QString::number(deviceId)});
+    result.configurationReport = command.output;
     if (command.succeeded()) {
         const QRegularExpression configurationLine(QStringLiteral("(?im)^\\s*vJoyConfig\\s+(.+)$"));
         const QRegularExpressionMatch match = configurationLine.match(command.output);
         if (match.hasMatch()) result.restoreCommand = match.captured(1).trimmed();
+    } else {
+        result.diagnostic += QStringLiteral("\nvJoyConfig -t -c %1 failed: %2").arg(deviceId).arg(
+            command.error.isEmpty() ? command.output.trimmed() : command.error);
     }
     const SetupProcessResult devices = runVJoy(false, {QStringLiteral("-t")});
+    result.deviceListReport = devices.output;
     if (devices.succeeded()) {
-        const QRegularExpression deviceLine(QStringLiteral("(?im)^\\s*Device\\s*:\\s*(\\d+)"));
+        const QRegularExpression deviceLine(QStringLiteral("(?im)^\\s*Device\\s*:?[\\t ]*(\\d+)"));
         QRegularExpressionMatchIterator iterator = deviceLine.globalMatch(devices.output);
         while (iterator.hasNext()) result.availableDeviceIds.append(iterator.next().captured(1).toInt());
         std::sort(result.availableDeviceIds.begin(), result.availableDeviceIds.end());
         result.availableDeviceIds.erase(
             std::unique(result.availableDeviceIds.begin(), result.availableDeviceIds.end()),
             result.availableDeviceIds.end());
+    } else {
+        result.diagnostic += QStringLiteral("\nvJoyConfig -t failed: %1").arg(
+            devices.error.isEmpty() ? devices.output.trimmed() : devices.error);
     }
     if (!result.devicePresent) {
         // There is no descriptor to preserve. A deletion of this newly created
         // device is the exact rollback snapshot for a previously absent target.
         result.forceFeedbackKnown = true;
+        result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
         return result;
     }
-    if (result.forceFeedbackKnown) return result;
+    if (result.forceFeedbackKnown) {
+        result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
+        return result;
+    }
     // An absent FFB line is only safe when the report explicitly says no FFB.
     result.forceFeedbackKnown = report.output.contains(QStringLiteral("FFB Effects"), Qt::CaseInsensitive)
         && report.output.contains(QStringLiteral("None"), Qt::CaseInsensitive);
+    result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
     return result;
 }
 
@@ -924,27 +948,37 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
         return result;
     }
     const SetupProcessResult cloak = runHidHide(false, {QStringLiteral("--cloak-state")});
+    result.cloakReport = cloak.output;
     if (cloak.succeeded()) {
         result.cloakKnown = true;
         result.cloaked = cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive);
     } else {
         result.diagnostic = cloak.error.isEmpty() ? cloak.output.trimmed() : cloak.error;
+        result.inspectionFailures.append(QStringLiteral("--cloak-state: %1").arg(result.diagnostic));
     }
     result.mapperExecutable = mapperExecutablePath();
     const SetupProcessResult apps = runHidHide(false, {QStringLiteral("--app-list")});
+    result.appListReport = apps.output;
     if (apps.succeeded()) {
         result.allowlistedApplications = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
         result.mapperAllowlisted = std::any_of(result.allowlistedApplications.cbegin(),
             result.allowlistedApplications.cend(), [&result](const QString &entry) {
                 return samePath(entry, result.mapperExecutable);
             });
+    } else {
+        result.inspectionFailures.append(QStringLiteral("--app-list: %1").arg(
+            apps.error.isEmpty() ? apps.output.trimmed() : apps.error));
     }
     QStringList gamingDevices;
     const SetupProcessResult devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+    result.gamingDevicesReport = devices.output;
     if (devices.succeeded()) gamingDevices = parseHidHideGamingDevices(devices.output);
+    else result.inspectionFailures.append(QStringLiteral("--dev-gaming: %1").arg(
+        devices.error.isEmpty() ? devices.output.trimmed() : devices.error));
     result.selectedControllerInstanceIds = selectedPhysicalHidInstances(physical, gamingDevices);
     result.selectedControllerResolved = !result.selectedControllerInstanceIds.isEmpty();
     const SetupProcessResult hidden = runHidHide(false, {QStringLiteral("--dev-list")});
+    result.deviceListReport = hidden.output;
     if (hidden.succeeded()) {
         result.hiddenDeviceInstanceIds = parseHidHideCommands(hidden.output, QStringLiteral("dev-hide"));
         result.selectedControllerHidden = !result.selectedControllerInstanceIds.isEmpty()
@@ -958,7 +992,12 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
         if (!result.selectedControllerHidden && result.selectedControllerResolved) {
             result.diagnostic = QStringLiteral("One or more current HID collections for the selected controller are not cloaked.");
         }
+    } else {
+        result.inspectionFailures.append(QStringLiteral("--dev-list: %1").arg(
+            hidden.error.isEmpty() ? hidden.output.trimmed() : hidden.error));
     }
+    result.inspectionComplete = cloak.succeeded() && apps.succeeded() && devices.succeeded() && hidden.succeeded();
+    if (!result.inspectionFailures.isEmpty()) result.diagnostic = result.inspectionFailures.join(QStringLiteral("\n"));
     return result;
 }
 

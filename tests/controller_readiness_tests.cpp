@@ -84,6 +84,7 @@ public:
     bool cancelElevation = false;
     bool repairApplied = false;
     bool cloakEnabled = false;
+    bool vjoy219HumanReadableOutput = false;
     int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
@@ -277,7 +278,9 @@ private:
             return {true, true, 0, QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance"), {}};
         }
         if (joined.contains(QStringLiteral("-t -c"))) {
-            return {true, true, 0, QStringLiteral("vJoyConfig 1 -f -a X Y Z Rz -b 4\n"), {}};
+            return {true, true, 0, vjoy219HumanReadableOutput
+                ? QStringLiteral("vJoyConfig 1 -f -a X Y Z Rx Ry Rz -b 15 -e all\n")
+                : QStringLiteral("vJoyConfig 1 -f -a X Y Z Rz -b 4\n"), {}};
         }
         if (joined.contains(QStringLiteral("-t"))) {
             const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), QStringLiteral("1")};
@@ -286,8 +289,12 @@ private:
                 --staleVJoyCapabilityInspections;
                 capabilitiesConverged = false;
             }
-            return {true, true, 0, QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
-                .arg(capabilitiesConverged ? 32 : 4), {}};
+            const QString report = vjoy219HumanReadableOutput
+                ? QStringLiteral("Device 1 FREE\nButtons %1\nContinous POVs 0\nDescrete POVs 0\nAxes X Y Z Rx Ry Rz Sl0 Sl1\nFFB All Effects\n")
+                      .arg(capabilitiesConverged ? 32 : 15)
+                : QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
+                      .arg(capabilitiesConverged ? 32 : 4);
+            return {true, true, 0, report, {}};
         }
         return {true, true, 0, {}, {}};
     }
@@ -338,6 +345,7 @@ private slots:
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
     void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
     void managedPhysicalInputsRequireExactIdentityAndRollBackOnFailure();
+    void vjoy219HumanReadableOutputIsParsedAsHealthyDescriptor();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -347,6 +355,28 @@ void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
     QVERIFY(!plan.vjoyNeedsChanges);
     QVERIFY(!plan.hidhideNeedsChanges);
     QCOMPARE(plan.state, ControllerReadinessState::Ready);
+}
+
+void ControllerReadinessTests::vjoy219HumanReadableOutputIsParsedAsHealthyDescriptor()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    fake->vjoy219HumanReadableOutput = true;
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    service.inspect(configuration, connectedController(), VerificationMode::Full);
+    const VJoyCapabilities &vjoy = service.plan().vjoy;
+    QVERIFY(vjoy.inspectionComplete);
+    QVERIFY(vjoy.devicePresent);
+    QVERIFY(vjoy.driverReady);
+    QCOMPARE(vjoy.buttons, 15);
+    QVERIFY(vjoy.axes[static_cast<size_t>(VirtualAxis::Rz)]);
+    QVERIFY(vjoy.forceFeedbackKnown);
+    QVERIFY(vjoy.forceFeedbackEffects.contains(QStringLiteral("all")));
 }
 
 void ControllerReadinessTests::exactRequiredVJoyCapacityIsReady()

@@ -51,6 +51,10 @@ struct VJoyCapabilities {
     bool ownedByHotasBf6 = false;
     bool outputReportsSucceeding = false;
     bool reportValid = false;
+    // A descriptor is not truth until every supported read used to interpret
+    // it completed. Raw output is retained on the control plane for setup
+    // diagnostics and parser qualification.
+    bool inspectionComplete = false;
     int deviceId = 1;
     QList<int> availableDeviceIds;
     std::array<bool, kVirtualAxisSlotCount> axes{};
@@ -64,6 +68,9 @@ struct VJoyCapabilities {
     QStringList forceFeedbackEffects;
     QString restoreCommand;
     QString diagnostic;
+    QString descriptorReport;
+    QString configurationReport;
+    QString deviceListReport;
 };
 
 struct HidHideCapabilities {
@@ -75,11 +82,17 @@ struct HidHideCapabilities {
     bool mapperAllowlisted = false;
     bool selectedControllerResolved = false;
     bool selectedControllerHidden = false;
+    bool inspectionComplete = false;
     QString mapperExecutable;
     QStringList allowlistedApplications;
     QStringList hiddenDeviceInstanceIds;
     QStringList selectedControllerInstanceIds;
     QString diagnostic;
+    QString cloakReport;
+    QString appListReport;
+    QString gamingDevicesReport;
+    QString deviceListReport;
+    QStringList inspectionFailures;
 };
 
 // A normal profile switch may adjust only HOTAS BF6-managed virtual outputs.

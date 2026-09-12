@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 # HOTAS_VERSION is the single release version authority.  Its non-generic name
 # avoids shadowing the C++20 <version> header on case-insensitive Windows paths.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/HOTAS_VERSION")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/HOTAS_VERSION" HOTAS_BF6_VERSION_RAW)
 string(STRIP "${HOTAS_BF6_VERSION_RAW}" HOTAS_BF6_VERSION)
 if (NOT HOTAS_BF6_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
@@ -73,6 +75,7 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_discovery.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/setup_truth.cpp
     src/controller_diagnostics.h
     src/controller_diagnostics.cpp
     src/app_issue.h

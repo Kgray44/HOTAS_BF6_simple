@@ -12,6 +12,10 @@ Rectangle {
     property string emphasis: "" // ready, warning, danger, or empty
     property bool compact: false
     property bool legacy: !!theme.legacy
+    // Flight Deck owns a denser telemetry/button language. The shared setup
+    // surface uses this primitive, so recognize its complete token family
+    // instead of putting pale Standard text on the Deck's cyan primary fill.
+    readonly property bool flightDeck: theme && theme.radiusShell !== undefined
     // Keep a typed color at the boundary. Legacy passes a compact token map
     // whose values begin as strings, while Theme.qml exposes QColor values.
     // Accessing `.r` directly on the map was therefore unsafe in Legacy.
@@ -26,8 +30,8 @@ Rectangle {
     }
 
     implicitWidth: Math.max(compact ? 34 : (legacy ? 110 : 92), caption.implicitWidth + (compact ? 18 : (legacy ? 30 : 24)))
-    implicitHeight: compact ? 30 : (legacy ? 36 : 34)
-    radius: legacy ? 3 : theme.controlRadius
+    implicitHeight: compact ? 30 : (legacy ? 36 : (flightDeck ? theme.controlHeight : 34))
+    radius: legacy ? 3 : (flightDeck ? theme.radiusControl : theme.controlRadius)
     // Legacy already has a deliberately tuned CommandButton treatment.  Keep
     // these exact values in the shared primitive so Devices can reuse it
     // without bringing a Standard-looking button into the Legacy surface.
@@ -50,10 +54,12 @@ Rectangle {
         text: control.text
         color: !control.commandEnabled ? (control.legacy ? "#879196" : theme.textFaint)
                                         : control.tone === "danger" ? theme.danger
-                                                                     : (control.legacy ? "#f0f4f5" : theme.textStrong)
-        font.pixelSize: control.compact ? 10 : 11
+                                        : control.flightDeck && control.tone === "primary"
+                                            ? (theme.light ? "white" : theme.primarySurface)
+                                            : (control.legacy ? "#f0f4f5" : theme.textStrong)
+        font.pixelSize: control.compact ? 10 : (control.flightDeck ? 9 : 11)
         font.bold: true
-        font.family: theme.topGun ? theme.displayFont : "Segoe UI Variable"
+        font.family: control.flightDeck ? theme.telemetryFont : (theme.topGun ? theme.displayFont : "Segoe UI Variable")
         elide: Text.ElideRight
     }
     MouseArea {

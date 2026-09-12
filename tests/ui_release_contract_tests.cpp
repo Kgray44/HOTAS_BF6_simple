@@ -270,17 +270,15 @@ void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
     const QString themedButton = sourceFile(QStringLiteral("qml/ThemedButton.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
 
-    // The rig verifier is a V2.4 surface in every theme. Its repair and undo
-    // workflow must use the shared themed primitive, not visually skinned
-    // native Qt buttons or a Dialog-generated Cancel action.
+    // The V2.6.2 setup truth surface is shared by every non-Flight-Deck shell
+    // and uses the common button primitive rather than native controls.
     QVERIFY(readinessPanel.contains(QStringLiteral("ThemedButton")));
     QVERIFY(!readinessPanel.contains(QStringLiteral("\n            Button {")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("standardButtons: Dialog.NoButton")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: \"ready\"")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("model: root.steps")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("modelData.state === \"current\"")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: root.hasRepair() ? \"warning\" : \"ready\"")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("CHECK & REPAIR SETUP")));
     QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
-    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true")));
+    QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; showTitle: false")));
 }
 
 void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
@@ -632,6 +630,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString assistant = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
+    const QString flightDeckDevices = sourceFile(QStringLiteral("qml/FlightDeckDevices.qml"));
     const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
@@ -693,16 +692,15 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("applyPhysicalDeviceGameVisibility")));
     QVERIFY(!backend.contains(QStringLiteral("name.startsWith(u\"INPUT")));
     QVERIFY(!backend.contains(QStringLiteral("name.contains(u\"VISIBILITY")));
-    QVERIFY(standard.contains(QStringLiteral("HOTAS BF6 SETUP ASSISTANT")));
+    QVERIFY(standard.contains(QStringLiteral("SETUP HEALTH & REPAIR")));
     QVERIFY(standard.contains(QStringLiteral("standardAppHealthControl")));
     QVERIFY(standard.contains(QStringLiteral("navigateToIssue(target)")));
     QVERIFY(standard.contains(QStringLiteral("backend.focusIssueTarget")));
     QVERIFY(standard.contains(QStringLiteral("devices.focusIssueTarget(target)")));
     for (const QString &ui : {standard, legacy}) {
-        QVERIFY(ui.contains(QStringLiteral("if (deviceId !== \"\")")));
-        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"virtualOutput\", outputId)")));
-        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"device\", deviceId)")));
-        QVERIFY(ui.contains(QStringLiteral("startSetupAssistantCheckForScope(\"deviceRig\", rigId)")));
+        QVERIFY(ui.contains(QStringLiteral("controllerSetupDialog.open()")));
+        QVERIFY(ui.contains(QStringLiteral("backend.setEditingDeviceContext(rigId, deviceId !== \"\" ? [deviceId] : [])")));
+        QVERIFY(ui.contains(QStringLiteral("onOpened: backend.checkSetupHealth()")));
     }
     QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
@@ -717,25 +715,24 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(health.contains(QStringLiteral("y: Math.max(0, Math.round(((parent ? parent.height : height) - height) / 2))")));
     QVERIFY(health.contains(QStringLiteral("border.width: 2")));
     QVERIFY(health.contains(QStringLiteral("implicitWidth: 32")));
-    QVERIFY(assistant.contains(QStringLiteral("setupAssistantLiveTest")));
-    QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupAssistantSteps")));
-    QVERIFY(assistant.contains(QStringLiteral("model: root.steps")));
-    QVERIFY(assistant.contains(QStringLiteral("INPUT DETECTED")));
-    QVERIFY(assistant.contains(QStringLiteral("Activity is passive evidence, not a gated test session")));
-    QVERIFY(assistant.contains(QStringLiteral("root.activityMonitoring")));
-    QVERIFY(assistant.contains(QStringLiteral("USE DEFAULT RANGE")));
-    QVERIFY(assistant.contains(QStringLiteral("root.summary.scopeType === \"deviceRig\"")));
-    QVERIFY(assistant.contains(QStringLiteral("VIEW ALL SETUP STEPS")));
-    QVERIFY(!assistant.contains(QStringLiteral("guidedStepState")));
-    QVERIFY(!assistant.contains(QStringLiteral("guidedStepIndex")));
-    QVERIFY(assistant.contains(QStringLiteral("Applying game visibility...")));
-    QVERIFY(assistant.contains(QStringLiteral("applySetupAssistantIssueAction")));
-    QVERIFY(assistant.contains(QStringLiteral("completeSetupAssistantDevice")));
-    QVERIFY(assistant.contains(QStringLiteral("actionResultDismissTimer")));
-    QVERIFY(assistant.contains(QStringLiteral("COPY DIAGNOSTICS")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setupTruthSnapshot READ setupTruthSnapshot")));
+    QVERIFY(backendHeader.contains(QStringLiteral("checkSetupHealth")));
+    QVERIFY(backendHeader.contains(QStringLiteral("repairSetupHealth")));
+    QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceUnverified")));
+    QVERIFY(backend.contains(QStringLiteral("UNKNOWN / INSPECTION FAILED")));
+    QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
+    QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));
+    QVERIFY(assistant.contains(QStringLiteral("REPAIR PLAN")));
+    QVERIFY(assistant.contains(QStringLiteral("COPY FULL DIAGNOSTICS")));
+    QVERIFY(assistant.contains(QStringLiteral("repairSetupHealth")));
+    QVERIFY(assistant.contains(QStringLiteral("checkingColor")));
+    QVERIFY(assistant.contains(QStringLiteral("useHostRepairConfirmation")));
     QVERIFY(assistant.contains(QStringLiteral("ThemedDialogHeader")));
-    QVERIFY(!assistant.contains(QStringLiteral("setupAssistantRelevantStep")));
-    QVERIFY(assistant.contains(QStringLiteral("VIEW TECHNICAL DETAILS")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("useHostRepairConfirmation: true")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("onRepairRequested: repairConfirmation.open()")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("model: root.setupRepairPlan")));
+    QVERIFY(standard.contains(QStringLiteral("showTitle: false")));
+    QVERIFY(legacy.contains(QStringLiteral("showTitle: false")));
     QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
     QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
     QVERIFY(devices.contains(QStringLiteral("CREATE OUTPUT")));

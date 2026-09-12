@@ -678,5 +678,16 @@
       "Signal Flow builds presentation-side route, port-membership, telemetry, and wire-geometry indexes so canvas and node lookups avoid repeated full-graph scans; geometry remains topology and layout driven.",
       "The candidate adds source and startup contracts for those boundaries. It is not a protected-main merge, release tag, signed package, updater publication, public release, or physical controller-to-vJoy acceptance claim."
     ]
+  },
+  {
+    "version": "2.6.2",
+    "title": "Setup Truth & Repair Convergence (emergency candidate)",
+    "summary": "Replaces fragmented Devices setup projections with one typed, read-only truth snapshot and one explicit repair-convergence entry point.",
+    "highlights": [
+      "Setup Health distinguishes fresh Ready evidence from repairable faults, user-action waits, unavailable dependencies, definitive failures, and unknown or failed inspections; a failed command read is never presented as a confirmed broken subsystem.",
+      "The repair plan includes exact saved-controller verification alongside scoped vJoy and HidHide repair. Controller identity is committed only after the existing exact DirectInput and HID identity proof succeeds.",
+      "vJoy and HidHide inspection retain raw supported utility outputs for diagnostics. Automatic changes preserve the existing scoped rollback and read-back controls, and final state is recomputed from a fresh inspection.",
+      "Devices presents one Check & Repair Setup workflow with visible current step, full diagnostics, repair-plan evidence, and before/after session reporting. The DirectInput-to-vJoy report path remains unchanged."
+    ]
   }
 ]

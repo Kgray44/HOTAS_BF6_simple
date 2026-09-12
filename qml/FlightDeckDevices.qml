@@ -15,8 +15,8 @@ Flickable {
     // touching AppBackend, device discovery, or persisted configuration.
     // Production never assigns this and always consumes backend.controllers.
     property var controllerPresentationOverride: null
-    // A long repair-plan fixture exercises the dialog's internal-scroll
-    // contract without asking AppBackend to alter vJoy or HidHide state.
+    // Test-only presentation data keeps legacy geometry fixtures isolated.
+    // Production setup actions route exclusively through setupHealthDialog.
     property var proposedChangesPresentationOverride: null
     property bool virtualDetailsOpen: false
     property bool isolationDetailsOpen: false
@@ -31,6 +31,9 @@ Flickable {
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
     readonly property var state: readinessModel ? readinessModel.currentState : ({})
+    // The compact cards are projections of the same typed snapshot used by
+    // the central dialog. They never infer repairability from their labels.
+    readonly property var setupTruth: backend.setupTruthSnapshot || ({})
     // A newly loaded Devices page reads the same current state as the shared
     // readiness model, so fixture and live updates cannot leave its compact
     // status label one render behind.
@@ -39,16 +42,17 @@ Flickable {
     readonly property var input: readinessModel ? readinessModel.input : ({})
     readonly property var output: readinessModel ? readinessModel.output : ({})
     readonly property var isolation: readinessModel ? readinessModel.isolation : ({})
-    readonly property var vjoyCheck: checkFor(["VJOY", "VIRTUAL OUTPUT"])
-    readonly property var isolationCheck: checkFor(["HIDHIDE", "ISOLATION"])
-    readonly property var physicalCheck: checkFor(["PHYSICAL", "CONTROLLER"])
+    readonly property var vjoyCheck: truthCheck("vjoy", ["VJOY", "VIRTUAL OUTPUT"])
+    readonly property var isolationCheck: truthCheck("isolation", ["HIDHIDE", "ISOLATION"])
+    readonly property var physicalCheck: truthCheck("physical", ["PHYSICAL", "CONTROLLER"])
+    readonly property var verificationCheck: truthCheck("verification", ["VERIFICATION"])
     readonly property var controllerItems: controllerPresentationOverride === null
         ? backend.controllers : controllerPresentationOverride
     readonly property var rigItems: backend.deviceRigs || []
     readonly property var outputLayouts: backend.virtualOutputLayouts || []
     readonly property var axisItems: backend.axes
-    readonly property bool checking: state.controllerSetupInProgress === undefined
-        ? backend.controllerSetupInProgress : state.controllerSetupInProgress
+    readonly property bool checking: backend.setupRepairSessionActive || (state.controllerSetupInProgress === undefined
+        ? backend.controllerSetupInProgress : state.controllerSetupInProgress)
     readonly property bool canRepairSetup: (state.controllerSetupCanApply === undefined
         ? backend.controllerSetupCanApply : state.controllerSetupCanApply) && !checking
     readonly property bool canUndoRepair: state.controllerSetupCanUndo === undefined
@@ -78,6 +82,11 @@ Flickable {
         ? proposedChangesPresentationOverride
         : state.controllerReadinessProposedChanges === undefined
             ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
+    // The central Setup Truth plan is authoritative in production. Keep the
+    // existing presentation fixture as a fallback only for the isolated
+    // Flight Deck dialog-layout contract.
+    readonly property var setupRepairPlan: (setupTruth.repairPlan || []).length > 0
+        ? setupTruth.repairPlan : proposedChanges
     readonly property bool reconnectRequired: state.controllerReconnectRequired === undefined
         ? backend.controllerReconnectRequired : state.controllerReconnectRequired
     readonly property bool disconnectObserved: state.controllerDisconnectObserved === undefined
@@ -107,6 +116,17 @@ Flickable {
     clip: true
     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+    function truthCheck(id, names) {
+        const groups = setupTruth.groups || [];
+        for (let index = 0; index < groups.length; ++index) {
+            if (String(groups[index].id || "") === id) {
+                return { name: groups[index].title || names[0], state: groups[index].status || "CHECKING",
+                    message: groups[index].detail || "", severity: groups[index].severity || "info" };
+            }
+        }
+        return checkFor(names);
+    }
+
     function checkFor(names) {
         const checks = state.checks || [];
         for (let index = 0; index < checks.length; ++index) {
@@ -124,9 +144,9 @@ Flickable {
         const label = String((check || {}).state || "").toUpperCase();
         if (severity === "ready" || label === "READY")
             return "healthy";
-        if (severity === "error" || label.indexOf("ERROR") >= 0 || label.indexOf("REQUIRED") >= 0)
+        if (severity === "error" || label.indexOf("ERROR") >= 0 || label.indexOf("REQUIRED") >= 0 || label.indexOf("ACTION NEEDED") >= 0)
             return "fault";
-        if (severity === "warning" || label.indexOf("ATTENTION") >= 0)
+        if (severity === "warning" || severity === "waiting" || label.indexOf("ATTENTION") >= 0 || label.indexOf("WAITING") >= 0)
             return "attention";
         return "informational";
     }
@@ -513,14 +533,16 @@ Flickable {
                             font.bold: true
                         }
                         Text {
-                            text: readiness.label || "CHECKING"
-                            color: deck.statusColor(readiness.tone || "informational")
+                            text: root.setupTruth.overallStatus || readiness.label || "CHECKING"
+                            color: deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
                             font.family: deck.displayFont
                             font.pixelSize: root.medium ? 22 : 18
                             font.bold: true
                         }
                         Text {
-                            text: checking ? "Checking the controller chain…" : (readiness.detail || "Checking current controller setup.")
+                            text: checking ? "Checking the complete Device Rig…" : (root.setupTruth.rigName
+                                ? "Current typed setup truth for " + root.setupTruth.rigName + "."
+                                : (readiness.detail || "Checking current controller setup."))
                             color: deck.textSecondary
                             font.pixelSize: 11
                             Layout.fillWidth: true
@@ -529,14 +551,14 @@ Flickable {
                     }
                     Button {
                         objectName: "flightDeckSetupHealthAction"
-                        text: checking ? "CHECKING…" : (root.canRepairSetup ? "REPAIR SETUP" : "VERIFY SETUP")
+                        text: "CHECK & REPAIR SETUP"
                         enabled: !checking
                         visible: root.medium
                         implicitHeight: deck.controlHeight
                         leftPadding: deck.space16
                         rightPadding: deck.space16
                         focusPolicy: Qt.StrongFocus
-                        onClicked: root.canRepairSetup ? repairConfirmation.open() : backend.verifyHotasSetup()
+                        onClicked: setupHealthDialog.open()
                         background: Rectangle {
                             radius: deck.radiusControl
                             color: parent.enabled && parent.down ? deck.accentMuted : deck.accent
@@ -563,7 +585,7 @@ Flickable {
                     Repeater {
                         model: [
                             { label: "Physical input", check: root.physicalCheck },
-                            { label: "Controller verification", check: root.physicalCheck },
+                            { label: "Controller verification", check: root.verificationCheck },
                             { label: "Virtual output", check: root.vjoyCheck },
                             { label: "Device isolation", check: root.isolationCheck }
                         ]
@@ -597,12 +619,12 @@ Flickable {
 
                 Button {
                     visible: !root.medium
-                    text: checking ? "CHECKING SETUP…" : (root.canRepairSetup ? "REPAIR SETUP" : "VERIFY SETUP")
+                    text: "CHECK & REPAIR SETUP"
                     enabled: !checking
                     Layout.fillWidth: true
                     implicitHeight: deck.controlHeight
                     focusPolicy: Qt.StrongFocus
-                    onClicked: root.canRepairSetup ? repairConfirmation.open() : backend.verifyHotasSetup()
+                    onClicked: setupHealthDialog.open()
                     background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
@@ -908,7 +930,9 @@ Flickable {
                 RowLayout {
                     Layout.fillWidth: true
                     Button {
-                        visible: !root.vjoyReady
+                        // Manual driver configuration is an advanced fallback,
+                        // never a competing normal repair route.
+                        visible: !root.vjoyReady && root.virtualDetailsOpen
                         text: "OPEN VJOY SETUP"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
@@ -975,14 +999,10 @@ Flickable {
                     Layout.fillWidth: true
                     Button {
                         visible: root.toneFor(root.isolationCheck) !== "healthy"
-                        text: root.canRepairSetup ? "REPAIR SETUP" : root.canRepairHidHideAccess ? "FIX APP ACCESS" : "OPEN HIDHIDE"
+                        text: "VIEW SETUP HEALTH"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: {
-                            if (root.canRepairSetup) repairConfirmation.open()
-                            else if (root.canRepairHidHideAccess) backend.repairHidHideAccess()
-                            else backend.openHidHideConfiguration()
-                        }
+                        onClicked: setupHealthDialog.open()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
@@ -1076,11 +1096,11 @@ Flickable {
                     }
                     Button {
                         objectName: "flightDeckVerifySetup"
-                        text: checking ? "VERIFYING…" : "VERIFY SETUP"
+                        text: "VIEW SETUP HEALTH"
                         enabled: !checking
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.controlHeight
-                        onClicked: backend.verifyHotasSetup()
+                        onClicked: setupHealthDialog.open()
                         background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
@@ -1256,8 +1276,7 @@ Flickable {
             close();
             root.openRigDetails(root.selectedRigId);
             if (result.nextAction === "setup") {
-                backend.startSetupAssistantCheckForScope("deviceRig", root.selectedRigId);
-                root.showTransientActionFeedback({ success: true, title: "Rig saved — setup check ready", message: "Open Setup / Verification when you are ready to verify the selected controllers and output." }, "", "", 5000);
+                root.showTransientActionFeedback({ success: true, title: "Rig saved", message: "Use Check & Repair Setup to inspect this Device Rig without changing its configuration." }, "", "", 5000);
             }
         }
         onOpened: resetDraft()
@@ -1520,7 +1539,7 @@ Flickable {
                 Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
-                    RigButton { text: "VERIFY / REPAIR"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.startSetupAssistantCheckForScope("deviceRig", String(rigDetailsContent.rig.id || "")); rigDetailsDialog.close(); root.showTransientActionFeedback({ success: true, title: "Rig setup check opened", message: "Setup / Verification now reflects this Device Rig's controllers and Virtual Outputs." }, "", "", 5000); Qt.callLater(function() { root.contentY = Math.max(0, verificationSection.y - deck.space8); }); } }
+                    RigButton { text: "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
                     Item { Layout.fillWidth: true }
                     RigButton { text: "DELETE RIG"; destructive: true; enabled: !!rigDetailsContent.rig; onClicked: { deleteRigDialog.rigId = String(rigDetailsContent.rig.id || ""); deleteRigDialog.open(); } }
                     RigButton { text: "CLOSE"; subdued: true; onClicked: rigDetailsDialog.close() }
@@ -1549,6 +1568,33 @@ Flickable {
                 Item { Layout.fillWidth: true }
                 RigButton { text: "CANCEL"; subdued: true; onClicked: deleteRigDialog.close() }
                 RigButton { objectName: "flightDeckDeleteRigConfirm"; text: "DELETE RIG"; destructive: true; enabled: !!deleteRigDialog.rig; onClicked: { const deleted = backend.deleteDeviceRig(deleteRigDialog.rigId); root.reportBooleanAction(deleted, "Device Rig deleted", "Affected Profile assignments were cleared; no Profile was remapped.", "Device Rig was not deleted", "Refresh the Device Rig list and try again."); deleteRigDialog.close(); rigDetailsDialog.close(); } }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: setupHealthDialog
+        objectName: "flightDeckSetupHealthDialog"
+        tokens: deck
+        heading: "Setup health & repair"
+        preferredWidth: 760
+        onOpened: backend.checkSetupHealth()
+        contentItem: Flickable {
+            width: setupHealthDialog.availableWidth
+            implicitHeight: Math.min(setupHealthPanel.implicitHeight, setupHealthDialog.maximumBodyHeight)
+            contentWidth: width
+            contentHeight: setupHealthPanel.implicitHeight
+            clip: true
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ControllerReadinessPanel {
+                id: setupHealthPanel
+                width: parent.width
+                backendObject: backend
+                themeTokens: deck
+                showTitle: false
+                useHostRepairConfirmation: true
+                onCloseRequested: setupHealthDialog.close()
+                onRepairRequested: repairConfirmation.open()
             }
         }
     }
@@ -1589,8 +1635,8 @@ Flickable {
                         spacing: deck.space4
                         Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                         Repeater {
-                            model: root.proposedChanges
-                            delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            model: root.setupRepairPlan
+                            delegate: Text { text: "• " + (modelData.title || modelData.message || "Scoped repair"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
@@ -1609,7 +1655,7 @@ Flickable {
                     Button {
                         text: "REPAIR SETUP"
                         focusPolicy: Qt.StrongFocus
-                        onClicked: { repairConfirmation.close(); backend.applyControllerReadiness() }
+                        onClicked: { repairConfirmation.close(); backend.repairSetupHealth() }
                         background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
