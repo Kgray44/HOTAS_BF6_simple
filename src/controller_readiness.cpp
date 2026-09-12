@@ -30,6 +30,11 @@ namespace {
 
 constexpr int kInspectionTimeoutMs = 2500;
 constexpr int kApplyTimeoutMs = 30000;
+// HidHide's device graph can briefly be busy while Windows refreshes a USB
+// controller.  This is a read-only query, so one short, bounded retry avoids
+// converting a transient control-plane delay into an "unknown" setup state.
+constexpr int kHidHideGamingReadAttempts = 2;
+constexpr int kHidHideGamingReadRetryIntervalMs = 150;
 constexpr auto kPendingRecoveryKey = "readiness/pendingAutomaticRepairRecovery";
 
 QStringList installRoots()
@@ -983,7 +988,14 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
             apps.error.isEmpty() ? apps.output.trimmed() : apps.error));
     }
     QStringList gamingDevices;
-    const SetupProcessResult devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+    SetupProcessResult devices;
+    for (int attempt = 0; attempt < kHidHideGamingReadAttempts; ++attempt) {
+        devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+        // Never retry a cancellation. A timeout or transport failure is safe
+        // to re-read once because this command does not mutate HidHide.
+        if (devices.succeeded() || devices.cancelled) break;
+        if (attempt + 1 != kHidHideGamingReadAttempts) QThread::msleep(kHidHideGamingReadRetryIntervalMs);
+    }
     result.gamingDevicesReport = devices.output;
     if (devices.succeeded()) gamingDevices = parseHidHideGamingDevices(devices.output);
     else result.inspectionFailures.append(QStringLiteral("--dev-gaming: %1").arg(

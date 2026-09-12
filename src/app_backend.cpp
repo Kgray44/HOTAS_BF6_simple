@@ -5839,10 +5839,35 @@ QVariantMap AppBackend::setupRepairSession() const
         || m_setupConvergenceStage == SetupConvergenceStage::RepairingVJoy
         || m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
         || m_setupConvergenceStage == SetupConvergenceStage::FinalChecking;
+    const auto isTerminalStep = [](const QString &status) {
+        return status == u"SUCCEEDED"_qs || status == u"FAILED"_qs || status == u"CANCELLED"_qs;
+    };
+    const int totalStepCount = m_setupRepairProgress.size();
+    int completedStepCount = 0;
+    for (const QVariant &entry : m_setupRepairProgress) {
+        if (isTerminalStep(entry.toMap().value(u"status"_qs).toString())) ++completedStepCount;
+    }
+    const QVariantMap current = currentSetupRepairStep();
+    int currentStepNumber = current.value(u"order"_qs).toInt();
+    if (currentStepNumber <= 0 && totalStepCount > 0) {
+        for (const QVariant &entry : m_setupRepairProgress) {
+            const QVariantMap step = entry.toMap();
+            if (isTerminalStep(step.value(u"status"_qs).toString())) {
+                currentStepNumber = std::max(currentStepNumber, step.value(u"order"_qs).toInt());
+            }
+        }
+        currentStepNumber = std::min(totalStepCount, std::max(1, currentStepNumber));
+    }
+    const int progressPercent = totalStepCount == 0 ? 0
+        : (100 * completedStepCount) / totalStepCount;
+    const QString progressLabel = totalStepCount == 0 ? u"No repair stages have started"_qs
+        : QString(u"Stage %1 of %2 · %3%"_qs).arg(currentStepNumber).arg(totalStepCount).arg(progressPercent);
     QVariantMap result{{u"sessionId"_qs, m_setupConvergenceSessionId}, {u"mode"_qs, mode},
         {u"active"_qs, active}, {u"startedAt"_qs, m_setupConvergenceStarted.toString(Qt::ISODate)},
-        {u"steps"_qs, m_setupRepairProgress}, {u"stepCount"_qs, m_setupRepairProgress.size()}};
-    const QVariantMap current = currentSetupRepairStep();
+        {u"steps"_qs, m_setupRepairProgress}, {u"stepCount"_qs, totalStepCount},
+        {u"totalStepCount"_qs, totalStepCount}, {u"completedStepCount"_qs, completedStepCount},
+        {u"currentStepNumber"_qs, currentStepNumber}, {u"progressPercent"_qs, progressPercent},
+        {u"progressLabel"_qs, progressLabel}};
     if (!current.isEmpty()) result.insert(u"currentStep"_qs, current);
     if (m_setupConvergenceStage == SetupConvergenceStage::Complete
         || m_setupConvergenceStage == SetupConvergenceStage::Failed
@@ -5876,6 +5901,7 @@ void AppBackend::appendSetupRepairProgress(const QString &id, const QString &sub
                                            bool requiresElevation, bool requiresReconnect)
 {
     const bool current = status == u"RUNNING"_qs || status == u"WAITING FOR USER"_qs;
+    const bool terminal = status == u"SUCCEEDED"_qs || status == u"FAILED"_qs || status == u"CANCELLED"_qs;
     const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
     if (current) {
         for (QVariant &entry : m_setupRepairProgress) {
@@ -5889,7 +5915,7 @@ void AppBackend::appendSetupRepairProgress(const QString &id, const QString &sub
         {u"detail"_qs, detail}, {u"requiresElevation"_qs, requiresElevation},
         {u"requiresReconnect"_qs, requiresReconnect}, {u"order"_qs, m_setupRepairProgress.size() + 1},
         {u"total"_qs, 0}, {u"startedAt"_qs, now},
-        {u"finishedAt"_qs, current ? QString{} : now}, {u"result"_qs, current ? QString{} : status},
+        {u"finishedAt"_qs, terminal ? now : QString{}}, {u"result"_qs, terminal ? status : QString{}},
         {u"evidence"_qs, QVariantMap{}}, {u"timestamp"_qs, now}});
     const int total = m_setupRepairProgress.size();
     for (QVariant &entry : m_setupRepairProgress) {
@@ -5903,6 +5929,7 @@ void AppBackend::updateSetupRepairProgress(const QString &id, const QString &sta
                                            const QString &result, const QVariantMap &evidence, bool current)
 {
     const bool active = current && (state == u"RUNNING"_qs || state == u"WAITING FOR USER"_qs);
+    const bool terminal = state == u"SUCCEEDED"_qs || state == u"FAILED"_qs || state == u"CANCELLED"_qs;
     const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
     if (active) {
         for (QVariant &entry : m_setupRepairProgress) {
@@ -5920,7 +5947,8 @@ void AppBackend::updateSetupRepairProgress(const QString &id, const QString &sta
         if (!detail.isEmpty()) step.insert(u"detail"_qs, detail);
         if (!result.isEmpty()) step.insert(u"result"_qs, result);
         if (!evidence.isEmpty()) step.insert(u"evidence"_qs, evidence);
-        if (!active) step.insert(u"finishedAt"_qs, now);
+        if (terminal) step.insert(u"finishedAt"_qs, now);
+        else if (!active) step.insert(u"finishedAt"_qs, QString{});
         step.insert(u"timestamp"_qs, now);
         entry = step;
         break;
@@ -6002,6 +6030,14 @@ QVariantMap AppBackend::repairSetupHealth()
             issue.value(u"explanation"_qs).toString(), issue.value(u"requiresElevation"_qs).toBool(),
             issue.value(u"requiresReconnect"_qs).toBool());
     }
+    // Freeze the full stage count before the first repair starts. The progress
+    // percentage is stage-based (not a time estimate), so it must never jump
+    // backwards when the mandatory final read-back is reached.
+    const bool finalAlreadyListed = std::any_of(m_setupRepairProgress.cbegin(), m_setupRepairProgress.cend(),
+        [](const QVariant &entry) { return entry.toMap().value(u"id"_qs).toString() == u"final-inspect"_qs; });
+    if (!finalAlreadyListed) appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs,
+        u"Performing final full inspection"_qs, u"PENDING"_qs,
+        u"Fresh driver and controller read-back will determine the final setup truth."_qs);
     for (const QVariant &value : issues) {
         const QVariantMap issue = value.toMap();
         if (issue.value(u"code"_qs).toString() != u"PhysicalDeviceUnverified"_qs
@@ -6085,12 +6121,8 @@ QVariantMap AppBackend::repairSetupHealth()
             u"deviceIsolation"_qs, {}, u"wait"_qs, {}, {}, true);
     }
     setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
-    const bool finalAlreadyListed = std::any_of(m_setupRepairProgress.cbegin(), m_setupRepairProgress.cend(),
-        [](const QVariant &entry) { return entry.toMap().value(u"id"_qs).toString() == u"final-inspect"_qs; });
-    if (finalAlreadyListed) updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
+    updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
         u"Performing final full inspection from fresh driver and controller read-back evidence."_qs, {}, {}, true);
-    else appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
-        u"RUNNING"_qs, u"Final health is based only on fresh read-back evidence."_qs);
     verifyHotasSetup();
     return actionResult(true, u"Verifying final setup state"_qs,
         u"No additional automatic mutation is needed; HOTAS BF6 is recomputing setup health from scratch."_qs,
@@ -6258,8 +6290,8 @@ bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConf
             }
             if (m_setupConvergenceCancelled) {
                 setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
-                appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
-                    u"RUNNING"_qs, u"Reading final setup truth after the cancelled repair request."_qs);
+                updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
+                    u"Reading final setup truth after the cancelled repair request."_qs, {}, {}, true);
                 verifyHotasSetup();
             } else {
                 setSetupConvergenceStage(SetupConvergenceStage::Repairing);
@@ -6344,8 +6376,8 @@ bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configurati
             }
             if (m_setupConvergenceCancelled) {
                 setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
-                appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
-                    u"RUNNING"_qs, u"Reading final setup truth after the cancelled repair request."_qs);
+                updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
+                    u"Reading final setup truth after the cancelled repair request."_qs, {}, {}, true);
                 verifyHotasSetup();
             } else {
                 setSetupConvergenceStage(SetupConvergenceStage::Repairing);

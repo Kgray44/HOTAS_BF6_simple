@@ -37,11 +37,30 @@ Item {
     function stateColor(status) {
         if (status === "READY" || status === "SUCCEEDED") return readyColor
         if (status === "CHECKING") return checkingColor
+        if (status === "PENDING") return mutedColor
         if (status === "UNKNOWN / INSPECTION FAILED") return mutedColor
         if (status === "FAILED" || status === "UNAVAILABLE") return dangerColor
         return warningColor
     }
     function hasRepair() { return (snapshot.repairPlan || []).length > 0 }
+    function sessionProgressPercent() {
+        const value = Number(session.progressPercent)
+        return isNaN(value) ? 0 : Math.max(0, Math.min(100, value))
+    }
+    function stageStatusLabel(status) {
+        if (status === "WAITING FOR USER") return "WAITING FOR YOU"
+        if (status === "SUCCEEDED") return "COMPLETE"
+        if (status === "PENDING") return "QUEUED"
+        return status || "QUEUED"
+    }
+    function stageMarker(status, order) {
+        if (status === "SUCCEEDED") return "✓"
+        if (status === "FAILED") return "!"
+        if (status === "CANCELLED") return "×"
+        if (status === "RUNNING") return "›"
+        if (status === "WAITING FOR USER") return "?"
+        return String(order || "•")
+    }
     function currentStep() {
         // Results are intentionally frozen and have no current operation.
         // This prevents a completed log entry from masquerading as a spinner.
@@ -84,6 +103,117 @@ Item {
                 Text { Layout.fillWidth: true; text: root.currentStep().detail || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 Text { visible: !!root.currentStep().requiresReconnect; text: "RECONNECT CONTROLLER"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
                 Text { visible: !!root.currentStep().requiresReconnect; text: root.backendObject && root.backendObject.controllerDisconnectObserved ? "Disconnect observed. Reconnect the exact controller and move a control." : "Disconnect the exact controller, reconnect it, then move a control."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            }
+        }
+        Rectangle {
+            id: setupStageTimeline
+            objectName: "setupStageTimeline"
+            readonly property int total: Number(root.session.totalStepCount || root.session.stepCount || 0)
+            readonly property int completed: Number(root.session.completedStepCount || 0)
+            visible: total > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? stageTimelineColumn.implicitHeight + 20 : 0
+            color: root.panelColor
+            border.color: root.session.active ? root.stateColor(root.currentStep().status || "RUNNING") : root.borderColor
+            border.width: root.session.active ? 2 : 1
+            radius: root.radius
+            ColumnLayout {
+                id: stageTimelineColumn
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "STAGE PROGRESS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    Text { text: setupStageTimeline.completed + " OF " + setupStageTimeline.total + " COMPLETE"; color: root.textColor; font.pixelSize: 9; font.bold: true }
+                }
+                Rectangle {
+                    id: setupStageProgress
+                    objectName: "setupStageProgress"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 8
+                    color: root.insetColor
+                    border.color: root.borderColor
+                    radius: height / 2
+                    clip: true
+                    Rectangle {
+                        width: parent.width * root.sessionProgressPercent() / 100
+                        height: parent.height
+                        color: root.session.active ? root.stateColor(root.currentStep().status || "RUNNING")
+                                                   : root.stateColor(root.session.result || "SUCCEEDED")
+                        radius: parent.radius
+                        Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
+                }
+                Text {
+                    objectName: "setupProgressPercent"
+                    Layout.fillWidth: true
+                    text: root.session.progressLabel || ("Stage 1 of " + setupStageTimeline.total + " · " + root.sessionProgressPercent() + "%")
+                    color: root.checkingColor
+                    font.pixelSize: 10
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Progress is based on completed setup stages, not an estimate of elapsed time."
+                    color: root.mutedColor
+                    font.pixelSize: 9
+                    wrapMode: Text.WordWrap
+                }
+                Repeater {
+                    model: root.session.steps || []
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property string status: modelData.status || modelData.state || "PENDING"
+                        readonly property bool current: !!modelData.current
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: stageRow.implicitHeight + 14
+                        color: current ? root.insetColor : root.panelColor
+                        border.color: current ? root.stateColor(status) : root.borderColor
+                        border.width: current ? 2 : 1
+                        radius: root.radius
+                        opacity: status === "PENDING" ? 0.78 : 1.0
+                        RowLayout {
+                            id: stageRow
+                            anchors.fill: parent
+                            anchors.margins: 7
+                            spacing: 8
+                            Rectangle {
+                                Layout.alignment: Qt.AlignTop
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                                radius: 12
+                                color: root.stateColor(status)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.stageMarker(status, modelData.order)
+                                    color: root.panelColor
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text { Layout.fillWidth: true; text: modelData.title || "Setup stage"; color: root.textColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap }
+                                Text { Layout.fillWidth: true; text: modelData.detail || "Waiting to begin."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { visible: !!modelData.requiresElevation; text: "ADMINISTRATOR APPROVAL MAY BE REQUIRED"; color: root.warningColor; font.pixelSize: 8; font.bold: true }
+                                Text { visible: !!modelData.requiresReconnect; text: "CONTROLLER RECONNECT REQUIRED"; color: root.warningColor; font.pixelSize: 8; font.bold: true }
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                                Layout.preferredWidth: 106
+                                text: root.stageStatusLabel(status)
+                                color: root.stateColor(status)
+                                font.pixelSize: 8
+                                font.bold: true
+                                horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+                }
             }
         }
         Repeater {

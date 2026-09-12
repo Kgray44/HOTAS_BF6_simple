@@ -729,6 +729,9 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("applyScopedHidHideRepair")));
     QVERIFY(backend.contains(QStringLiteral("issue.value(u\"code\"_qs).toString() != u\"HidHideMismatch\"_qs")));
     QVERIFY(backend.contains(QStringLiteral("m_setupTruthBeforeSnapshot = m_setupTruthSnapshot")));
+    QVERIFY(backend.contains(QStringLiteral("progressPercent")));
+    QVERIFY(backend.contains(QStringLiteral("completedStepCount")));
+    QVERIFY(backend.contains(QStringLiteral("Performing final full inspection")));
     QVERIFY(readiness.contains(QStringLiteral("QString vJoyConfigurationAxisToken(VirtualAxis axis)")));
     QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider0: return QStringLiteral(\"Sl0\")")));
     QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider1: return QStringLiteral(\"Sl1\")")));
@@ -738,6 +741,9 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));
+    QVERIFY(assistant.contains(QStringLiteral("STAGE PROGRESS")));
+    QVERIFY(assistant.contains(QStringLiteral("setupStageTimeline")));
+    QVERIFY(assistant.contains(QStringLiteral("progressPercent")));
     QVERIFY(assistant.contains(QStringLiteral("REPAIR PLAN")));
     QVERIFY(assistant.contains(QStringLiteral("COPY FULL DIAGNOSTICS")));
     QVERIFY(assistant.contains(QStringLiteral("repairSetupHealth")));

@@ -85,6 +85,7 @@ public:
     bool repairApplied = false;
     bool cloakEnabled = false;
     bool vjoy219HumanReadableOutput = false;
+    int transientGamingProbeFailures = 0;
     int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
@@ -99,6 +100,10 @@ public:
     {
         Q_UNUSED(program)
         calls.append(arguments.join(u' '));
+        if (arguments.contains(QStringLiteral("--dev-gaming")) && transientGamingProbeFailures > 0) {
+            --transientGamingProbeFailures;
+            return {true, true, 1, {}, QStringLiteral("Timed out after 2500 ms")};
+        }
         const bool visibilityOperation = arguments.contains(QStringLiteral("--dev-hide"))
             || arguments.contains(QStringLiteral("--dev-unhide"));
         if (visibilityOperation) ++runtimeVisibilityOperations;
@@ -343,6 +348,7 @@ private slots:
     void validVJoySupersetCannotDisagreeWithAggregateHealth();
     void staleVJoyPlanBecomesReadyImmediatelyAfterCorrection();
     void currentCandidateExecutableMustBeAllowlistedAndReadBack();
+    void transientHidHideGamingProbeRetriesAndRemainsRepairable();
     void physicalControllerContainerIdentitySurvivesReenumeration();
     void automaticRepairConvergesWithoutChangingUnrelatedHidHideRules();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
@@ -1094,6 +1100,27 @@ void ControllerReadinessTests::currentCandidateExecutableMustBeAllowlistedAndRea
     QVERIFY(std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
         return call.startsWith(QStringLiteral("elevated:--app-reg "));
     }));
+}
+
+void ControllerReadinessTests::transientHidHideGamingProbeRetriesAndRemainsRepairable()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->transientGamingProbeFailures = 1;
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    const ControllerReadinessPlan &plan = service.plan();
+    QVERIFY(plan.hidhide.inspectionComplete);
+    QVERIFY(plan.hidhide.selectedControllerResolved);
+    QVERIFY(plan.hidhideNeedsChanges);
+    QVERIFY(plan.hidhideCanApply);
+    QCOMPARE(std::count(probe->calls.cbegin(), probe->calls.cend(), QStringLiteral("--dev-gaming")), 2);
 }
 
 void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenumeration()
