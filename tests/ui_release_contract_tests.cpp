@@ -276,6 +276,8 @@ void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
     QVERIFY(!readinessPanel.contains(QStringLiteral("\n            Button {")));
     QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: root.hasRepair() ? \"warning\" : \"ready\"")));
     QVERIFY(readinessPanel.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("return session.active && session.currentStep")));
     QVERIFY(readinessPanel.contains(QStringLiteral("CHECK & REPAIR SETUP")));
     QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
     QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; showTitle: false")));
@@ -716,11 +718,16 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(health.contains(QStringLiteral("border.width: 2")));
     QVERIFY(health.contains(QStringLiteral("implicitWidth: 32")));
     QVERIFY(backendHeader.contains(QStringLiteral("setupTruthSnapshot READ setupTruthSnapshot")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setupRepairSession READ setupRepairSession")));
     QVERIFY(backendHeader.contains(QStringLiteral("checkSetupHealth")));
     QVERIFY(backendHeader.contains(QStringLiteral("repairSetupHealth")));
     QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceUnverified")));
     QVERIFY(backend.contains(QStringLiteral("UNKNOWN / INSPECTION FAILED")));
+    QVERIFY(backend.contains(QStringLiteral("SetupConvergenceStage::Results")));
+    QVERIFY(backend.contains(QStringLiteral("applyScopedVJoyRepair")));
+    QVERIFY(backend.contains(QStringLiteral("m_setupTruthBeforeSnapshot = m_setupTruthSnapshot")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
+    QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));
     QVERIFY(assistant.contains(QStringLiteral("REPAIR PLAN")));
     QVERIFY(assistant.contains(QStringLiteral("COPY FULL DIAGNOSTICS")));
@@ -731,6 +738,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(flightDeckDevices.contains(QStringLiteral("useHostRepairConfirmation: true")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("onRepairRequested: repairConfirmation.open()")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("model: root.setupRepairPlan")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("setupTruth.repairPlan")));
     QVERIFY(standard.contains(QStringLiteral("showTitle: false")));
     QVERIFY(legacy.contains(QStringLiteral("showTitle: false")));
     QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
