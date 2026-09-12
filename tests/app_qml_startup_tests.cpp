@@ -8097,6 +8097,12 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             const QVariantList directSegments = directRoute->toMap().value(QStringLiteral("segments")).toList();
             const QString curveInsertSegmentId = directSegments.isEmpty() ? QString{}
                 : directSegments.constFirst().toMap().value(QStringLiteral("id")).toString();
+            const QVariantList initiallyAvailable = backend.signalFlowAvailableProcessorsForSegment(
+                curveInsertSegmentId, backend.signalFlowRevision());
+            const bool curveInitiallyAvailable = std::any_of(initiallyAvailable.cbegin(), initiallyAvailable.cend(),
+                [](const QVariant &entry) {
+                    return entry.toMap().value(QStringLiteral("key")).toString() == QStringLiteral("curve");
+                });
             const QVariantMap addedProcessor = backend.signalFlowInsertProcessor(
                 curveInsertSegmentId, QStringLiteral("curve"), backend.signalFlowRevision());
             const qulonglong revisionAfterCurveInsert = backend.signalFlowRevision();
@@ -8111,16 +8117,25 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 });
             const QVariantList processorDetails = processedRoute == processedRoutes.cend()
                 ? QVariantList{} : processedRoute->toMap().value(QStringLiteral("processorDetails")).toList();
+            const QVariantList postCurveSegments = processedRoute == processedRoutes.cend() ? QVariantList{}
+                : processedRoute->toMap().value(QStringLiteral("segments")).toList();
+            const QString wrongDeadzoneSegmentId = postCurveSegments.isEmpty() ? QString{}
+                : postCurveSegments.constLast().toMap().value(QStringLiteral("id")).toString();
+            const qulonglong revisionBeforeWrongStage = backend.signalFlowRevision();
+            const QVariantMap rejectedWrongStage = backend.signalFlowInsertProcessor(
+                wrongDeadzoneSegmentId, QStringLiteral("deadzone"), revisionBeforeWrongStage);
             const bool curveVisible = processedRoute != processedRoutes.cend()
                 && std::any_of(processorDetails.cbegin(), processorDetails.cend(), [](const QVariant &entry) {
                         return entry.toMap().value(QStringLiteral("semantic")).toString() == QStringLiteral("curve");
                     });
-            if (curveInsertSegmentId.isEmpty() || !addedProcessor.value(QStringLiteral("success")).toBool()
+            if (curveInsertSegmentId.isEmpty() || !curveInitiallyAvailable
+                || !addedProcessor.value(QStringLiteral("success")).toBool()
                 || staleProcessorInsert.value(QStringLiteral("success")).toBool()
-                || backend.signalFlowRevision() != revisionAfterCurveInsert || !curveVisible
+                || rejectedWrongStage.value(QStringLiteral("success")).toBool()
+                || backend.signalFlowRevision() != revisionBeforeWrongStage || !curveVisible
                 || !backend.focusIssueTarget(QStringLiteral("signalFlowRoute"), routeId)) {
                 return failPresentationLifecycleTest(QStringLiteral(
-                    "Signal Flow processor insertion or exact App Health route focus did not preserve canonical identity"));
+                    "Signal Flow stage-checked processor insertion or exact App Health route focus did not preserve canonical identity"));
             }
             settlePresentation();
             const QVariantMap focusedRoute = page->property("selectedRoute").toMap();

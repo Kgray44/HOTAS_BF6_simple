@@ -2056,13 +2056,28 @@ Item {
         }
         const detail = processorDetail(kind)
         const enabled = processorEnabled(kind)
-        const segments = inspectedRoute.segments || []
-        const segmentId = selectedSegmentId || (segments.length > 0 ? String(segments[0].id || "") : "")
+        const segmentId = selectedProcessorSegmentId()
         const result = enabled
             ? backendObject.signalFlowRemoveOrBypassProcessor(String(detail.id || ""), Number(graph.revision || 0))
             : backendObject.signalFlowInsertProcessor(segmentId, kind, Number(graph.revision || 0))
         announce(result, "Processor change was not applied.")
         if (result && result.success) processorDialog.close()
+    }
+    function selectedProcessorSegmentId() {
+        const segments = inspectedRoute && inspectedRoute.segments ? inspectedRoute.segments : []
+        for (let index = 0; index < segments.length; ++index)
+            if (String(segments[index].id || "") === String(selectedSegmentId || "")) return selectedSegmentId
+        return segments.length > 0 ? String(segments[0].id || "") : ""
+    }
+    function processorCanInsert(kind) {
+        const segmentId = selectedProcessorSegmentId()
+        if (!segmentId) return false
+        const available = backendObject.signalFlowAvailableProcessorsForSegment(segmentId,
+            Number(graph.revision || 0))
+        return available.some(function(item) { return String(item.key || "") === String(kind || "") })
+    }
+    function processorActionAvailable(kind) {
+        return processorEnabled(kind) || processorIsShared(kind) || processorCanInsert(kind)
     }
     function splitSharedProcessor(kind) {
         if (!inspectedRoute || !inspectedRoute.id) return
@@ -2073,8 +2088,12 @@ Item {
     }
     function removeSelectedProcessor() {
         if (!inspectedNode || inspectedNode.kind !== "processor" || !inspectedNode.objectId) return
-        const result = backendObject.signalFlowRemoveOrBypassProcessor(String(inspectedNode.objectId),
-            Number(graph.revision || 0))
+        const route = inspectedRoute && inspectedRoute.id ? inspectedRoute : routeForProcessorNode(inspectedNode)
+        const result = inspectedNode.shared
+            ? backendObject.signalFlowRemoveSharedProcessorChannel(String(inspectedNode.objectId), String(route.id || ""),
+                Number(graph.revision || 0))
+            : backendObject.signalFlowRemoveOrBypassProcessor(String(inspectedNode.objectId),
+                Number(graph.revision || 0))
         announce(result, "Processor was not removed.")
         if (result && result.success) {
             selectedSegmentId = ""
@@ -3996,7 +4015,7 @@ Item {
                     DeckButton { text: "Open Curve Editor"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "curve")); helpText: "Open the authoritative Curve Editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("curve", root.inspectedRoute) }
                     DeckButton { text: "Open Adaptive Response"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "adaptive-response")); helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("adaptive-response", root.inspectedRoute) }
                     DeckButton { text: root.inspectedNode && root.inspectedNode.semantic === "curve" ? "Open Curve Editor" : "Open Adaptive Response"; visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && (root.inspectedNode.semantic === "curve" || root.inspectedNode.semantic === "adaptive-response")); Layout.fillWidth: true; onClicked: root.openNodeSettings(root.inspectedNode) }
-                    DeckButton { text: "Remove processor"; destructive: true; visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.removeSelectedProcessor() }
+                    DeckButton { text: root.inspectedNode && root.inspectedNode.shared ? "Remove this shared channel" : "Remove processor"; destructive: true; visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.removeSelectedProcessor() }
                     DeckButton { text: "Processor palette"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: processorDialog.open() }
                     DeckButton { text: "Share active processor…"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openShareProcessorDialog() }
                     DeckButton { text: "Disconnect selected"; destructive: true; helpText: "Remove this canonical route. Shortcut: Delete."; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
@@ -4348,7 +4367,7 @@ Item {
         title: "Processor palette"
         contentItem: ColumnLayout {
             spacing: deck.space8
-            Text { Layout.fillWidth: true; text: "Drag a processor chip onto the highlighted visible wire, or click it to apply the same atomic action to the selected canonical segment. Focused settings stay authoritative."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Drag a processor chip onto its matching highlighted execution-stage wire, or click it to apply the same atomic action to the selected canonical segment. Visual-only reorders are not offered; focused settings stay authoritative."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Flow {
                 Layout.fillWidth: true; spacing: deck.space8
                 Repeater {
@@ -4361,16 +4380,19 @@ Item {
                         id: deckProcessorChip
                         required property var modelData
                         property string processorKind: modelData.key
+                        readonly property bool activeProcessor: root.processorEnabled(processorKind)
+                        readonly property bool actionAvailable: root.processorActionAvailable(processorKind)
                         width: Math.max(118, chipLabel.implicitWidth + 20); height: deck.compactControlHeight; radius: deck.radiusControl
-                        color: root.processorEnabled(processorKind) ? deck.accent : deck.secondarySurface
+                        color: activeProcessor ? deck.accent : deck.secondarySurface
+                        opacity: actionAvailable ? 1.0 : 0.54
                         border.color: chipDrag.active ? deck.attention : deck.border; border.width: 1
-                        Text { id: chipLabel; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? deck.applicationBackground : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; font.bold: true }
+                        Text { id: chipLabel; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : activeProcessor ? "Remove " + modelData.label : actionAvailable ? "Add " + modelData.label : "Select stage for " + modelData.label; color: activeProcessor ? deck.applicationBackground : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; font.bold: true }
                         Drag.active: chipDrag.active
                         Drag.source: deckProcessorChip
                         Drag.keys: ["signal-flow-processor"]
                         Drag.hotSpot.x: width / 2; Drag.hotSpot.y: height / 2
-                        DragHandler { id: chipDrag; enabled: root.mode === "configured" }
-                        MouseArea { anchors.fill: parent; onClicked: root.toggleProcessor(processorKind) }
+                        DragHandler { id: chipDrag; enabled: root.mode === "configured" && !activeProcessor && root.processorCanInsert(processorKind) }
+                        MouseArea { anchors.fill: parent; enabled: root.mode === "configured" && actionAvailable; onClicked: root.toggleProcessor(processorKind) }
                     }
                 }
             }

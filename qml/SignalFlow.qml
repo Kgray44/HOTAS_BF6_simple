@@ -100,6 +100,10 @@ Item {
     property bool sourceDragDropHandled: false
     property var connectionPreview: ({})
     property string pendingProcessorRouteId: ""
+    property string pendingProcessorSegmentId: ""
+    // A processor command always names the durable segment painted beneath the
+    // pointer.  This remains presentation state, never an alternate topology.
+    property string selectedSegmentId: ""
     readonly property string semanticDensity: {
         const requested = graph.workspace && graph.workspace.densityMode || "detailed"
         if (zoom <= 0.62) return "overview"
@@ -686,18 +690,22 @@ Item {
             for (let processorIndex = 0; processorIndex < processorWaypoints.length; ++processorIndex) {
                 const waypoint = processorWaypoints[processorIndex]
                 const obstacle = obstaclePlan(currentX, currentY, waypoint.leftX, waypoint.y, excludedIds)
+                const canonicalSegment = (route.segments || [])[processorIndex]
                 segments.push({ "startX": currentX, "startY": currentY, "endX": waypoint.leftX,
                     "endY": waypoint.y, "hasDetour": obstacle.hasDetour,
-                    "detourY": obstacle.detourY, "underCard": obstacle.underCard })
+                    "detourY": obstacle.detourY, "underCard": obstacle.underCard,
+                    "routeSegmentId": canonicalSegment ? String(canonicalSegment.id || "") : "" })
                 currentX = waypoint.rightX
                 currentY = waypoint.y
             }
             const finalX = targetPosition.x
             const finalY = targetPosition.y + 52 + stableLane(route.destinationPortId + route.id, 18) * 5
             const finalObstacle = obstaclePlan(currentX, currentY, finalX, finalY, excludedIds)
+            const finalCanonicalSegment = (route.segments || [])[processorWaypoints.length]
             segments.push({ "startX": currentX, "startY": currentY, "endX": finalX,
                 "endY": finalY, "hasDetour": finalObstacle.hasDetour,
-                "detourY": finalObstacle.detourY, "underCard": finalObstacle.underCard })
+                "detourY": finalObstacle.detourY, "underCard": finalObstacle.underCard,
+                "routeSegmentId": finalCanonicalSegment ? String(finalCanonicalSegment.id || "") : "" })
             const focusSegment = segments[Math.floor(segments.length * 0.5)]
             next.push({
                 "route": route,
@@ -1099,10 +1107,88 @@ Item {
         if (String(connectionPreview.portId || "") === String(port.id || ""))
             connectionPreview = ({})
     }
-    function previewProcessorTarget(route) {
-        if (!route || !route.id || String(route.id) === String(selectedRoute && selectedRoute.id || "")) return
+    function previewProcessorTarget(route, segmentId) {
+        if (!route || !route.id || !segmentId) return
         pendingProcessorRouteId = String(route.id)
+        pendingProcessorSegmentId = String(segmentId)
         processorHysteresis.restart()
+    }
+    function distanceToWireLine(x, y, first, second) {
+        const dx = second.x - first.x, dy = second.y - first.y
+        const length = dx * dx + dy * dy
+        if (length < 0.0001) return Math.hypot(x - first.x, y - first.y)
+        const t = Math.max(0, Math.min(1, ((x - first.x) * dx + (y - first.y) * dy) / length))
+        return Math.hypot(x - (first.x + dx * t), y - (first.y + dy * t))
+    }
+    function cubicPoint(first, controlOne, controlTwo, second, t) {
+        const inverse = 1 - t
+        return ({ "x": inverse * inverse * inverse * first.x + 3 * inverse * inverse * t * controlOne.x
+                    + 3 * inverse * t * t * controlTwo.x + t * t * t * second.x,
+                  "y": inverse * inverse * inverse * first.y + 3 * inverse * inverse * t * controlOne.y
+                    + 3 * inverse * t * t * controlTwo.y + t * t * t * second.y })
+    }
+    function distanceToWireSegment(x, y, segment, lane) {
+        const first = ({ "x": Number(segment.startX || 0), "y": Number(segment.startY || 0) })
+        const second = ({ "x": Number(segment.endX || 0), "y": Number(segment.endY || 0) })
+        const direction = second.x >= first.x ? 1 : -1
+        if (graph.workspace && graph.workspace.wireStyle === "orthogonal") {
+            if (segment.hasDetour) {
+                const stub = Math.max(42, Math.min(120, Math.abs(second.x - first.x) * 0.22))
+                const firstElbow = ({ "x": first.x + direction * stub, "y": first.y })
+                const secondElbow = ({ "x": second.x - direction * stub, "y": second.y })
+                return Math.min(distanceToWireLine(x, y, first, firstElbow),
+                    distanceToWireLine(x, y, firstElbow, ({ "x": firstElbow.x, "y": Number(segment.detourY || 0) })),
+                    distanceToWireLine(x, y, ({ "x": firstElbow.x, "y": Number(segment.detourY || 0) }),
+                        ({ "x": secondElbow.x, "y": Number(segment.detourY || 0) })),
+                    distanceToWireLine(x, y, ({ "x": secondElbow.x, "y": Number(segment.detourY || 0) }), secondElbow),
+                    distanceToWireLine(x, y, secondElbow, second))
+            }
+            const laneX = Math.round((first.x + second.x) * 0.5 + lane * 12)
+            return Math.min(distanceToWireLine(x, y, first, ({ "x": laneX, "y": first.y })),
+                distanceToWireLine(x, y, ({ "x": laneX, "y": first.y }), ({ "x": laneX, "y": second.y })),
+                distanceToWireLine(x, y, ({ "x": laneX, "y": second.y }), second))
+        }
+        let best = Infinity
+        let previous = first
+        const controls = segment.hasDetour
+            ? [{ "start": first, "controlOne": ({ "x": first.x + direction * 86, "y": first.y }),
+                 "controlTwo": ({ "x": first.x + direction * 118, "y": Number(segment.detourY || 0) }),
+                 "end": ({ "x": (first.x + second.x) * 0.5, "y": Number(segment.detourY || 0) }) },
+               { "start": ({ "x": (first.x + second.x) * 0.5, "y": Number(segment.detourY || 0) }),
+                 "controlOne": ({ "x": second.x - direction * 118, "y": Number(segment.detourY || 0) }),
+                 "controlTwo": ({ "x": second.x - direction * 86, "y": second.y }), "end": second }]
+            : [{ "start": first, "controlOne": ({ "x": first.x + 148 + lane * 10, "y": first.y }),
+                 "controlTwo": ({ "x": second.x - 148 - lane * 10, "y": second.y }), "end": second }]
+        for (let curveIndex = 0; curveIndex < controls.length; ++curveIndex) {
+            const curve = controls[curveIndex]
+            previous = curve.start
+            for (let sample = 1; sample <= 12; ++sample) {
+                const current = cubicPoint(curve.start, curve.controlOne, curve.controlTwo, curve.end, sample / 12)
+                best = Math.min(best, distanceToWireLine(x, y, previous, current))
+                previous = current
+            }
+        }
+        return best
+    }
+    function hitProcessorWire(x, y) {
+        let best = null
+        let bestDistance = 12
+        const geometry = wireGeometry || []
+        for (let routeIndex = 0; routeIndex < geometry.length; ++routeIndex) {
+            const entry = geometry[routeIndex]
+            if (!entry || !entry.route || (viewMode === "effective" && !entry.route.effective)) continue
+            const segments = entry.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex]
+                if (!segment || !segment.routeSegmentId) continue
+                const distance = distanceToWireSegment(x, y, segment, stableLane(entry.route.id, 5) - 2)
+                if (distance < bestDistance) {
+                    bestDistance = distance
+                    best = ({ "route": entry.route, "routeSegmentId": String(segment.routeSegmentId) })
+                }
+            }
+        }
+        return best
     }
     function clearSelection() {
         interaction = ({ "mode": "IDLE", "source": ({}), "target": ({}),
@@ -1110,6 +1196,8 @@ Item {
         selectedSource = ({})
         selectedRoute = ({})
         selectedNode = ({})
+        selectedSegmentId = ""
+        pendingProcessorSegmentId = ""
         dragWire = ({ "active": false, "source": ({}), "x": 0, "y": 0 })
         sourceDragDropHandled = true
         connectionPreview = ({})
@@ -1243,10 +1331,43 @@ Item {
             splitSharedProcessor(kind)
             return
         }
-        const result = backendObject.signalFlowToggleProcessor(String(selectedRoute.id), kind,
-            !processorEnabled(kind), Number(graph.revision || 0))
+        const detail = processorDetail(kind)
+        const result = processorEnabled(kind)
+            ? backendObject.signalFlowRemoveOrBypassProcessor(String(detail.id || ""), Number(graph.revision || 0))
+            : backendObject.signalFlowInsertProcessor(selectedProcessorSegmentId(), kind,
+                Number(graph.revision || 0))
         showResult(result, "Processor change was not applied.")
         if (result && result.success) processorDialog.close()
+    }
+    function selectedProcessorSegmentId() {
+        const segments = selectedRoute && selectedRoute.segments ? selectedRoute.segments : []
+        for (let index = 0; index < segments.length; ++index)
+            if (String(segments[index].id || "") === String(selectedSegmentId || "")) return selectedSegmentId
+        return segments.length > 0 ? String(segments[0].id || "") : ""
+    }
+    function processorCanInsert(kind) {
+        const segmentId = selectedProcessorSegmentId()
+        if (!segmentId) return false
+        const available = backendObject.signalFlowAvailableProcessorsForSegment(segmentId,
+            Number(graph.revision || 0))
+        return available.some(function(item) { return String(item.key || "") === String(kind || "") })
+    }
+    function processorActionAvailable(kind) {
+        return processorEnabled(kind) || processorIsShared(kind) || processorCanInsert(kind)
+    }
+    function removeSelectedProcessor() {
+        if (!selectedNode || selectedNode.kind !== "processor" || !selectedNode.objectId) return
+        const route = selectedRoute && selectedRoute.id ? selectedRoute : routeForProcessorNode(selectedNode)
+        const result = selectedNode.shared
+            ? backendObject.signalFlowRemoveSharedProcessorChannel(String(selectedNode.objectId), String(route.id || ""),
+                Number(graph.revision || 0))
+            : backendObject.signalFlowRemoveOrBypassProcessor(String(selectedNode.objectId),
+                Number(graph.revision || 0))
+        showResult(result, "Processor was not removed.")
+        if (result && result.success) {
+            selectedSegmentId = ""
+            selectedNode = ({})
+        }
     }
     function splitSharedProcessor(kind) {
         if (!selectedRoute || !selectedRoute.id) return
@@ -1563,8 +1684,8 @@ Item {
     }
 
     // A short sustained-hover gate keeps a dragged processor from jumping
-    // between adjacent route lanes. The committed drop still targets the
-    // route under the pointer and is revision-checked by AppBackend.
+    // between adjacent visible wires. The committed drop still targets the
+    // exact canonical segment under the pointer and is revision-checked.
     Timer {
         id: processorHysteresis
         interval: 110
@@ -1574,6 +1695,7 @@ Item {
             for (let index = 0; index < routes.length; ++index) {
                 if (String(routes[index].id || "") !== root.pendingProcessorRouteId) continue
                 root.selectedRoute = routes[index]
+                root.selectedSegmentId = root.pendingProcessorSegmentId
                 root.selectedSource = ({})
                 root.selectedNode = ({})
                 break
@@ -2135,8 +2257,14 @@ Item {
                                     const segments = entry.segments || []
                                     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
                                         const segment = segments[segmentIndex]
+                                        const selectedSegment = String(root.selectedSegmentId || "")
+                                            === String(segment.routeSegmentId || "")
+                                        const pendingSegment = String(root.pendingProcessorSegmentId || "")
+                                            === String(segment.routeSegmentId || "")
+                                        const segmentColor = selectedSegment || pendingSegment ? root.warning : color
+                                        const segmentWidth = selectedSegment || pendingSegment ? Math.max(3.8, width) : width
                                         drawWire(ctx, segment.startX, segment.startY, segment.endX, segment.endY,
-                                            color, width, alpha, root.stableLane(route.id, 5) - 2, dashed,
+                                            segmentColor, segmentWidth, alpha, root.stableLane(route.id, 5) - 2, dashed,
                                             entryReveal, segment.hasDetour, segment.detourY, segment.underCard)
                                     }
                                 }
@@ -2157,6 +2285,58 @@ Item {
                                     ctx.fill()
                                     ctx.restore()
                                 }
+                            }
+                        }
+                        // Pointer and drop interaction query this same cached geometry that
+                        // Canvas paints.  There is no invisible route list or surrogate lane.
+                        MouseArea {
+                            id: processorWireInteractionLayer
+                            anchors.fill: parent
+                            z: 1
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function(mouse) {
+                                const hit = root.hitProcessorWire(mouse.x, mouse.y)
+                                if (!hit || !hit.route) return
+                                root.selectedRoute = hit.route
+                                root.selectedSegmentId = String(hit.routeSegmentId || "")
+                                root.selectedNode = ({})
+                                root.selectedSource = ({})
+                                if (mouse.button === Qt.RightButton) {
+                                    routeContextMenu.targetRoute = hit.route
+                                    routeContextMenu.open()
+                                }
+                            }
+                        }
+                        DropArea {
+                            anchors.fill: parent
+                            z: 1
+                            keys: ["signal-flow-processor"]
+                            onEntered: function(drag) {
+                                const hit = root.hitProcessorWire(drag.x, drag.y)
+                                if (hit) root.previewProcessorTarget(hit.route, String(hit.routeSegmentId || ""))
+                            }
+                            onPositionChanged: function(drag) {
+                                const hit = root.hitProcessorWire(drag.x, drag.y)
+                                if (hit) root.previewProcessorTarget(hit.route, String(hit.routeSegmentId || ""))
+                            }
+                            onExited: {
+                                root.pendingProcessorRouteId = ""
+                                root.pendingProcessorSegmentId = ""
+                            }
+                            onDropped: function(drop) {
+                                const hit = root.hitProcessorWire(drop.x, drop.y)
+                                root.pendingProcessorRouteId = ""
+                                root.pendingProcessorSegmentId = ""
+                                if (!hit || !hit.route || !hit.routeSegmentId || !drop.source || !drop.source.processorKind) return
+                                root.selectedRoute = hit.route
+                                root.selectedSegmentId = String(hit.routeSegmentId)
+                                root.selectedNode = ({})
+                                const result = backendObject.signalFlowInsertProcessor(String(hit.routeSegmentId),
+                                    String(drop.source.processorKind), Number(root.graph.revision || 0))
+                                root.showResult(result, "Processor was not inserted.")
+                                if (result && result.success) processorDialog.close()
+                                drop.accepted = true
                             }
                         }
                         // The proposal is visible but deliberately non-interactive: while
@@ -2317,58 +2497,6 @@ Item {
                                 }
                             }
                         }
-                        Repeater {
-                            model: root.graph.routes || []
-                            delegate: Item {
-                                required property int index
-                                required property var modelData
-                                // Each target follows cached geometry rather than the
-                                // Canvas owning a second route model. This preserves
-                                // individual route selection inside a visible bundle.
-                                readonly property var geometry: root.wireGeometry.filter(function(entry) {
-                                    return entry.routeId === String(modelData.id || "")
-                                })[0]
-                                x: geometry ? Math.max(0, Number(geometry.focusX || (geometry.startX + geometry.endX) * 0.5) - 90) : 680
-                                y: geometry ? Math.max(0, Number(geometry.focusY || (geometry.startY + geometry.endY) * 0.5) - 10) : 80 + index * 24
-                                width: 180; height: 20
-                                DropArea {
-                                    id: processorDrop
-                                    anchors.fill: parent
-                                    keys: ["signal-flow-processor"]
-                                    onEntered: function(drag) { root.previewProcessorTarget(modelData) }
-                                    onExited: function(drag) {
-                                        if (root.pendingProcessorRouteId === String(modelData.id || ""))
-                                            root.pendingProcessorRouteId = ""
-                                    }
-                                    onDropped: function(drop) {
-                                        if (drop.source && drop.source.processorKind) {
-                                            root.selectedRoute = modelData
-                                            root.selectedNode = ({})
-                                            const result = backendObject.signalFlowToggleProcessor(String(modelData.id),
-                                                String(drop.source.processorKind), true, Number(root.graph.revision || 0))
-                                            root.showResult(result, "Processor was not inserted.")
-                                            drop.accepted = true
-                                        }
-                                    }
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    Accessible.name: "Route " + modelData.sourceLabel + " to " + modelData.destinationLabel
-                                    Accessible.description: "Select this route; right-click for processing actions; press Delete to disconnect it in Configured view."
-                                    onClicked: function(mouse) {
-                                        root.selectedRoute = modelData
-                                        root.selectedSource = ({})
-                                        root.selectedNode = ({})
-                                        if (mouse.button === Qt.RightButton) {
-                                            routeContextMenu.targetRoute = modelData
-                                            routeContextMenu.open()
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 Text {
@@ -2377,7 +2505,7 @@ Item {
                     anchors.margins: 8
                     text: root.connectionPreview && root.connectionPreview.message
                         ? root.connectionPreview.message
-                        : "Click-click or drag to route · drag a processor chip onto a route lane · right-click a wire for processing · right-click a card to pin · Delete disconnects"
+                        : "Click-click or drag to route · drag a processor chip onto a visible wire · right-click a wire for processing · right-click a card to pin · Delete disconnects"
                     color: root.graphLabel
                     font.pixelSize: 9
                 }
@@ -2494,6 +2622,14 @@ Item {
                         helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Signal Flow selection for return."
                         Layout.fillWidth: true
                         onClicked: root.openFullSettings("adaptive-response", root.selectedRoute)
+                    }
+                    FlowButton {
+                        text: root.selectedNode && root.selectedNode.shared ? "Remove this shared channel" : "Remove processor"
+                        dangerAction: true
+                        visible: Boolean(root.selectedNode && root.selectedNode.kind === "processor")
+                        enabled: root.viewMode === "configured"
+                        Layout.fillWidth: true
+                        onClicked: root.removeSelectedProcessor()
                     }
                     FlowButton { text: "Processor palette"; visible: Boolean(root.selectedRoute && root.selectedRoute.id); enabled: root.viewMode === "configured"; Layout.fillWidth: true; onClicked: processorDialog.open() }
                     FlowButton { text: "Share active processor…"; visible: Boolean(root.selectedRoute && root.selectedRoute.id); enabled: root.viewMode === "configured"; Layout.fillWidth: true; onClicked: root.openShareProcessorDialog() }
@@ -2776,7 +2912,7 @@ Item {
         title: "Processor palette"
         contentItem: ColumnLayout {
             spacing: 9
-            Text { Layout.fillWidth: true; text: "Drag a processor onto a route lane in the canvas, or click one to atomically add/remove it from the selected source chain. Source-owned processors affect that source’s visible fan-out routes."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "Drag a processor onto its matching visible execution-stage wire, or select that wire then click. Signal Flow rejects visual-only reorders; source-owned processors affect that source’s visible fan-out routes."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
             Flow {
                 Layout.fillWidth: true
                 spacing: 7
@@ -2790,17 +2926,20 @@ Item {
                         id: processorChip
                         required property var modelData
                         property string processorKind: modelData.key
+                        readonly property bool activeProcessor: root.processorEnabled(processorKind)
+                        readonly property bool actionAvailable: root.processorActionAvailable(processorKind)
                         width: Math.max(108, chipText.implicitWidth + 20); height: 30; radius: 4
-                        color: root.processorEnabled(processorKind) ? root.graphOutput : root.control
+                        color: activeProcessor ? root.graphOutput : root.control
+                        opacity: actionAvailable ? 1.0 : 0.54
                         border.color: chipDrag.active ? root.warning : root.borderStrong
-                        Text { id: chipText; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? root.pageBackground : root.textStrong; font.pixelSize: 10; font.bold: true }
+                        Text { id: chipText; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : activeProcessor ? "Remove " + modelData.label : actionAvailable ? "Add " + modelData.label : "Select stage for " + modelData.label; color: activeProcessor ? root.pageBackground : root.textStrong; font.pixelSize: 10; font.bold: true }
                         Drag.active: chipDrag.active
                         Drag.source: processorChip
                         Drag.keys: ["signal-flow-processor"]
                         Drag.hotSpot.x: width / 2
                         Drag.hotSpot.y: height / 2
-                        DragHandler { id: chipDrag; enabled: root.viewMode === "configured" }
-                        MouseArea { anchors.fill: parent; onClicked: root.toggleProcessor(processorKind) }
+                        DragHandler { id: chipDrag; enabled: root.viewMode === "configured" && !activeProcessor && root.processorCanInsert(processorKind) }
+                        MouseArea { anchors.fill: parent; enabled: root.viewMode === "configured" && actionAvailable; onClicked: root.toggleProcessor(processorKind) }
                     }
                 }
             }

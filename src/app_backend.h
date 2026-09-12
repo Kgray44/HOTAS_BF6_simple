@@ -776,8 +776,20 @@ public:
     Q_INVOKABLE QVariantMap signalFlowInsertProcessor(const QString &segmentId,
                                                        const QString &processorKind,
                                                        qulonglong expectedRevision);
+    // Returns only the source-owned processors whose fixed runtime stage is
+    // represented by this canonical segment.  This keeps the palette honest:
+    // Signal Flow cannot offer a graph-only reorder that the mapping worker
+    // would not execute.
+    Q_INVOKABLE QVariantList signalFlowAvailableProcessorsForSegment(const QString &segmentId,
+                                                                      qulonglong expectedRevision) const;
     Q_INVOKABLE QVariantMap signalFlowRemoveOrBypassProcessor(const QString &processorId,
                                                                qulonglong expectedRevision);
+    // A shared processor owns one focused setting but can serve several axis
+    // channels.  Removing one channel is explicit and leaves the remaining
+    // shared processor intact (including its durable identity).
+    Q_INVOKABLE QVariantMap signalFlowRemoveSharedProcessorChannel(const QString &processorId,
+                                                                    const QString &routeId,
+                                                                    qulonglong expectedRevision);
     // A shared processor is a canonical, source-owned relation. The first
     // route is its owner; later selected axis routes receive the same durable
     // focused setting at the next configuration boundary.

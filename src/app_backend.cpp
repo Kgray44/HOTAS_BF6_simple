@@ -126,6 +126,71 @@ bool parseSignalFlowEndpointToken(const QString &token, SignalFlowEndpointRefere
     return true;
 }
 
+// Axis conditioning has a fixed, compiled execution order.  Signal Flow
+// renders those same stages as processors, but must never imply that a user
+// can drag one past another when the MappingWorker would still execute the
+// source-owned transform in this order.
+int signalFlowProcessorStage(const QString &kind)
+{
+    const QString normalized = kind.trimmed().toLower();
+    if (normalized == u"domain"_qs) return 0;
+    if (normalized == u"deadzone"_qs) return 1;
+    if (normalized == u"center-hold"_qs) return 2;
+    if (normalized == u"invert"_qs) return 3;
+    if (normalized == u"curve"_qs) return 4;
+    if (normalized == u"limits"_qs) return 5;
+    if (normalized == u"adaptive-response"_qs) return 6;
+    // Explicit mixers remain a downstream topology decision rather than an
+    // axis conditioner.  They are not insertable by this palette.
+    return 100;
+}
+
+QString signalFlowProcessorLabel(const QString &kind)
+{
+    const QString normalized = kind.trimmed().toLower();
+    if (normalized == u"center-hold"_qs) return u"Center Hold"_qs;
+    if (normalized == u"adaptive-response"_qs) return u"Adaptive Response"_qs;
+    if (normalized == u"limits"_qs) return u"Output Limits"_qs;
+    return normalized.left(1).toUpper() + normalized.mid(1);
+}
+
+QList<QString> signalFlowEditableProcessorKinds()
+{
+    return {u"deadzone"_qs, u"center-hold"_qs, u"invert"_qs,
+            u"curve"_qs, u"limits"_qs, u"adaptive-response"_qs};
+}
+
+QString signalFlowProcessorKindForId(const SignalFlowState &state, const QString &processorId)
+{
+    const auto found = std::find_if(state.processorIdentities.cbegin(), state.processorIdentities.cend(),
+        [&processorId](const SignalFlowIdentityRecord &identity) {
+            return identity.active && identity.id == processorId;
+        });
+    return found == state.processorIdentities.cend() ? QString{} : found->key.section(u':', -1);
+}
+
+int signalFlowRequiredInsertionSegment(const SignalFlowState &state, const SignalFlowRoute &route,
+                                       const QString &processorKind)
+{
+    const int requestedStage = signalFlowProcessorStage(processorKind);
+    if (requestedStage < 0 || requestedStage >= 100) return -1;
+    int segment = 0;
+    for (const QString &processorId : route.processorPath) {
+        if (signalFlowProcessorStage(signalFlowProcessorKindForId(state, processorId)) < requestedStage)
+            ++segment;
+    }
+    return segment;
+}
+
+bool signalFlowRouteHasProcessorKind(const SignalFlowState &state, const SignalFlowRoute &route,
+                                     const QString &processorKind)
+{
+    return std::any_of(route.processorPath.cbegin(), route.processorPath.cend(),
+        [&state, &processorKind](const QString &processorId) {
+            return signalFlowProcessorKindForId(state, processorId) == processorKind;
+        });
+}
+
 bool startupSmokeRequested()
 {
     const QStringList arguments = QCoreApplication::arguments();
@@ -7967,26 +8032,153 @@ QVariantMap AppBackend::signalFlowInsertProcessor(const QString &segmentId,
     }
     reconcileSignalFlowState(&m_configuration);
     const QString requestedSegment = segmentId.trimmed();
-    QString routeId;
+    const SignalFlowRoute *targetRoute = nullptr;
+    int requestedOrdinal = -1;
     for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
         const auto found = std::find_if(route.segments.cbegin(), route.segments.cend(),
-            [&requestedSegment](const SignalFlowRouteSegment &segment) {
-                return segment.id == requestedSegment;
-            });
+            [&requestedSegment](const SignalFlowRouteSegment &segment) { return segment.id == requestedSegment; });
         if (found != route.segments.cend()) {
-            routeId = route.id;
+            targetRoute = &route;
+            requestedOrdinal = static_cast<int>(std::distance(route.segments.cbegin(), found));
             break;
         }
     }
-    if (routeId.isEmpty()) {
+    if (!targetRoute) {
         return signalFlowActionResult(false, u"Processor target expired"_qs,
             u"That wire segment no longer exists in the current canonical topology. Review the graph and try again."_qs,
             requestedSegment);
     }
-    // The existing processor mutation owns focused-editor projection, runtime
-    // compilation, persistence, and undo.  Its route target has now been
-    // resolved from a real canonical segment rather than a route-lane proxy.
-    return signalFlowToggleProcessor(routeId, processorKind, true, expectedRevision);
+    const QString kind = processorKind.trimmed().toLower();
+    if (!signalFlowEditableProcessorKinds().contains(kind)) {
+        return signalFlowActionResult(false, u"Choose a supported processor"_qs,
+            u"Signal Flow can add Curve, Deadzone, Center Hold, Invert, Output Limits, or Adaptive Response to an axis route."_qs,
+            requestedSegment);
+    }
+    if (signalFlowRouteHasProcessorKind(m_configuration.signalFlow, *targetRoute, kind)) {
+        return signalFlowActionResult(false, u"Processor is already on this source"_qs,
+            QString(u"%1 is already active on this source. Use its visible processor card to remove or configure it."_qs)
+                .arg(signalFlowProcessorLabel(kind)), targetRoute->id);
+    }
+    const int requiredOrdinal = signalFlowRequiredInsertionSegment(m_configuration.signalFlow, *targetRoute, kind);
+    if (requiredOrdinal < 0 || requestedOrdinal != requiredOrdinal) {
+        return signalFlowActionResult(false, u"Choose the matching execution stage"_qs,
+            QString(u"%1 has one compiled runtime stage. Drop it on the visible wire at that stage; Signal Flow will not create a visual-only reorder."_qs)
+                .arg(signalFlowProcessorLabel(kind)), targetRoute->id);
+    }
+    // The focused-editor mutation owns projection, runtime compilation,
+    // persistence, and undo.  It is invoked only after the exact canonical
+    // segment is proven to be the transform's real execution stage.
+    return signalFlowToggleProcessor(targetRoute->id, kind, true, expectedRevision);
+}
+
+QVariantList AppBackend::signalFlowAvailableProcessorsForSegment(const QString &segmentId,
+                                                                  qulonglong expectedRevision) const
+{
+    QVariantList available;
+    if (expectedRevision != m_configurationGeneration) return available;
+    const QString requestedSegment = segmentId.trimmed();
+    const SignalFlowRoute *targetRoute = nullptr;
+    int requestedOrdinal = -1;
+    for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
+        const auto found = std::find_if(route.segments.cbegin(), route.segments.cend(),
+            [&requestedSegment](const SignalFlowRouteSegment &segment) { return segment.id == requestedSegment; });
+        if (found == route.segments.cend()) continue;
+        targetRoute = &route;
+        requestedOrdinal = static_cast<int>(std::distance(route.segments.cbegin(), found));
+        break;
+    }
+    if (!targetRoute || targetRoute->sourceKind != SignalFlowPortKind::Axis
+        || targetRoute->sourceIndex < 0 || targetRoute->sourceIndex >= kPhysicalAxisCount) return available;
+    for (const QString &kind : signalFlowEditableProcessorKinds()) {
+        if (signalFlowRouteHasProcessorKind(m_configuration.signalFlow, *targetRoute, kind)) continue;
+        if (signalFlowRequiredInsertionSegment(m_configuration.signalFlow, *targetRoute, kind) != requestedOrdinal)
+            continue;
+        available.append(QVariantMap{{u"key"_qs, kind}, {u"label"_qs, signalFlowProcessorLabel(kind)},
+                                     {u"segmentId"_qs, requestedSegment}});
+    }
+    return available;
+}
+
+QVariantMap AppBackend::signalFlowRemoveSharedProcessorChannel(const QString &processorId,
+                                                                const QString &routeId,
+                                                                qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Shared channel was not removed"_qs,
+            u"The graph changed while this shared channel was selected. No topology was changed."_qs,
+            processorId.trimmed());
+    }
+    reconcileSignalFlowState(&m_configuration);
+    const QString id = processorId.trimmed();
+    const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
+    auto shared = std::find_if(m_configuration.signalFlow.sharedProcessors.begin(),
+        m_configuration.signalFlow.sharedProcessors.end(), [&id](const SignalFlowSharedProcessor &candidate) {
+            return candidate.enabled && candidate.id == id;
+        });
+    if (!route || shared == m_configuration.signalFlow.sharedProcessors.end()
+        || route->profileId != shared->profileId || route->controllerRecordId != shared->controllerRecordId
+        || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
+        || route->sourceIndex >= kPhysicalAxisCount
+        || std::find(shared->sourceAxes.cbegin(), shared->sourceAxes.cend(), route->sourceIndex)
+            == shared->sourceAxes.cend()) {
+        return signalFlowActionResult(false, u"Shared channel is no longer available"_qs,
+            u"Select a current route served by this shared processor and try again."_qs, id);
+    }
+    ControllerProfile &profile = currentProfile();
+    if (profile.id != shared->profileId) {
+        return signalFlowActionResult(false, u"Shared channel is outside this profile"_qs,
+            u"The selected shared processor belongs to a different editing profile. No topology was changed."_qs, id);
+    }
+    DeviceProfileMapping *deviceMapping = shared->controllerRecordId.isEmpty()
+        ? nullptr : &ensureDeviceProfileMapping(profile, shared->controllerRecordId);
+    AxisMapping &axis = (deviceMapping ? deviceMapping->axes : profile.axes)[static_cast<size_t>(route->sourceIndex)];
+    AdaptiveResponseAxisOverride &adaptive = (deviceMapping ? deviceMapping->adaptiveResponse
+                                                              : profile.adaptiveResponse)
+        .axes[static_cast<size_t>(route->sourceIndex)];
+    const QString kind = shared->kind;
+    MapperConfiguration before = m_configuration;
+    if (kind == u"curve"_qs) {
+        axis.curve = linearCurveDefinition();
+    } else if (kind == u"deadzone"_qs) {
+        axis.deadzone = 0.03F;
+    } else if (kind == u"center-hold"_qs) {
+        axis.hysteresis = 0.002F;
+    } else if (kind == u"invert"_qs) {
+        axis.inverted = false;
+    } else if (kind == u"limits"_qs) {
+        const bool oneSided = axis.rangeMode == AxisRangeMode::OneSided;
+        const float minimum = oneSided ? 0.0F : -1.0F;
+        axis.outputMinimum = minimum;
+        axis.outputMaximum = 1.0F;
+        if (oneSided) {
+            axis.oneSidedOutputMinimum = minimum;
+            axis.oneSidedOutputMaximum = 1.0F;
+        } else {
+            axis.centeredOutputMinimum = minimum;
+            axis.centeredOutputMaximum = 1.0F;
+        }
+    } else if (kind == u"adaptive-response"_qs) {
+        adaptive.settings.enabled = false;
+        adaptive.properties |= AdaptiveResponseEnabled;
+    }
+    shared->sourceAxes.erase(std::remove(shared->sourceAxes.begin(), shared->sourceAxes.end(), route->sourceIndex),
+                              shared->sourceAxes.end());
+    if (shared->sourceAxes.size() < 2) {
+        m_configuration.signalFlow.sharedProcessors.erase(shared);
+    } else if (shared->ownerAxis == route->sourceIndex) {
+        // The processor's durable key identifies the shared configuration,
+        // not the member currently acting as owner.  Preserve it across this
+        // owner handoff so links, ports, undo, and focused-editor updates stay
+        // attached to the same object.
+        shared->ownerAxis = shared->sourceAxes.front();
+    }
+    const QString durableRouteId = route->id;
+    const QString description = QString(u"Removed %1 from %2 and its fan-out routes"_qs)
+        .arg(signalFlowProcessorLabel(kind), physicalAxisLabel(static_cast<PhysicalAxis>(route->sourceIndex)));
+    commitSignalFlowCommand(std::move(before), description);
+    return signalFlowActionResult(true, u"Shared channel removed"_qs,
+                                  u"The selected source now bypasses this processor. Other shared channels were left unchanged."_qs,
+                                  durableRouteId);
 }
 
 QVariantMap AppBackend::signalFlowRemoveOrBypassProcessor(const QString &processorId,
@@ -8175,6 +8367,33 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
         if (ownerAxis < 0) ownerAxis = route->sourceIndex;
         sourceAxes.push_back(route->sourceIndex);
     }
+    SignalFlowState &topology = m_configuration.signalFlow;
+    std::vector<SignalFlowSharedProcessor *> relatedSharedProcessors;
+    for (SignalFlowSharedProcessor &candidate : topology.sharedProcessors) {
+        if (!candidate.enabled || candidate.profileId != profile.id
+            || candidate.controllerRecordId != controllerId || candidate.kind != kind) continue;
+        const bool intersectsSelection = std::any_of(candidate.sourceAxes.cbegin(), candidate.sourceAxes.cend(),
+            [&seenAxes](int axis) { return seenAxes.contains(axis); });
+        if (intersectsSelection) relatedSharedProcessors.push_back(&candidate);
+    }
+    if (relatedSharedProcessors.size() > 1) {
+        return signalFlowActionResult(false, u"Shared processors have different settings"_qs,
+            u"The selected routes belong to different shared processors. Split one explicitly before combining them so no configuration is silently replaced."_qs);
+    }
+    SignalFlowSharedProcessor *existingShared = relatedSharedProcessors.empty()
+        ? nullptr : relatedSharedProcessors.front();
+    if (existingShared) {
+        // Growing a shared pair is a membership edit to the same canonical
+        // object, never a delete/recreate cycle.  Its identity remains stable
+        // even when the caller selected a newly added axis first.
+        ownerAxis = existingShared->ownerAxis;
+        for (const int axis : existingShared->sourceAxes) {
+            if (!seenAxes.contains(axis)) {
+                seenAxes.insert(axis);
+                sourceAxes.push_back(axis);
+            }
+        }
+    }
     const AxisMappings &axes = deviceMapping ? deviceMapping->axes : profile.axes;
     const AxisMapping &owner = axes[static_cast<size_t>(ownerAxis)];
     const bool processorActive = kind == u"curve"_qs
@@ -8199,27 +8418,22 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
                 .arg(label));
     }
     MapperConfiguration before = m_configuration;
-    SignalFlowState &topology = m_configuration.signalFlow;
-    for (auto iterator = topology.sharedProcessors.begin();
-         iterator != topology.sharedProcessors.end();) {
-        if (iterator->profileId != profile.id || iterator->controllerRecordId != controllerId
-            || iterator->kind != kind) {
-            ++iterator;
-            continue;
-        }
-        iterator->sourceAxes.erase(std::remove_if(iterator->sourceAxes.begin(), iterator->sourceAxes.end(),
-            [&seenAxes](int axis) { return seenAxes.contains(axis); }), iterator->sourceAxes.end());
-        if (iterator->sourceAxes.size() < 2) {
-            iterator = topology.sharedProcessors.erase(iterator);
-            continue;
-        }
-        if (std::find(iterator->sourceAxes.cbegin(), iterator->sourceAxes.cend(), iterator->ownerAxis)
-            == iterator->sourceAxes.cend()) {
-            iterator->ownerAxis = iterator->sourceAxes.front();
-            iterator->identityKey = signalFlowSharedProcessorIdentityKey(
-                profile, controllerId, kind, iterator->ownerAxis);
-        }
-        ++iterator;
+    std::sort(sourceAxes.begin(), sourceAxes.end());
+    sourceAxes.erase(std::unique(sourceAxes.begin(), sourceAxes.end()), sourceAxes.end());
+    const QString label = signalFlowProcessorLabel(kind);
+    if (existingShared) {
+        existingShared->sourceAxes = std::move(sourceAxes);
+        // Reconcile intentionally treats a pre-existing non-owner edit as a
+        // divergence.  A newly joined channel is different: copy the shared
+        // owner now, before the next reconciliation, so growth is atomic and
+        // cannot be mistaken for an external conflicting edit.
+        signalFlowPropagateSharedProcessorSettings(&m_configuration, profile.id, controllerId,
+                                                   kind, existingShared->ownerAxis);
+        const QString description = QString(u"Extended shared %1 to %2 axis sources"_qs)
+            .arg(label).arg(existingShared->sourceAxes.size());
+        commitSignalFlowCommand(std::move(before), description);
+        return signalFlowActionResult(true, u"Shared processor extended"_qs, description,
+                                      routeIds.front().trimmed());
     }
     if (topology.sharedProcessors.size() >= kMaximumSignalFlowSharedProcessors) {
         return signalFlowActionResult(false, u"Shared processor limit reached"_qs,
@@ -8234,10 +8448,7 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
     shared.enabled = true;
     shared.identityKey = signalFlowSharedProcessorIdentityKey(profile, controllerId, kind, ownerAxis);
     topology.sharedProcessors.push_back(std::move(shared));
-    const QString label = kind == u"center-hold"_qs ? u"Center Hold"_qs
-        : kind == u"adaptive-response"_qs ? u"Adaptive Response"_qs
-        : kind == u"limits"_qs ? u"Output Limits"_qs
-        : kind.left(1).toUpper() + kind.mid(1);
+    signalFlowPropagateSharedProcessorSettings(&m_configuration, profile.id, controllerId, kind, ownerAxis);
     const QString description = QString(u"Shared %1 across %2 axis sources"_qs)
         .arg(label).arg(seenAxes.size());
     commitSignalFlowCommand(std::move(before), description);
@@ -8301,8 +8512,6 @@ QVariantMap AppBackend::signalFlowSplitSharedProcessor(const QString &routeId,
             topology.sharedProcessors.erase(iterator);
         } else if (iterator->ownerAxis == sourceAxis) {
             iterator->ownerAxis = iterator->sourceAxes.front();
-            iterator->identityKey = signalFlowSharedProcessorIdentityKey(
-                profile, controllerId, kind, iterator->ownerAxis);
         }
         break;
     }

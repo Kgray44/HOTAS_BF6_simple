@@ -3879,6 +3879,7 @@ void MappingCoreTests::signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSett
     QVERIFY(sharedIdentity);
     QVERIFY(sharedIdentity->active);
     QCOMPARE(sharedIdentity->id, reconciled.id);
+    const QString stableSharedId = reconciled.id;
 
     const auto routeForAxis = [](const MapperConfiguration &candidate, int axis) {
         const auto found = std::find_if(candidate.signalFlow.routes.cbegin(),
@@ -3894,6 +3895,36 @@ void MappingCoreTests::signalFlowSharedProcessorGrowthAndSplitRetainsRuntimeSett
     QVERIFY(axis1);
     QVERIFY(axis0->processorPath.contains(reconciled.id));
     QVERIFY(axis1->processorPath.contains(reconciled.id));
+
+    // Growing a shared object and handing its owner to another member must
+    // retain one canonical processor identity. The durable card/port/link is
+    // the shared configuration, not whichever source currently owns it.
+    configuration.signalFlow.sharedProcessors.front().sourceAxes.push_back(2);
+    QVERIFY(signalFlowPropagateSharedProcessorSettings(&configuration, profile.id, {},
+                                                        QStringLiteral("curve"), 0));
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.sharedProcessors.size(), size_t{1});
+    QCOMPARE(configuration.signalFlow.sharedProcessors.front().id, stableSharedId);
+    const SignalFlowRoute *axis2 = routeForAxis(configuration, 2);
+    QVERIFY(axis2);
+    QVERIFY(axis2->processorPath.contains(stableSharedId));
+    QCOMPARE(profile.axes[2].curve.strength, 0.67F);
+
+    auto &ownerHandoff = configuration.signalFlow.sharedProcessors.front();
+    ownerHandoff.sourceAxes.erase(std::remove(ownerHandoff.sourceAxes.begin(), ownerHandoff.sourceAxes.end(), 0),
+                                  ownerHandoff.sourceAxes.end());
+    ownerHandoff.ownerAxis = 1;
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.sharedProcessors.size(), size_t{1});
+    QCOMPARE(configuration.signalFlow.sharedProcessors.front().id, stableSharedId);
+
+    // Restore the two-channel setup used by the existing serialization and
+    // divergence checks below without manufacturing a replacement identity.
+    auto &restoredMembers = configuration.signalFlow.sharedProcessors.front();
+    restoredMembers.sourceAxes = {0, 1};
+    restoredMembers.ownerAxis = 0;
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.sharedProcessors.front().id, stableSharedId);
 
     // An edit through the shared object's owner updates every linked source
     // at the same configuration boundary, rather than creating copied graph
