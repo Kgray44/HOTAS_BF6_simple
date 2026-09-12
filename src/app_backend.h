@@ -1064,6 +1064,12 @@ private:
     ControllerVJoyRequirements currentVjoyRequirements() const;
     bool rememberCurrentController(const QString &expectedRecordId = {},
                                    const PhysicalControllerCapabilities *observedProof = nullptr);
+    // Setup verification proves an already saved identity.  It must not need
+    // the mapper's active-controller selection (or alter it) just to write
+    // that proof back to the saved record.
+    bool commitExactControllerVerification(const QString &recordId,
+                                           const PhysicalControllerCapabilities &observedProof,
+                                           QString *failure = nullptr);
     void tryAutoSwitchVerifiedController();
     void refreshTrayStatus();
     void rebuildSelectedAxisCurve();
@@ -1178,6 +1184,10 @@ private:
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
     QString m_pendingSetupVerificationRecordId;
+    // The pending ID above belongs to the legacy asynchronous acquisition
+    // hand-off.  Keep the frozen repair target separately so a recovery
+    // read-back cannot lose which exact record is authorized for persistence.
+    QString m_setupConvergenceIdentityRecordId;
     PhysicalControllerCapabilities m_setupDirectInputProof;
     bool m_setupDirectInputProofAvailable = false;
     // A repair session contains only control-plane state. The worker still

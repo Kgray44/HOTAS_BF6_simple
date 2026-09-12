@@ -6022,6 +6022,8 @@ QVariantMap AppBackend::checkSetupHealth()
     m_setupConvergenceHidHideRepairFailed = false;
     m_setupConvergenceCancelled = false;
     m_setupConvergenceCurrentIssueId.clear();
+    m_pendingSetupVerificationRecordId.clear();
+    m_setupConvergenceIdentityRecordId.clear();
     m_setupTruthBeforeSnapshot.clear();
     m_setupTruthAfterSnapshot.clear();
     m_setupRepairSessionReport.clear();
@@ -6098,6 +6100,7 @@ QVariantMap AppBackend::repairSetupHealth()
         if (m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
         m_setupConvergenceAttemptedIssues.insert(attemptKey);
         m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
+        m_setupConvergenceIdentityRecordId = recordId;
         setSetupConvergenceStage(SetupConvergenceStage::VerifyingIdentity);
         updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"RUNNING"_qs,
             u"Acquiring the matching DirectInput controller and committing verification only after exact identity proof."_qs,
@@ -6214,6 +6217,7 @@ void AppBackend::completeSetupConvergence(const QString &finalState)
              m_setupTruthBeforeSnapshot.value(u"diagnostics"_qs).toString(),
              operations, m_setupTruthAfterSnapshot.value(u"diagnostics"_qs).toString(), state);
     m_setupConvergenceFinished = QDateTime::currentDateTime();
+    m_setupConvergenceIdentityRecordId.clear();
     setSetupConvergenceStage(state == u"READY"_qs ? SetupConvergenceStage::Complete
         : state == u"CANCELLED"_qs ? SetupConvergenceStage::Cancelled : SetupConvergenceStage::Failed);
     emit stateChanged();
@@ -13050,8 +13054,15 @@ void AppBackend::startVerification(VerificationMode mode)
         ? u"Full controller verification started"_qs
         : u"Quick controller verification started"_qs);
 
+    // Repair owns a frozen record ID for its entire identity-proof stage.
+    // The explicit acquisition field is intentionally only a hand-off detail:
+    // a recovery read-back must never turn a proven controller into an
+    // anonymous verification and silently skip the timestamp commit.
     const QString setupVerificationRecordId = mode == VerificationMode::Full
-        ? m_pendingSetupVerificationRecordId : QString{};
+        ? (!m_pendingSetupVerificationRecordId.isEmpty() ? m_pendingSetupVerificationRecordId
+            : (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity
+                ? m_setupConvergenceIdentityRecordId : QString{}))
+        : QString{};
     QThread *thread = QThread::create([this, configuration, physical, setupDirectInputId, mode, mappingWasRequested,
                                        mapperOwnsVjoy, outputReportsSucceeding, arrivalId,
                                        setupVerificationRecordId] {
@@ -13162,9 +13173,13 @@ void AppBackend::startVerification(VerificationMode mode)
                     const bool physicalReady = m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready;
                     const bool identityMatches = saved && ControllerReadinessService::samePhysicalController(
                         expected, observedPhysical);
+                    QString identityCommitFailure;
+                    const bool identityCommitted = saved && restored && finalIdentityProof
+                        && observedPhysical.connected && physicalReady && identityMatches
+                        && commitExactControllerVerification(setupVerificationRecordId, observedPhysical,
+                                                             &identityCommitFailure);
                     if (saved && restored && finalIdentityProof && observedPhysical.connected
-                        && physicalReady && identityMatches && !m_readiness.hasPendingRecovery()
-                        && rememberCurrentController(setupVerificationRecordId, &observedPhysical)) {
+                        && physicalReady && identityMatches && identityCommitted) {
                         appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
                     } else {
                         m_setupConvergenceIdentityVerificationFailed = true;
@@ -13185,9 +13200,8 @@ void AppBackend::startVerification(VerificationMode mode)
                         } else if (!identityMatches) {
                             m_setupConvergenceIdentityVerificationFailure =
                                 u"The active controller did not match the selected saved physical identity."_qs;
-                        } else if (m_readiness.hasPendingRecovery()) {
-                            m_setupConvergenceIdentityVerificationFailure =
-                                u"The controller identity matched, but the required fresh DirectInput report after the earlier repair was not observed. Move a control and retry; HidHide and vJoy were not changed."_qs;
+                        } else if (!identityCommitFailure.isEmpty()) {
+                            m_setupConvergenceIdentityVerificationFailure = identityCommitFailure;
                         } else {
                             m_setupConvergenceIdentityVerificationFailure =
                                 u"The matching controller was proven, but HOTAS BF6 could not persist its verification record."_qs;
@@ -13195,6 +13209,8 @@ void AppBackend::startVerification(VerificationMode mode)
                         appendEvent(QString(u"Selected controller setup did not commit identity: %1"_qs)
                             .arg(m_setupConvergenceIdentityVerificationFailure));
                     }
+                    if (m_setupConvergenceIdentityRecordId == setupVerificationRecordId)
+                        m_setupConvergenceIdentityRecordId.clear();
                 } else if (m_readiness.plan().state == ControllerReadinessState::Ready) {
                     rememberCurrentController();
                 }
@@ -13651,6 +13667,62 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
     m_worker.updateConfiguration(m_configuration);
     rebuildControllerUiModel();
     appendEvent(QString(u"Verified controller remembered: %1"_qs).arg(controller->name));
+    return true;
+}
+
+bool AppBackend::commitExactControllerVerification(const QString &recordId,
+                                                   const PhysicalControllerCapabilities &observedProof,
+                                                   QString *failure)
+{
+    const auto reject = [failure](const QString &detail) {
+        if (failure) *failure = detail;
+        return false;
+    };
+    if (recordId.trimmed().isEmpty()) {
+        return reject(u"HOTAS BF6 lost the selected saved-controller record before verification could be committed."_qs);
+    }
+    if (!observedProof.connected || !observedProof.inputReportsReceived
+        || observedProof.directInputId.trimmed().isEmpty()) {
+        return reject(u"The selected controller did not provide the required fresh DirectInput proof, so its verification was not committed."_qs);
+    }
+
+    MapperConfiguration candidate = m_configuration;
+    const auto found = std::find_if(candidate.savedControllers.begin(), candidate.savedControllers.end(),
+        [&recordId](const SavedControllerRecord &record) { return record.id == recordId; });
+    if (found == candidate.savedControllers.end()) {
+        return reject(u"The selected saved-controller record is no longer available to persist."_qs);
+    }
+
+    PhysicalControllerCapabilities expected;
+    expected.directInputId = found->lastDirectInputId;
+    expected.hidInstanceId = found->hidInstanceId;
+    expected.hidContainerId = found->hidContainerId;
+    if (!ControllerReadinessService::samePhysicalController(expected, observedProof)) {
+        return reject(u"The final DirectInput proof did not match the exact saved controller, so HOTAS BF6 left its verification record unchanged."_qs);
+    }
+
+    // Preserve the saved record's mapping, calibration, ownership, and runtime
+    // selection. This is a proof commit, not a controller or rig activation.
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    found->lastDirectInputId = observedProof.directInputId;
+    if (!observedProof.hidInstanceId.isEmpty()) found->hidInstanceId = observedProof.hidInstanceId;
+    if (!observedProof.hidContainerId.isEmpty()) found->hidContainerId = observedProof.hidContainerId;
+    found->axes = observedProof.axes;
+    found->axisCount = std::count(found->axes.cbegin(), found->axes.cend(), true);
+    found->buttonCount = observedProof.buttons;
+    found->povCount = observedProof.povs;
+    found->lastSeen = timestamp;
+    found->lastVerified = timestamp;
+
+    if (!ConfigStore::save(candidate)) {
+        return reject(u"HOTAS BF6 proved the selected controller but could not save its verification record. No controller, HidHide, or vJoy setting was changed."_qs);
+    }
+    m_configuration = std::move(candidate);
+    ++m_configurationGeneration;
+    m_worker.updateConfiguration(m_configuration);
+    rebuildControllerUiModel();
+    appendEvent(QString(u"Exact controller verification committed without changing the active rig: %1"_qs)
+        .arg(recordId));
     return true;
 }
 

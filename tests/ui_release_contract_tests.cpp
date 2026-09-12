@@ -697,6 +697,12 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("OptionalDeviceOffline")));
     QVERIFY(backend.contains(QStringLiteral("VirtualOutputBusy")));
     QVERIFY(backend.contains(QStringLiteral("m_pendingSetupVerificationRecordId")));
+    // The transient acquisition hand-off cannot be the only authority for an
+    // identity repair: recovery read-back must retain the frozen record and
+    // commit it without changing the active runtime selection.
+    QVERIFY(backend.contains(QStringLiteral("m_setupConvergenceIdentityRecordId")));
+    QVERIFY(backend.contains(QStringLiteral("commitExactControllerVerification")));
+    QVERIFY(backend.contains(QStringLiteral("without changing the active rig")));
     QVERIFY(backend.contains(QStringLiteral("physicalStatus == VerificationSubsystemState::Ready")));
     QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
     QVERIFY(backend.contains(QStringLiteral("NoMappedControl")));
