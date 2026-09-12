@@ -77,6 +77,13 @@ Item {
     property int pointerHitCandidateCount: 0
     property int liveSampleCount: 0
     property var retiringWireGeometry: []
+    // A dropped card switches from its inexpensive live geometry to the
+    // obstacle-aware route cache.  Keep a snapshot for a brief transition so
+    // that switch can morph continuously, never as erased/replaced wiring.
+    property var reflowWireGeometry: []
+    property var reflowWireSegmentIndex: ({})
+    property bool wireReflowPending: false
+    property real wireReflow: 1.0
     property real wireReveal: 1.0
     property real wireRetire: 1.0
     property var nodePositions: ({})
@@ -302,7 +309,7 @@ Item {
         const states = nodeData && nodeData.portGroups ? nodeData.portGroups : []
         if (states.length > 0) return states
         const seen = ({})
-        const result = []
+        let result = []
         const cardPorts = portsForNode(nodeData)
         for (let index = 0; index < cardPorts.length; ++index) {
             const group = String(cardPorts[index].group || "Controls")
@@ -431,6 +438,70 @@ Item {
         if (source.kind === "native-pov") return port.kind === "native-pov"
         return port.kind === "button"
     }
+    // Routing is a card-level task as well as a port-level one.  The source
+    // card stays unmistakable, and destination cards advertise whether they
+    // are compatible candidates or the current hovered target.
+    function routingNodeState(nodeData) {
+        if (!nodeData || !source || !source.id) return ""
+        const sourceOwnerId = portOwnerNodeId(source)
+        if (sourceOwnerId && nodeMatchesId(nodeData, sourceOwnerId)) return "source"
+        const previewOwnerId = String(connectionPreview && connectionPreview.ownerNodeId || "")
+        if (previewOwnerId && nodeMatchesId(nodeData, previewOwnerId))
+            return connectionPreview.compatible ? "target" : "blocked"
+        if (nodeData.kind !== "output") return ""
+        const cardPorts = portsForNode(nodeData)
+        for (let index = 0; index < cardPorts.length; ++index) {
+            if (matching(cardPorts[index], true) && compatible(cardPorts[index])) return "candidate"
+        }
+        return ""
+    }
+    function routingNodeBorderColor(state) {
+        if (state === "source") return deck.accent
+        if (state === "target") return deck.attention
+        if (state === "candidate") return deck.focus
+        if (state === "blocked") return deck.attention
+        return deck.border
+    }
+    function routingNodeBorderWidth(state) {
+        return state === "source" || state === "target" ? 3 : state.length > 0 ? 2 : 1
+    }
+    function routingNodeSurface(baseColor, state) {
+        if (!state) return baseColor
+        const emphasis = state === "target" || state === "blocked" ? deck.attention
+            : state === "source" ? deck.accent : deck.focus
+        const amount = state === "candidate" ? 0.08 : 0.14
+        return Qt.rgba(baseColor.r * (1 - amount) + emphasis.r * amount,
+            baseColor.g * (1 - amount) + emphasis.g * amount,
+            baseColor.b * (1 - amount) + emphasis.b * amount, baseColor.a)
+    }
+    function routeTopologySignature(routes) {
+        const routeParts = []
+        const sourceRoutes = routes || []
+        for (let routeIndex = 0; routeIndex < sourceRoutes.length; ++routeIndex) {
+            const route = sourceRoutes[routeIndex] || ({})
+            const segmentParts = []
+            const segments = route.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex] || ({})
+                segmentParts.push([String(segment.id || ""), String(segment.sourceNodeId || ""),
+                    String(segment.destinationNodeId || ""), String(segment.sourceEndpointId || ""),
+                    String(segment.destinationEndpointId || "")].join("~"))
+            }
+            routeParts.push([String(route.id || ""), String(route.sourceNodeId || ""),
+                String(route.destinationNodeId || ""), String(route.sourceEndpointId || route.sourcePortId || ""),
+                String(route.destinationEndpointId || route.destinationPortId || ""), segmentParts.join(",")].join("\u001f"))
+        }
+        routeParts.sort()
+        return routeParts.join("\u001e")
+    }
+    function renderedRouteTopologySignature() {
+        const renderedRoutes = []
+        const entries = wireGeometry || []
+        for (let index = 0; index < entries.length; ++index) {
+            if (entries[index] && entries[index].route) renderedRoutes.push(entries[index].route)
+        }
+        return routeTopologySignature(renderedRoutes)
+    }
     function routeLive(route) {
         const entries = liveTelemetry.routes || []
         for (let i = 0; i < entries.length; ++i) if (entries[i].id === route.id) return entries[i]
@@ -470,10 +541,19 @@ Item {
     // Canvas highlights individual segments, so leaving the latter behind
     // would make a trace appear selected after its inspector was dismissed.
     function clearGraphSelection() {
+        // An explicit canvas dismissal wins over a deferred return-state
+        // restore from a recently closed settings page.
+        presentationRestored = true
         inspectedRoute = ({})
         selectedSegmentId = ""
         inspectedNode = ({})
         source = ({})
+    }
+    function dismissEmptyGraphAt(x, y) {
+        const hit = hitWire(x, y)
+        if (hit && hit.route) return false
+        clearGraphSelection()
+        return true
     }
     function useInputScope(nodeData) {
         if (!nodeData || nodeData.kind !== "input" || !nodeData.controllerRecordId || !graph.deviceRigId) return false
@@ -539,7 +619,7 @@ Item {
         const isCompatible = compatible(port)
         const existing = routesForPort(port, true)
         const requiresMerge = isCompatible && source.kind === "axis" && existing.length > 0
-        connectionPreview = ({ "portId": String(port.id), "compatible": isCompatible,
+        connectionPreview = ({ "portId": String(port.id), "ownerNodeId": portOwnerNodeId(port), "compatible": isCompatible,
             "message": source.label + " → " + port.label + (isCompatible
                 ? requiresMerge ? " · occupied analog output: choose Replace or Mixer."
                 : existing.length > 0 ? " · existing route present."
@@ -706,6 +786,24 @@ Item {
         for (const key in portAnchorOffsets) offsets[key] = portAnchorOffsets[key]
         if (port.endpointId) rememberPortAnchor(port, String(port.endpointId), x, y, next, offsets)
         if (port.id) rememberPortAnchor(port, String(port.id), x, y, next, offsets)
+        portAnchors = next
+        portAnchorOffsets = offsets
+        wireGeometryTimer.restart()
+    }
+    // A hidden or destroyed port row no longer describes a rendered endpoint.
+    // Drop its measured offset so a collapsed density group falls back to its
+    // current card geometry instead of retaining a stale row position.
+    function forgetPortAnchor(port) {
+        if (!port) return
+        const endpointKey = String(port.endpointId || "")
+        const legacyKey = String(port.id || "")
+        if ((!endpointKey || !portAnchors[endpointKey]) && (!legacyKey || !portAnchors[legacyKey])) return
+        const next = ({})
+        const offsets = ({})
+        for (const key in portAnchors)
+            if (key !== endpointKey && key !== legacyKey) next[key] = portAnchors[key]
+        for (const key in portAnchorOffsets)
+            if (key !== endpointKey && key !== legacyKey) offsets[key] = portAnchorOffsets[key]
         portAnchors = next
         portAnchorOffsets = offsets
         wireGeometryTimer.restart()
@@ -915,8 +1013,12 @@ Item {
         for (let bx = Math.floor(segment.bounds.left / cell); bx <= Math.floor(segment.bounds.right / cell); ++bx) {
             for (let by = Math.floor(segment.bounds.top / cell); by <= Math.floor(segment.bounds.bottom / cell); ++by) {
                 const key = bx + ":" + by
-                if (!buckets[key]) buckets[key] = []
-                buckets[key].push({ "route": route, "routeId": routeId,
+                let bucket = buckets[key]
+                if (!bucket) {
+                    bucket = []
+                    buckets[key] = bucket
+                }
+                bucket.push({ "route": route, "routeId": routeId,
                     "routeSegmentId": segment.routeSegmentId, "cacheKey": cacheKey, "points": segment.points })
                 keys.push(key)
             }
@@ -965,6 +1067,60 @@ Item {
             "bundleX": inputPosition.x + graphCardWidth(input),
             "processorCount": Math.max(0, segments.length - 1), "lane": lane
         })
+    }
+    function snapshotWireGeometry(entries) {
+        const snapshot = []
+        const sourceEntries = entries || []
+        for (let entryIndex = 0; entryIndex < sourceEntries.length; ++entryIndex) {
+            const entry = sourceEntries[entryIndex]
+            if (!entry) continue
+            const segments = []
+            const sourceSegments = entry.segments || []
+            for (let segmentIndex = 0; segmentIndex < sourceSegments.length; ++segmentIndex) {
+                const segment = sourceSegments[segmentIndex]
+                if (!segment) continue
+                // Canvas only needs these immutable presentation fields while
+                // the current cache is rebuilt underneath it.
+                segments.push({ "routeSegmentId": String(segment.routeSegmentId || ""),
+                    "startX": Number(segment.startX), "startY": Number(segment.startY),
+                    "endX": Number(segment.endX), "endY": Number(segment.endY),
+                    "hasDetour": Boolean(segment.hasDetour), "detourY": Number(segment.detourY || 0),
+                    "underCard": Boolean(segment.underCard) })
+            }
+            if (segments.length > 0) snapshot.push({ "route": entry.route || ({}),
+                "routeId": String(entry.routeId || ""), "lane": Number(entry.lane || 0), "segments": segments })
+        }
+        return snapshot
+    }
+    function indexReflowWireSegments(entries) {
+        const index = ({})
+        const sourceEntries = entries || []
+        for (let entryIndex = 0; entryIndex < sourceEntries.length; ++entryIndex) {
+            const entry = sourceEntries[entryIndex]
+            const segments = entry && entry.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex]
+                if (segment) index[String(entry.routeId || "") + "|" + String(segment.routeSegmentId || "")] = segment
+            }
+        }
+        return index
+    }
+    function reflowSourceSegment(routeId, segmentId) {
+        return reflowWireSegmentIndex[String(routeId || "") + "|" + String(segmentId || "")] || null
+    }
+    function prepareWireReflow() {
+        if (reducedMotion || !wireGeometry || wireGeometry.length === 0) {
+            reflowWireGeometry = []
+            reflowWireSegmentIndex = ({})
+            wireReflowPending = false
+            wireReflow = 1
+            return
+        }
+        wireReflowAnimation.stop()
+        reflowWireGeometry = snapshotWireGeometry(wireGeometry)
+        reflowWireSegmentIndex = indexReflowWireSegments(reflowWireGeometry)
+        wireReflowPending = reflowWireGeometry.length > 0
+        wireReflow = wireReflowPending ? 0 : 1
     }
     function rebuildWireGeometry() {
         geometryRebuildCount += 1
@@ -1020,8 +1176,17 @@ Item {
         wireBuckets = buckets
         wireSegmentBucketKeys = segmentBucketKeys
         wireNodeSegmentRefs = nodeSegmentRefs
+        if (wireReflowPending) {
+            wireReflowPending = false
+            if (reflowWireGeometry.length > 0 && !reducedMotion) {
+                wireReflow = 0
+                wireReflowAnimation.restart()
+            } else {
+                reflowWireGeometry = []
+                wireReflow = 1
+            }
+        }
         if (diagram) diagram.requestPaint()
-        if (portAnchorDiagnosticsEnabled) collectPortAnchorDiagnostics()
     }
     function refreshLiveDragGeometry(nodeId) {
         const movedNode = nodeForId(nodeId)
@@ -1117,6 +1282,10 @@ Item {
         const id = nodeIdentity(nodeData)
         if (!id) return false
         updateLiveNodeDrag(nodeData, x, y)
+        // Snapshot the exact live wire the user just moved. The final cache
+        // pass is allowed to route around nearby cards, but it will hand over
+        // through a short geometry morph instead of popping to the new path.
+        prepareWireReflow()
         noteNodePosition(nodeStorageIdentity(nodeData), x, y, false)
         const next = ({})
         for (const key in liveNodePositions) {
@@ -1622,22 +1791,56 @@ Item {
     onGraphChanged: {
         const nextRouteIds = ({})
         const nextRoutes = graph.routes || []
+        // Node placement and workspace saves update the graph too.  They do
+        // not change a route, so replaying the reveal animation would blank
+        // otherwise live wires immediately after a card is dropped.
+        const topologyChanged = routeTopologySignature(nextRoutes) !== renderedRouteTopologySignature()
         for (let index = 0; index < nextRoutes.length; ++index)
             nextRouteIds[String(nextRoutes[index].id || "")] = true
-        retiringWireGeometry = (wireGeometry || []).filter(function(entry) {
-            return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
-        })
+        if (topologyChanged) {
+            wireReflowPending = false
+            reflowWireGeometry = []
+            reflowWireSegmentIndex = ({})
+            wireReflow = 1
+            retiringWireGeometry = (wireGeometry || []).filter(function(entry) {
+                return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
+            })
+        }
+        portAnchors = ({})
+        portAnchorOffsets = ({})
+        // Clear endpoint measurements before clearing a saved-position
+        // override.  That keeps the position-map observer below from
+        // rebuilding once with anchors belonging to the graph we just left.
         nodePositions = ({})
         liveNodePositions = ({})
         liveDragNodeId = ""
-        portAnchors = ({})
-        portAnchorOffsets = ({})
         // Repeater delegates report their measured centers on the following
-        // geometry turn.  Their reports restart the wire timer, so a stable
-        // graph never retains this provisional fallback geometry.
+        // geometry turn. Their timers are queued before the handoff timer, so
+        // this retains the current wire until exactly one stable,
+        // obstacle-aware rebuild is ready.
         requestPortAnchorMeasurement()
-        wireGeometryTimer.restart()
-        restartWireMotion()
+        // With no routes there cannot be a delegate endpoint callback to do
+        // this work, but stale geometry still has to disappear immediately.
+        if (nextRoutes.length === 0) wireGeometryTimer.restart()
+        else graphGeometryHandoffTimer.restart()
+        if (topologyChanged) restartWireMotion()
+        else {
+            // Keep any already-drawn wire continuously visible while fresh
+            // port measurements settle after a layout-only graph update.
+            wireReveal = 1
+            if (retiringWireGeometry.length === 0) wireRetire = 1
+        }
+    }
+    // A position-map assignment is also a geometry change.  Most product
+    // moves pass through noteNodePosition(), but layout restore, test fixtures
+    // and future workspace importers may replace the complete map directly.
+    // Existing card-local port offsets make this one coalesced rebuild exact
+    // without waiting for a visual delegate notification.  Graph replacement
+    // clears those offsets first (above), so its deferred anchor handoff stays
+    // a single stable rebuild.
+    onNodePositionsChanged: {
+        if (!liveDragNodeId && Object.keys(portAnchorOffsets).length > 0)
+            wireGeometryTimer.restart()
     }
     onPresentationStateChanged: {
         presentationRestored = false
@@ -1656,11 +1859,16 @@ Item {
             wireReveal = 1
             wireRetire = 1
             retiringWireGeometry = []
+            wireReflow = 1
+            wireReflowPending = false
+            reflowWireGeometry = []
+            reflowWireSegmentIndex = ({})
         }
         if (diagram) diagram.requestPaint()
     }
     onWireRevealChanged: if (diagram) diagram.requestPaint()
     onWireRetireChanged: if (diagram) diagram.requestPaint()
+    onWireReflowChanged: if (diagram) diagram.requestPaint()
     onLiveModeChanged: if (diagram) diagram.requestPaint()
     onDragWireChanged: if (diagram) diagram.requestPaint()
     onRouteStateFilterChanged: if (diagram) diagram.requestPaint()
@@ -1722,6 +1930,18 @@ Item {
     }
 
     Timer {
+        id: graphGeometryHandoffTimer
+        // A graph refresh first asks every live delegate to measure its port.
+        // Those zero-turn delegate timers are queued before this handoff, so
+        // restarting the geometry timer here produces one stable cache even
+        // when a backend signal lands between a caller's own measurement
+        // request and its next presentation turn.
+        interval: 0
+        repeat: false
+        onTriggered: wireGeometryTimer.restart()
+    }
+
+    Timer {
         id: noticeTimer
         interval: root.noticeError ? 8000 : 4200
         repeat: false
@@ -1746,6 +1966,19 @@ Item {
         duration: 170
         easing.type: Easing.InCubic
         onStopped: if (root.wireRetire >= 0.999) root.retiringWireGeometry = []
+    }
+    NumberAnimation {
+        id: wireReflowAnimation
+        target: root
+        property: "wireReflow"
+        from: 0
+        to: 1
+        duration: 260
+        easing.type: Easing.InOutCubic
+        onStopped: if (root.wireReflow >= 0.999) {
+            root.reflowWireGeometry = []
+            root.reflowWireSegmentIndex = ({})
+        }
     }
 
     Timer {
@@ -1880,6 +2113,12 @@ Item {
         property bool destination: false
         property bool compatibleTarget: root.compatible(port)
         readonly property string endpointKey: String(port && (port.endpointId || port.id) || "")
+        readonly property bool sourceSelected: !destination && root.source
+            && String(root.source.endpointId || root.source.id || "") === endpointKey
+        readonly property bool previewedDestination: destination && root.connectionPreview
+            && String(root.connectionPreview.portId || "") === String(port.id || "")
+        readonly property bool routingCandidate: destination && compatibleTarget
+        readonly property bool routingEmphasized: sourceSelected || previewedDestination || routingCandidate
         implicitHeight: 28
         Accessible.name: (destination ? "Destination " : "Source ") + String(port.label || "port")
         Accessible.description: destination
@@ -1890,6 +2129,10 @@ Item {
             const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
             root.notePortAnchor(port, point.x, point.y)
         }
+        // A group expansion moves this row after its own x/y notifications.
+        // Measure on the delegate-owned next event turn so the cache records
+        // the settled rendered center, while destruction still removes any
+        // stale measurement before the delegate vanishes.
         function queueAnchorMeasurement() { anchorMeasurementTimer.restart() }
         onXChanged: queueAnchorMeasurement()
         onYChanged: queueAnchorMeasurement()
@@ -1897,9 +2140,7 @@ Item {
         onHeightChanged: queueAnchorMeasurement()
         onVisibleChanged: queueAnchorMeasurement()
         Component.onCompleted: queueAnchorMeasurement()
-        // A Timer belongs to this delegate and is cancelled with it.  This is
-        // safe during Repeater destruction, unlike a deferred JS callback
-        // which can outlive the row that scheduled it.
+        Component.onDestruction: root.forgetPortAnchor(port)
         Timer {
             id: anchorMeasurementTimer
             interval: 0
@@ -1910,6 +2151,19 @@ Item {
             target: root
             function onPortAnchorMeasurementEpochChanged() { graphPortRow.queueAnchorMeasurement() }
         }
+        Rectangle {
+            anchors.fill: parent
+            radius: 5
+            visible: graphPortRow.routingEmphasized
+            color: graphPortRow.previewedDestination
+                ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.19)
+                : graphPortRow.sourceSelected ? Qt.rgba(deck.accent.r, deck.accent.g, deck.accent.b, 0.18)
+                : Qt.rgba(deck.focus.r, deck.focus.g, deck.focus.b, 0.10)
+            border.width: graphPortRow.sourceSelected || graphPortRow.previewedDestination ? 2 : 1
+            border.color: graphPortRow.previewedDestination ? deck.attention
+                : graphPortRow.sourceSelected ? deck.accent : deck.focus
+            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
+        }
         RowLayout {
             anchors.fill: parent
             spacing: deck.space6
@@ -1918,14 +2172,29 @@ Item {
                 Layout.preferredHeight: 28
                 visible: graphPortRow.destination
                 Rectangle {
+                    anchors.centerIn: parent
+                    width: destinationDot.width + 10; height: destinationDot.height + 10; radius: width / 2
+                    visible: graphPortRow.routingCandidate
+                    color: graphPortRow.previewedDestination
+                        ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.24)
+                        : Qt.rgba(deck.focus.r, deck.focus.g, deck.focus.b, 0.18)
+                    border.width: 1
+                    border.color: graphPortRow.previewedDestination ? deck.attention : deck.focus
+                    Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
+                }
+                Rectangle {
                     id: destinationDot
                     objectName: "signalFlowPortVisual:" + graphPortRow.endpointKey
                     anchors.centerIn: parent
-                    width: 10; height: 10; radius: 5
+                    width: graphPortRow.routingCandidate ? 13 : 10
+                    height: width; radius: width / 2
                     color: !graphPortRow.port.available ? deck.disabled
+                        : graphPortRow.previewedDestination ? deck.attention
                         : graphPortRow.compatibleTarget ? deck.accent : graphPortRow.port.mapped ? deck.healthy : deck.textMuted
-                    border.width: graphPortRow.compatibleTarget ? 2 : 1
-                    border.color: graphPortRow.compatibleTarget ? deck.focus : deck.border
+                    border.width: graphPortRow.previewedDestination ? 3 : graphPortRow.compatibleTarget ? 2 : 1
+                    border.color: graphPortRow.previewedDestination ? deck.attention
+                        : graphPortRow.compatibleTarget ? deck.focus : deck.border
+                    Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 110; easing.type: Easing.OutCubic } }
                 }
             }
             Text {
@@ -1945,15 +2214,25 @@ Item {
                 Layout.preferredHeight: 28
                 visible: !graphPortRow.destination
                 Rectangle {
+                    anchors.centerIn: parent
+                    width: sourceDot.width + 10; height: sourceDot.height + 10; radius: width / 2
+                    visible: graphPortRow.sourceSelected
+                    color: Qt.rgba(deck.accent.r, deck.accent.g, deck.accent.b, 0.24)
+                    border.width: 1
+                    border.color: deck.accent
+                }
+                Rectangle {
                     id: sourceDot
                     objectName: "signalFlowPortVisual:" + graphPortRow.endpointKey
                     anchors.centerIn: parent
-                    width: 10; height: 10; radius: 5
+                    width: graphPortRow.sourceSelected ? 13 : 10
+                    height: width; radius: width / 2
                     color: !graphPortRow.port.available ? deck.disabled
-                        : root.source && String(root.source.endpointId || root.source.id) === String(graphPortRow.port.endpointId || graphPortRow.port.id)
+                        : graphPortRow.sourceSelected
                             ? deck.accent : graphPortRow.port.mapped ? deck.informational : deck.textMuted
-                    border.width: root.source && String(root.source.endpointId || root.source.id) === String(graphPortRow.port.endpointId || graphPortRow.port.id) ? 2 : 1
-                    border.color: deck.focus
+                    border.width: graphPortRow.sourceSelected ? 3 : 1
+                    border.color: graphPortRow.sourceSelected ? deck.accent : deck.focus
+                    Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 110; easing.type: Easing.OutCubic } }
                 }
             }
         }
@@ -1971,17 +2250,19 @@ Item {
             DragHandler {
                 id: sourceDrag
                 enabled: !graphPortRow.destination && root.mode === "configured" && graphPortRow.port.available
+                function updateWireAtPointer() {
+                    const point = hitTarget.mapToItem(scene, centroid.position.x, centroid.position.y)
+                    root.updateSourceDrag(point)
+                }
                 onActiveChanged: {
                     if (active) {
-                        const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5, hitTarget.height * 0.5)
+                        const point = hitTarget.mapToItem(scene, centroid.position.x, centroid.position.y)
                         root.beginSourceDrag(graphPortRow.port, point)
                     } else root.endSourceDrag()
                 }
                 onTranslationChanged: {
                     if (!active) return
-                    const point = hitTarget.mapToItem(scene, hitTarget.width * 0.5 + translation.x,
-                        hitTarget.height * 0.5 + translation.y)
-                    root.updateSourceDrag(point)
+                    updateWireAtPointer()
                 }
             }
             DropArea {
@@ -2255,6 +2536,95 @@ Item {
                                 context.stroke()
                                 context.restore()
                             }
+                            // The generic route curve is intentionally generous so
+                            // long, left-to-right routes stay readable.  A temporary
+                            // drag wire needs a different contract: its visible tip
+                            // must be exactly at the pointer, even for a short or
+                            // reverse-direction gesture.  Clamped, direction-aware
+                            // controls avoid the old loop that put the pointer on the
+                            // visual middle of the preview.
+                            function drawDragPreview(context, startX, startY, endX, endY) {
+                                const deltaX = endX - startX
+                                const controlDirection = deltaX >= 0 ? 1 : -1
+                                const control = Math.min(96, Math.max(12, Math.abs(deltaX) * 0.32))
+                                const path = function() {
+                                    context.beginPath()
+                                    context.moveTo(startX, startY)
+                                    context.bezierCurveTo(startX + controlDirection * control, startY,
+                                        endX - controlDirection * control, endY, endX, endY)
+                                }
+                                context.save()
+                                context.lineCap = "round"
+                                context.lineJoin = "round"
+                                context.setLineDash([])
+                                context.strokeStyle = deck.graphSurface
+                                context.lineWidth = 6.1
+                                context.globalAlpha = 0.96
+                                path()
+                                context.stroke()
+                                context.strokeStyle = deck.attention
+                                context.lineWidth = 2.8
+                                context.globalAlpha = 0.97
+                                context.setLineDash([6, 4])
+                                path()
+                                context.stroke()
+                                context.restore()
+                            }
+                            // During the handoff from live drag geometry to
+                            // the obstacle-aware cache, interpolate the drawn
+                            // path itself.  There is never an outgoing/incoming
+                            // duplicate: the one visible wire travels to its
+                            // final endpoints and bend controls over 260 ms.
+                            function drawWireMorph(context, previous, current, color, lineWidth, alpha, lane, dashed) {
+                                const progress = Math.max(0, Math.min(1, Number(root.wireReflow || 0)))
+                                const blend = function(from, to) { return Number(from) + (Number(to) - Number(from)) * progress }
+                                const startX = blend(previous.startX, current.startX)
+                                const startY = blend(previous.startY, current.startY)
+                                const endX = blend(previous.endX, current.endX)
+                                const endY = blend(previous.endY, current.endY)
+                                const previousDirection = Number(previous.endX) >= Number(previous.startX) ? 1 : -1
+                                const currentDirection = Number(current.endX) >= Number(current.startX) ? 1 : -1
+                                const previousDetourY = Boolean(previous.hasDetour)
+                                    ? Number(previous.detourY) + lane * 12 : Number(previous.startY) + lane * 12
+                                const currentDetourY = Boolean(current.hasDetour)
+                                    ? Number(current.detourY) + lane * 12 : Number(current.startY) + lane * 12
+                                const previousEndControlY = Boolean(previous.hasDetour)
+                                    ? Number(previous.detourY) + lane * 12 : Number(previous.endY) + lane * 12
+                                const currentEndControlY = Boolean(current.hasDetour)
+                                    ? Number(current.detourY) + lane * 12 : Number(current.endY) + lane * 12
+                                const previousStartControlX = Number(previous.startX)
+                                    + (Boolean(previous.hasDetour) ? previousDirection * 86 : 178)
+                                const currentStartControlX = Number(current.startX)
+                                    + (Boolean(current.hasDetour) ? currentDirection * 86 : 178)
+                                const previousEndControlX = Number(previous.endX)
+                                    - (Boolean(previous.hasDetour) ? previousDirection * 86 : 178)
+                                const currentEndControlX = Number(current.endX)
+                                    - (Boolean(current.hasDetour) ? currentDirection * 86 : 178)
+                                const path = function() {
+                                    context.beginPath()
+                                    context.moveTo(startX, startY)
+                                    context.bezierCurveTo(blend(previousStartControlX, currentStartControlX),
+                                        blend(previousDetourY, currentDetourY),
+                                        blend(previousEndControlX, currentEndControlX),
+                                        blend(previousEndControlY, currentEndControlY), endX, endY)
+                                }
+                                context.save()
+                                context.lineCap = "round"
+                                context.lineJoin = "round"
+                                context.strokeStyle = deck.graphSurface
+                                context.lineWidth = lineWidth + 3.2
+                                context.globalAlpha = alpha * 0.96
+                                context.setLineDash([])
+                                path()
+                                context.stroke()
+                                context.strokeStyle = color
+                                context.lineWidth = lineWidth
+                                context.globalAlpha = alpha * (Boolean(previous.underCard) || Boolean(current.underCard) ? 0.72 : 1)
+                                context.setLineDash(dashed ? [5, 3] : [])
+                                path()
+                                context.stroke()
+                                context.restore()
+                            }
                             onPaint: {
                                 root.canvasPaintCount += 1
                                 const context = getContext("2d")
@@ -2308,12 +2678,21 @@ Item {
                                         const segmentSelected = String(root.selectedSegmentId || "") === String(segment.routeSegmentId || "")
                                         const segmentHovered = String(root.hoveredSegmentId || "") === String(segment.routeSegmentId || "")
                                         const segmentPreview = String(root.pendingProcessorSegmentId || "") === String(segment.routeSegmentId || "")
-                                        drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
-                                            segmentSelected || segmentPreview ? deck.attention : segmentHovered ? deck.focus : color,
-                                            segmentSelected || segmentPreview ? Math.max(3.8, lineWidth) : segmentHovered ? Math.max(3.1, lineWidth) : lineWidth,
-                                            alpha, Number(entry.lane === undefined
-                                                ? root.stableLane(route.id, 9) - 4 : entry.lane), dashed,
-                                            root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
+                                        const segmentColor = segmentSelected || segmentPreview ? deck.attention
+                                            : segmentHovered ? deck.focus : color
+                                        const segmentWidth = segmentSelected || segmentPreview ? Math.max(3.8, lineWidth)
+                                            : segmentHovered ? Math.max(3.1, lineWidth) : lineWidth
+                                        const lane = Number(entry.lane === undefined
+                                            ? root.stableLane(route.id, 9) - 4 : entry.lane)
+                                        const previous = root.reflowSourceSegment(entry.routeId, segment.routeSegmentId)
+                                        if (previous && root.wireReflow < 0.999) {
+                                            drawWireMorph(context, previous, segment, segmentColor, segmentWidth,
+                                                alpha, lane, dashed)
+                                        } else {
+                                            drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
+                                                segmentColor, segmentWidth, alpha, lane, dashed,
+                                                root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
+                                        }
                                         if (segmentPreview) {
                                             context.save()
                                             context.globalAlpha = 0.96
@@ -2333,14 +2712,19 @@ Item {
                                     const start = root.currentGraphSpacePortCenter(sourceEndpoint, sourceId, sourceNode, true)
                                     const startX = Number(start.x)
                                     const startY = Number(start.y)
-                                    drawWire(context, startX, startY, Number(root.dragWire.x || startX),
-                                        Number(root.dragWire.y || startY), deck.attention, 2.5, 0.94, 0, true,
-                                        1, false, 0, false)
+                                    const pointerX = Number(root.dragWire.x || startX)
+                                    const pointerY = Number(root.dragWire.y || startY)
+                                    drawDragPreview(context, startX, startY, pointerX, pointerY)
                                     context.save()
+                                    context.fillStyle = Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.28)
+                                    context.globalAlpha = 0.96
+                                    context.beginPath()
+                                    context.arc(pointerX, pointerY, 10, 0, Math.PI * 2)
+                                    context.fill()
                                     context.fillStyle = deck.attention
                                     context.globalAlpha = 0.96
                                     context.beginPath()
-                                    context.arc(Number(root.dragWire.x || startX), Number(root.dragWire.y || startY), 5, 0, Math.PI * 2)
+                                    context.arc(pointerX, pointerY, 5, 0, Math.PI * 2)
                                     context.fill()
                                     context.restore()
                                 }
@@ -2357,6 +2741,14 @@ Item {
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             onPositionChanged: function(mouse) { root.updateWireHover(mouse.x, mouse.y) }
                             onExited: root.updateWireHover(-10000, -10000)
+                            // Flickable may take over a background gesture
+                            // before MouseArea emits `clicked`. Dismiss on
+                            // the initial empty-canvas press so selection is
+                            // never stranded behind a pan gesture.
+                            onPressed: function(mouse) {
+                                if (mouse.button !== Qt.LeftButton) return
+                                root.dismissEmptyGraphAt(mouse.x, mouse.y)
+                            }
                             onClicked: function(mouse) {
                                 const hit = root.hitWire(mouse.x, mouse.y)
                                 if (!hit || !hit.route) {
@@ -2411,17 +2803,21 @@ Item {
                             id: inputNode
                             tokens: deck
                             readonly property var nodeData: root.node("input")
+                            readonly property string routingState: root.routingNodeState(nodeData)
                             x: Number(root.nodePosition(nodeData, 80, 120).x)
                             y: Number(root.nodePosition(nodeData, 80, 120).y)
                             Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), inputCardContent.implicitHeight + contentPadding * 2)
-                            z: 2
+                            z: routingState.length > 0 ? 3 : 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
-                            color: deck.secondarySurface
+                            color: root.routingNodeSurface(deck.secondarySurface, routingState)
+                            border.width: root.routingNodeBorderWidth(routingState)
+                            border.color: root.routingNodeBorderColor(routingState)
+                            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
                             Column {
                                 id: inputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -2456,17 +2852,23 @@ Item {
                                 id: secondaryInputNode
                                 required property var modelData
                                 tokens: deck
+                                readonly property string routingState: root.routingNodeState(modelData)
                                 x: Number(root.nodePosition(modelData, 80, 120).x)
                                 y: Number(root.nodePosition(modelData, 80, 120).y)
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: Math.max(root.graphCardHeight(modelData), secondaryCardContent.implicitHeight + contentPadding * 2)
-                                z: 2
+                                z: routingState.length > 0 ? 3 : 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
-                                color: modelData.missingReference ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface
+                                color: root.routingNodeSurface(modelData.missingReference
+                                    ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface,
+                                    routingState)
+                                border.width: root.routingNodeBorderWidth(routingState)
+                                border.color: root.routingNodeBorderColor(routingState)
+                                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
                                 Column {
                                     id: secondaryCardContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -2500,18 +2902,22 @@ Item {
                                 id: processorNode
                                 required property var modelData
                                 tokens: deck
+                                readonly property string routingState: root.routingNodeState(modelData)
                                 x: Number(root.nodePosition(modelData, 680, 120).x)
                                 y: Number(root.nodePosition(modelData, 680, 120).y)
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: root.graphCardHeight(modelData)
-                                z: 2
+                                z: routingState.length > 0 ? 3 : 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                                 Behavior on height { NumberAnimation { duration: root.reducedMotion ? 0 : 190; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
-                                color: deck.elevatedSurface
+                                color: root.routingNodeSurface(deck.elevatedSurface, routingState)
+                                border.width: root.routingNodeBorderWidth(routingState)
+                                border.color: root.routingNodeBorderColor(routingState)
+                                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
                                 ColumnLayout {
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: 4
                                     Text { text: modelData.label; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
@@ -2536,6 +2942,7 @@ Item {
                                     delegate: Rectangle {
                                         id: processorPortMarker
                                         required property var modelData
+                                        required property int index
                                         readonly property bool inputPort: String(modelData.direction || "") === "input"
                                         objectName: "signalFlowProcessorPortVisual:" + String(modelData.endpointId || modelData.id || "")
                                         width: 10; height: 10; radius: 5
@@ -2596,17 +3003,21 @@ Item {
                             id: outputNode
                             tokens: deck
                             readonly property var nodeData: root.node("output")
+                            readonly property string routingState: root.routingNodeState(nodeData)
                             x: Number(root.nodePosition(nodeData, 1320, 120).x)
                             y: Number(root.nodePosition(nodeData, 1320, 120).y)
                             Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), outputCardContent.implicitHeight + contentPadding * 2)
-                            z: 2
+                            z: routingState.length > 0 ? 3 : 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
-                            color: deck.secondarySurface
+                            color: root.routingNodeSurface(deck.secondarySurface, routingState)
+                            border.width: root.routingNodeBorderWidth(routingState)
+                            border.color: root.routingNodeBorderColor(routingState)
+                            Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
                             Column {
                                 id: outputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
@@ -2853,7 +3264,16 @@ Item {
         }
     }
 
-    Timer { id: saveTimer; interval: 650; repeat: false; onTriggered: root.saveWorkspace() }
+    Timer {
+        id: saveTimer
+        // A named object lets the native qualification fixture stop only its
+        // own deferred save while it temporarily supplies a synthetic graph.
+        // Product interactions still use this same debounce unchanged.
+        objectName: "signalFlowWorkspaceSaveTimer"
+        interval: 650
+        repeat: false
+        onTriggered: root.saveWorkspace()
+    }
 
     Menu {
         id: deckProfileContextMenu
