@@ -84,6 +84,11 @@ Item {
     property var reflowWireSegmentIndex: ({})
     property bool wireReflowPending: false
     property real wireReflow: 1.0
+    // A freshly added route has no prior curve to morph from. Reveal only
+    // that route while every surviving route transitions from its snapshot.
+    property var appearingWireRouteIds: ({})
+    property bool wireAppearancePending: false
+    property real wireAppear: 1.0
     property real wireReveal: 1.0
     property real wireRetire: 1.0
     property var nodePositions: ({})
@@ -1162,6 +1167,9 @@ Item {
     function reflowSourceSegment(routeId, segmentId) {
         return reflowWireSegmentIndex[String(routeId || "") + "|" + String(segmentId || "")] || null
     }
+    function wireIsAppearing(routeId) {
+        return Boolean(appearingWireRouteIds[String(routeId || "")])
+    }
     function prepareWireReflow() {
         if (reducedMotion || !wireGeometry || wireGeometry.length === 0) {
             reflowWireGeometry = []
@@ -1238,6 +1246,16 @@ Item {
             } else {
                 reflowWireGeometry = []
                 wireReflow = 1
+            }
+        }
+        if (wireAppearancePending) {
+            wireAppearancePending = false
+            if (!reducedMotion && Object.keys(appearingWireRouteIds).length > 0) {
+                wireAppear = 0
+                wireAppearAnimation.restart()
+            } else {
+                wireAppear = 1
+                appearingWireRouteIds = ({})
             }
         }
         if (diagram) diagram.requestPaint()
@@ -1852,13 +1870,40 @@ Item {
         for (let index = 0; index < nextRoutes.length; ++index)
             nextRouteIds[String(nextRoutes[index].id || "")] = true
         if (topologyChanged) {
-            wireReflowPending = false
-            reflowWireGeometry = []
-            reflowWireSegmentIndex = ({})
-            wireReflow = 1
-            retiringWireGeometry = (wireGeometry || []).filter(function(entry) {
+            const previousRouteIds = ({})
+            const previousGeometry = wireGeometry || []
+            for (let index = 0; index < previousGeometry.length; ++index) {
+                const routeId = String(previousGeometry[index] && previousGeometry[index].routeId || "")
+                if (routeId.length > 0) previousRouteIds[routeId] = true
+            }
+            // Topology changes also reflow surviving routes. Keep their exact
+            // last curve so the stable cache can use the normal geometry morph.
+            prepareWireReflow()
+            retiringWireGeometry = snapshotWireGeometry(previousGeometry).filter(function(entry) {
                 return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
             })
+            const appearing = ({})
+            for (let index = 0; index < nextRoutes.length; ++index) {
+                const routeId = String(nextRoutes[index].id || "")
+                if (routeId.length > 0 && !previousRouteIds[routeId]) appearing[routeId] = true
+            }
+            appearingWireRouteIds = appearing
+            wireAppearancePending = Object.keys(appearing).length > 0
+            wireAppear = wireAppearancePending ? 0 : 1
+            // Never reset the whole graph to zero opacity for one connection.
+            wireRevealAnimation.stop()
+            wireReveal = 1
+            wireRetireAnimation.stop()
+            if (reducedMotion) {
+                wireRetire = 1
+                retiringWireGeometry = []
+                wireAppear = 1
+                wireAppearancePending = false
+                appearingWireRouteIds = ({})
+            } else if (retiringWireGeometry.length > 0) {
+                wireRetire = 0
+                wireRetireAnimation.restart()
+            } else wireRetire = 1
         }
         portAnchors = ({})
         portAnchorOffsets = ({})
@@ -1877,8 +1922,7 @@ Item {
         // this work, but stale geometry still has to disappear immediately.
         if (nextRoutes.length === 0) wireGeometryTimer.restart()
         else graphGeometryHandoffTimer.restart()
-        if (topologyChanged) restartWireMotion()
-        else {
+        if (!topologyChanged) {
             // Keep any already-drawn wire continuously visible while fresh
             // port measurements settle after a layout-only graph update.
             wireReveal = 1
@@ -1917,12 +1961,16 @@ Item {
             wireReflowPending = false
             reflowWireGeometry = []
             reflowWireSegmentIndex = ({})
+            wireAppear = 1
+            wireAppearancePending = false
+            appearingWireRouteIds = ({})
         }
         if (diagram) diagram.requestPaint()
     }
     onWireRevealChanged: if (diagram) diagram.requestPaint()
     onWireRetireChanged: if (diagram) diagram.requestPaint()
     onWireReflowChanged: if (diagram) diagram.requestPaint()
+    onWireAppearChanged: if (diagram) diagram.requestPaint()
     onLiveModeChanged: if (diagram) diagram.requestPaint()
     onDragWireChanged: if (diagram) diagram.requestPaint()
     onRouteStateFilterChanged: if (diagram) diagram.requestPaint()
@@ -2033,6 +2081,16 @@ Item {
             root.reflowWireGeometry = []
             root.reflowWireSegmentIndex = ({})
         }
+    }
+    NumberAnimation {
+        id: wireAppearAnimation
+        target: root
+        property: "wireAppear"
+        from: 0
+        to: 1
+        duration: 260
+        easing.type: Easing.InOutCubic
+        onStopped: if (root.wireAppear >= 0.999) root.appearingWireRouteIds = ({})
     }
 
     Timer {
@@ -2719,13 +2777,15 @@ Item {
                                     const lineWidth = selected ? 3.6 : hovered ? 3.0 : live ? 2.5 : 1.65
                                     const alpha = root.routeVisualAlpha(route, live)
                                     const dashed = root.routeHasProblem(route)
+                                    const entryReveal = root.wireIsAppearing(entry.routeId)
+                                        ? root.wireAppear : root.wireReveal
                                     if (entry.drawBundleTrunk) {
                                         const trunkEndX = entry.bundleX
                                         drawWire(context, entry.startX, entry.startY, trunkEndX, entry.startY, color,
                                             Math.min(5.0, lineWidth + entry.bundleCount * 0.35), alpha, 0, true,
-                                            root.wireReveal, false, 0, false)
+                                            entryReveal, false, 0, false)
                                         context.save()
-                                        context.globalAlpha = alpha * root.wireReveal
+                                        context.globalAlpha = alpha * entryReveal
                                         context.fillStyle = deck.textMuted
                                         context.font = "bold 9px sans-serif"
                                         context.fillText(String(entry.bundleCount) + "×", trunkEndX + 5, entry.startY - 5)
@@ -2750,7 +2810,7 @@ Item {
                                         } else {
                                             drawWire(context, segment.startX, segment.startY, segment.endX, segment.endY,
                                                 segmentColor, segmentWidth, alpha, lane, dashed,
-                                                root.wireReveal, segment.hasDetour, segment.detourY, segment.underCard)
+                                                entryReveal, segment.hasDetour, segment.detourY, segment.underCard)
                                         }
                                         if (segmentPreview) {
                                             context.save()

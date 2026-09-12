@@ -7336,6 +7336,21 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         " return animated && wireReveal === 1 && wireRetire === 1 && retiringWireGeometry.length === 0;"
         "})()"));
     const bool motionVisible = motionContract.evaluate().toBool() && !motionContract.hasError();
+    QQmlExpression topologyHandoff(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " reducedMotion = false;"
+        " const before = wireGeometry.filter(function(entry) { return entry.routeId === 'stress-chain'; })[0];"
+        " const seed = (graph.routes || [])[0];"
+        " if (!before || !before.segments || before.segments.length === 0 || !seed) return false;"
+        " const added = Object.assign({}, seed); added.id = 'stress-topology-added';"
+        " added.segments = (seed.segments || []).map(function(segment, index) {"
+        "   const copy = Object.assign({}, segment); copy.id = 'stress-topology-added-segment-' + index; return copy; });"
+        " const next = Object.assign({}, graph); next.routes = (graph.routes || []).concat([added]); graph = next;"
+        " const previous = reflowSourceSegment(before.routeId, before.segments[0].routeSegmentId);"
+        " return wireReveal === 1 && wireAppearancePending && wireAppear === 0 && previous"
+        "   && !wireIsAppearing(before.routeId) && wireIsAppearing(added.id);"
+        "})()"));
+    const bool topologyHandoffSmooth = topologyHandoff.evaluate().toBool() && !topologyHandoff.hasError();
     // This is a synthetic page-owned graph. Toggle its style in QML, then
     // rebuild the same geometry cache Canvas uses; no backend workspace or
     // route mutation is involved in the presentation-only check.
@@ -7417,20 +7432,20 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
     }
     restore();
     if (!largeDenseFixture || !underCardFallback || !processorChainVisible || !fanOutSeparated
-        || !sharedProcessorVisible || !layoutTransitionVisible || !motionVisible
+        || !sharedProcessorVisible || !layoutTransitionVisible || !motionVisible || !topologyHandoffSmooth
         || !stylePreservesTopology || !normalGraphCalm || !captured) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Signal Flow visual stress fixture failed for %1 "
             "(dense=%2 under-card=%3 processor-chain=%4 fanout=%5 [shape=%6 samples=%7 lanes=%8/%9 y8=%10/%11] "
-            "shared=%12 layout=%13 motion=%14 style=%15 [processors=%16 segments=%17] normal=%18 [routes=%19 bounds=%20 margins=%21 groups=%22 "
-            "size=%23 bounds=%24x%25 scene=%26x%27] capture=%28)")
+            "shared=%12 layout=%13 motion=%14 topology-handoff=%15 style=%16 [processors=%17 segments=%18] normal=%19 [routes=%20 bounds=%21 margins=%22 groups=%23 "
+            "size=%24 bounds=%25x%26 scene=%27x%28] capture=%29)")
             .arg(theme).arg(largeDenseFixture).arg(underCardFallback).arg(processorChainVisible)
             .arg(fanOutSeparated).arg(fanOutShape).arg(fanOutSamplesSeparate)
             .arg(bundleA.value(QStringLiteral("lane")).toDouble()).arg(bundleB.value(QStringLiteral("lane")).toDouble())
             .arg(bundleAPoints.size() > 8 ? bundleAPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() : -1.0)
             .arg(bundleBPoints.size() > 8 ? bundleBPoints.at(8).toMap().value(QStringLiteral("y")).toDouble() : -1.0)
-            .arg(sharedProcessorVisible).arg(layoutTransitionVisible).arg(motionVisible).arg(stylePreservesTopology)
-            .arg(orthogonalProcessorCount).arg(orthogonalSegmentCount).arg(normalGraphCalm).arg(normalRouteCount)
+            .arg(sharedProcessorVisible).arg(layoutTransitionVisible).arg(motionVisible).arg(topologyHandoffSmooth)
+            .arg(stylePreservesTopology).arg(orthogonalProcessorCount).arg(orthogonalSegmentCount).arg(normalGraphCalm).arg(normalRouteCount)
             .arg(normalBoundsCoverCards).arg(normalSceneMargins).arg(normalGroupsCalm).arg(normalGeometry.size())
             .arg(normalBounds.value(QStringLiteral("maxX")).toDouble())
             .arg(normalBounds.value(QStringLiteral("maxY")).toDouble()).arg(normalSceneWidth).arg(normalSceneHeight)
