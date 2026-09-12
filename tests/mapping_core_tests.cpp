@@ -3799,6 +3799,7 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
     workspace.wireStyle = QStringLiteral("orthogonal");
     workspace.densityMode = QStringLiteral("compact");
     workspace.layoutLocked = true;
+    workspace.snapToGrid = false;
     configuration.signalFlow.workspaces.push_back(workspace);
     configuration.signalFlow.nodeLayouts.push_back({workspace.key, recreated->id, 420.0F, 180.0F, true});
 
@@ -3818,6 +3819,22 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
     QCOMPARE(restored.signalFlow.nodeLayouts.size(), size_t{1});
     QCOMPARE(restored.signalFlow.workspaces.front().wireStyle, QStringLiteral("orthogonal"));
     QVERIFY(restored.signalFlow.workspaces.front().layoutLocked);
+    QVERIFY(!restored.signalFlow.workspaces.front().snapToGrid);
+
+    // Existing schema-28 workspace records have no Snap to Grid member. They
+    // must load as the owner-requested enabled default, not fail migration or
+    // silently retain an unspecified behaviour.
+    QJsonObject legacyWorkspaceJson = serialized;
+    QJsonObject legacySignalFlow = legacyWorkspaceJson.value(QStringLiteral("signalFlow")).toObject();
+    QJsonArray legacyWorkspaces = legacySignalFlow.value(QStringLiteral("workspaces")).toArray();
+    QJsonObject legacyWorkspace = legacyWorkspaces.at(0).toObject();
+    legacyWorkspace.remove(QStringLiteral("snapToGrid"));
+    legacyWorkspaces.replace(0, legacyWorkspace);
+    legacySignalFlow.insert(QStringLiteral("workspaces"), legacyWorkspaces);
+    legacyWorkspaceJson.insert(QStringLiteral("signalFlow"), legacySignalFlow);
+    const MapperConfiguration legacyWorkspaceRestored = ConfigStore::fromJson(legacyWorkspaceJson, &valid);
+    QVERIFY(valid);
+    QVERIFY(legacyWorkspaceRestored.signalFlow.workspaces.front().snapToGrid);
 
     // v2.5 configuration has no Signal Flow JSON.  Loading it is a pure,
     // deterministic migration: mapping semantics do not change and identity

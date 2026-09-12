@@ -7011,14 +7011,15 @@ QVariantMap AppBackend::signalFlowGraph() const
     QVariantMap workspace{{u"key"_qs, workspaceKey}, {u"panX"_qs, 0.0}, {u"panY"_qs, 0.0},
                           {u"zoom"_qs, 1.0}, {u"wireStyle"_qs, u"smooth"_qs},
                           {u"densityMode"_qs, u"compact"_qs}, {u"inspectorWidth"_qs, 360},
-                          {u"layoutLocked"_qs, false}};
+                          {u"layoutLocked"_qs, false}, {u"snapToGrid"_qs, true}};
     for (const SignalFlowWorkspaceState &savedWorkspace : m_configuration.signalFlow.workspaces) {
         if (savedWorkspace.key != workspaceKey) continue;
         workspace = {{u"key"_qs, savedWorkspace.key}, {u"panX"_qs, savedWorkspace.panX},
                      {u"panY"_qs, savedWorkspace.panY}, {u"zoom"_qs, savedWorkspace.zoom},
                      {u"wireStyle"_qs, savedWorkspace.wireStyle}, {u"densityMode"_qs, savedWorkspace.densityMode},
                      {u"inspectorWidth"_qs, savedWorkspace.inspectorWidth},
-                     {u"layoutLocked"_qs, savedWorkspace.layoutLocked}};
+                     {u"layoutLocked"_qs, savedWorkspace.layoutLocked},
+                     {u"snapToGrid"_qs, savedWorkspace.snapToGrid}};
         break;
     }
     return {{u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
@@ -8525,6 +8526,7 @@ bool AppBackend::signalFlowSaveWorkspace(const QVariantMap &workspace)
     state.densityMode = workspace.value(u"densityMode"_qs, u"detailed"_qs).toString().trimmed();
     state.inspectorWidth = std::clamp(workspace.value(u"inspectorWidth"_qs, 360).toInt(), 240, 720);
     state.layoutLocked = workspace.value(u"layoutLocked"_qs, false).toBool();
+    state.snapToGrid = workspace.value(u"snapToGrid"_qs, true).toBool();
     if ((state.wireStyle != u"smooth"_qs && state.wireStyle != u"orthogonal"_qs)
         || (state.densityMode != u"detailed"_qs && state.densityMode != u"compact"_qs
             && state.densityMode != u"overview"_qs)) return false;

@@ -6668,6 +6668,145 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     return true;
 }
 
+bool verifySignalFlowAssistiveSnappingFixture(QObject *page, hotas::AppBackend &backend)
+{
+    if (!page) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow assistive snapping fixture needs a live Flight Deck page"));
+    }
+    // This probes the exact presentation helpers used by the rendered card
+    // drag while the native-pointer fixture above verifies that those helpers
+    // do not quantize a held card. Keep the graph synthetic here so edge,
+    // center, grid, bypass, and out-of-range cases remain deterministic.
+    const QVariantMap graphBeforePreview = backend.signalFlowGraph();
+    QQmlExpression interaction(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const original = graph;"
+        " const source = { id: 'snap-source', objectId: 'snap-source', kind: 'input', x: 0, y: 0, connected: true };"
+        " const aligned = { id: 'snap-aligned', objectId: 'snap-aligned', kind: 'processor', x: 400, y: 500, channelCount: 1 };"
+        " graph = { nodes: [source, aligned], routes: [], workspace: { snapToGrid: true, wireStyle: 'smooth', densityMode: 'detailed' } };"
+        " beginLiveNodeDrag(source); updateLiveNodeDrag(source, 101, 197);"
+        " const held = nodePosition(source, 0, 0);"
+        " const preview = updateNodeSnapPreview(source, 101, 197, false);"
+        " const previewVisible = Boolean(nodeSnapPreview && nodeSnapPreview.active);"
+        " cancelLiveNodeDrag(source);"
+        " const nearGrid = nodeSnapCandidate(source, 101, 197, false);"
+        " const awayFromGrid = nodeSnapCandidate(source, 114, 211, false);"
+        " const alignedCandidate = nodeSnapCandidate(source, 406, 209, false);"
+        " const disabled = Object.assign({}, graph); disabled.workspace = Object.assign({}, graph.workspace, { snapToGrid: false }); graph = disabled;"
+        " const snapOff = nodeSnapCandidate(source, 101, 197, false);"
+        " const enabled = Object.assign({}, graph); enabled.workspace = Object.assign({}, graph.workspace, { snapToGrid: true }); graph = enabled;"
+        " const altBypass = nodeSnapCandidate(source, 101, 197, true);"
+        " const afterAlt = nodeSnapCandidate(source, 101, 197, false);"
+        " graph = original;"
+        " return ({ heldX: held.x, heldY: held.y, previewVisible: previewVisible, previewX: preview.x, previewY: preview.y,"
+        "   gridActive: nearGrid.active, gridX: nearGrid.x, gridY: nearGrid.y,"
+        "   freeActive: awayFromGrid.active, freeX: awayFromGrid.x, freeY: awayFromGrid.y,"
+        "   offActive: snapOff.active, altActive: altBypass.active, afterAltActive: afterAlt.active,"
+        "   alignmentActive: alignedCandidate.active, alignmentX: alignedCandidate.alignmentX,"
+        "   alignmentDelta: Math.abs(alignedCandidate.x - 406), alignmentY: alignedCandidate.y });"
+        "})()"));
+    const QVariantMap result = interaction.evaluate().toMap();
+    const bool autoLayoutStayedExplicit = backend.signalFlowGraph() == graphBeforePreview;
+    const bool qmlPass = !interaction.hasError()
+        // The live card tracks every free pointer sample rather than stepping
+        // through the forthcoming grid candidate.
+        && std::abs(result.value(QStringLiteral("heldX")).toDouble() - 101.0) < 0.01
+        && std::abs(result.value(QStringLiteral("heldY")).toDouble() - 197.0) < 0.01
+        && result.value(QStringLiteral("previewVisible")).toBool()
+        && std::abs(result.value(QStringLiteral("previewX")).toDouble() - 96.0) < 0.01
+        && std::abs(result.value(QStringLiteral("previewY")).toDouble() - 192.0) < 0.01
+        && result.value(QStringLiteral("gridActive")).toBool()
+        && std::abs(result.value(QStringLiteral("gridX")).toDouble() - 96.0) < 0.01
+        && std::abs(result.value(QStringLiteral("gridY")).toDouble() - 192.0) < 0.01
+        && !result.value(QStringLiteral("freeActive")).toBool()
+        && std::abs(result.value(QStringLiteral("freeX")).toDouble() - 114.0) < 0.01
+        && std::abs(result.value(QStringLiteral("freeY")).toDouble() - 211.0) < 0.01
+        && !result.value(QStringLiteral("offActive")).toBool()
+        && !result.value(QStringLiteral("altActive")).toBool()
+        && result.value(QStringLiteral("afterAltActive")).toBool()
+        && result.value(QStringLiteral("alignmentActive")).toBool()
+        && result.value(QStringLiteral("alignmentX")).toString() == QStringLiteral("left edge")
+        && result.value(QStringLiteral("alignmentDelta")).toDouble() <= 10.0
+        && std::abs(result.value(QStringLiteral("alignmentY")).toDouble() - 209.0) < 0.01
+        && autoLayoutStayedExplicit;
+
+    const QVariantMap originalGraph = backend.signalFlowGraph();
+    const QVariantList originalNodes = originalGraph.value(QStringLiteral("nodes")).toList();
+    const auto inputIt = std::find_if(originalNodes.cbegin(), originalNodes.cend(), [](const QVariant &value) {
+        return value.toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("input");
+    });
+    if (inputIt == originalNodes.cend()) {
+        page->setProperty("graph", originalGraph);
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow assistive snapping fixture could not find a persisted input card"));
+    }
+    const QVariantMap input = inputIt->toMap();
+    const QString objectId = input.value(QStringLiteral("objectId")).toString();
+    const QPointF originalPosition(input.value(QStringLiteral("x")).toDouble(), input.value(QStringLiteral("y")).toDouble());
+    const bool pinned = input.value(QStringLiteral("pinned")).toBool();
+    const auto savedPosition = [&backend, &objectId]() {
+        const QVariantList nodes = backend.signalFlowGraph().value(QStringLiteral("nodes")).toList();
+        for (const QVariant &value : nodes) {
+            const QVariantMap node = value.toMap();
+            if (node.value(QStringLiteral("objectId")).toString() == objectId)
+                return QPointF(node.value(QStringLiteral("x")).toDouble(), node.value(QStringLiteral("y")).toDouble());
+        }
+        return QPointF(std::numeric_limits<qreal>::quiet_NaN(), std::numeric_limits<qreal>::quiet_NaN());
+    };
+    const QPointF freePosition(113.25, 207.75);
+    const QPointF snappedPosition(96.0, 192.0);
+    const bool freeSaved = backend.signalFlowSaveNodeLayout(objectId, freePosition.x(), freePosition.y(), pinned);
+    const QPointF restoredFree = savedPosition();
+    const bool snappedSaved = backend.signalFlowSaveNodeLayout(objectId, snappedPosition.x(), snappedPosition.y(), pinned);
+    page->setProperty("graph", backend.signalFlowGraph());
+    settlePresentation();
+    QMetaObject::invokeMethod(page, "requestPortAnchorMeasurement", Qt::DirectConnection);
+    QMetaObject::invokeMethod(page, "rebuildWireGeometry", Qt::DirectConnection);
+    settlePresentation();
+    QQmlExpression endpoints(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " for (let entryIndex = 0; entryIndex < wireGeometry.length; ++entryIndex) {"
+        "   const segments = wireGeometry[entryIndex].segments || [];"
+        "   for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
+        "     const segment = segments[segmentIndex];"
+        "     const source = currentGraphSpacePortCenter(segment.sourceEndpointId, '', nodeForId(segment.sourceNodeId), true);"
+        "     const destination = currentGraphSpacePortCenter(segment.destinationEndpointId, '', nodeForId(segment.destinationNodeId), false);"
+        "     if (Math.abs(segment.startX - source.x) > 0.01 || Math.abs(segment.startY - source.y) > 0.01"
+        "         || Math.abs(segment.endX - destination.x) > 0.01 || Math.abs(segment.endY - destination.y) > 0.01) return false;"
+        "   }"
+        " } return true;"
+        "})()"));
+    const bool endpointIntegrity = endpoints.evaluate().toBool() && !endpoints.hasError();
+    const QPointF restoredSnap = savedPosition();
+    const bool restoredOriginal = backend.signalFlowSaveNodeLayout(objectId, originalPosition.x(), originalPosition.y(), pinned);
+    page->setProperty("graph", backend.signalFlowGraph());
+    settlePresentation();
+    const bool persistencePass = freeSaved && snappedSaved && restoredOriginal
+        && std::hypot(restoredFree.x() - freePosition.x(), restoredFree.y() - freePosition.y()) < 0.01
+        && std::hypot(restoredSnap.x() - snappedPosition.x(), restoredSnap.y() - snappedPosition.y()) < 0.01
+        && endpointIntegrity;
+    if (!qmlPass || !persistencePass) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow assistive snapping contract failed (qml=%1 persistence=%2 held=(%3,%4) grid=(%5,%6) free=(%7,%8) align=%9/%10 delta=%11 autoLayout=%12 endpoints=%13 error=%14)")
+            .arg(qmlPass).arg(persistencePass)
+            .arg(result.value(QStringLiteral("heldX")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("heldY")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("gridX")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("gridY")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("freeX")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("freeY")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("alignmentX")).toString())
+            .arg(result.value(QStringLiteral("alignmentY")).toDouble(), 0, 'f', 2)
+            .arg(result.value(QStringLiteral("alignmentDelta")).toDouble(), 0, 'f', 2)
+            .arg(autoLayoutStayedExplicit)
+            .arg(endpointIntegrity)
+            .arg(interaction.hasError() ? interaction.error().toString()
+                                        : endpoints.hasError() ? endpoints.error().toString() : QStringLiteral("none")));
+    }
+    return true;
+}
+
 bool verifySignalFlowLiveNodeDragFixture(QObject *page)
 {
     if (!page) return failPresentationLifecycleTest(QStringLiteral("Signal Flow live-drag fixture needs a live page"));
@@ -7705,6 +7844,29 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
                 "Signal Flow %1 did not expose card inspection, drag preview, live sampling, semantic zoom, and search focus (error=%2)")
                 .arg(theme).arg(interactionSurface.hasError() ? interactionSurface.error().toString() : QStringLiteral("none")));
         }
+        QQmlExpression assistiveSnapSurface(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const original = graph;"
+            " const source = { id: 'theme-snap-source', objectId: 'theme-snap-source', kind: 'input', x: 0, y: 0 };"
+            " const other = { id: 'theme-snap-other', objectId: 'theme-snap-other', kind: 'processor', x: 360, y: 460, sharedChannelCount: 1 };"
+            " graph = { nodes: [source, other], routes: [], workspace: { snapToGrid: true, wireStyle: 'smooth', densityMode: 'detailed' } };"
+            " beginNodeSnapDrag(source, false); const preview = updateNodeSnapPreview(source, 83, 157, false);"
+            " const visible = nodeSnapPreview && nodeSnapPreview.active; const near = nodeSnapCandidate(source, 83, 157, false);"
+            " const free = nodeSnapCandidate(source, 101, 179, false);"
+            " const alt = nodeSnapCandidate(source, 83, 157, true);"
+            " const changed = Object.assign({}, graph); changed.workspace = Object.assign({}, graph.workspace, { snapToGrid: false }); graph = changed;"
+            " const off = nodeSnapCandidate(source, 83, 157, false);"
+            " graph = original; cancelNodeSnapDrag();"
+            " return visible && near.active && near.x === 80 && near.y === 160"
+            "   && !free.active && !alt.active && !off.active;"
+            "})()"));
+        const bool assistiveSnapReady = assistiveSnapSurface.evaluate().toBool();
+        if (assistiveSnapSurface.hasError() || !assistiveSnapReady) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 did not retain assistive-only snapping, Alt bypass, and the workspace toggle (error=%2)")
+                .arg(theme).arg(assistiveSnapSurface.hasError() ? assistiveSnapSurface.error().toString()
+                                                                 : QStringLiteral("none")));
+        }
         // The compact graph-first visual contract belongs to the Flight Deck
         // surface. Existing experiences keep their own cached-geometry and
         // interaction coverage above without being required to expose the
@@ -8275,6 +8437,9 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     }
     if (!verifySignalFlowNativeCardPointerDrag(flightDeckPage,
             qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
+        return false;
+    }
+    if (!verifySignalFlowAssistiveSnappingFixture(flightDeckPage, backend)) {
         return false;
     }
     if (!verifySignalFlowVisualStressFixture(flightDeckPage, qobject_cast<QQuickWindow *>(flightDeckWindow),

@@ -955,6 +955,10 @@ struct SignalFlowWorkspaceState {
     QString densityMode = u"detailed"_qs;
     int inspectorWidth = 360;
     bool layoutLocked = false;
+    // Workspace-only assistance. This has no bearing on routes, compilation,
+    // or runtime mapping; it merely decides whether a released graph card may
+    // settle onto a nearby visible grid or alignment candidate.
+    bool snapToGrid = true;
 };
 
 struct SignalFlowNodeLayout {

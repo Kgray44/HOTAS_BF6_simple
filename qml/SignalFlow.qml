@@ -57,6 +57,18 @@ Item {
     property real wireReveal: 1.0
     property real wireRetire: 1.0
     property var nodePositions: ({})
+    // Snapping is deliberately a transient layout aid.  The card keeps its
+    // exact pointer position while pressed; this object only describes the
+    // restrained proposal that may be applied after release.
+    property var nodeSnapPreview: ({})
+    property string snapDragNodeId: ""
+    property bool snapDragAltBypass: false
+    property var snapSettlingNodeIds: ({})
+    readonly property bool snapToGridEnabled: !graph.workspace || graph.workspace.snapToGrid !== false
+    readonly property real snapGridSize: 40
+    readonly property real snapGridThreshold: 10
+    readonly property real alignmentSnapThreshold: 10
+    readonly property int snapSettleDuration: 100
     // A source-first learn gesture owns this short-lived visual state only.
     // It is not stored in the canonical topology or in the workspace.
     property string learnedSourcePortId: ""
@@ -424,6 +436,120 @@ Item {
         if (saved) return saved
         return ({ "x": Number(node.x === undefined ? fallbackX : node.x),
                   "y": Number(node.y === undefined ? fallbackY : node.y) })
+    }
+    function snapNodeKey(node) {
+        return String(node && (node.objectId || node.id) || "")
+    }
+    function snapNodeSize(node) {
+        if (!node) return ({ "width": 238, "height": 86 })
+        if (String(node.kind || "") === "processor") {
+            return ({ "width": 155, "height": 82 + Math.max(0, Number(node.sharedChannelCount || 0) - 1) * 20 })
+        }
+        // Input/output cards can grow for visible ports.  This conservative
+        // base keeps alignment suggestions small and never pulls across a
+        // distant card merely because a group is expanded.
+        return ({ "width": 238, "height": 86 })
+    }
+    function snapGridValue(value) {
+        const proposed = Math.round(Number(value) / snapGridSize) * snapGridSize
+        return Math.abs(proposed - Number(value)) <= snapGridThreshold
+            ? ({ "value": proposed, "guide": proposed, "label": "grid" }) : null
+    }
+    function nodeSnapCandidate(node, x, y, bypass) {
+        const freeX = Number(x)
+        const freeY = Number(y)
+        if (!isFinite(freeX) || !isFinite(freeY)) return ({ "active": false, "changed": false, "x": x, "y": y })
+        if (Boolean(bypass) || !snapToGridEnabled)
+            return ({ "active": false, "changed": false, "x": freeX, "y": freeY })
+        const size = snapNodeSize(node)
+        const key = snapNodeKey(node)
+        let alignmentX = null
+        let alignmentY = null
+        function considerX(value, guide, label) {
+            const distance = Math.abs(Number(value) - freeX)
+            if (distance <= alignmentSnapThreshold && (!alignmentX || distance < alignmentX.distance))
+                alignmentX = ({ "value": Number(value), "guide": Number(guide), "distance": distance, "label": label })
+        }
+        function considerY(value, guide, label) {
+            const distance = Math.abs(Number(value) - freeY)
+            if (distance <= alignmentSnapThreshold && (!alignmentY || distance < alignmentY.distance))
+                alignmentY = ({ "value": Number(value), "guide": Number(guide), "distance": distance, "label": label })
+        }
+        const nodes = graph.nodes || []
+        for (let index = 0; index < nodes.length; ++index) {
+            const other = nodes[index]
+            if (!other || snapNodeKey(other) === key) continue
+            const position = nodePosition(other, Number(other.x || 0), Number(other.y || 0))
+            const otherSize = snapNodeSize(other)
+            // Meaningful card relationships win over the visual grid.  Each
+            // comparison is bounded by the same small 10px threshold.
+            considerX(position.x, position.x, "left edge")
+            considerX(position.x + otherSize.width - size.width, position.x + otherSize.width, "right edge")
+            considerX(position.x + (otherSize.width - size.width) * 0.5,
+                position.x + otherSize.width * 0.5, "vertical center")
+            considerY(position.y, position.y, "top edge")
+            considerY(position.y + (otherSize.height - size.height) * 0.5,
+                position.y + otherSize.height * 0.5, "horizontal center")
+        }
+        const gridX = alignmentX ? null : snapGridValue(freeX)
+        const gridY = alignmentY ? null : snapGridValue(freeY)
+        const snappedX = alignmentX ? alignmentX.value : gridX ? gridX.value : freeX
+        const snappedY = alignmentY ? alignmentY.value : gridY ? gridY.value : freeY
+        const active = Boolean(alignmentX || alignmentY || gridX || gridY)
+        return ({
+            "active": active,
+            "changed": active && (Math.abs(snappedX - freeX) > 0.01 || Math.abs(snappedY - freeY) > 0.01),
+            "x": snappedX, "y": snappedY, "freeX": freeX, "freeY": freeY,
+            "width": size.width, "height": size.height,
+            "guideX": alignmentX ? alignmentX.guide : gridX ? gridX.guide : NaN,
+            "guideY": alignmentY ? alignmentY.guide : gridY ? gridY.guide : NaN,
+            "alignmentX": alignmentX ? alignmentX.label : "",
+            "alignmentY": alignmentY ? alignmentY.label : "",
+            "gridX": Boolean(gridX), "gridY": Boolean(gridY)
+        })
+    }
+    function beginNodeSnapDrag(node, altBypass) {
+        snapDragNodeId = snapNodeKey(node)
+        snapDragAltBypass = Boolean(altBypass)
+        nodeSnapPreview = ({})
+    }
+    function updateNodeSnapPreview(node, x, y, altBypass) {
+        if (snapNodeKey(node) !== snapDragNodeId) return ({})
+        snapDragAltBypass = Boolean(altBypass)
+        const candidate = nodeSnapCandidate(node, x, y, snapDragAltBypass)
+        nodeSnapPreview = candidate.active ? candidate : ({})
+        return candidate
+    }
+    function finishNodeSnapDrag(node, x, y, altBypass) {
+        const candidate = nodeSnapCandidate(node, x, y, Boolean(altBypass))
+        nodeSnapPreview = ({})
+        snapDragNodeId = ""
+        snapDragAltBypass = false
+        if (candidate.changed) {
+            const next = ({})
+            for (const id in snapSettlingNodeIds) next[id] = snapSettlingNodeIds[id]
+            next[snapNodeKey(node)] = true
+            snapSettlingNodeIds = next
+            snapSettlingTimer.restart()
+        }
+        return candidate
+    }
+    function cancelNodeSnapDrag() {
+        nodeSnapPreview = ({})
+        snapDragNodeId = ""
+        snapDragAltBypass = false
+    }
+    function nodeIsSnapSettling(node) {
+        return Boolean(snapSettlingNodeIds[snapNodeKey(node)])
+    }
+    function nodeIsSnapDragging(node) {
+        return snapNodeKey(node) === snapDragNodeId
+    }
+    Timer {
+        id: snapSettlingTimer
+        interval: root.reducedMotion ? 1 : root.snapSettleDuration + 12
+        repeat: false
+        onTriggered: root.snapSettlingNodeIds = ({})
     }
     function noteNodePosition(objectId, x, y) {
         const id = String(objectId || "")
@@ -1109,7 +1235,8 @@ Item {
             "wireStyle": savedValue("wireStyle", "smooth"),
             "densityMode": savedValue("densityMode", "detailed"),
             "inspectorWidth": savedValue("inspectorWidth", 360),
-            "layoutLocked": savedValue("layoutLocked", false)
+            "layoutLocked": savedValue("layoutLocked", false),
+            "snapToGrid": savedValue("snapToGrid", true)
         })
     }
     function persistWorkspace(changes, successMessage) {
@@ -1148,6 +1275,12 @@ Item {
         return persistWorkspace({ "layoutLocked": !locked }, !locked
             ? "Layout locked. Dragging cards is disabled."
             : "Layout unlocked. Drag cards to reposition them.")
+    }
+    function toggleSnapToGrid() {
+        const enabled = snapToGridEnabled
+        return persistWorkspace({ "snapToGrid": !enabled }, !enabled
+            ? "Snap to Grid enabled. Cards remain free until release."
+            : "Snap to Grid disabled. Card positions will stay exactly where released.")
     }
     function saveNodePlacement(node, x, y, pinned) {
         if (!node || !node.objectId) return false
@@ -1251,6 +1384,7 @@ Item {
             return entry && entry.routeId && !nextRouteIds[String(entry.routeId)]
         })
         nodePositions = ({})
+        cancelNodeSnapDrag()
         rebuildWireGeometry()
         restartWireMotion()
     }
@@ -1272,6 +1406,7 @@ Item {
     onViewModeChanged: {
         if (viewMode === "effective" && routingActive)
             cancelRouting("Connection cancelled because Effective view is read-only.", true)
+        if (viewMode === "effective") cancelNodeSnapDrag()
         if (wireCanvas) wireCanvas.requestPaint()
     }
     onLiveTelemetryChanged: if (wireCanvas) wireCanvas.requestPaint()
@@ -1647,6 +1782,7 @@ Item {
                 FlowButton { text: "Fit"; helpText: "Fit the current workspace into the graph viewport. Shortcut: Home."; onClicked: root.keyboardAction("fit") }
                 FlowButton { text: "Auto-layout"; helpText: "Arrange unpinned cards with the stable bounded layout."; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onClicked: root.showResult(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
                 FlowButton { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; helpText: "Prevent accidental card dragging while preserving each saved placement."; onClicked: root.toggleLayoutLocked() }
+                FlowButton { text: root.snapToGridEnabled ? "Snap to Grid: on" : "Snap to Grid: off"; helpText: "Suggest nearby grid or card alignment on release. Hold Alt for one exact free placement."; onClicked: root.toggleSnapToGrid() }
                 FlowButton { text: "Density: " + ((root.graph.workspace && root.graph.workspace.densityMode) || "detailed"); helpText: "Cycle detailed, compact, and overview port density. Shortcut: D."; onClicked: root.cycleDensityMode() }
                 FlowButton { text: "Wires: " + ((root.graph.workspace && root.graph.workspace.wireStyle) || "smooth"); helpText: "Switch between smooth and orthogonal cached wire rendering."; onClicked: root.toggleWireStyle() }
                 FlowButton { text: root.reducedMotion ? "Reduced motion" : "Full motion"; helpText: "Disable movement animation while keeping topology changes visible."; onClicked: root.reducedMotion = !root.reducedMotion }
@@ -1917,6 +2053,38 @@ Item {
                                 }
                             }
                         }
+                        // The proposal is visible but deliberately non-interactive: while
+                        // pressed, the real card follows the pointer exactly above it.
+                        Item {
+                            id: snapPreviewOverlay
+                            anchors.fill: parent
+                            z: 1.5
+                            visible: Boolean(root.nodeSnapPreview && root.nodeSnapPreview.active)
+                                && !root.snapDragAltBypass
+                            Rectangle {
+                                visible: isFinite(Number(root.nodeSnapPreview.guideX))
+                                x: Number(root.nodeSnapPreview.guideX || 0) - 0.5
+                                y: 0; width: 1; height: parent.height
+                                color: root.graphPreview; opacity: 0.38
+                            }
+                            Rectangle {
+                                visible: isFinite(Number(root.nodeSnapPreview.guideY))
+                                x: 0; y: Number(root.nodeSnapPreview.guideY || 0) - 0.5
+                                width: parent.width; height: 1
+                                color: root.graphPreview; opacity: 0.38
+                            }
+                            Rectangle {
+                                x: Number(root.nodeSnapPreview.x || 0)
+                                y: Number(root.nodeSnapPreview.y || 0)
+                                width: Number(root.nodeSnapPreview.width || 0)
+                                height: Number(root.nodeSnapPreview.height || 0)
+                                radius: root.themeTokens.controlRadius || 5
+                                color: "transparent"
+                                border.width: 1
+                                border.color: root.graphPreview
+                                opacity: 0.62
+                            }
+                        }
                         Repeater {
                             model: root.graph.nodes || []
                             delegate: Rectangle {
@@ -1927,8 +2095,8 @@ Item {
                                 y: Number(node.y || 0)
                                 onXChanged: root.noteNodePosition(node.objectId, x, y)
                                 onYChanged: root.noteNodePosition(node.objectId, x, y)
-                                Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(node) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.nodeIsSnapDragging(node); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(node) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
                                 width: node.kind === "processor" ? 155 : 238
                                 height: node.kind === "processor"
                                     ? 82 + Math.max(0, Number(node.sharedChannelCount || 0) - 1) * 20
@@ -1999,12 +2167,25 @@ Item {
                                     drag.target: root.viewMode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? flowNode : null
                                     drag.axis: Drag.XAndYAxis
                                     enabled: true
-                                    onPressed: mouse => { mouse.accepted = false }
-                                    onReleased: {
+                                    onPressed: function(mouse) {
+                                        root.beginNodeSnapDrag(node, Boolean(mouse.modifiers & Qt.AltModifier))
+                                        mouse.accepted = false
+                                    }
+                                    onPositionChanged: function(mouse) {
+                                        if (drag.active)
+                                            root.updateNodeSnapPreview(node, flowNode.x, flowNode.y,
+                                                Boolean(mouse.modifiers & Qt.AltModifier))
+                                        mouse.accepted = false
+                                    }
+                                    onReleased: function(mouse) {
                                         if (drag.active) {
-                                            root.saveNodePlacement(node, flowNode.x, flowNode.y, Boolean(node.pinned))
+                                            const settled = root.finishNodeSnapDrag(node, flowNode.x, flowNode.y,
+                                                Boolean(mouse.modifiers & Qt.AltModifier))
+                                            flowNode.x = Number(settled.x)
+                                            flowNode.y = Number(settled.y)
+                                            root.saveNodePlacement(node, Number(settled.x), Number(settled.y), Boolean(node.pinned))
                                             root.workspaceDirty = true
-                                        }
+                                        } else root.cancelNodeSnapDrag()
                                         mouse.accepted = false
                                     }
                                     onClicked: function(mouse) {

@@ -319,7 +319,8 @@ QJsonObject signalFlowWorkspaceToJson(const SignalFlowWorkspaceState &workspace)
             {u"wireStyle"_qs, workspace.wireStyle.trimmed().left(24)},
             {u"densityMode"_qs, workspace.densityMode.trimmed().left(24)},
             {u"inspectorWidth"_qs, std::clamp(workspace.inspectorWidth, 240, 720)},
-            {u"layoutLocked"_qs, workspace.layoutLocked}};
+            {u"layoutLocked"_qs, workspace.layoutLocked},
+            {u"snapToGrid"_qs, workspace.snapToGrid}};
 }
 
 bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceState *workspace)
@@ -329,8 +330,10 @@ bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceSta
     const QJsonValue panY = json.value(u"panY"_qs);
     const QJsonValue zoom = json.value(u"zoom"_qs);
     const QJsonValue width = json.value(u"inspectorWidth"_qs);
+    const QJsonValue snapToGrid = json.value(u"snapToGrid"_qs);
     if (!panX.isDouble() || !panY.isDouble() || !zoom.isDouble() || !width.isDouble()
-        || !json.value(u"layoutLocked"_qs).isBool()) return false;
+        || !json.value(u"layoutLocked"_qs).isBool()
+        || (!snapToGrid.isUndefined() && !snapToGrid.isBool())) return false;
     SignalFlowWorkspaceState restored;
     restored.key = json.value(u"key"_qs).toString().trimmed().left(320);
     restored.wireStyle = json.value(u"wireStyle"_qs).toString().trimmed().left(24);
@@ -344,6 +347,10 @@ bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceSta
     restored.zoom = std::clamp(static_cast<float>(zoom.toDouble()), 0.25F, 4.0F);
     restored.inspectorWidth = std::clamp(width.toInt(), 240, 720);
     restored.layoutLocked = json.value(u"layoutLocked"_qs).toBool();
+    // Schema-28 workspaces predate this optional presentation preference.
+    // Preserve their established free-form layout while defaulting new and
+    // older workspaces to the owner-requested assistive setting.
+    restored.snapToGrid = snapToGrid.isUndefined() ? true : snapToGrid.toBool();
     *workspace = std::move(restored);
     return true;
 }

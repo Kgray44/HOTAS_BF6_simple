@@ -97,6 +97,16 @@ Item {
     // when the pointer is released.
     property var liveNodePositions: ({})
     property string liveDragNodeId: ""
+    // Assistive snapping is a workspace-only release decision.  The ghost and
+    // guides are transient; a held card always tracks the pointer freely.
+    property var nodeSnapPreview: ({})
+    property bool snapDragAltBypass: false
+    property var snapSettlingNodeIds: ({})
+    readonly property bool snapToGridEnabled: !graph.workspace || graph.workspace.snapToGrid !== false
+    readonly property real snapGridSize: 48
+    readonly property real snapGridThreshold: 12
+    readonly property real alignmentSnapThreshold: 10
+    readonly property int snapSettleDuration: 100
     // Presentation-only continuity for source-first learning. The canonical
     // graph remains owned by AppBackend.
     property string learnedSourcePortId: ""
@@ -929,6 +939,98 @@ Item {
         return ({ "x": Number(nodeData.x === undefined ? fallbackX : nodeData.x),
                   "y": Number(nodeData.y === undefined ? fallbackY : nodeData.y) })
     }
+    function snapNodeSize(nodeData) {
+        return ({ "width": graphCardWidth(nodeData), "height": graphCardHeight(nodeData) })
+    }
+    function snapGridValue(value) {
+        const proposed = Math.round(Number(value) / snapGridSize) * snapGridSize
+        return Math.abs(proposed - Number(value)) <= snapGridThreshold
+            ? ({ "value": proposed, "guide": proposed, "label": "grid" }) : null
+    }
+    function nodeSnapCandidate(nodeData, x, y, bypass) {
+        const freeX = Number(x)
+        const freeY = Number(y)
+        if (!isFinite(freeX) || !isFinite(freeY)) return ({ "active": false, "changed": false, "x": x, "y": y })
+        if (Boolean(bypass) || !snapToGridEnabled)
+            return ({ "active": false, "changed": false, "x": freeX, "y": freeY })
+        const size = snapNodeSize(nodeData)
+        const identity = nodeIdentity(nodeData)
+        let alignmentX = null
+        let alignmentY = null
+        function considerX(value, guide, label) {
+            const distance = Math.abs(Number(value) - freeX)
+            if (distance <= alignmentSnapThreshold && (!alignmentX || distance < alignmentX.distance))
+                alignmentX = ({ "value": Number(value), "guide": Number(guide), "distance": distance, "label": label })
+        }
+        function considerY(value, guide, label) {
+            const distance = Math.abs(Number(value) - freeY)
+            if (distance <= alignmentSnapThreshold && (!alignmentY || distance < alignmentY.distance))
+                alignmentY = ({ "value": Number(value), "guide": Number(guide), "distance": distance, "label": label })
+        }
+        const nodes = graph.nodes || []
+        for (let index = 0; index < nodes.length; ++index) {
+            const other = nodes[index]
+            if (!other || nodeMatchesId(other, identity)) continue
+            const position = nodePosition(other, Number(other.x || 0), Number(other.y || 0))
+            const otherSize = snapNodeSize(other)
+            // Keep the alignment field small and intentional.  It assists
+            // the nearest meaningful edge/center relationship, never a
+            // distant magnetic pull across the canvas.
+            considerX(position.x, position.x, "left edge")
+            considerX(position.x + otherSize.width - size.width, position.x + otherSize.width, "right edge")
+            considerX(position.x + (otherSize.width - size.width) * 0.5,
+                position.x + otherSize.width * 0.5, "vertical center")
+            considerY(position.y, position.y, "top edge")
+            considerY(position.y + (otherSize.height - size.height) * 0.5,
+                position.y + otherSize.height * 0.5, "horizontal center")
+        }
+        const gridX = alignmentX ? null : snapGridValue(freeX)
+        const gridY = alignmentY ? null : snapGridValue(freeY)
+        const snappedX = alignmentX ? alignmentX.value : gridX ? gridX.value : freeX
+        const snappedY = alignmentY ? alignmentY.value : gridY ? gridY.value : freeY
+        const active = Boolean(alignmentX || alignmentY || gridX || gridY)
+        return ({
+            "active": active,
+            "changed": active && (Math.abs(snappedX - freeX) > 0.01 || Math.abs(snappedY - freeY) > 0.01),
+            "x": snappedX, "y": snappedY, "freeX": freeX, "freeY": freeY,
+            "width": size.width, "height": size.height,
+            "guideX": alignmentX ? alignmentX.guide : gridX ? gridX.guide : NaN,
+            "guideY": alignmentY ? alignmentY.guide : gridY ? gridY.guide : NaN,
+            "alignmentX": alignmentX ? alignmentX.label : "",
+            "alignmentY": alignmentY ? alignmentY.label : "",
+            "gridX": Boolean(gridX), "gridY": Boolean(gridY)
+        })
+    }
+    function updateNodeSnapPreview(nodeData, x, y, altBypass) {
+        if (!isLiveNodeDrag(nodeData)) return ({})
+        snapDragAltBypass = Boolean(altBypass)
+        const candidate = nodeSnapCandidate(nodeData, x, y, snapDragAltBypass)
+        nodeSnapPreview = candidate.active ? candidate : ({})
+        return candidate
+    }
+    function clearNodeSnapPreview() {
+        nodeSnapPreview = ({})
+        snapDragAltBypass = false
+    }
+    function markNodeSnapSettling(nodeData) {
+        const next = ({})
+        for (const key in snapSettlingNodeIds) next[key] = snapSettlingNodeIds[key]
+        next[nodeIdentity(nodeData)] = true
+        const stored = nodeStorageIdentity(nodeData)
+        if (stored) next[stored] = true
+        snapSettlingNodeIds = next
+        snapSettlingTimer.restart()
+    }
+    function nodeIsSnapSettling(nodeData) {
+        return Boolean(snapSettlingNodeIds[nodeIdentity(nodeData)]
+            || snapSettlingNodeIds[nodeStorageIdentity(nodeData)])
+    }
+    Timer {
+        id: snapSettlingTimer
+        interval: root.reducedMotion ? 1 : root.snapSettleDuration + 12
+        repeat: false
+        onTriggered: root.snapSettlingNodeIds = ({})
+    }
     function noteNodePosition(objectId, x, y, scheduleGeometry) {
         const id = String(objectId || "")
         if (!id || !isFinite(x) || !isFinite(y)) return
@@ -1503,21 +1605,34 @@ Item {
         if (portAnchorDiagnosticsEnabled) requestPortAnchorMeasurement()
         return refreshLiveDragGeometry(id)
     }
-    function finishLiveNodeDrag(nodeData, x, y, persist) {
+    function finishLiveNodeDrag(nodeData, x, y, persist, altBypass) {
         const id = nodeIdentity(nodeData)
         if (!id) return false
         updateLiveNodeDrag(nodeData, x, y)
+        // Test-only callers that explicitly suppress persistence keep their
+        // historical exact-coordinate fixture semantics. Product drags use
+        // the same assistive candidate shown during the gesture.
+        const candidate = persist === false
+            ? ({ "active": false, "changed": false, "x": Number(x), "y": Number(y) })
+            : nodeSnapCandidate(nodeData, x, y, Boolean(altBypass))
+        const settledX = Number(candidate.x)
+        const settledY = Number(candidate.y)
         // Snapshot the exact live wire the user just moved. The final cache
         // pass is allowed to route around nearby cards, but it will hand over
         // through a short geometry morph instead of popping to the new path.
         prepareWireReflow()
-        noteNodePosition(nodeStorageIdentity(nodeData), x, y, false)
+        if (candidate.changed) markNodeSnapSettling(nodeData)
+        // Keep the last pointer position live until `liveNodePositions` is
+        // cleared below. That makes the following short animation genuinely
+        // release-time settling rather than a visible quantized drag step.
+        noteNodePosition(nodeStorageIdentity(nodeData), settledX, settledY, false)
         const next = ({})
         for (const key in liveNodePositions) {
             if (key !== id && key !== nodeStorageIdentity(nodeData)) next[key] = liveNodePositions[key]
         }
         liveNodePositions = next
         liveDragNodeId = ""
+        clearNodeSnapPreview()
         // A fixture can deliberately skip persistence; it still receives one
         // complete obstacle pass on release. The product path gets that same
         // one pass from onGraphChanged after the single layout save, avoiding
@@ -1526,7 +1641,7 @@ Item {
             rebuildWireGeometry()
             return true
         }
-        const saved = saveNodePlacement(nodeData, x, y, Boolean(nodeData.pinned))
+        const saved = saveNodePlacement(nodeData, settledX, settledY, Boolean(nodeData.pinned))
         if (!saved) rebuildWireGeometry()
         if (saved) nodePlacementWriteCount += 1
         return saved
@@ -1541,6 +1656,7 @@ Item {
         }
         liveNodePositions = next
         liveDragNodeId = ""
+        clearNodeSnapPreview()
         rebuildWireGeometry()
     }
     function restartWireMotion() {
@@ -1916,7 +2032,8 @@ Item {
             "wireStyle": savedValue("wireStyle", "smooth"),
             "densityMode": savedValue("densityMode", "detailed"),
             "inspectorWidth": savedValue("inspectorWidth", 360),
-            "layoutLocked": savedValue("layoutLocked", false)
+            "layoutLocked": savedValue("layoutLocked", false),
+            "snapToGrid": savedValue("snapToGrid", true)
         })
     }
     function persistWorkspace(changes, successMessage) {
@@ -1954,6 +2071,12 @@ Item {
         return persistWorkspace({ "layoutLocked": !locked }, !locked
             ? "Layout locked. Dragging cards is disabled."
             : "Layout unlocked. Drag cards to reposition them.")
+    }
+    function toggleSnapToGrid() {
+        const enabled = snapToGridEnabled
+        return persistWorkspace({ "snapToGrid": !enabled }, !enabled
+            ? "Snap to Grid enabled. Cards remain free until release."
+            : "Snap to Grid disabled. Card positions will stay exactly where released.")
     }
     function saveNodePlacement(nodeData, x, y, pinned) {
         if (!nodeData || !nodeData.objectId) return false
@@ -2088,6 +2211,7 @@ Item {
         nodePositions = ({})
         liveNodePositions = ({})
         liveDragNodeId = ""
+        clearNodeSnapPreview()
         // Repeater delegates report their measured centers on the following
         // geometry turn. Their timers are queued before the handoff timer, so
         // this retains the current wire until exactly one stable,
@@ -2134,6 +2258,7 @@ Item {
     onModeChanged: {
         if (mode === "effective" && routingActive)
             cancelRouting("Connection cancelled because Effective view is read-only.", true)
+        if (mode === "effective") clearNodeSnapPreview()
         if (diagram) diagram.requestPaint()
     }
     onLiveTelemetryChanged: if (diagram) diagram.requestPaint()
@@ -3080,6 +3205,38 @@ Item {
                                 }
                             }
                         }
+                        // The ghost and guide stay under the freely moving card. They make a
+                        // release-time proposal explicit without consuming pointer ownership.
+                        Item {
+                            id: snapPreviewOverlay
+                            anchors.fill: parent
+                            z: 1.5
+                            visible: Boolean(root.nodeSnapPreview && root.nodeSnapPreview.active)
+                                && !root.snapDragAltBypass
+                            Rectangle {
+                                visible: isFinite(Number(root.nodeSnapPreview.guideX))
+                                x: Number(root.nodeSnapPreview.guideX || 0) - 0.5
+                                y: 0; width: 1; height: parent.height
+                                color: deck.focus; opacity: 0.40
+                            }
+                            Rectangle {
+                                visible: isFinite(Number(root.nodeSnapPreview.guideY))
+                                x: 0; y: Number(root.nodeSnapPreview.guideY || 0) - 0.5
+                                width: parent.width; height: 1
+                                color: deck.focus; opacity: 0.40
+                            }
+                            Rectangle {
+                                x: Number(root.nodeSnapPreview.x || 0)
+                                y: Number(root.nodeSnapPreview.y || 0)
+                                width: Number(root.nodeSnapPreview.width || 0)
+                                height: Number(root.nodeSnapPreview.height || 0)
+                                radius: deck.radiusCard
+                                color: "transparent"
+                                border.width: 1
+                                border.color: deck.focus
+                                opacity: 0.66
+                            }
+                        }
                         // One interaction layer tests the same cached paths that Canvas paints.
                         // Cards sit above it, so endpoint hit areas always take precedence.
                         MouseArea {
@@ -3157,8 +3314,8 @@ Item {
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 80, 120).x)
                             y: Number(root.nodePosition(nodeData, 80, 120).y)
-                            Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(inputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(inputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), inputCardContent.implicitHeight + contentPadding * 2)
                             z: routingState.length > 0 ? 3 : 2
@@ -3196,6 +3353,8 @@ Item {
                                     nodeStartX = inputNode.x; nodeStartY = inputNode.y
                                     pointerMoved = false
                                     root.beginLiveNodeDrag(inputNode.nodeData)
+                                    root.updateNodeSnapPreview(inputNode.nodeData, nodeStartX, nodeStartY,
+                                        Boolean(mouse.modifiers & Qt.AltModifier))
                                 }
                                 onPositionChanged: function(mouse) {
                                     if (!pressed || !root.isLiveNodeDrag(inputNode.nodeData)) return
@@ -3203,11 +3362,16 @@ Item {
                                     const x = nodeStartX + point.x - pointerStartSceneX
                                     const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
-                                    if (pointerMoved) root.updateLiveNodeDrag(inputNode.nodeData, x, y)
+                                    if (pointerMoved) {
+                                        root.updateLiveNodeDrag(inputNode.nodeData, x, y)
+                                        root.updateNodeSnapPreview(inputNode.nodeData, x, y,
+                                            Boolean(mouse.modifiers & Qt.AltModifier))
+                                    }
                                 }
-                                onReleased: {
+                                onReleased: function(mouse) {
                                     if (!root.isLiveNodeDrag(inputNode.nodeData)) return
-                                    if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
+                                    if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y,
+                                        true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(inputNode.nodeData)
                                 }
                                 onClicked: function(mouse) { if (!pointerMoved) root.selectNode(inputNode.nodeData) }
@@ -3227,8 +3391,8 @@ Item {
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 80, 120).x)
                                 y: Number(root.nodePosition(modelData, 80, 120).y)
-                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: Math.max(root.graphCardHeight(modelData), secondaryCardContent.implicitHeight + contentPadding * 2)
                                 z: routingState.length > 0 ? 3 : 2
@@ -3266,6 +3430,8 @@ Item {
                                         nodeStartX = secondaryInputNode.x; nodeStartY = secondaryInputNode.y
                                         pointerMoved = false
                                         root.beginLiveNodeDrag(modelData)
+                                        root.updateNodeSnapPreview(modelData, nodeStartX, nodeStartY,
+                                            Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                     onPositionChanged: function(mouse) {
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
@@ -3273,11 +3439,16 @@ Item {
                                         const x = nodeStartX + point.x - pointerStartSceneX
                                         const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
-                                        if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
+                                        if (pointerMoved) {
+                                            root.updateLiveNodeDrag(modelData, x, y)
+                                            root.updateNodeSnapPreview(modelData, x, y,
+                                                Boolean(mouse.modifiers & Qt.AltModifier))
+                                        }
                                     }
-                                    onReleased: {
+                                    onReleased: function(mouse) {
                                         if (!root.isLiveNodeDrag(modelData)) return
-                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y,
+                                            true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
                                     onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
@@ -3296,8 +3467,8 @@ Item {
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 680, 120).x)
                                 y: Number(root.nodePosition(modelData, 680, 120).y)
-                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                                Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                                Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(modelData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
                                 height: root.graphCardHeight(modelData)
                                 z: routingState.length > 0 ? 3 : 2
@@ -3389,6 +3560,8 @@ Item {
                                         nodeStartX = processorNode.x; nodeStartY = processorNode.y
                                         pointerMoved = false
                                         root.beginLiveNodeDrag(modelData)
+                                        root.updateNodeSnapPreview(modelData, nodeStartX, nodeStartY,
+                                            Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                     onPositionChanged: function(mouse) {
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
@@ -3396,11 +3569,16 @@ Item {
                                         const x = nodeStartX + point.x - pointerStartSceneX
                                         const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
-                                        if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
+                                        if (pointerMoved) {
+                                            root.updateLiveNodeDrag(modelData, x, y)
+                                            root.updateNodeSnapPreview(modelData, x, y,
+                                                Boolean(mouse.modifiers & Qt.AltModifier))
+                                        }
                                     }
-                                    onReleased: {
+                                    onReleased: function(mouse) {
                                         if (!root.isLiveNodeDrag(modelData)) return
-                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y)
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y,
+                                            true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
                                     onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
@@ -3417,8 +3595,8 @@ Item {
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 1320, 120).x)
                             y: Number(root.nodePosition(nodeData, 1320, 120).y)
-                            Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-                            Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
+                            Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(outputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
+                            Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : root.nodeIsSnapSettling(outputNode.nodeData) ? root.snapSettleDuration : 160; easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
                             height: Math.max(root.graphCardHeight(nodeData), outputCardContent.implicitHeight + contentPadding * 2)
                             z: routingState.length > 0 ? 3 : 2
@@ -3454,6 +3632,8 @@ Item {
                                     nodeStartX = outputNode.x; nodeStartY = outputNode.y
                                     pointerMoved = false
                                     root.beginLiveNodeDrag(outputNode.nodeData)
+                                    root.updateNodeSnapPreview(outputNode.nodeData, nodeStartX, nodeStartY,
+                                        Boolean(mouse.modifiers & Qt.AltModifier))
                                 }
                                 onPositionChanged: function(mouse) {
                                     if (!pressed || !root.isLiveNodeDrag(outputNode.nodeData)) return
@@ -3461,11 +3641,16 @@ Item {
                                     const x = nodeStartX + point.x - pointerStartSceneX
                                     const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
-                                    if (pointerMoved) root.updateLiveNodeDrag(outputNode.nodeData, x, y)
+                                    if (pointerMoved) {
+                                        root.updateLiveNodeDrag(outputNode.nodeData, x, y)
+                                        root.updateNodeSnapPreview(outputNode.nodeData, x, y,
+                                            Boolean(mouse.modifiers & Qt.AltModifier))
+                                    }
                                 }
-                                onReleased: {
+                                onReleased: function(mouse) {
                                     if (!root.isLiveNodeDrag(outputNode.nodeData)) return
-                                    if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
+                                    if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y,
+                                        true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(outputNode.nodeData)
                                 }
                                 onClicked: function(mouse) { if (!pointerMoved) root.selectNode(outputNode.nodeData) }
@@ -3756,6 +3941,7 @@ Item {
         MenuItem { text: "Fit graph"; onTriggered: root.fitGraph() }
         MenuItem { text: "Auto-layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.announce(backendObject.signalFlowAutoLayout(), "Auto-layout was not applied.") }
         MenuItem { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onTriggered: root.toggleLayoutLocked() }
+        MenuItem { text: "Snap to Grid"; checkable: true; checked: root.snapToGridEnabled; onTriggered: root.toggleSnapToGrid() }
         MenuSeparator {}
         MenuItem { text: root.signalFocus ? "Signal focus: on" : "Signal focus"; checkable: true; checked: root.signalFocus; onTriggered: { root.signalFocus = !root.signalFocus; if (root.signalFocus) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
         MenuItem { text: "X-ray related paths"; checkable: true; checked: root.xrayMode; onTriggered: root.keyboardAction("xray") }
