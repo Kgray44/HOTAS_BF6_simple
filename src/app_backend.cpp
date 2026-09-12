@@ -13025,6 +13025,13 @@ void AppBackend::startVerification(VerificationMode mode)
         ControllerReadinessPlan plan;
         bool prepared = true;
         bool restored = true;
+        // An explicit controller-identity repair cannot rely on the report
+        // that opened the transaction.  The vJoy hand-off may briefly leave
+        // the worker between input sessions, and restoreAfterDriverConfiguration
+        // intentionally returns promptly while ordinary discovery resumes.
+        // Require a second, exact DirectInput acquisition after restoration
+        // before a recovery journal is retired or an identity is persisted.
+        bool finalIdentityProof = setupVerificationRecordId.isEmpty();
         if (mode == VerificationMode::Full) {
             prepared = m_worker.prepareForDriverConfiguration();
         }
@@ -13057,13 +13064,17 @@ void AppBackend::startVerification(VerificationMode mode)
                 plan.vjoySummary = QStringLiteral("Verification completed, but HOTAS BF6 could not restore vJoy ownership.");
                 plan.status = QStringLiteral("ACTION REQUIRED — Mapping did not resume after verification.");
             }
+            if (restored && !setupVerificationRecordId.isEmpty()) {
+                finalIdentityProof = m_worker.selectPhysicalController(physical.directInputId);
+            }
         }
 
         QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId,
-                                         setupVerificationRecordId] () mutable {
+                                         setupVerificationRecordId, finalIdentityProof] () mutable {
             m_readiness.adoptPlan(std::move(plan));
             const PhysicalControllerCapabilities observedPhysical = currentPhysicalCapabilities();
-            if (m_readiness.reconcilePendingRecoveryAfterVerifiedReadback(observedPhysical)) {
+            if (finalIdentityProof
+                && m_readiness.reconcilePendingRecoveryAfterVerifiedReadback(observedPhysical)) {
                 appendEvent(u"Prior automatic setup recovery was reconciled after fresh controller and driver read-back proof"_qs);
             }
             if (m_readiness.hasPendingRecovery()) {
@@ -13077,7 +13088,7 @@ void AppBackend::startVerification(VerificationMode mode)
             appendEvent(restored
                 ? QString(u"Controller verification complete: %1"_qs).arg(m_readiness.plan().status)
                 : u"Controller verification complete, but mapping restoration failed"_qs);
-            if (mode == VerificationMode::Full && restored && observedPhysical.connected) {
+            if (mode == VerificationMode::Full) {
                 if (!setupVerificationRecordId.isEmpty()) {
                     if (m_pendingSetupVerificationRecordId == setupVerificationRecordId)
                         m_pendingSetupVerificationRecordId.clear();
@@ -13091,7 +13102,8 @@ void AppBackend::startVerification(VerificationMode mode)
                     const bool physicalReady = m_readiness.plan().physicalStatus == VerificationSubsystemState::Ready;
                     const bool identityMatches = saved && ControllerReadinessService::samePhysicalController(
                         expected, observedPhysical);
-                    if (saved && physicalReady && identityMatches && !m_readiness.hasPendingRecovery()
+                    if (saved && restored && finalIdentityProof && observedPhysical.connected
+                        && physicalReady && identityMatches && !m_readiness.hasPendingRecovery()
                         && rememberCurrentController(setupVerificationRecordId)) {
                         appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
                     } else {
@@ -13099,6 +13111,15 @@ void AppBackend::startVerification(VerificationMode mode)
                         if (!saved) {
                             m_setupConvergenceIdentityVerificationFailure =
                                 u"The saved controller record is no longer available to persist."_qs;
+                        } else if (!restored) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"HOTAS BF6 could not restore the prior mapping session, so controller identity was not committed."_qs;
+                        } else if (!finalIdentityProof) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"HOTAS BF6 could not obtain a fresh DirectInput report from the exact selected controller after restoring the mapping session. No identity was committed and no HidHide or vJoy change was made."_qs;
+                        } else if (!observedPhysical.connected) {
+                            m_setupConvergenceIdentityVerificationFailure =
+                                u"The selected controller did not remain connected through the final DirectInput proof, so its identity was not committed."_qs;
                         } else if (!physicalReady) {
                             m_setupConvergenceIdentityVerificationFailure = m_readiness.plan().physicalSummary;
                         } else if (!identityMatches) {

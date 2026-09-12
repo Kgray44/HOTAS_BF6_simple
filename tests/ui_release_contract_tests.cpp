@@ -19,6 +19,7 @@ private slots:
     void headerIsTheOnlyPrimaryMappingControl();
     void trayAndThemeRefreshRemainOnTheUiSide();
     void newDeviceSetupExplicitlyAcquiresThenVerifies();
+    void controllerSetupRequiresFreshPostRestoreIdentityProof();
     void controllerSetupRetainsItsExplicitTargetAndSuccessfulRepairPersistsIt();
     void sharedSettingsKeepOfflineControllersAndControlsVisuallyExplicit();
     void controllerPresentationIsCachedAndTelemetryIsIsolated();
@@ -79,6 +80,20 @@ void UiReleaseContractTests::newDeviceSetupExplicitlyAcquiresThenVerifies()
     QVERIFY(backend.contains(QStringLiteral("m_worker.selectPhysicalController(directInputId)")));
     QVERIFY(backend.contains(QStringLiteral("verifyHotasSetup();")));
     QVERIFY(backend.contains(QStringLiteral("New controller detected:")));
+}
+
+void UiReleaseContractTests::controllerSetupRequiresFreshPostRestoreIdentityProof()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const qsizetype verifierStart = backend.indexOf(QStringLiteral("void AppBackend::startVerification("));
+    QVERIFY(verifierStart >= 0);
+    const qsizetype verifierEnd = backend.indexOf(QStringLiteral("bool AppBackend::applyControllerReadinessForConfiguration("), verifierStart);
+    QVERIFY(verifierEnd > verifierStart);
+    const QString verifier = backend.mid(verifierStart, verifierEnd - verifierStart);
+
+    QVERIFY(verifier.contains(QStringLiteral("finalIdentityProof = m_worker.selectPhysicalController(physical.directInputId)")));
+    QVERIFY(verifier.contains(QStringLiteral("finalIdentityProof\n                && m_readiness.reconcilePendingRecoveryAfterVerifiedReadback")));
+    QVERIFY(verifier.contains(QStringLiteral("could not obtain a fresh DirectInput report from the exact selected controller after restoring the mapping session")));
 }
 
 void UiReleaseContractTests::controllerSetupRetainsItsExplicitTargetAndSuccessfulRepairPersistsIt()
