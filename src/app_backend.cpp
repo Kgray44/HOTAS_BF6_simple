@@ -5815,17 +5815,116 @@ QVariantMap AppBackend::setupTruthSnapshot() const
     return m_setupTruthSnapshot.isEmpty() ? buildSetupTruthSnapshot() : m_setupTruthSnapshot;
 }
 
+QVariantMap AppBackend::setupRepairSession() const
+{
+    const auto mode = [this] {
+        switch (m_setupConvergenceStage) {
+        case SetupConvergenceStage::Idle: return u"IDLE"_qs;
+        case SetupConvergenceStage::Checking: return u"CHECKING"_qs;
+        case SetupConvergenceStage::Results: return u"RESULTS"_qs;
+        case SetupConvergenceStage::Repairing:
+        case SetupConvergenceStage::VerifyingIdentity:
+        case SetupConvergenceStage::RepairingVJoy: return u"REPAIRING"_qs;
+        case SetupConvergenceStage::WaitingForUser: return u"WAITING FOR USER"_qs;
+        case SetupConvergenceStage::FinalChecking: return u"CHECKING FINAL STATE"_qs;
+        case SetupConvergenceStage::Complete: return u"COMPLETE"_qs;
+        case SetupConvergenceStage::Failed: return u"FAILED"_qs;
+        case SetupConvergenceStage::Cancelled: return u"CANCELLED"_qs;
+        }
+        return u"IDLE"_qs;
+    }();
+    const bool active = m_setupConvergenceStage == SetupConvergenceStage::Checking
+        || m_setupConvergenceStage == SetupConvergenceStage::Repairing
+        || m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity
+        || m_setupConvergenceStage == SetupConvergenceStage::RepairingVJoy
+        || m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
+        || m_setupConvergenceStage == SetupConvergenceStage::FinalChecking;
+    QVariantMap result{{u"sessionId"_qs, m_setupConvergenceSessionId}, {u"mode"_qs, mode},
+        {u"active"_qs, active}, {u"startedAt"_qs, m_setupConvergenceStarted.toString(Qt::ISODate)},
+        {u"steps"_qs, m_setupRepairProgress}, {u"stepCount"_qs, m_setupRepairProgress.size()}};
+    const QVariantMap current = currentSetupRepairStep();
+    if (!current.isEmpty()) result.insert(u"currentStep"_qs, current);
+    if (m_setupConvergenceStage == SetupConvergenceStage::Complete
+        || m_setupConvergenceStage == SetupConvergenceStage::Failed
+        || m_setupConvergenceStage == SetupConvergenceStage::Cancelled) {
+        result.insert(u"finishedAt"_qs, m_setupConvergenceFinished.toString(Qt::ISODate));
+        result.insert(u"result"_qs, mode);
+    }
+    return result;
+}
+
 QVariantList AppBackend::setupRepairProgress() const { return m_setupRepairProgress; }
 QString AppBackend::setupRepairSessionReport() const { return m_setupRepairSessionReport; }
-bool AppBackend::setupRepairSessionActive() const { return m_setupConvergenceStage != SetupConvergenceStage::Idle; }
+bool AppBackend::setupRepairSessionActive() const { return setupRepairSession().value(u"active"_qs).toBool(); }
+
+void AppBackend::setSetupConvergenceStage(SetupConvergenceStage stage)
+{
+    m_setupConvergenceStage = stage;
+}
+
+QVariantMap AppBackend::currentSetupRepairStep() const
+{
+    for (const QVariant &entry : m_setupRepairProgress) {
+        const QVariantMap step = entry.toMap();
+        if (step.value(u"current"_qs).toBool()) return step;
+    }
+    return {};
+}
 
 void AppBackend::appendSetupRepairProgress(const QString &id, const QString &subsystem, const QString &title,
                                            const QString &status, const QString &detail,
                                            bool requiresElevation, bool requiresReconnect)
 {
+    const bool current = status == u"RUNNING"_qs || status == u"WAITING FOR USER"_qs;
+    const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    if (current) {
+        for (QVariant &entry : m_setupRepairProgress) {
+            QVariantMap step = entry.toMap();
+            step.insert(u"current"_qs, false);
+            entry = step;
+        }
+    }
     m_setupRepairProgress.append(QVariantMap{{u"id"_qs, id}, {u"subsystem"_qs, subsystem}, {u"title"_qs, title},
-        {u"status"_qs, status}, {u"detail"_qs, detail}, {u"requiresElevation"_qs, requiresElevation},
-        {u"requiresReconnect"_qs, requiresReconnect}, {u"timestamp"_qs, QDateTime::currentDateTime().toString(Qt::ISODate)}});
+        {u"state"_qs, status}, {u"status"_qs, status}, {u"current"_qs, current},
+        {u"detail"_qs, detail}, {u"requiresElevation"_qs, requiresElevation},
+        {u"requiresReconnect"_qs, requiresReconnect}, {u"order"_qs, m_setupRepairProgress.size() + 1},
+        {u"total"_qs, 0}, {u"startedAt"_qs, now},
+        {u"finishedAt"_qs, current ? QString{} : now}, {u"result"_qs, current ? QString{} : status},
+        {u"evidence"_qs, QVariantMap{}}, {u"timestamp"_qs, now}});
+    const int total = m_setupRepairProgress.size();
+    for (QVariant &entry : m_setupRepairProgress) {
+        QVariantMap step = entry.toMap();
+        step.insert(u"total"_qs, total);
+        entry = step;
+    }
+}
+
+void AppBackend::updateSetupRepairProgress(const QString &id, const QString &state, const QString &detail,
+                                           const QString &result, const QVariantMap &evidence, bool current)
+{
+    const bool active = current && (state == u"RUNNING"_qs || state == u"WAITING FOR USER"_qs);
+    const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    if (active) {
+        for (QVariant &entry : m_setupRepairProgress) {
+            QVariantMap step = entry.toMap();
+            step.insert(u"current"_qs, false);
+            entry = step;
+        }
+    }
+    for (QVariant &entry : m_setupRepairProgress) {
+        QVariantMap step = entry.toMap();
+        if (step.value(u"id"_qs).toString() != id) continue;
+        step.insert(u"state"_qs, state);
+        step.insert(u"status"_qs, state);
+        step.insert(u"current"_qs, active);
+        if (!detail.isEmpty()) step.insert(u"detail"_qs, detail);
+        if (!result.isEmpty()) step.insert(u"result"_qs, result);
+        if (!evidence.isEmpty()) step.insert(u"evidence"_qs, evidence);
+        if (!active) step.insert(u"finishedAt"_qs, now);
+        step.insert(u"timestamp"_qs, now);
+        entry = step;
+        break;
+    }
 }
 
 void AppBackend::captureSetupTruthSnapshot(bool finalSnapshot)
@@ -5838,12 +5937,16 @@ QVariantMap AppBackend::checkSetupHealth()
 {
     if (m_verificationInProgress) return actionResult(false, u"Setup check is already running"_qs,
         u"HOTAS BF6 is still inspecting the selected setup."_qs, u"application"_qs, {}, u"wait"_qs, {}, {}, true);
-    m_setupConvergenceStage = SetupConvergenceStage::Checking;
+    setSetupConvergenceStage(SetupConvergenceStage::Checking);
     m_setupConvergenceSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     m_setupConvergenceStarted = QDateTime::currentDateTime();
+    m_setupConvergenceFinished = {};
     m_setupRepairProgress.clear();
     m_setupConvergenceAttemptedIssues.clear();
     m_setupConvergenceIdentityVerificationFailed = false;
+    m_setupConvergenceVJoyRepairFailed = false;
+    m_setupConvergenceCancelled = false;
+    m_setupConvergenceCurrentIssueId.clear();
     m_setupTruthBeforeSnapshot.clear();
     m_setupTruthAfterSnapshot.clear();
     m_setupRepairSessionReport.clear();
@@ -5865,27 +5968,52 @@ QVariantMap AppBackend::repairSetupHealth()
 {
     if (m_verificationInProgress) return actionResult(false, u"Setup is still checking"_qs,
         u"Wait for the read-only check to finish before approving repair."_qs, u"application"_qs, {}, u"wait"_qs, {}, {}, true);
-    if (m_setupTruthSnapshot.isEmpty()) captureSetupTruthSnapshot();
+    if (m_setupTruthSnapshot.isEmpty()) return checkSetupHealth();
+    if (setupRepairSessionActive() && m_setupConvergenceStage != SetupConvergenceStage::Repairing) return actionResult(false, u"Setup repair is already running"_qs,
+        u"HOTAS BF6 is completing the approved repair session."_qs, u"application"_qs, {}, u"wait"_qs, {}, {}, true);
     if (m_setupConvergenceSessionId.isEmpty()) {
         m_setupConvergenceSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_setupConvergenceStarted = QDateTime::currentDateTime();
+        m_setupConvergenceFinished = {};
         m_setupConvergenceAttemptedIssues.clear();
         m_setupConvergenceIdentityVerificationFailed = false;
+        m_setupConvergenceVJoyRepairFailed = false;
+        m_setupConvergenceCancelled = false;
     }
     if (m_setupTruthBeforeSnapshot.isEmpty()) m_setupTruthBeforeSnapshot = m_setupTruthSnapshot;
     const QVariantList issues = m_setupTruthSnapshot.value(u"issues"_qs).toList();
+    const QVariantList approvedPlan = m_setupTruthSnapshot.value(u"repairPlan"_qs).toList();
+    const auto approved = [&approvedPlan](const QString &issueId) {
+        return std::any_of(approvedPlan.cbegin(), approvedPlan.cend(), [&issueId](const QVariant &value) {
+            return value.toMap().value(u"id"_qs).toString() == issueId;
+        });
+    };
+    const auto stepIdFor = [](const QString &issueId) { return u"repair:"_qs + issueId; };
+    for (const QVariant &value : issues) {
+        const QVariantMap issue = value.toMap();
+        const QString issueId = issue.value(u"id"_qs).toString();
+        if (!issue.value(u"repairable"_qs).toBool() || !approved(issueId)) continue;
+        const QString stepId = stepIdFor(issueId);
+        const bool alreadyListed = std::any_of(m_setupRepairProgress.cbegin(), m_setupRepairProgress.cend(),
+            [&stepId](const QVariant &entry) { return entry.toMap().value(u"id"_qs).toString() == stepId; });
+        if (!alreadyListed) appendSetupRepairProgress(stepId, issue.value(u"subsystem"_qs).toString(),
+            issue.value(u"proposedRepair"_qs).toString(), u"PENDING"_qs,
+            issue.value(u"explanation"_qs).toString(), issue.value(u"requiresElevation"_qs).toBool(),
+            issue.value(u"requiresReconnect"_qs).toBool());
+    }
     for (const QVariant &value : issues) {
         const QVariantMap issue = value.toMap();
         if (issue.value(u"code"_qs).toString() != u"PhysicalDeviceUnverified"_qs
-            || !issue.value(u"repairable"_qs).toBool()) continue;
+            || !issue.value(u"repairable"_qs).toBool() || !approved(issue.value(u"id"_qs).toString())) continue;
         const QString recordId = issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString();
         const QString attemptKey = u"PhysicalDeviceUnverified:"_qs + recordId;
         if (m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
         m_setupConvergenceAttemptedIssues.insert(attemptKey);
-        m_setupConvergenceStage = SetupConvergenceStage::VerifyingIdentity;
-        appendSetupRepairProgress(u"verify-"_qs + recordId, u"Controller verification"_qs,
-            u"Verifying exact saved controller identity"_qs, u"RUNNING"_qs,
-            u"Acquiring the matching DirectInput controller and committing verification only after identity proof."_qs);
+        m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
+        setSetupConvergenceStage(SetupConvergenceStage::VerifyingIdentity);
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"RUNNING"_qs,
+            u"Acquiring the matching DirectInput controller and committing verification only after exact identity proof."_qs,
+            {}, QVariantMap{{u"recordId"_qs, recordId}}, true);
         const QVariantMap verification = completeSetupAssistantDevice(recordId);
         // A disconnected or unavailable saved target is an immediate, honest
         // outcome from the legacy exact-acquisition entry point. Do not leave
@@ -5900,7 +6028,7 @@ QVariantMap AppBackend::repairSetupHealth()
     for (const QVariant &value : issues) {
         const QVariantMap issue = value.toMap();
         if (issue.value(u"code"_qs).toString() != u"VJoyDescriptorMismatch"_qs
-            || !issue.value(u"repairable"_qs).toBool()) continue;
+            || !issue.value(u"repairable"_qs).toBool() || !approved(issue.value(u"id"_qs).toString())) continue;
         const QString layoutId = issue.value(u"evidence"_qs).toMap().value(u"layoutId"_qs).toString();
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
         const QString attemptKey = u"VJoyDescriptorMismatch:"_qs + layoutId;
@@ -5908,27 +6036,33 @@ QVariantMap AppBackend::repairSetupHealth()
         m_setupConvergenceAttemptedIssues.insert(attemptKey);
         MapperConfiguration outputConfiguration = m_configuration;
         outputConfiguration.vjoyDeviceId = layout->requirements.deviceId;
-        m_setupConvergenceStage = SetupConvergenceStage::RepairingDrivers;
-        appendSetupRepairProgress(u"vjoy-"_qs + layoutId, u"Virtual output"_qs,
-            QString(u"Repairing %1 vJoy descriptor"_qs).arg(layout->name), u"RUNNING"_qs,
-            u"Applying the displayed scoped descriptor repair, preserving its rollback snapshot and verifying read-back."_qs,
-            true);
-        if (applyControllerReadinessForConfiguration(outputConfiguration)) {
+        m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
+        setSetupConvergenceStage(SetupConvergenceStage::RepairingVJoy);
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"RUNNING"_qs,
+            QString(u"Repairing vJoy Device %1 for %2 only; Device 1 and HidHide are not part of this operation."_qs)
+                .arg(layout->requirements.deviceId).arg(layout->name), {},
+            QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId}}, true);
+        if (applyScopedVJoyRepair(layoutId, outputConfiguration,
+                                  ControllerReadinessService::requirementsFor(layout->requirements))) {
             return actionResult(true, u"Repairing virtual output"_qs,
                 u"HOTAS BF6 is applying the approved vJoy repair and will re-inspect the complete Device Rig."_qs,
                 u"virtualOutput"_qs, layoutId, u"wait"_qs, {}, {}, true);
         }
+        m_setupConvergenceVJoyRepairFailed = true;
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"FAILED"_qs,
+            u"The scoped vJoy repair could not start; no HidHide change was attempted."_qs);
+        setSetupConvergenceStage(SetupConvergenceStage::Repairing);
+        QTimer::singleShot(0, this, &AppBackend::repairSetupHealth);
+        return actionResult(false, u"Virtual output repair could not start"_qs,
+            u"No driver change was applied. HOTAS BF6 will still complete a final inspection."_qs,
+            u"virtualOutput"_qs, layoutId, u"wait"_qs, {}, {}, true);
     }
-    if (m_readiness.plan().canApplyAutomatically) {
-        m_setupConvergenceStage = SetupConvergenceStage::RepairingDrivers;
-        appendSetupRepairProgress(u"driver-repair"_qs, u"Driver setup"_qs, u"Repairing approved driver configuration"_qs,
-            u"RUNNING"_qs, u"Applying only the displayed scoped repairs, followed by authoritative read-back."_qs, true);
-        if (applyControllerReadiness()) return actionResult(true, u"Repairing setup"_qs,
-            u"HOTAS BF6 is applying the approved repair plan and will re-inspect every subsystem afterwards."_qs,
-            u"application"_qs, {}, u"wait"_qs, {}, {}, true);
-    }
-    m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
-    appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
+    setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
+    const bool finalAlreadyListed = std::any_of(m_setupRepairProgress.cbegin(), m_setupRepairProgress.cend(),
+        [](const QVariant &entry) { return entry.toMap().value(u"id"_qs).toString() == u"final-inspect"_qs; });
+    if (finalAlreadyListed) updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
+        u"Performing final full inspection from fresh driver and controller read-back evidence."_qs, {}, {}, true);
+    else appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
         u"RUNNING"_qs, u"Final health is based only on fresh read-back evidence."_qs);
     verifyHotasSetup();
     return actionResult(true, u"Verifying final setup state"_qs,
@@ -5948,12 +6082,15 @@ bool AppBackend::copySetupHealthDiagnostics()
 
 void AppBackend::completeSetupConvergence(const QString &finalState)
 {
-    captureSetupTruthSnapshot(true);
+    if (m_setupTruthAfterSnapshot.isEmpty()) captureSetupTruthSnapshot(true);
     const QString state = finalState.isEmpty() ? m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() : finalState;
-    appendSetupRepairProgress(u"complete"_qs, u"Setup"_qs, u"Setup convergence complete"_qs,
-        state == u"READY"_qs ? u"SUCCEEDED"_qs : u"FAILED"_qs,
+    const QString finalStepState = state == u"READY"_qs ? u"SUCCEEDED"_qs
+        : state == u"CANCELLED"_qs ? u"CANCELLED"_qs : u"FAILED"_qs;
+    updateSetupRepairProgress(u"final-inspect"_qs, finalStepState,
         state == u"READY"_qs ? u"Fresh read-back verified the final setup state."_qs
-                               : u"Fresh read-back found remaining setup work; review the exact issue below."_qs);
+        : state == u"CANCELLED"_qs ? u"The approved repair was cancelled; final read-back preserved the unresolved setup truth."_qs
+        : u"Fresh read-back found remaining setup work; review the exact issue below."_qs,
+        state, QVariantMap{{u"overallStatus"_qs, m_setupTruthAfterSnapshot.value(u"overallStatus"_qs)}});
     QString operations;
     for (const QVariant &value : m_setupRepairProgress) {
         const QVariantMap operation = value.toMap();
@@ -5966,7 +6103,9 @@ void AppBackend::completeSetupConvergence(const QString &finalState)
              QDateTime::currentDateTime().toString(Qt::ISODate),
              m_setupTruthBeforeSnapshot.value(u"diagnostics"_qs).toString(),
              operations, m_setupTruthAfterSnapshot.value(u"diagnostics"_qs).toString(), state);
-    m_setupConvergenceStage = SetupConvergenceStage::Idle;
+    m_setupConvergenceFinished = QDateTime::currentDateTime();
+    setSetupConvergenceStage(state == u"READY"_qs ? SetupConvergenceStage::Complete
+        : state == u"CANCELLED"_qs ? SetupConvergenceStage::Cancelled : SetupConvergenceStage::Failed);
     emit stateChanged();
 }
 
@@ -5976,64 +6115,138 @@ void AppBackend::continueSetupConvergence()
     if (m_setupConvergenceStage == SetupConvergenceStage::Checking) {
         refreshSelectedRigOutputReadiness();
         captureSetupTruthSnapshot();
-        appendSetupRepairProgress(u"inspect"_qs, u"Setup"_qs, u"Inspecting complete setup"_qs, u"SUCCEEDED"_qs,
-            u"Read-only inspection completed; review the frozen results and repair plan."_qs);
-        m_setupConvergenceStage = SetupConvergenceStage::Idle;
+        updateSetupRepairProgress(u"inspect"_qs, u"SUCCEEDED"_qs,
+            u"Read-only inspection completed. These frozen results are the only authority for a later repair."_qs,
+            u"RESULTS FROZEN"_qs, QVariantMap{{u"snapshotId"_qs, m_setupTruthSnapshot.value(u"snapshotId"_qs)}});
+        setSetupConvergenceStage(SetupConvergenceStage::Results);
         emit stateChanged();
         return;
     }
     if (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity) {
-        captureSetupTruthSnapshot();
-        const QVariantList currentIssues = m_setupTruthSnapshot.value(u"issues"_qs).toList();
-        const bool stillUnverified = std::any_of(currentIssues.cbegin(), currentIssues.cend(), [this](const QVariant &value) {
-            const QVariantMap issue = value.toMap();
-            return issue.value(u"code"_qs).toString() == u"PhysicalDeviceUnverified"_qs
-                && issue.value(u"repairable"_qs).toBool()
-                && m_setupConvergenceAttemptedIssues.contains(u"PhysicalDeviceUnverified:"_qs
-                    + issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString());
-        });
-        if (m_setupConvergenceIdentityVerificationFailed || stillUnverified) {
-            appendSetupRepairProgress(u"verify-failed"_qs, u"Controller verification"_qs,
-                u"Exact controller verification did not complete"_qs, u"FAILED"_qs,
-                u"No driver repair was attempted. Reconnect the exact controller, close competing controller software, then run Check & Repair Setup again."_qs);
-            m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
-            verifyHotasSetup();
-            return;
+        QVariantMap issue;
+        for (const QVariant &entry : m_setupTruthSnapshot.value(u"issues"_qs).toList()) {
+            if (entry.toMap().value(u"id"_qs).toString() == m_setupConvergenceCurrentIssueId) {
+                issue = entry.toMap();
+                break;
+            }
         }
-        appendSetupRepairProgress(u"verify-complete"_qs, u"Controller verification"_qs,
-            u"Verifying exact saved controller identity"_qs, u"SUCCEEDED"_qs,
-            u"Saved identity verification finished; re-inspecting the remaining setup state."_qs);
-        // Continue through the same repair authority so a verified controller
-        // can immediately advance to any still-required vJoy/HidHide repair.
-        m_setupConvergenceStage = SetupConvergenceStage::Idle;
+        const QString recordId = issue.value(u"evidence"_qs).toMap().value(u"recordId"_qs).toString();
+        const SavedControllerRecord *record = savedControllerRecord(recordId);
+        const bool verified = record && !record->lastVerified.isEmpty();
+        const QString stepId = u"repair:"_qs + m_setupConvergenceCurrentIssueId;
+        if (m_setupConvergenceIdentityVerificationFailed || !verified) {
+            m_setupConvergenceIdentityVerificationFailed = true;
+            updateSetupRepairProgress(stepId, u"FAILED"_qs,
+                u"The exact saved controller did not complete identity verification. The remaining approved repairs will still be processed."_qs,
+                u"IDENTITY NOT COMMITTED"_qs, QVariantMap{{u"recordId"_qs, recordId}});
+        } else {
+            updateSetupRepairProgress(stepId, u"SUCCEEDED"_qs,
+                u"The exact saved controller identity was committed and its verification timestamp was persisted."_qs,
+                u"IDENTITY VERIFIED"_qs,
+                QVariantMap{{u"recordId"_qs, recordId}, {u"lastVerified"_qs, record->lastVerified}});
+        }
+        // Do not let a failure in one approved repair silently cancel the next
+        // one. The frozen repair plan remains the transaction authority.
+        setSetupConvergenceStage(SetupConvergenceStage::Repairing);
         repairSetupHealth();
         return;
     }
-    if (m_setupConvergenceStage == SetupConvergenceStage::RepairingDrivers) {
+    if (m_setupConvergenceStage == SetupConvergenceStage::RepairingVJoy) return;
+    if (m_setupConvergenceStage == SetupConvergenceStage::Repairing) {
         if (m_readiness.reconnectVerificationPending()) {
-            m_setupConvergenceStage = SetupConvergenceStage::WaitingForReconnect;
+            setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
             appendSetupRepairProgress(u"reconnect"_qs, u"Device isolation"_qs, u"Reconnect controller"_qs,
                 u"WAITING FOR USER"_qs, u"Unplug and reconnect the exact selected controller, then move a control."_qs,
                 false, true);
             emit stateChanged();
             return;
         }
-        appendSetupRepairProgress(u"driver-repair"_qs, u"Driver setup"_qs, u"Repairing approved driver configuration"_qs,
-            m_readiness.plan().state == ControllerReadinessState::Ready ? u"SUCCEEDED"_qs : u"FAILED"_qs,
-            m_readiness.plan().status, true);
-        // The central authority may have just repaired one of several rig
-        // outputs. Rebuild the frozen typed view before selecting the next
-        // safely repairable item; no QML state decides this sequencing.
-        refreshSelectedRigOutputReadiness();
-        captureSetupTruthSnapshot();
-        m_setupConvergenceStage = SetupConvergenceStage::Idle;
         repairSetupHealth();
         return;
     }
     if (m_setupConvergenceStage == SetupConvergenceStage::FinalChecking) {
         refreshSelectedRigOutputReadiness();
-        completeSetupConvergence();
+        captureSetupTruthSnapshot(true);
+        const QString finalState = m_setupConvergenceCancelled ? u"CANCELLED"_qs
+            : (m_setupConvergenceIdentityVerificationFailed || m_setupConvergenceVJoyRepairFailed
+                || m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() != u"READY"_qs)
+                ? u"FAILED"_qs : u"READY"_qs;
+        completeSetupConvergence(finalState);
     }
+}
+
+bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConfiguration &configuration,
+                                       const MapperOutputRequirements &requirements)
+{
+    if (m_verificationInProgress || layoutId.isEmpty()) return false;
+    const bool mappingWasRequested = m_worker.mappingRequested();
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const QString issueId = m_setupConvergenceCurrentIssueId;
+    m_verificationInProgress = true;
+    emit stateChanged();
+
+    auto repair = std::make_shared<ControllerReadinessService>();
+    QThread *thread = QThread::create([this, repair, layoutId, configuration, requirements, physical,
+                                       mappingWasRequested, issueId] {
+        bool prepared = m_worker.prepareForDriverConfiguration();
+        bool completed = false;
+        bool cancelled = false;
+        bool restored = false;
+        if (prepared) {
+            repair->inspectForRequirements(configuration, physical, requirements);
+            const ControllerReadinessPlan before = repair->plan();
+            if (before.vjoyNeedsChanges && before.vjoyCanApply) {
+                completed = repair->applyVJoyConfiguration();
+                cancelled = repair->plan().state == ControllerReadinessState::Cancelled;
+            }
+            restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        }
+        QMetaObject::invokeMethod(this, [this, repair, layoutId, issueId, prepared, completed, cancelled, restored] {
+            m_virtualOutputReadinessPlans.insert(layoutId, repair->plan());
+            m_verificationInProgress = false;
+            const QString stepId = u"repair:"_qs + issueId;
+            if (cancelled) {
+                m_setupConvergenceCancelled = true;
+                updateSetupRepairProgress(stepId, u"CANCELLED"_qs,
+                    u"The administrator repair request was cancelled. HidHide and other vJoy devices were left untouched."_qs,
+                    u"CANCELLED"_qs, QVariantMap{{u"layoutId"_qs, layoutId},
+                        {u"deviceId"_qs, repair->plan().vjoy.deviceId}});
+            } else if (completed && restored && !repair->plan().vjoyNeedsChanges) {
+                updateSetupRepairProgress(stepId, u"SUCCEEDED"_qs,
+                    QString(u"vJoy Device %1 now matches this output layout; fresh descriptor read-back succeeded."_qs)
+                        .arg(repair->plan().vjoy.deviceId), u"READ-BACK VERIFIED"_qs,
+                    QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, repair->plan().vjoy.deviceId},
+                        {u"descriptor"_qs, repair->plan().vjoy.descriptorReport}});
+            } else {
+                m_setupConvergenceVJoyRepairFailed = true;
+                const QString detail = !prepared
+                    ? u"HOTAS BF6 could not safely release its current mapping output for this Device 2-only repair."_qs
+                    : !restored ? u"vJoy repair did not restore the prior mapping state; final inspection will show the actual result."_qs
+                    : repair->plan().status.isEmpty() ? u"vJoy Device 2 did not accept the scoped descriptor repair."_qs
+                    : repair->plan().status;
+                updateSetupRepairProgress(stepId, u"FAILED"_qs, detail, u"READ-BACK FAILED"_qs,
+                    QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, repair->plan().vjoy.deviceId},
+                        {u"descriptor"_qs, repair->plan().vjoy.descriptorReport}});
+            }
+            if (m_setupConvergenceCancelled) {
+                setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
+                appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
+                    u"RUNNING"_qs, u"Reading final setup truth after the cancelled repair request."_qs);
+                verifyHotasSetup();
+            } else {
+                setSetupConvergenceStage(SetupConvergenceStage::Repairing);
+                QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
+    return true;
 }
 
 QVariantList AppBackend::appIssues() const
@@ -12595,8 +12808,8 @@ void AppBackend::reconcileControllerReconnect(const PhysicalControllerCapabiliti
                 rememberCurrentController();
             }
             emit stateChanged();
-            if (m_setupConvergenceStage == SetupConvergenceStage::WaitingForReconnect) {
-                m_setupConvergenceStage = SetupConvergenceStage::FinalChecking;
+            if (m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser) {
+                setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
                 QTimer::singleShot(0, this, &AppBackend::verifyHotasSetup);
             }
         }, Qt::QueuedConnection);
@@ -12936,7 +13149,7 @@ bool AppBackend::applyControllerReadinessForConfiguration(const MapperConfigurat
                 }
             }
             emit stateChanged();
-            if (m_setupConvergenceStage == SetupConvergenceStage::RepairingDrivers) {
+            if (m_setupConvergenceStage == SetupConvergenceStage::Repairing) {
                 QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
             }
         }, Qt::QueuedConnection);

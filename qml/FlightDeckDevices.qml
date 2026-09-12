@@ -51,10 +51,8 @@ Flickable {
     readonly property var rigItems: backend.deviceRigs || []
     readonly property var outputLayouts: backend.virtualOutputLayouts || []
     readonly property var axisItems: backend.axes
-    readonly property bool checking: backend.setupRepairSessionActive || (state.controllerSetupInProgress === undefined
-        ? backend.controllerSetupInProgress : state.controllerSetupInProgress)
-    readonly property bool canRepairSetup: (state.controllerSetupCanApply === undefined
-        ? backend.controllerSetupCanApply : state.controllerSetupCanApply) && !checking
+    readonly property bool checking: backend.setupRepairSessionActive
+    readonly property bool canRepairSetup: (setupTruth.repairPlan || []).length > 0 && !checking
     readonly property bool canUndoRepair: state.controllerSetupCanUndo === undefined
         ? backend.controllerSetupCanUndo : state.controllerSetupCanUndo
     readonly property bool canRepairHidHideAccess: (state.hidhideAvailable === undefined
@@ -82,11 +80,10 @@ Flickable {
         ? proposedChangesPresentationOverride
         : state.controllerReadinessProposedChanges === undefined
             ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
-    // The central Setup Truth plan is authoritative in production. Keep the
-    // existing presentation fixture as a fallback only for the isolated
-    // Flight Deck dialog-layout contract.
-    readonly property var setupRepairPlan: (setupTruth.repairPlan || []).length > 0
-        ? setupTruth.repairPlan : proposedChanges
+    // Production repair approval is always the frozen central Setup Truth
+    // plan. The presentation override remains exclusively fixture-owned.
+    readonly property var setupRepairPlan: proposedChangesPresentationOverride !== null
+        ? proposedChanges : (setupTruth.repairPlan || [])
     readonly property bool reconnectRequired: state.controllerReconnectRequired === undefined
         ? backend.controllerReconnectRequired : state.controllerReconnectRequired
     readonly property bool disconnectObserved: state.controllerDisconnectObserved === undefined
@@ -510,14 +507,14 @@ Flickable {
                         width: 34
                         height: 34
                         radius: width / 2
-                        color: Qt.rgba(deck.statusColor(readiness.tone || "informational").r,
-                                       deck.statusColor(readiness.tone || "informational").g,
-                                       deck.statusColor(readiness.tone || "informational").b, 0.16)
-                        border.color: deck.statusColor(readiness.tone || "informational")
+                        color: Qt.rgba(deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" })).r,
+                                       deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" })).g,
+                                       deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" })).b, 0.16)
+                        border.color: deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
                         Text {
                             anchors.centerIn: parent
-                            text: root.markerFor(readiness.tone || "informational")
-                            color: deck.statusColor(readiness.tone || "informational")
+                            text: root.markerFor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
+                            color: deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
                             font.pixelSize: 18
                             font.bold: true
                         }

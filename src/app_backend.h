@@ -149,6 +149,10 @@ class AppBackend final : public QObject {
     // The single authoritative Devices setup projection. It is a frozen,
     // typed control-plane inspection result, not a summary parsed from QML.
     Q_PROPERTY(QVariantMap setupTruthSnapshot READ setupTruthSnapshot NOTIFY stateChanged)
+    // The session owns operation state separately from the frozen setup
+    // snapshot.  Every host (modal, page, sidebar, and compact card) reads
+    // this same projection; QML never infers an active operation from a log.
+    Q_PROPERTY(QVariantMap setupRepairSession READ setupRepairSession NOTIFY stateChanged)
     Q_PROPERTY(QVariantList setupRepairProgress READ setupRepairProgress NOTIFY stateChanged)
     Q_PROPERTY(QString setupRepairSessionReport READ setupRepairSessionReport NOTIFY stateChanged)
     Q_PROPERTY(bool setupRepairSessionActive READ setupRepairSessionActive NOTIFY stateChanged)
@@ -372,6 +376,7 @@ public:
     QVariantList setupAssistantSteps() const;
     QVariantMap setupAssistantSummary() const;
     QVariantMap setupTruthSnapshot() const;
+    QVariantMap setupRepairSession() const;
     QVariantList setupRepairProgress() const;
     QString setupRepairSessionReport() const;
     bool setupRepairSessionActive() const;
@@ -1096,6 +1101,7 @@ private:
     void appendCalibrationHistory(const std::array<Calibration, kPhysicalAxisCount> &calibration,
                                   int calibratedAxisCount);
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
+    enum class SetupConvergenceStage;
     void refreshVirtualOutputReadiness(const QString &layoutId);
     // A complete rig can target more than the currently selected Profile
     // output.  These probes stay on the setup control plane and never alter
@@ -1106,10 +1112,17 @@ private:
     QVariantMap buildSetupTruthSnapshot() const;
     void captureSetupTruthSnapshot(bool finalSnapshot = false);
     void continueSetupConvergence();
+    bool applyScopedVJoyRepair(const QString &layoutId, const MapperConfiguration &configuration,
+                               const MapperOutputRequirements &requirements);
     void appendSetupRepairProgress(const QString &id, const QString &subsystem,
                                    const QString &title, const QString &status,
                                    const QString &detail = {}, bool requiresElevation = false,
                                    bool requiresReconnect = false);
+    void updateSetupRepairProgress(const QString &id, const QString &state, const QString &detail = {},
+                                   const QString &result = {}, const QVariantMap &evidence = {},
+                                   bool current = false);
+    void setSetupConvergenceStage(SetupConvergenceStage stage);
+    QVariantMap currentSetupRepairStep() const;
     void completeSetupConvergence(const QString &finalState = {});
 
     enum class CalibrationStageState {
@@ -1163,10 +1176,23 @@ private:
     QString m_pendingSetupVerificationRecordId;
     // A repair session contains only control-plane state. The worker still
     // owns DirectInput reports and never observes this bookkeeping.
-    enum class SetupConvergenceStage { Idle, Checking, VerifyingIdentity, RepairingDrivers, FinalChecking, WaitingForReconnect };
+    enum class SetupConvergenceStage {
+        Idle,
+        Checking,
+        Results,
+        Repairing,
+        WaitingForUser,
+        Complete,
+        Failed,
+        Cancelled,
+        VerifyingIdentity,
+        RepairingVJoy,
+        FinalChecking,
+    };
     SetupConvergenceStage m_setupConvergenceStage = SetupConvergenceStage::Idle;
     QString m_setupConvergenceSessionId;
     QDateTime m_setupConvergenceStarted;
+    QDateTime m_setupConvergenceFinished;
     QVariantMap m_setupTruthSnapshot;
     QVariantMap m_setupTruthBeforeSnapshot;
     QVariantMap m_setupTruthAfterSnapshot;
@@ -1174,6 +1200,9 @@ private:
     QString m_setupRepairSessionReport;
     QSet<QString> m_setupConvergenceAttemptedIssues;
     bool m_setupConvergenceIdentityVerificationFailed = false;
+    bool m_setupConvergenceVJoyRepairFailed = false;
+    bool m_setupConvergenceCancelled = false;
+    QString m_setupConvergenceCurrentIssueId;
     // Output inspection is explicit and scoped.  A rig/device check must not
     // accidentally change another saved output's readiness presentation.
     QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;

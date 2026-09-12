@@ -20,6 +20,7 @@ Item {
     signal calibrationRequested()
     signal repairRequested()
     readonly property var snapshot: backendObject ? backendObject.setupTruthSnapshot : ({})
+    readonly property var session: backendObject ? backendObject.setupRepairSession : ({})
     readonly property var progress: backendObject ? backendObject.setupRepairProgress : []
     function token(name, fallback) { return themeTokens && themeTokens[name] !== undefined ? themeTokens[name] : fallback }
     readonly property color panelColor: token("panel", token("elevatedSurface", "#1a1d23"))
@@ -42,9 +43,9 @@ Item {
     }
     function hasRepair() { return (snapshot.repairPlan || []).length > 0 }
     function currentStep() {
-        for (let i = progress.length - 1; i >= 0; --i)
-            if (progress[i].status === "RUNNING" || progress[i].status === "WAITING FOR USER") return progress[i]
-        return progress.length > 0 ? progress[progress.length - 1] : ({})
+        // Results are intentionally frozen and have no current operation.
+        // This prevents a completed log entry from masquerading as a spinner.
+        return session.active && session.currentStep ? session.currentStep : ({})
     }
     function checkedAge() {
         if (!snapshot.timestamp) return "Not checked yet"
@@ -73,12 +74,12 @@ Item {
             }
         }
         Rectangle {
-            visible: root.currentStep().title !== undefined
+            visible: !!root.session.active && root.currentStep().title !== undefined
             Layout.fillWidth: true; Layout.preferredHeight: visible ? progressColumn.implicitHeight + 20 : 0
             color: root.panelColor; border.color: root.stateColor(root.currentStep().status || "RUNNING"); radius: root.radius
             ColumnLayout {
                 id: progressColumn; anchors.fill: parent; anchors.margins: 10; spacing: 3
-                Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                Text { text: root.session.mode === "WAITING FOR USER" ? "WAITING FOR YOU" : "CURRENT STEP"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
                 Text { text: root.currentStep().title || "Checking setup"; color: root.textColor; font.pixelSize: 12; font.bold: true }
                 Text { Layout.fillWidth: true; text: root.currentStep().detail || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 Text { visible: !!root.currentStep().requiresReconnect; text: "RECONNECT CONTROLLER"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
