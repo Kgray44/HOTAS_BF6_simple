@@ -77,7 +77,7 @@ void UiReleaseContractTests::newDeviceSetupExplicitlyAcquiresThenVerifies()
 {
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     QVERIFY(backend.contains(QStringLiteral("startExplicitNewControllerVerification(target->directInputId")));
-    QVERIFY(backend.contains(QStringLiteral("m_worker.selectPhysicalController(directInputId)")));
+    QVERIFY(backend.contains(QStringLiteral("MappingWorker::probeExactPhysicalController(directInputId)")));
     QVERIFY(backend.contains(QStringLiteral("verifyHotasSetup();")));
     QVERIFY(backend.contains(QStringLiteral("New controller detected:")));
 }
@@ -91,7 +91,7 @@ void UiReleaseContractTests::controllerSetupRequiresFreshPostRestoreIdentityProo
     QVERIFY(verifierEnd > verifierStart);
     const QString verifier = backend.mid(verifierStart, verifierEnd - verifierStart);
 
-    QVERIFY(verifier.contains(QStringLiteral("finalIdentityProof = m_worker.selectPhysicalController(physical.directInputId)")));
+    QVERIFY(verifier.contains(QStringLiteral("MappingWorker::probeExactPhysicalController(setupDirectInputId)")));
     QVERIFY(verifier.contains(QStringLiteral("finalIdentityProof\n                && m_readiness.reconcilePendingRecoveryAfterVerifiedReadback")));
     QVERIFY(verifier.contains(QStringLiteral("could not obtain a fresh DirectInput report from the exact selected controller after restoring the mapping session")));
 }

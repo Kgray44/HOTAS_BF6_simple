@@ -911,6 +911,96 @@ bool MappingWorker::selectPhysicalController(const QString &expectedDirectInputI
     return false;
 }
 
+DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QString &expectedDirectInputId)
+{
+    DirectInputControllerProbe result;
+    const QString expected = expectedDirectInputId.trimmed();
+    if (expected.isEmpty()) {
+        result.diagnostic = u"No exact DirectInput controller identity was supplied for setup proof."_qs;
+        return result;
+    }
+
+    LPDIRECTINPUT8W directInput = nullptr;
+    const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
+        IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
+    if (FAILED(initialized)) {
+        result.diagnostic = u"DirectInput initialization failed: "_qs + inputErrorMessage(initialized);
+        return result;
+    }
+
+    const std::optional<DirectInputDevice> selected = selectDeviceByPersistedId(directInput, expected);
+    if (!selected) {
+        directInput->Release();
+        result.diagnostic = u"The exact saved controller was not visible through DirectInput."_qs;
+        return result;
+    }
+
+    LPDIRECTINPUTDEVICE8W device = nullptr;
+    const HRESULT created = directInput->CreateDevice(selected->guid, &device, nullptr);
+    if (FAILED(created)) {
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not open the exact saved controller: "_qs
+            + inputErrorMessage(created);
+        return result;
+    }
+    const HRESULT format = device->SetDataFormat(&c_dfDIJoystick2);
+    const HRESULT cooperative = SUCCEEDED(format)
+        ? device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE)
+        : format;
+    if (FAILED(cooperative)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs
+            + inputErrorMessage(cooperative);
+        return result;
+    }
+
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    ObjectEnumerationContext objects{device, &result.axes, &buttons};
+    device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+    HRESULT acquired = device->Acquire();
+    if (FAILED(acquired)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs
+            + inputErrorMessage(acquired);
+        return result;
+    }
+
+    DIJOYSTATE2 state{};
+    HRESULT read = device->Poll();
+    if (SUCCEEDED(read)) read = device->GetDeviceState(sizeof(state), &state);
+    if (read == DIERR_INPUTLOST || read == DIERR_NOTACQUIRED) {
+        acquired = device->Acquire();
+        if (SUCCEEDED(acquired)) {
+            read = device->Poll();
+            if (SUCCEEDED(read)) read = device->GetDeviceState(sizeof(state), &state);
+        }
+    }
+    if (FAILED(read)) {
+        device->Unacquire();
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"The exact saved controller did not deliver a DirectInput state report: "_qs
+            + inputErrorMessage(read);
+        return result;
+    }
+
+    result.acquired = true;
+    result.name = selected->name;
+    result.directInputId = guidToString(selected->guid);
+    result.hidInstanceId = hidInstanceIdForDevice(device);
+    result.hidContainerId = hidDeviceContainerId(result.hidInstanceId);
+    result.axisCount = objects.axisCount;
+    result.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
+    result.povCount = objects.povCount;
+    result.diagnostic = u"Exact DirectInput controller acquired and returned a live state report."_qs;
+    device->Unacquire();
+    device->Release();
+    directInput->Release();
+    return result;
+}
+
 void MappingWorker::requestStop()
 {
     m_stopRequested = true;

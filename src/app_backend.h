@@ -1062,7 +1062,8 @@ private:
                                               const QString &scopeId) const;
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
-    bool rememberCurrentController(const QString &expectedRecordId = {});
+    bool rememberCurrentController(const QString &expectedRecordId = {},
+                                   const PhysicalControllerCapabilities *observedProof = nullptr);
     void tryAutoSwitchVerifiedController();
     void refreshTrayStatus();
     void rebuildSelectedAxisCurve();
@@ -1094,6 +1095,7 @@ private:
     void startVerification(VerificationMode mode);
     bool applyControllerReadinessForConfiguration(const MapperConfiguration &configuration);
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
+    QString setupTruthDirectInputId() const;
     void observeControllerReconnect();
     void reconcileControllerReconnect(const PhysicalControllerCapabilities &physical);
     void sampleCalibrationControlPlane();
@@ -1176,6 +1178,8 @@ private:
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
     QString m_pendingSetupVerificationRecordId;
+    PhysicalControllerCapabilities m_setupDirectInputProof;
+    bool m_setupDirectInputProofAvailable = false;
     // A repair session contains only control-plane state. The worker still
     // owns DirectInput reports and never observes this bookkeeping.
     enum class SetupConvergenceStage {

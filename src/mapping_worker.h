@@ -189,6 +189,22 @@ struct DeviceSnapshot {
     QString hidContainerId;
 };
 
+// A bounded control-plane proof for setup.  It opens exactly one persisted
+// DirectInput controller, reads one state report, and immediately releases
+// it.  It never starts mapping, selects an active Device Rig, or opens vJoy.
+struct DirectInputControllerProbe {
+    bool acquired = false;
+    QString name;
+    QString directInputId;
+    QString hidInstanceId;
+    QString hidContainerId;
+    std::array<bool, kPhysicalAxisCount> axes{};
+    int axisCount = 0;
+    int buttonCount = 0;
+    int povCount = 0;
+    QString diagnostic;
+};
+
 class MappingWorker final : public QThread {
     Q_OBJECT
 
@@ -214,6 +230,9 @@ public:
     // acquisition boundary.  It clears old input state before discovery and
     // never performs device enumeration from a report callback.
     bool selectPhysicalController(const QString &expectedDirectInputId, int timeoutMs = 3500);
+    // Setup can inspect an editing Rig without activating it.  This direct
+    // proof is deliberately independent from the long-lived mapping runtime.
+    static DirectInputControllerProbe probeExactPhysicalController(const QString &expectedDirectInputId);
     void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }

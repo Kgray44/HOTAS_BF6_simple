@@ -3299,6 +3299,32 @@ const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
     return activeDeviceRig();
 }
 
+QString AppBackend::setupTruthDirectInputId() const
+{
+    const DeviceRig *rig = activeDeviceRig();
+    if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
+        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    }
+    if (!rig) return {};
+
+    // Setup Truth may inspect an editing Rig, but it never activates that Rig
+    // merely to obtain DirectInput evidence.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const DeviceRigMember &member : rig->members) {
+            if (!member.enabled || (pass == 0 && !member.required)) continue;
+            for (const DiscoveredController &controller : m_discoveredControllers) {
+                if (!controller.connected || controller.virtualDevice) continue;
+                const ControllerMatch match = ControllerManager::match(
+                    controller, m_configuration.savedControllers);
+                if (!match.ambiguous && match.recordId == member.controllerRecordId) {
+                    return controller.directInputId;
+                }
+            }
+        }
+    }
+    return {};
+}
+
 QVariantList AppBackend::deviceRigs() const
 {
     QVariantList result;
@@ -6000,6 +6026,8 @@ QVariantMap AppBackend::checkSetupHealth()
     m_setupTruthAfterSnapshot.clear();
     m_setupRepairSessionReport.clear();
     m_virtualOutputReadinessPlans.clear();
+    m_setupDirectInputProof = {};
+    m_setupDirectInputProofAvailable = false;
     appendSetupRepairProgress(u"inspect"_qs, u"Setup"_qs, u"Inspecting complete setup"_qs, u"RUNNING"_qs,
         u"No configuration changes are made during this check."_qs);
     verifyHotasSetup();
@@ -13007,7 +13035,12 @@ void AppBackend::startVerification(VerificationMode mode)
     const bool mappingWasRequested = m_worker.mappingRequested();
     const bool mapperOwnsVjoy = m_worker.runtime().mappingActive.load();
     const bool outputReportsSucceeding = mapperOwnsVjoy && m_worker.runtime().vjoyReady.load();
-    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const PhysicalControllerCapabilities runtimePhysical = currentPhysicalCapabilities();
+    const PhysicalControllerCapabilities physical = m_setupDirectInputProofAvailable
+        ? m_setupDirectInputProof : runtimePhysical;
+    const QString setupDirectInputId = mode == VerificationMode::Full
+        ? (!physical.directInputId.isEmpty() ? physical.directInputId : setupTruthDirectInputId())
+        : QString{};
     const QString arrivalId = mode == VerificationMode::Quick ? m_pendingControllerArrivalId : QString{};
 
     m_verificationInProgress = true;
@@ -13019,9 +13052,28 @@ void AppBackend::startVerification(VerificationMode mode)
 
     const QString setupVerificationRecordId = mode == VerificationMode::Full
         ? m_pendingSetupVerificationRecordId : QString{};
-    QThread *thread = QThread::create([this, configuration, physical, mode, mappingWasRequested,
+    QThread *thread = QThread::create([this, configuration, physical, setupDirectInputId, mode, mappingWasRequested,
                                        mapperOwnsVjoy, outputReportsSucceeding, arrivalId,
                                        setupVerificationRecordId] {
+        const auto physicalFromProbe = [](const DirectInputControllerProbe &probe) {
+            PhysicalControllerCapabilities result;
+            result.name = probe.name;
+            result.directInputId = probe.directInputId;
+            result.hidInstanceId = probe.hidInstanceId;
+            result.hidContainerId = probe.hidContainerId;
+            result.connected = probe.acquired;
+            result.inputReportsReceived = probe.acquired;
+            result.axes = probe.axes;
+            result.buttons = probe.buttonCount;
+            result.povs = probe.povCount;
+            return result;
+        };
+        PhysicalControllerCapabilities inspectedPhysical = physical;
+        if (!setupDirectInputId.isEmpty()) {
+            const DirectInputControllerProbe inspectionProbe =
+                MappingWorker::probeExactPhysicalController(setupDirectInputId);
+            if (inspectionProbe.acquired) inspectedPhysical = physicalFromProbe(inspectionProbe);
+        }
         ControllerReadinessPlan plan;
         bool prepared = true;
         bool restored = true;
@@ -13032,17 +13084,18 @@ void AppBackend::startVerification(VerificationMode mode)
         // Require a second, exact DirectInput acquisition after restoration
         // before a recovery journal is retired or an identity is persisted.
         bool finalIdentityProof = setupVerificationRecordId.isEmpty();
+        PhysicalControllerCapabilities finalPhysical = inspectedPhysical;
         if (mode == VerificationMode::Full) {
             prepared = m_worker.prepareForDriverConfiguration();
         }
 
         if (prepared) {
             ControllerReadinessService verifier;
-            plan = verifier.inspect(configuration, physical, mode,
+            plan = verifier.inspect(configuration, inspectedPhysical, mode,
                                     mode == VerificationMode::Quick && mapperOwnsVjoy,
                                     mode == VerificationMode::Quick && outputReportsSucceeding);
         } else {
-            plan = ControllerReadinessService::checkingPlan(physical, mode);
+            plan = ControllerReadinessService::checkingPlan(inspectedPhysical, mode);
             plan.state = ControllerReadinessState::Failed;
             plan.isChecking = false;
             plan.vjoyStatus = VerificationSubsystemState::Error;
@@ -13064,15 +13117,22 @@ void AppBackend::startVerification(VerificationMode mode)
                 plan.vjoySummary = QStringLiteral("Verification completed, but HOTAS BF6 could not restore vJoy ownership.");
                 plan.status = QStringLiteral("ACTION REQUIRED — Mapping did not resume after verification.");
             }
-            if (restored && !setupVerificationRecordId.isEmpty()) {
-                finalIdentityProof = m_worker.selectPhysicalController(physical.directInputId);
+            if (restored && !setupDirectInputId.isEmpty()) {
+                const DirectInputControllerProbe finalProbe =
+                    MappingWorker::probeExactPhysicalController(setupDirectInputId);
+                if (finalProbe.acquired) finalPhysical = physicalFromProbe(finalProbe);
+                if (!setupVerificationRecordId.isEmpty()) finalIdentityProof = finalProbe.acquired;
             }
         }
 
         QMetaObject::invokeMethod(this, [this, plan = std::move(plan), mode, restored, arrivalId,
-                                         setupVerificationRecordId, finalIdentityProof] () mutable {
+                                         setupVerificationRecordId, finalIdentityProof, finalPhysical] () mutable {
             m_readiness.adoptPlan(std::move(plan));
-            const PhysicalControllerCapabilities observedPhysical = currentPhysicalCapabilities();
+            const PhysicalControllerCapabilities observedPhysical = finalPhysical;
+            if (observedPhysical.connected) {
+                m_setupDirectInputProof = observedPhysical;
+                m_setupDirectInputProofAvailable = true;
+            }
             if (finalIdentityProof
                 && m_readiness.reconcilePendingRecoveryAfterVerifiedReadback(observedPhysical)) {
                 appendEvent(u"Prior automatic setup recovery was reconciled after fresh controller and driver read-back proof"_qs);
@@ -13104,7 +13164,7 @@ void AppBackend::startVerification(VerificationMode mode)
                         expected, observedPhysical);
                     if (saved && restored && finalIdentityProof && observedPhysical.connected
                         && physicalReady && identityMatches && !m_readiness.hasPendingRecovery()
-                        && rememberCurrentController(setupVerificationRecordId)) {
+                        && rememberCurrentController(setupVerificationRecordId, &observedPhysical)) {
                         appendEvent(QString(u"Selected controller setup completed: %1"_qs).arg(saved->displayName));
                     } else {
                         m_setupConvergenceIdentityVerificationFailed = true;
@@ -13520,9 +13580,11 @@ ControllerVJoyRequirements AppBackend::currentVjoyRequirements() const
     return result;
 }
 
-bool AppBackend::rememberCurrentController(const QString &expectedRecordId)
+bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
+                                           const PhysicalControllerCapabilities *observedProof)
 {
-    const DiscoveredController *controller = discoveredController(deviceId());
+    const QString observedId = observedProof ? observedProof->directInputId : deviceId();
+    const DiscoveredController *controller = discoveredController(observedId);
     if (!controller || controller->virtualDevice) return false;
     const ControllerMatch match = ControllerManager::match(*controller, m_configuration.savedControllers);
     QString existingId = match.ambiguous ? QString{} : match.recordId;
@@ -13534,10 +13596,13 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId)
         remembered.hidInstanceId = expected->hidInstanceId;
         remembered.hidContainerId = expected->hidContainerId;
         PhysicalControllerCapabilities observed;
-        observed.directInputId = controller->directInputId;
-        observed.hidInstanceId = controller->hidInstanceId;
-        observed.hidContainerId = controller->hidContainerId;
-        observed.connected = controller->connected;
+        if (observedProof) observed = *observedProof;
+        else {
+            observed.directInputId = controller->directInputId;
+            observed.hidInstanceId = controller->hidInstanceId;
+            observed.hidContainerId = controller->hidContainerId;
+            observed.connected = controller->connected;
+        }
         if (!ControllerReadinessService::samePhysicalController(remembered, observed)) return false;
         existingId = expectedRecordId;
     }
@@ -13553,6 +13618,15 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId)
     verifiedRequirements.deviceId = m_configuration.vjoyDeviceId;
     SavedControllerRecord record = ControllerManager::verifiedRecord(*controller, m_configuration.calibration,
                                                                       verifiedRequirements, existingId);
+    if (observedProof) {
+        record.lastDirectInputId = observedProof->directInputId;
+        record.hidInstanceId = observedProof->hidInstanceId;
+        record.hidContainerId = observedProof->hidContainerId;
+        record.axes = observedProof->axes;
+        record.axisCount = std::count(record.axes.cbegin(), record.axes.cend(), true);
+        record.buttonCount = observedProof->buttons;
+        record.povCount = observedProof->povs;
+    }
     record.axisActivity = m_configuration.axisActivity;
     MapperConfiguration candidate = m_configuration;
     if (!existingId.isEmpty()) {
@@ -13710,15 +13784,26 @@ void AppBackend::startExplicitNewControllerVerification(const QString &directInp
     m_controllerSelectionInProgress = true;
     emit stateChanged();
     QThread *thread = QThread::create([this, directInputId, displayName] {
-        // A user selected SET UP, so acquire that exact device and wait for a
-        // fresh report before beginning full verification. This never relies
-        // on a global disconnected-to-connected edge.
-        const bool selected = m_worker.selectPhysicalController(directInputId);
-        QMetaObject::invokeMethod(this, [this, selected, displayName] {
+        // Setup may inspect an editing Rig which is intentionally not the
+        // active mapping Rig. Prove this exact controller directly instead of
+        // asking MappingWorker to select or activate a different runtime Rig.
+        const DirectInputControllerProbe probe =
+            MappingWorker::probeExactPhysicalController(directInputId);
+        QMetaObject::invokeMethod(this, [this, probe, displayName] {
             m_controllerSelectionInProgress = false;
-            if (selected) {
+            if (probe.acquired) {
+                m_setupDirectInputProof.name = probe.name;
+                m_setupDirectInputProof.directInputId = probe.directInputId;
+                m_setupDirectInputProof.hidInstanceId = probe.hidInstanceId;
+                m_setupDirectInputProof.hidContainerId = probe.hidContainerId;
+                m_setupDirectInputProof.connected = true;
+                m_setupDirectInputProof.inputReportsReceived = true;
+                m_setupDirectInputProof.axes = probe.axes;
+                m_setupDirectInputProof.buttons = probe.buttonCount;
+                m_setupDirectInputProof.povs = probe.povCount;
+                m_setupDirectInputProofAvailable = true;
                 m_setupAssistantDeviceAcquisitionFailures.remove(m_pendingSetupVerificationRecordId);
-                appendEvent(QString(u"Selected controller acquired for setup: %1; starting explicit verification"_qs)
+                appendEvent(QString(u"Selected controller proved through DirectInput for setup: %1; starting explicit verification"_qs)
                     .arg(displayName));
                 verifyHotasSetup();
             } else {
@@ -13726,10 +13811,13 @@ void AppBackend::startExplicitNewControllerVerification(const QString &directInp
                 m_pendingSetupVerificationRecordId.clear();
                 if (!failedRecordId.isEmpty()) {
                     m_setupAssistantDeviceAcquisitionFailures.insert(failedRecordId,
-                        QString(u"HOTAS BF6 found the saved controller in discovery, but it did not receive a fresh DirectInput report while acquiring it. Close other HOTAS BF6 sessions or any controller software using the device, then retry acquisition."_qs));
+                        QString(u"HOTAS BF6 found the saved controller in discovery, but direct setup proof failed: %1"_qs)
+                            .arg(probe.diagnostic));
                 }
-                appendEvent(QString(u"Could not acquire %1 for setup; no fresh DirectInput report arrived"_qs)
-                    .arg(displayName));
+                m_setupConvergenceIdentityVerificationFailure = QString(
+                    u"HOTAS BF6 could not prove %1 through DirectInput: %2"_qs)
+                    .arg(displayName, probe.diagnostic);
+                appendEvent(m_setupConvergenceIdentityVerificationFailure);
                 if (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity) {
                     m_setupConvergenceIdentityVerificationFailed = true;
                     QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
