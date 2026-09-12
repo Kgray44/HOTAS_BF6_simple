@@ -751,6 +751,14 @@ public:
                                                         const QString &destinationEndpointId,
                                                         const QString &collisionDecision,
                                                         qulonglong expectedRevision);
+    // Presentation gestures use this non-mutating companion before commit.
+    // It reports the same endpoint/context/collision preconditions that the
+    // canonical command will revalidate atomically, without creating a
+    // graph-local compatibility model in QML.
+    Q_INVOKABLE QVariantMap signalFlowPreviewConnection(const QString &sourceEndpointId,
+                                                         const QString &destinationEndpointId,
+                                                         const QString &collisionDecision,
+                                                         qulonglong expectedRevision) const;
     Q_INVOKABLE QVariantMap signalFlowDisconnect(const QString &routeId,
                                                  qulonglong expectedRevision);
     // These are deliberately control-plane helpers. They resolve an existing

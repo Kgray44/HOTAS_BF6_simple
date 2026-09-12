@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.0**
+**Current version: v2.6.3**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.3 — Signal Flow core interactions (review candidate)
+
+Rebuilds the graphical Signal Flow editor's core routing interaction around one canonical endpoint preview and commit contract while retaining the bounded DirectInput-to-vJoy runtime.
+
+- Click-click and drag-drop capture their originating graph revision, profile, and Device Rig, preview backend-validated compatibility, and revalidate atomically at commit; a stale gesture never changes a newer topology.
+- Occupied analog destinations require an explicit Replace or mixer decision, virtual POV streams require replacement rather than mixing, and valid fan-out remains available without a synthetic Split node.
+- Legacy, Standard, Top Gun, Day Ops, and Flight Deck retain their distinct presentations while sharing the same canonical endpoint command, keyboard route controls, read-only Effective boundary, and non-color interaction cues.
+- This is an owner-review candidate only. It does not assert a protected-main merge, release tag, installer publication, signing, public asset, or physical controller-to-vJoy acceptance.
 
 ## v2.6.0 — Signal Flow
 

@@ -667,5 +667,16 @@
       "Schema 28 migrates canonical topology and preserves implicit focused-editor button defaults through persistence, focused-editor edits, and portable-profile round trips.",
       "Qualification covers topology/migration, collision semantics, focused-editor projection, QML lifecycle/source contracts, isolated snapshot capture, and the synthetic zero-allocation mapping benchmark. Physical controller-to-vJoy, installer interaction, signing, and public-release claims require their separate release evidence."
     ]
+  },
+  {
+    "version": "2.6.3",
+    "title": "Signal Flow core interactions (review candidate)",
+    "summary": "Rebuilds the graphical Signal Flow editor's core routing interaction around one canonical endpoint preview and commit contract while retaining the bounded DirectInput-to-vJoy runtime.",
+    "highlights": [
+      "Click-click and drag-drop capture their originating graph revision, profile, and Device Rig, preview backend-validated compatibility, and revalidate atomically at commit; a stale gesture never changes a newer topology.",
+      "Occupied analog destinations require an explicit Replace or mixer decision, virtual POV streams require replacement rather than mixing, and valid fan-out remains available without a synthetic Split node.",
+      "Legacy, Standard, Top Gun, Day Ops, and Flight Deck retain their distinct presentations while sharing the same canonical endpoint command, keyboard route controls, read-only Effective boundary, and non-color interaction cues.",
+      "This is an owner-review candidate only. It does not assert a protected-main merge, release tag, installer publication, signing, public asset, or physical controller-to-vJoy acceptance."
+    ]
   }
 ]

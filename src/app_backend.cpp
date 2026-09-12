@@ -7306,6 +7306,9 @@ QVariantMap AppBackend::connectSignalFlowEndpoints(const QString &sourceEndpoint
                                                     const QString &collisionDecision,
                                                     qulonglong expectedRevision)
 {
+    const QVariantMap preview = signalFlowPreviewConnection(sourceEndpointId, destinationEndpointId,
+                                                            collisionDecision, expectedRevision);
+    if (!preview.value(u"success"_qs).toBool()) return preview;
     SignalFlowEndpointReference source;
     SignalFlowEndpointReference destination;
     if (!parseSignalFlowEndpointToken(sourceEndpointId, &source)
@@ -7357,6 +7360,142 @@ QVariantMap AppBackend::connectSignalFlowEndpoints(const QString &sourceEndpoint
     }
     return signalFlowConnectInternal(sourceKind, source.index, source.subIndex, destinationValue,
                                      replace, mixer, expectedRevision, source.ownerId);
+}
+
+QVariantMap AppBackend::signalFlowPreviewConnection(const QString &sourceEndpointId,
+                                                     const QString &destinationEndpointId,
+                                                     const QString &collisionDecision,
+                                                     qulonglong expectedRevision) const
+{
+    const auto previewResult = [this](bool success, const QString &title, const QString &message,
+                                      bool requiresDecision = false) {
+        QVariantMap result = signalFlowActionResult(success, title, message);
+        result.insert(u"canCommit"_qs, success);
+        result.insert(u"requiresCollisionDecision"_qs, requiresDecision);
+        result.insert(u"collisionOptions"_qs, requiresDecision
+            ? QVariantList{u"replace"_qs, u"average"_qs, u"sum-clamped"_qs, u"highest-magnitude"_qs}
+            : QVariantList{});
+        return result;
+    };
+
+    if (expectedRevision != m_configurationGeneration) {
+        return previewResult(false, u"Graph context changed"_qs,
+            u"The graph changed while this connection was being prepared. Review the current route and retry."_qs);
+    }
+
+    SignalFlowEndpointReference source;
+    SignalFlowEndpointReference destination;
+    if (!parseSignalFlowEndpointToken(sourceEndpointId, &source)
+        || !parseSignalFlowEndpointToken(destinationEndpointId, &destination)
+        || !source.source || destination.source) {
+        return previewResult(false, u"Choose graph endpoints again"_qs,
+            u"The selected port no longer belongs to this Signal Flow projection. Refresh the graph and retry."_qs);
+    }
+
+    const ControllerProfile &profile = currentProfile();
+    if (source.profileId != profile.id || destination.profileId != profile.id) {
+        return previewResult(false, u"Graph context changed"_qs,
+            u"The selected endpoints belong to a different profile. No route was changed."_qs);
+    }
+
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    if (!layout || destination.ownerId != layout->id) {
+        return previewResult(false, u"Destination is no longer available"_qs,
+            u"The selected output port belongs to an earlier graph projection. Refresh the graph and retry."_qs);
+    }
+
+    const QString sourceKind = source.kind.trimmed().toLower();
+    const QString destinationKind = destination.kind.trimmed().toLower();
+    const bool compatible = (sourceKind == u"axis"_qs && destinationKind == u"axis"_qs)
+        || ((sourceKind == u"button"_qs || sourceKind == u"pov"_qs)
+            && destinationKind == u"button"_qs)
+        || (sourceKind == u"native-pov"_qs && destinationKind == u"native-pov"_qs);
+    if (!compatible) {
+        return previewResult(false, u"Ports are incompatible"_qs,
+            u"These ports carry different signal kinds. Choose a compatible visible destination."_qs);
+    }
+
+    const QString graphRigId = !m_configuration.editingDeviceRigId.trimmed().isEmpty()
+        ? m_configuration.editingDeviceRigId : profile.deviceRigId;
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, graphRigId)) {
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
+            [&source](const DeviceRigMember &candidate) {
+                return candidate.enabled && candidate.controllerRecordId == source.ownerId;
+            });
+        if (member == rig->members.cend()) {
+            return previewResult(false, u"Source owner is unavailable"_qs,
+                u"This physical port is no longer an enabled member of the current Device Rig."_qs);
+        }
+    }
+
+    if ((sourceKind == u"axis"_qs && (source.index < 0 || source.index >= kPhysicalAxisCount
+            || m_configuration.axisActivity[static_cast<size_t>(source.index)] == PhysicalAxisActivity::Fixed))
+        || (sourceKind == u"button"_qs && (source.index < 0 || source.index >= kMaximumPhysicalButtons))
+        || (sourceKind == u"pov"_qs && (source.index < 0 || source.index >= kMaximumPhysicalPovs
+            || source.subIndex < 0 || source.subIndex >= kPovDirectionCount))
+        || (sourceKind == u"native-pov"_qs && (source.index < 0 || source.index >= kMaximumPhysicalPovs))) {
+        return previewResult(false, u"Source is unavailable"_qs,
+            u"This physical source is no longer available for a canonical Signal Flow connection."_qs);
+    }
+
+    bool destinationAvailable = false;
+    if (destinationKind == u"axis"_qs) {
+        destinationAvailable = destination.index > 0 && destination.index < kVirtualAxisSlotCount
+            && layout->requirements.axes[static_cast<size_t>(destination.index)];
+    } else if (destinationKind == u"button"_qs) {
+        destinationAvailable = destination.index > 0 && destination.index <= kMaximumVirtualButtons;
+    } else if (destinationKind == u"native-pov"_qs) {
+        const int capacity = destination.subIndex == static_cast<int>(NativePovTargetType::Continuous)
+            ? layout->requirements.continuousPovs : destination.subIndex == static_cast<int>(NativePovTargetType::Discrete)
+                ? layout->requirements.discretePovs : 0;
+        destinationAvailable = destination.index > 0 && destination.index <= capacity;
+    }
+    if (!destinationAvailable) {
+        return previewResult(false, u"Destination is unavailable"_qs,
+            u"This virtual output does not currently provide the selected destination."_qs);
+    }
+
+    const QString decision = collisionDecision.trimmed().toLower();
+    const bool replace = decision == u"replace"_qs;
+    const bool mixer = decision == u"average"_qs || decision == u"sum-clamped"_qs
+        || decision == u"highest-magnitude"_qs;
+    if (!decision.isEmpty() && !replace && !mixer) {
+        return previewResult(false, u"Choose a valid collision decision"_qs,
+            u"Use Replace, Average, Sum Clamped, or Highest Magnitude when the destination is occupied."_qs);
+    }
+
+    const bool occupiedByAnotherSource = std::any_of(m_configuration.signalFlow.routes.cbegin(),
+        m_configuration.signalFlow.routes.cend(), [&profile, &source, &destination](const SignalFlowRoute &route) {
+            return route.enabled && route.profileId == profile.id
+                && route.destinationKind == (destination.kind == u"axis"_qs ? SignalFlowPortKind::Axis
+                    : destination.kind == u"button"_qs ? SignalFlowPortKind::Button : SignalFlowPortKind::NativePov)
+                && route.destinationIndex == destination.index && route.destinationSubIndex == destination.subIndex
+                && (route.controllerRecordId != source.ownerId
+                    || route.sourceIndex != source.index || route.sourceSubIndex != source.subIndex
+                    || (source.kind == u"axis"_qs ? route.sourceKind != SignalFlowPortKind::Axis
+                        : source.kind == u"button"_qs ? route.sourceKind != SignalFlowPortKind::Button
+                        : source.kind == u"pov"_qs ? route.sourceKind != SignalFlowPortKind::PovDirection
+                        : route.sourceKind != SignalFlowPortKind::NativePov));
+        });
+    const bool exclusiveDestination = destinationKind == u"axis"_qs || destinationKind == u"native-pov"_qs;
+    if (exclusiveDestination && occupiedByAnotherSource && decision.isEmpty()) {
+        const QString message = destinationKind == u"axis"_qs
+            ? u"This output is already mapped. Choose Replace Existing Mapping or an explicit mixer; silent analog fan-in is not allowed."_qs
+            : u"This virtual POV already has a source. Choose Replace Existing Mapping or another destination; raw POV streams are never silently merged."_qs;
+        QVariantMap result = previewResult(false, u"Destination already mapped"_qs, message, true);
+        if (destinationKind == u"native-pov"_qs)
+            result.insert(u"collisionOptions"_qs, QVariantList{u"replace"_qs});
+        return result;
+    }
+    if (destinationKind == u"native-pov"_qs && mixer) {
+        return previewResult(false, u"Virtual POV cannot be mixed"_qs,
+            u"Raw virtual POV streams are not silently or explicitly mixed. Choose Replace Existing Mapping or another destination."_qs);
+    }
+
+    return previewResult(true, u"Connection is ready"_qs,
+        occupiedByAnotherSource && mixer ? u"An explicit mixer will be created for this occupied analog destination."_qs
+        : occupiedByAnotherSource && replace ? u"The existing destination mapping will be replaced atomically."_qs
+        : u"This source and destination are compatible and ready to connect."_qs);
 }
 
 QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int sourceIndex,

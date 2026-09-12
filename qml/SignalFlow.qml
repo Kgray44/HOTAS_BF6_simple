@@ -61,10 +61,20 @@ Item {
     // It is not stored in the canonical topology or in the workspace.
     property string learnedSourcePortId: ""
     property var pendingLearnDestination: ({})
+    // One presentation-only routing gesture is shared by the four non-Flight
+    // Deck themes. It deliberately captures graph context but never stores a
+    // graph-local mapping or compatibility decision.
+    property var interaction: ({ "mode": "IDLE", "source": ({}), "target": ({}),
+        "expectedRevision": 0, "profileId": "", "rigId": "", "token": 0 })
+    property int interactionToken: 0
+    property bool connectionCommitInFlight: false
+    readonly property bool routingActive: Boolean(interaction && interaction.mode
+        && interaction.mode !== "IDLE")
     // A drag wire and its hover preview are presentation-only.  The source
-    // selection and the eventual route still go through AppBackend's
-    // revision-checked canonical command.
+    // selection and eventual route still go through the same endpoint command
+    // as Flight Deck.
     property var dragWire: ({ "active": false, "source": ({}), "x": 0, "y": 0 })
+    property bool sourceDragDropHandled: false
     property var connectionPreview: ({})
     property string pendingProcessorRouteId: ""
     readonly property string semanticDensity: {
@@ -704,18 +714,79 @@ Item {
     function visibleOutputPorts() {
         return outputPorts().filter(function(port) { return portVisible(port, true) })
     }
-    function sourceIsCompatible(port) {
-        if (!selectedSource || !selectedSource.kind)
+    function interactionSource() {
+        const active = interaction && interaction.source
+        return active && active.id ? active : selectedSource
+    }
+    function samePort(first, second) {
+        return String(first && (first.endpointId || first.id) || "")
+            === String(second && (second.endpointId || second.id) || "")
+    }
+    function routingContextIsCurrent() {
+        if (!routingActive) return false
+        return Number(interaction.expectedRevision || 0) === Number(graph.revision || 0)
+            && String(interaction.profileId || "") === String(graph.profileId || "")
+            && String(interaction.rigId || "") === String(graph.deviceRigId || "")
+    }
+    function cancelRouting(reason, announceCancellation) {
+        const hadRouting = routingActive || Boolean(dragWire && dragWire.active)
+        interaction = ({ "mode": "IDLE", "source": ({}), "target": ({}),
+            "expectedRevision": 0, "profileId": "", "rigId": "", "token": interactionToken })
+        selectedSource = ({})
+        dragWire = ({ "active": false, "source": ({}), "x": 0, "y": 0 })
+        sourceDragDropHandled = true
+        connectionPreview = ({})
+        if (hadRouting && announceCancellation && reason && reason.length > 0) {
+            feedback = reason
+            feedbackError = false
+        }
+        return hadRouting
+    }
+    function armSource(port, beginDrag) {
+        if (!port || !port.id) return false
+        if (viewMode === "effective" || !graph.editable) {
+            feedback = "Effective view is read-only. Switch to Configured to edit this route."
+            feedbackError = true
             return false
-        if (selectedSource.kind === "axis") return port.kind === "axis"
-        if (selectedSource.kind === "native-pov") return port.kind === "native-pov"
+        }
+        if (!port.available) {
+            feedback = "This input is inactive. Complete calibration before routing it."
+            feedbackError = true
+            return false
+        }
+        if (!beginDrag && routingActive && samePort(interactionSource(), port)) {
+            cancelRouting("Connection cancelled.", true)
+            return false
+        }
+        interactionToken += 1
+        interaction = ({ "mode": beginDrag ? "SOURCE_DRAGGING" : "SOURCE_ARMED", "source": port,
+            "target": ({}), "expectedRevision": Number(graph.revision || 0),
+            "profileId": String(graph.profileId || ""), "rigId": String(graph.deviceRigId || ""),
+            "token": interactionToken })
+        selectedSource = port
+        selectedRoute = ({})
+        selectedNode = ({})
+        connectionPreview = ({})
+        feedback = beginDrag ? "Dragging " + port.label + ". Release on a highlighted destination."
+                             : "Connection armed: " + port.label + ". Choose a compatible destination."
+        feedbackError = false
+        return true
+    }
+    function sourceIsCompatible(port) {
+        const activeSource = interactionSource()
+        if (!activeSource || !activeSource.kind)
+            return false
+        if (activeSource.kind === "axis") return port.kind === "axis"
+        if (activeSource.kind === "native-pov") return port.kind === "native-pov"
         return port.kind === "button"
     }
     function sourceLabel() {
-        return selectedSource && selectedSource.label ? selectedSource.label : "Select a source port"
+        const activeSource = interactionSource()
+        return activeSource && activeSource.label ? activeSource.label : "Select a source port"
     }
     function selectNode(node) {
         if (!node || !node.id) return false
+        if (routingActive) cancelRouting("", false)
         selectedNode = node
         selectedRoute = ({})
         selectedSource = ({})
@@ -725,6 +796,7 @@ Item {
     }
     function useInputScope(node) {
         if (!node || node.kind !== "input" || !node.controllerRecordId || !graph.deviceRigId) return false
+        if (routingActive) cancelRouting("Connection cancelled because the editing scope changed.", true)
         const changed = backendObject.setEditingDeviceContext(String(graph.deviceRigId), [String(node.controllerRecordId)])
         if (!changed) {
             feedback = "This saved input could not become the editing scope. Resolve its Device Rig membership in Devices."
@@ -741,6 +813,7 @@ Item {
     }
     function selectProfileContext(profile) {
         if (!profile || !profile.id) return false
+        if (routingActive) cancelRouting("Connection cancelled because the editing profile changed.", true)
         if (!backendObject.activateProfile(String(profile.id))) {
             feedback = "The selected profile could not become the active editing context."
             feedbackError = true
@@ -754,6 +827,7 @@ Item {
     }
     function selectRigContext(rig) {
         if (!rig || !rig.id) return false
+        if (routingActive) cancelRouting("Connection cancelled because the Device Rig changed.", true)
         if (!backendObject.setEditingDeviceContext(String(rig.id), [])) {
             feedback = "The selected Device Rig could not become the Signal Flow context."
             feedbackError = true
@@ -766,36 +840,71 @@ Item {
         return true
     }
     function beginSourceDrag(port, point) {
-        if (!port || !port.id) return false
-        chooseSource(port)
+        if (!armSource(port, true)) return false
+        sourceDragDropHandled = false
         dragWire = ({ "active": true, "source": port,
             "x": Number(point && point.x || 0), "y": Number(point && point.y || 0) })
         return true
     }
     function updateSourceDrag(point) {
-        if (!dragWire.active) return
-        dragWire = ({ "active": true, "source": dragWire.source,
+        if (!dragWire.active || !routingContextIsCurrent()) {
+            if (routingActive || dragWire.active)
+                cancelRouting("The graph changed while the connection was being dragged. No route was changed.", true)
+            return
+        }
+        dragWire = ({ "active": true, "source": interactionSource(),
             "x": Number(point && point.x || 0), "y": Number(point && point.y || 0) })
     }
     function endSourceDrag() {
         if (!dragWire.active) return
+        const gestureToken = Number(interaction && interaction.token || 0)
         dragWire = ({ "active": false, "source": ({}), "x": 0, "y": 0 })
-        connectionPreview = ({})
+        // Qt Quick may retire the source handler before its destination
+        // DropArea reports the release. Give that single delivery turn a
+        // chance to mark the gesture handled, then cancel a genuine miss.
+        Qt.callLater(function() {
+            if (!root.routingActive || Number(root.interaction && root.interaction.token || 0) !== gestureToken)
+                return
+            if (!root.routingContextIsCurrent())
+                root.cancelRouting("The graph changed while the connection was being dragged. No route was changed.", true)
+            else if (!root.sourceDragDropHandled)
+                root.cancelRouting("Connection cancelled: release on a highlighted compatible destination.", true)
+        })
     }
     function previewDestination(port) {
-        if (!port || !selectedSource || !selectedSource.id) return
-        const compatible = sourceIsCompatible(port)
-        const existing = routesForPort(port, true)
-        const requiresMerge = compatible && selectedSource.kind === "axis" && existing.length > 0
-        connectionPreview = ({ "portId": String(port.id), "compatible": compatible,
-            "message": selectedSource.label + " → " + port.label + (compatible
-                ? requiresMerge ? " · occupied analog output: choose Replace or Mixer."
-                : existing.length > 0 ? " · existing route present."
-                : " · compatible direct route."
-                : " · incompatible endpoint type.") })
+        const activeSource = interactionSource()
+        if (!port || !activeSource || !activeSource.id || !routingActive) return
+        if (!routingContextIsCurrent()) {
+            cancelRouting("The graph changed while the connection was being prepared. No route was changed.", true)
+            return
+        }
+        const sourceEndpoint = String(activeSource.endpointId || activeSource.id || "")
+        const destinationEndpoint = String(port.endpointId || port.id || "")
+        const preview = sourceEndpoint.length > 0 && destinationEndpoint.length > 0
+            ? backendObject.signalFlowPreviewConnection(sourceEndpoint, destinationEndpoint, "",
+                Number(interaction.expectedRevision || 0))
+            : ({ "success": false, "title": "Port is unavailable",
+                "message": "This port no longer has a canonical graph endpoint. Refresh the graph and retry." })
+        const accepted = Boolean(preview && (preview.success || preview.requiresCollisionDecision))
+        connectionPreview = ({ "portId": String(port.id || ""), "compatible": accepted,
+            "canCommit": Boolean(preview && preview.canCommit),
+            "requiresCollisionDecision": Boolean(preview && preview.requiresCollisionDecision),
+            "title": String(preview && preview.title || "Connection preview"),
+            "message": String(preview && preview.message || "This destination cannot be used.") })
+        if (accepted)
+            interaction = ({ "mode": "TARGET_PREVIEW", "source": activeSource, "target": port,
+                "expectedRevision": interaction.expectedRevision, "profileId": interaction.profileId,
+                "rigId": interaction.rigId, "token": interaction.token })
     }
     function clearDestinationPreview(port) {
-        if (!port || String(connectionPreview.portId || "") === String(port.id || ""))
+        if (!port) return
+        if (dragWire && dragWire.active && String(interaction && interaction.target && interaction.target.id || "")
+                === String(port.id || "")) return
+        if (String(interaction && interaction.target && interaction.target.id || "") === String(port.id || ""))
+            interaction = ({ "mode": "SOURCE_ARMED", "source": interactionSource(), "target": ({}),
+                "expectedRevision": interaction.expectedRevision, "profileId": interaction.profileId,
+                "rigId": interaction.rigId, "token": interaction.token })
+        if (String(connectionPreview.portId || "") === String(port.id || ""))
             connectionPreview = ({})
     }
     function previewProcessorTarget(route) {
@@ -804,9 +913,13 @@ Item {
         processorHysteresis.restart()
     }
     function clearSelection() {
+        interaction = ({ "mode": "IDLE", "source": ({}), "target": ({}),
+            "expectedRevision": 0, "profileId": "", "rigId": "", "token": interactionToken })
         selectedSource = ({})
         selectedRoute = ({})
         selectedNode = ({})
+        dragWire = ({ "active": false, "source": ({}), "x": 0, "y": 0 })
+        sourceDragDropHandled = true
         connectionPreview = ({})
     }
     function applyBackendFocus() {
@@ -842,74 +955,82 @@ Item {
         feedbackError = !(result && result.success)
     }
     function chooseSource(port) {
-        if (port && port.scopeEditable === false) {
-            feedback = "This saved input is visible for the whole rig but is not the active editing scope. Select its card, then choose Edit this input scope."
-            feedbackError = true
-            return
-        }
-        if (!port.available) {
-            feedback = "This input is inactive. Complete calibration before routing it."
-            feedbackError = true
-            return
-        }
-        if (viewMode === "effective") {
-            feedback = "Effective view is read-only. Switch to Configured to edit routes."
-            feedbackError = true
-            return
-        }
-        selectedSource = port
-        selectedRoute = ({})
-        selectedNode = ({})
-        feedback = "Selected " + port.label + ". Choose a compatible output port."
-        feedbackError = false
+        return armSource(port, false)
     }
-    function chooseOutput(port) {
-        if (!sourceIsCompatible(port)) {
-            feedback = selectedSource && selectedSource.kind
-                ? "Choose a compatible " + (selectedSource.kind === "axis" ? "virtual axis" : "virtual button") + "."
-                : "Select an input source first."
+    function destinationPortById(portId) {
+        const ports = outputPorts()
+        for (let index = 0; index < ports.length; ++index)
+            if (String(ports[index].id || "") === String(portId || "")) return ports[index]
+        return null
+    }
+    function commitConnection(port, decision) {
+        const sourceBeforeConnect = interactionSource()
+        if (!sourceBeforeConnect || !sourceBeforeConnect.id || !port || !port.id) {
+            feedback = "Select an input and a compatible destination first."
             feedbackError = true
-            return
+            return false
         }
-        const sourceBeforeConnect = selectedSource
-        const destination = destinationFor(port)
-        previewDestination(port)
-        const result = backendObject.signalFlowConnect(String(selectedSource.kind), Number(selectedSource.index),
-            Number(selectedSource.subIndex || 0), destination, false, Number(graph.revision || 0))
+        if (!routingContextIsCurrent()) {
+            cancelRouting("The graph changed while the connection was being prepared. No route was changed.", true)
+            return false
+        }
+        const sourceEndpoint = String(sourceBeforeConnect.endpointId || sourceBeforeConnect.id || "")
+        const destinationEndpoint = String(port.endpointId || port.id || "")
+        const requestedDecision = String(decision || "")
+        const preview = backendObject.signalFlowPreviewConnection(sourceEndpoint, destinationEndpoint,
+            requestedDecision, Number(interaction.expectedRevision || 0))
+        if (!preview || !preview.success) {
+            if (preview && preview.requiresCollisionDecision && requestedDecision.length === 0) {
+                connectionPreview = ({ "portId": String(port.id || ""), "compatible": true,
+                    "canCommit": false, "requiresCollisionDecision": true,
+                    "title": String(preview.title || "Resolve destination collision"),
+                    "message": String(preview.message || "Choose an explicit collision policy.") })
+                interaction = ({ "mode": "TARGET_PREVIEW", "source": sourceBeforeConnect, "target": port,
+                    "expectedRevision": interaction.expectedRevision, "profileId": interaction.profileId,
+                    "rigId": interaction.rigId, "token": interaction.token })
+                replaceDialog.destination = destinationFor(port)
+                replaceDialog.portLabel = String(port.label || "destination")
+                replaceDialog.destinationPortId = String(port.id || "")
+                const options = preview.collisionOptions || []
+                replaceDialog.mixerAllowed = options.indexOf("average") >= 0
+                replaceDialog.open()
+                feedback = String(preview.message || "Choose an explicit collision policy.")
+                feedbackError = false
+            } else {
+                showResult(preview, "Connection was not applied.")
+                if (preview && String(preview.title || "") === "Graph context changed")
+                    cancelRouting("The graph changed while the connection was being prepared. No route was changed.", true)
+            }
+            return false
+        }
+        connectionCommitInFlight = true
+        const result = backendObject.connectSignalFlowEndpoints(sourceEndpoint, destinationEndpoint,
+            requestedDecision, Number(interaction.expectedRevision || 0))
+        connectionCommitInFlight = false
         showResult(result, "Connection was not applied.")
         if (result && result.success) {
-            if (!keepLearnedRouteHighlighted(sourceBeforeConnect, port.id)) clearSelection()
+            cancelRouting("", false)
+            if (!keepLearnedRouteHighlighted(sourceBeforeConnect, port.id)) selectedRoute = ({})
+            return true
         }
-        else if (result && String(result.message).indexOf("Choose Replace") >= 0) {
-            replaceDialog.destination = destination
-            replaceDialog.portLabel = port.label
-            replaceDialog.destinationPortId = String(port.id || "")
-            replaceDialog.open()
-        }
+        return false
     }
+    function chooseOutput(port) { return commitConnection(port, "") }
     function chooseDraggedOutput(sourcePort, outputPort) {
-        if (!sourcePort || !outputPort) return
-        selectedSource = sourcePort
-        selectedRoute = ({})
-        selectedNode = ({})
+        if (!sourcePort || !outputPort) return false
+        if (!routingActive || !samePort(sourcePort, interactionSource())) {
+            if (!armSource(sourcePort, true)) return false
+        }
         previewDestination(outputPort)
-        chooseOutput(outputPort)
+        return commitConnection(outputPort, "")
     }
     function applyReplacement() {
-        const sourceBeforeConnect = selectedSource
-        const result = backendObject.signalFlowConnect(String(selectedSource.kind), Number(selectedSource.index),
-            Number(selectedSource.subIndex || 0), replaceDialog.destination, true, Number(graph.revision || 0))
-        showResult(result, "Replacement was not applied.")
-        if (result && result.success)
-            if (!keepLearnedRouteHighlighted(sourceBeforeConnect, replaceDialog.destinationPortId)) clearSelection()
+        const destination = destinationPortById(replaceDialog.destinationPortId)
+        return destination ? commitConnection(destination, "replace") : false
     }
     function applyMixer(mode) {
-        const sourceBeforeConnect = selectedSource
-        const result = backendObject.signalFlowConnectWithMixer(String(selectedSource.kind), Number(selectedSource.index),
-            Number(selectedSource.subIndex || 0), replaceDialog.destination, mode, Number(graph.revision || 0))
-        showResult(result, "Mixer connection was not applied.")
-        if (result && result.success)
-            if (!keepLearnedRouteHighlighted(sourceBeforeConnect, replaceDialog.destinationPortId)) clearSelection()
+        const destination = destinationPortById(replaceDialog.destinationPortId)
+        return destination ? commitConnection(destination, mode) : false
     }
     function disconnectSelected() {
         if (!selectedRoute || !selectedRoute.id)
@@ -1047,7 +1168,8 @@ Item {
         return saveNodePlacement(node, placement.x, placement.y, !Boolean(node.pinned))
     }
     function cancelTransient() {
-        if (replaceDialog.visible) replaceDialog.close()
+        if (routingActive) cancelRouting("Connection cancelled.", true)
+        else if (replaceDialog.visible) replaceDialog.close()
         else if (processorDialog.visible) processorDialog.close()
         else if (shareDialog.visible) shareDialog.close()
         else if (sourceLearnDialog.visible) sourceLearnDialog.close()
@@ -1136,10 +1258,22 @@ Item {
         presentationRestored = false
         Qt.callLater(restorePresentationState)
     }
-    onSelectedRouteChanged: if (wireCanvas) wireCanvas.requestPaint()
+    onSelectedRouteChanged: {
+        if (routingActive && selectedRoute && selectedRoute.id)
+            cancelRouting("Connection cancelled because a route was selected.", true)
+        if (wireCanvas) wireCanvas.requestPaint()
+    }
     onSelectedSourceChanged: if (wireCanvas) wireCanvas.requestPaint()
-    onSelectedNodeChanged: if (wireCanvas) wireCanvas.requestPaint()
-    onViewModeChanged: if (wireCanvas) wireCanvas.requestPaint()
+    onSelectedNodeChanged: {
+        if (routingActive && selectedNode && selectedNode.id)
+            cancelRouting("Connection cancelled because a card was selected.", true)
+        if (wireCanvas) wireCanvas.requestPaint()
+    }
+    onViewModeChanged: {
+        if (viewMode === "effective" && routingActive)
+            cancelRouting("Connection cancelled because Effective view is read-only.", true)
+        if (wireCanvas) wireCanvas.requestPaint()
+    }
     onLiveTelemetryChanged: if (wireCanvas) wireCanvas.requestPaint()
     onSignalFocusChanged: if (wireCanvas) wireCanvas.requestPaint()
     onXrayModeChanged: if (wireCanvas) wireCanvas.requestPaint()
@@ -1161,7 +1295,14 @@ Item {
     Connections {
         target: backendObject
         function onSignalFlowChanged() {
-            root.graph = backendObject.signalFlowGraph
+            const nextGraph = backendObject.signalFlowGraph
+            if (root.routingActive && !root.connectionCommitInFlight
+                    && (Number(root.interaction.expectedRevision || 0) !== Number(nextGraph.revision || 0)
+                        || String(root.interaction.profileId || "") !== String(nextGraph.profileId || "")
+                        || String(root.interaction.rigId || "") !== String(nextGraph.deviceRigId || ""))) {
+                root.cancelRouting("The graph changed outside this gesture. No route was changed.", true)
+            }
+            root.graph = nextGraph
             if (!root.workspaceRestored)
                 Qt.callLater(root.restoreWorkspace)
             Qt.callLater(root.applyBackendFocus)
@@ -1288,6 +1429,10 @@ Item {
         property bool compatible: false
         implicitHeight: 27
         width: parent ? parent.width : 180
+        activeFocusOnTab: true
+        opacity: output && root.routingActive && !compatible
+            && !(root.connectionPreview && root.connectionPreview.portId === String(port.id || "")) ? 0.5 : 1.0
+        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
         Rectangle {
             anchors.fill: parent
             radius: 4
@@ -1323,6 +1468,13 @@ Item {
                 font.pixelSize: 8
                 font.bold: true
             }
+            Text {
+                visible: portRow.output && root.routingActive
+                text: portRow.compatible ? "READY" : "DIFFERS"
+                color: portRow.compatible ? root.ready : root.textMuted
+                font.pixelSize: 8
+                font.bold: true
+            }
         }
         Drag.active: sourceDrag.active
         Drag.source: portRow
@@ -1333,6 +1485,7 @@ Item {
             id: sourceDrag
             enabled: Boolean(!portRow.output && root.graph.editable && root.viewMode === "configured"
                              && portRow.port && portRow.port.available)
+            dragThreshold: 8
             onActiveChanged: {
                 if (active && portRow.port && portRow.port.id) {
                     const point = portRow.mapToItem(graphScene, portRow.width, portRow.height * 0.5)
@@ -1359,6 +1512,7 @@ Item {
             onExited: function(drag) { root.clearDestinationPreview(portRow.port) }
             onDropped: function(drop) {
                 if (drop.source && drop.source.port) {
+                    root.sourceDragDropHandled = true
                     root.chooseDraggedOutput(drop.source.port, portRow.port)
                     root.endSourceDrag()
                     drop.accepted = true
@@ -1381,6 +1535,18 @@ Item {
                 if (portRow.output) root.chooseOutput(portRow.port)
                 else root.chooseSource(portRow.port)
             }
+        }
+        Keys.onPressed: function(event) {
+            if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Space) return
+            if (portRow.output) root.chooseOutput(portRow.port)
+            else root.chooseSource(portRow.port)
+            event.accepted = true
+        }
+        Rectangle {
+            anchors.centerIn: parent
+            width: parent.width + 4; height: parent.height + 4; radius: 5
+            color: "transparent"; border.width: 2; border.color: root.borderStrong
+            visible: parent.activeFocus
         }
         ToolTip.visible: hit.containsMouse
         ToolTip.delay: 450
@@ -2234,17 +2400,19 @@ Item {
         parent: Overlay.overlay
         anchors.centerIn: parent
         modal: true
-        title: "Resolve analog input collision"
         property string destination: ""
         property string destinationPortId: ""
         property string portLabel: ""
+        property bool mixerAllowed: true
+        title: mixerAllowed ? "Resolve analog input collision" : "Resolve virtual POV collision"
         width: Math.min(470, root.width - 40)
         contentItem: ColumnLayout {
             spacing: 12
-            Text { Layout.fillWidth: true; text: "“" + root.sourceLabel() + "” conflicts with the current route into “" + replaceDialog.portLabel + "”. Replace moves the existing input; Mixer preserves both inputs with an explicit runtime mode. Both choices can be undone."; color: root.text; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "“" + root.sourceLabel() + "” conflicts with the current route into “" + replaceDialog.portLabel + "”. " + (replaceDialog.mixerAllowed ? "Replace moves the existing input; Mixer preserves both inputs with an explicit runtime mode. Both choices can be undone." : "Virtual POV streams cannot be merged; replace the current source or choose another destination."); color: root.text; wrapMode: Text.WordWrap }
             ComboBox {
                 id: mixerMode
                 Layout.fillWidth: true
+                visible: replaceDialog.mixerAllowed
                 model: ["average", "sum-clamped", "highest-magnitude"]
                 Accessible.name: "Analog mixer mode"
             }
@@ -2252,7 +2420,7 @@ Item {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 FlowButton { text: "Cancel"; onClicked: replaceDialog.close() }
-                FlowButton { text: "Create mixer"; onClicked: { const mode = mixerMode.currentText; replaceDialog.close(); root.applyMixer(mode) } }
+                FlowButton { visible: replaceDialog.mixerAllowed; text: "Create mixer"; onClicked: { const mode = mixerMode.currentText; replaceDialog.close(); root.applyMixer(mode) } }
                 FlowButton { text: "Replace route"; accent: true; onClicked: { replaceDialog.close(); root.applyReplacement() } }
             }
         }
