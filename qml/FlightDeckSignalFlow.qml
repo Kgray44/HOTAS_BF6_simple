@@ -2578,6 +2578,10 @@ Item {
                     contentHeight: scene.height * root.zoom
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
+                    // The card body claims a drag on press so it can update
+                    // its incident wires synchronously. Do not let the graph
+                    // viewport steal that already-claimed pointer to pan.
+                    interactive: !root.liveDragNodeId && !(root.dragWire && root.dragWire.active)
                     onMovementEnded: saveTimer.restart()
                     ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -2923,6 +2927,7 @@ Item {
                             tokens: deck
                             readonly property var nodeData: root.node("input")
                             readonly property string routingState: root.routingNodeState(nodeData)
+                            objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 80, 120).x)
                             y: Number(root.nodePosition(nodeData, 80, 120).y)
                             Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
@@ -2940,26 +2945,44 @@ Item {
                             Column {
                                 id: inputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
+                                z: 1
                                 Text { width: parent.width; text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                 Text { width: parent.width; text: inputNode.nodeData.connected ? "CONNECTED · VERIFIED" : "OFFLINE · SAVED IDENTITY"; color: inputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                 SignalFlowPortGroups { width: parent.width; nodeData: inputNode.nodeData; destination: false }
                             }
                             MouseArea {
+                                objectName: "signalFlowNodeDrag:" + root.nodeIdentity(inputNode.nodeData)
                                 anchors.fill: parent
-                                z: -1
-                                drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? inputNode : null
-                                drag.axis: Drag.XAndYAxis
-                                onPressed: root.beginLiveNodeDrag(inputNode.nodeData)
+                                z: 0
+                                // A graph pan must never take ownership once a card body
+                                // press begins. Port hit targets remain above this body area.
+                                preventStealing: true
+                                property real pointerStartX: 0
+                                property real pointerStartY: 0
+                                property real nodeStartX: 0
+                                property real nodeStartY: 0
+                                property bool pointerMoved: false
+                                onPressed: function(mouse) {
+                                    if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                    pointerStartX = mouse.x; pointerStartY = mouse.y
+                                    nodeStartX = inputNode.x; nodeStartY = inputNode.y
+                                    pointerMoved = false
+                                    root.beginLiveNodeDrag(inputNode.nodeData)
+                                }
                                 onPositionChanged: function(mouse) {
-                                    if (drag.active) root.updateLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
+                                    if (!pressed || !root.isLiveNodeDrag(inputNode.nodeData)) return
+                                    const x = nodeStartX + mouse.x - pointerStartX
+                                    const y = nodeStartY + mouse.y - pointerStartY
+                                    if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
+                                    if (pointerMoved) root.updateLiveNodeDrag(inputNode.nodeData, x, y)
                                 }
                                 onReleased: {
-                                    if (drag.active) {
-                                        root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
-                                    } else root.cancelLiveNodeDrag(inputNode.nodeData)
+                                    if (!root.isLiveNodeDrag(inputNode.nodeData)) return
+                                    if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y)
+                                    else root.cancelLiveNodeDrag(inputNode.nodeData)
                                 }
-                                onClicked: function(mouse) { if (!drag.active) root.selectNode(inputNode.nodeData) }
-                                onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(inputNode.nodeData) }
+                                onClicked: function(mouse) { if (!pointerMoved) root.selectNode(inputNode.nodeData) }
+                                onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(inputNode.nodeData) }
                             }
                             TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = inputNode.nodeData; deckNodeContextMenu.open() } }
                         }
@@ -2972,6 +2995,7 @@ Item {
                                 required property var modelData
                                 tokens: deck
                                 readonly property string routingState: root.routingNodeState(modelData)
+                                objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 80, 120).x)
                                 y: Number(root.nodePosition(modelData, 80, 120).y)
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
@@ -2991,26 +3015,42 @@ Item {
                                 Column {
                                     id: secondaryCardContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
+                                    z: 1
                                     Text { width: parent.width; text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                     Text { width: parent.width; text: modelData.connected ? "CONNECTED · SAVED MEMBER" : modelData.missingReference ? "MISSING REFERENCE" : "OFFLINE · SAVED MEMBER"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                     SignalFlowPortGroups { width: parent.width; nodeData: modelData; destination: false }
                                 }
                                 MouseArea {
+                                    objectName: "signalFlowNodeDrag:" + root.nodeIdentity(modelData)
                                     anchors.fill: parent
-                                    z: -1
-                                    drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? secondaryInputNode : null
-                                    drag.axis: Drag.XAndYAxis
-                                    onPressed: root.beginLiveNodeDrag(modelData)
+                                    z: 0
+                                    preventStealing: true
+                                    property real pointerStartX: 0
+                                    property real pointerStartY: 0
+                                    property real nodeStartX: 0
+                                    property real nodeStartY: 0
+                                    property bool pointerMoved: false
+                                    onPressed: function(mouse) {
+                                        if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                        pointerStartX = mouse.x; pointerStartY = mouse.y
+                                        nodeStartX = secondaryInputNode.x; nodeStartY = secondaryInputNode.y
+                                        pointerMoved = false
+                                        root.beginLiveNodeDrag(modelData)
+                                    }
                                     onPositionChanged: function(mouse) {
-                                        if (drag.active) root.updateLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
+                                        if (!pressed || !root.isLiveNodeDrag(modelData)) return
+                                        const x = nodeStartX + mouse.x - pointerStartX
+                                        const y = nodeStartY + mouse.y - pointerStartY
+                                        if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
+                                        if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
                                     }
                                     onReleased: {
-                                        if (drag.active) {
-                                            root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
-                                        } else root.cancelLiveNodeDrag(modelData)
+                                        if (!root.isLiveNodeDrag(modelData)) return
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y)
+                                        else root.cancelLiveNodeDrag(modelData)
                                     }
-                                    onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
-                                    onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(modelData) }
+                                    onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
+                                    onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(modelData) }
                                 }
                                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = modelData; deckNodeContextMenu.open() } }
                             }
@@ -3022,6 +3062,7 @@ Item {
                                 required property var modelData
                                 tokens: deck
                                 readonly property string routingState: root.routingNodeState(modelData)
+                                objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
                                 x: Number(root.nodePosition(modelData, 680, 120).x)
                                 y: Number(root.nodePosition(modelData, 680, 120).y)
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
@@ -3039,6 +3080,7 @@ Item {
                                 Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : 110 } }
                                 ColumnLayout {
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: 4
+                                    z: 1
                                     Text { text: modelData.label; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Text { text: modelData.detail; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
                                     Text { visible: Boolean(modelData.shared); text: "SHARED · " + Number(modelData.sharedChannelCount || 0) + " CHANNELS"; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
@@ -3100,20 +3142,36 @@ Item {
                                     }
                                 }
                                 MouseArea {
+                                    objectName: "signalFlowNodeDrag:" + root.nodeIdentity(modelData)
                                     anchors.fill: parent
-                                    drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? processorNode : null
-                                    drag.axis: Drag.XAndYAxis
-                                    onPressed: root.beginLiveNodeDrag(modelData)
+                                    z: 0
+                                    preventStealing: true
+                                    property real pointerStartX: 0
+                                    property real pointerStartY: 0
+                                    property real nodeStartX: 0
+                                    property real nodeStartY: 0
+                                    property bool pointerMoved: false
+                                    onPressed: function(mouse) {
+                                        if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                        pointerStartX = mouse.x; pointerStartY = mouse.y
+                                        nodeStartX = processorNode.x; nodeStartY = processorNode.y
+                                        pointerMoved = false
+                                        root.beginLiveNodeDrag(modelData)
+                                    }
                                     onPositionChanged: function(mouse) {
-                                        if (drag.active) root.updateLiveNodeDrag(modelData, processorNode.x, processorNode.y)
+                                        if (!pressed || !root.isLiveNodeDrag(modelData)) return
+                                        const x = nodeStartX + mouse.x - pointerStartX
+                                        const y = nodeStartY + mouse.y - pointerStartY
+                                        if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
+                                        if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
                                     }
                                     onReleased: {
-                                        if (drag.active) {
-                                            root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y)
-                                        } else root.cancelLiveNodeDrag(modelData)
+                                        if (!root.isLiveNodeDrag(modelData)) return
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y)
+                                        else root.cancelLiveNodeDrag(modelData)
                                     }
-                                    onClicked: function(mouse) { if (!drag.active) root.selectNode(modelData) }
-                                    onDoubleClicked: function(mouse) { if (!drag.active) root.openNodeSettings(modelData) }
+                                    onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
+                                    onDoubleClicked: function(mouse) { if (!pointerMoved) root.openNodeSettings(modelData) }
                                 }
                                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = modelData; deckNodeContextMenu.open() } }
                             }
@@ -3123,6 +3181,7 @@ Item {
                             tokens: deck
                             readonly property var nodeData: root.node("output")
                             readonly property string routingState: root.routingNodeState(nodeData)
+                            objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
                             x: Number(root.nodePosition(nodeData, 1320, 120).x)
                             y: Number(root.nodePosition(nodeData, 1320, 120).y)
                             Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
@@ -3140,26 +3199,42 @@ Item {
                             Column {
                                 id: outputCardContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
+                                z: 1
                                 Text { width: parent.width; text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                 Text { width: parent.width; text: outputNode.nodeData.connected ? "READY · VIRTUAL OUTPUT" : "OUTPUT UNAVAILABLE"; color: outputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                 SignalFlowPortGroups { width: parent.width; nodeData: outputNode.nodeData; destination: true }
                             }
                             MouseArea {
+                                objectName: "signalFlowNodeDrag:" + root.nodeIdentity(outputNode.nodeData)
                                 anchors.fill: parent
-                                z: -1
-                                drag.target: root.mode === "configured" && !(root.graph.workspace && root.graph.workspace.layoutLocked) ? outputNode : null
-                                drag.axis: Drag.XAndYAxis
-                                onPressed: root.beginLiveNodeDrag(outputNode.nodeData)
+                                z: 0
+                                preventStealing: true
+                                property real pointerStartX: 0
+                                property real pointerStartY: 0
+                                property real nodeStartX: 0
+                                property real nodeStartY: 0
+                                property bool pointerMoved: false
+                                onPressed: function(mouse) {
+                                    if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
+                                    pointerStartX = mouse.x; pointerStartY = mouse.y
+                                    nodeStartX = outputNode.x; nodeStartY = outputNode.y
+                                    pointerMoved = false
+                                    root.beginLiveNodeDrag(outputNode.nodeData)
+                                }
                                 onPositionChanged: function(mouse) {
-                                    if (drag.active) root.updateLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
+                                    if (!pressed || !root.isLiveNodeDrag(outputNode.nodeData)) return
+                                    const x = nodeStartX + mouse.x - pointerStartX
+                                    const y = nodeStartY + mouse.y - pointerStartY
+                                    if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
+                                    if (pointerMoved) root.updateLiveNodeDrag(outputNode.nodeData, x, y)
                                 }
                                 onReleased: {
-                                    if (drag.active) {
-                                        root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
-                                    } else root.cancelLiveNodeDrag(outputNode.nodeData)
+                                    if (!root.isLiveNodeDrag(outputNode.nodeData)) return
+                                    if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y)
+                                    else root.cancelLiveNodeDrag(outputNode.nodeData)
                                 }
-                                onClicked: function(mouse) { if (!drag.active) root.selectNode(outputNode.nodeData) }
-                                onDoubleClicked: function(mouse) { if (!drag.active) root.openCardSettings(outputNode.nodeData) }
+                                onClicked: function(mouse) { if (!pointerMoved) root.selectNode(outputNode.nodeData) }
+                                onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(outputNode.nodeData) }
                             }
                             TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = outputNode.nodeData; deckNodeContextMenu.open() } }
                         }

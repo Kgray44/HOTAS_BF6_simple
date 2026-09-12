@@ -6548,6 +6548,84 @@ bool verifyRenderedSignalFlowPortAnchors(QObject *page, const QString &stage)
     return true;
 }
 
+bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, hotas::AppBackend &backend)
+{
+    if (!page || !window) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native card drag fixture needs a live page and window"));
+    }
+    // Exercise the rendered MouseArea, not the presentation helper directly.
+    // This guards the Flickable/card ownership boundary that a function-level
+    // live-drag test cannot observe.
+    QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const inputNodeData = node('input'); if (!inputNodeData || !inputNodeData.objectId || !graph.editable) return ({});"
+        " const wasLocked = Boolean(graph.workspace && graph.workspace.layoutLocked);"
+        " const oldMode = mode; mode = 'configured'; if (wasLocked && !toggleLayoutLocked()) return ({});"
+        " return { nodeId: String(inputNodeData.id || inputNodeData.objectId), objectId: String(inputNodeData.objectId), x: Number(inputNodeData.x), y: Number(inputNodeData.y),"
+        "   pinned: Boolean(inputNodeData.pinned), wasLocked: wasLocked, oldMode: oldMode };"
+        "})()"));
+    const QVariantMap setup = prepare.evaluate().toMap();
+    if (prepare.hasError() || setup.value(QStringLiteral("objectId")).toString().isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native card drag could not prepare an editable input card (error=%1)")
+            .arg(prepare.hasError() ? prepare.error().toString() : QStringLiteral("no editable card")));
+    }
+    settlePresentation();
+    const QString nodeId = setup.value(QStringLiteral("nodeId")).toString();
+    const QString objectId = setup.value(QStringLiteral("objectId")).toString();
+    auto *card = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowNodeCard:") + nodeId);
+    auto *dragSurface = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowNodeDrag:") + nodeId);
+    if (!card || !dragSurface || dragSurface->width() < 20.0 || dragSurface->height() < 20.0) {
+        if (setup.value(QStringLiteral("wasLocked")).toBool()) {
+            QQmlExpression restoreLock(qmlContext(page), page, QStringLiteral("toggleLayoutLocked()"));
+            restoreLock.evaluate();
+        }
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native card drag did not expose a rendered card body for %1").arg(nodeId));
+    }
+    const QPointF before(card->x(), card->y());
+    const QPointF press = dragSurface->mapToScene(QPointF(dragSurface->width() * 0.5,
+        std::min<qreal>(18.0, dragSurface->height() * 0.5)));
+    const QPointF release = press + QPointF(46.0, 28.0);
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press.toPoint());
+    QTest::qWait(8);
+    const bool pressDelivered = page->property("liveDragNodeId").toString() == nodeId;
+    QTest::mouseMove(window, release.toPoint(), 24);
+    QTest::qWait(16);
+    const QPointF during(card->x(), card->y());
+    const bool movedDuringPointerDrag = std::hypot(during.x() - before.x(), during.y() - before.y()) > 8.0
+        && page->property("liveDragNodeId").toString() == nodeId;
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, release.toPoint());
+    settlePresentation();
+
+    // Restore exactly the original test fixture placement, irrespective of
+    // whether the drag reached persistence, and return the workspace lock to
+    // its initial state before any later lifecycle checks run.
+    const bool placementRestored = backend.signalFlowSaveNodeLayout(objectId,
+        setup.value(QStringLiteral("x")).toDouble(), setup.value(QStringLiteral("y")).toDouble(),
+        setup.value(QStringLiteral("pinned")).toBool());
+    page->setProperty("graph", backend.signalFlowGraph());
+    settlePresentation();
+    QQmlExpression restore(qmlContext(page), page, QStringLiteral(
+        "(function() { mode = '%1'; const locked = Boolean(graph.workspace && graph.workspace.layoutLocked);"
+        " return locked === %2 ? true : toggleLayoutLocked(); })()")
+        .arg(setup.value(QStringLiteral("oldMode")).toString())
+        .arg(setup.value(QStringLiteral("wasLocked")).toBool() ? QStringLiteral("true") : QStringLiteral("false")));
+    const bool workspaceRestored = restore.evaluate().toBool() && !restore.hasError();
+    settlePresentation();
+    if (!pressDelivered || !movedDuringPointerDrag || !placementRestored || !workspaceRestored) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native card pointer drag failed (press=%1 moved=%2 before=(%3,%4) during=(%5,%6) restored=%7 workspace=%8)")
+            .arg(pressDelivered).arg(movedDuringPointerDrag).arg(before.x(), 0, 'f', 2).arg(before.y(), 0, 'f', 2)
+            .arg(during.x(), 0, 'f', 2).arg(during.y(), 0, 'f', 2)
+            .arg(placementRestored).arg(workspaceRestored));
+    }
+    return true;
+}
+
 bool verifySignalFlowLiveNodeDragFixture(QObject *page)
 {
     if (!page) return failPresentationLifecycleTest(QStringLiteral("Signal Flow live-drag fixture needs a live page"));
@@ -8152,6 +8230,10 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     if (qEnvironmentVariableIsSet("HOTAS_QML_SIGNAL_FLOW_OWNER_SOAK_ONLY")) {
         return verifySignalFlowOwnerReviewSoak(flightDeckPage, qobject_cast<QQuickWindow *>(flightDeckWindow),
             ownerSoakSeconds);
+    }
+    if (!verifySignalFlowNativeCardPointerDrag(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
+        return false;
     }
     if (!verifySignalFlowVisualStressFixture(flightDeckPage, qobject_cast<QQuickWindow *>(flightDeckWindow),
             QStringLiteral("Flight Deck"))) {
