@@ -278,22 +278,24 @@ private:
             return {true, true, 0, QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance"), {}};
         }
         if (joined.contains(QStringLiteral("-t -c"))) {
+            const QString device = arguments.isEmpty() ? QStringLiteral("1") : arguments.back();
             return {true, true, 0, vjoy219HumanReadableOutput
-                ? QStringLiteral("vJoyConfig 1 -f -a X Y Z Rx Ry Rz -b 15 -e all\n")
-                : QStringLiteral("vJoyConfig 1 -f -a X Y Z Rz -b 4\n"), {}};
+                ? QStringLiteral("vJoyConfig %1 -f -a X Y Z Rx Ry Rz -b 15 -e all\n").arg(device)
+                : QStringLiteral("vJoyConfig %1 -f -a X Y Z Rz -b 4\n").arg(device), {}};
         }
         if (joined.contains(QStringLiteral("-t"))) {
-            const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), QStringLiteral("1")};
+            const QString device = arguments.size() >= 2 ? arguments.back() : QStringLiteral("1");
+            const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), device};
             bool capabilitiesConverged = repairApplied;
             if (capabilitiesConverged && targetedCapabilityReport && staleVJoyCapabilityInspections > 0) {
                 --staleVJoyCapabilityInspections;
                 capabilitiesConverged = false;
             }
             const QString report = vjoy219HumanReadableOutput
-                ? QStringLiteral("Device 1 FREE\nButtons %1\nContinous POVs 0\nDescrete POVs 0\nAxes X Y Z Rx Ry Rz Sl0 Sl1\nFFB All Effects\n")
-                      .arg(capabilitiesConverged ? 32 : 15)
-                : QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
-                      .arg(capabilitiesConverged ? 32 : 4);
+                ? QStringLiteral("Device %1 FREE\nButtons %2\nContinous POVs 0\nDescrete POVs 0\nAxes X Y Z Rx Ry Rz Sl0 Sl1\nFFB All Effects\n")
+                      .arg(device).arg(capabilitiesConverged ? 32 : 15)
+                : QStringLiteral("Device: %1\nState: FREE\nButtons: %2\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
+                      .arg(device).arg(capabilitiesConverged ? 32 : 4);
             return {true, true, 0, report, {}};
         }
         return {true, true, 0, {}, {}};
@@ -336,6 +338,7 @@ private slots:
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisCapabilitySupersetIsReady();
     void vjoyShortSliderAliasesRemainReady();
+    void scopedVJoyRepairUsesCandidateOwnedDevice2Transaction();
     void scopedHidHideRepairPreservesVJoyOperationScope();
     void validVJoySupersetCannotDisagreeWithAggregateHealth();
     void staleVJoyPlanBecomesReadyImmediatelyAfterCorrection();
@@ -965,6 +968,39 @@ void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
         defaultConfiguration(), connectedController(), requirements);
     QVERIFY(!plan.vjoyNeedsChanges);
     QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+}
+
+void ControllerReadinessTests::scopedVJoyRepairUsesCandidateOwnedDevice2Transaction()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.vjoyDeviceId = 2;
+    MapperOutputRequirements requirements;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Y)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Z)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Rx)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider1)] = true;
+    requirements.buttons = 32;
+
+    QVERIFY(service.inspectForRequirements(configuration, connectedController(), requirements).vjoyNeedsChanges);
+    QVERIFY(service.applyVJoyConfiguration());
+    QCOMPARE(probe->elevatedTransactions, 1);
+    QVERIFY(containsCanonicalApplicationPath(probe->elevatedPrograms));
+    QVERIFY(!probe->lastRepairRequest.isEmpty());
+    const QString helperCommands = probe->calls.join(u'\n');
+    QVERIFY(helperCommands.contains(QStringLiteral("helper:2 -f -a Y Z Rx Sl0 Sl1 -b 32")));
+    QVERIFY(!helperCommands.contains(QStringLiteral("helper:--dev-hide")));
+    QVERIFY(!service.plan().vjoyNeedsChanges);
+    QCOMPARE(service.plan().vjoy.deviceId, 2);
 }
 
 void ControllerReadinessTests::scopedHidHideRepairPreservesVJoyOperationScope()

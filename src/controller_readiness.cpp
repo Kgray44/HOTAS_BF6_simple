@@ -1405,19 +1405,43 @@ bool ControllerReadinessService::applyVJoyConfiguration()
 {
     if (m_transactionActive || !m_plan.vjoyNeedsChanges || !m_plan.vjoyCanApply) return false;
     m_transactionActive = true;
-    m_plan.state = ControllerReadinessState::Applying;
-    m_plan.status = QStringLiteral("CONFIGURING VJOY — Applying the selected controller's output requirements.");
-    const SetupProcessResult result = runVJoy(true, vjoyConfigurationArguments(m_plan.vjoy, m_plan.requirements));
-    if (!result.succeeded()) {
-        m_plan.state = result.cancelled ? ControllerReadinessState::Cancelled : ControllerReadinessState::Failed;
-        m_plan.status = result.cancelled
+    m_plan.state = ControllerReadinessState::AwaitingPermission;
+    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Applying only the selected vJoy device descriptor.");
+
+    // A scoped Device 2 repair must cross the same product-owned elevated
+    // boundary as every other automatic setup mutation.  ShellExecute'ing
+    // vJoyConfig directly loses its structured stdout/stderr and made a
+    // successful UAC consent indistinguishable from a driver no-op.  Build a
+    // vJoy-only transaction so the helper can return per-operation evidence;
+    // suppressing HidHide preserves the frozen per-issue repair scope.
+    ControllerReadinessPlan vjoyOnlyPlan = m_plan;
+    vjoyOnlyPlan.hidhideNeedsChanges = false;
+    Journal journal;
+    const QList<RepairOperation> operations = repairOperationsFor(vjoyOnlyPlan, &journal);
+    m_lastRepairResult = runRepairTransaction(operations);
+    if (m_lastRepairResult.outcome != AutomaticRepairOutcome::Ready) {
+        m_plan.state = m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled
+            ? ControllerReadinessState::Cancelled : ControllerReadinessState::Failed;
+        m_plan.status = m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled
             ? QStringLiteral("vJoy configuration was cancelled.")
-            : QStringLiteral("vJoy configuration failed: %1").arg(result.error);
+            : QStringLiteral("vJoy configuration failed: %1").arg(m_lastRepairResult.message);
         m_transactionActive = false;
         return false;
     }
-    const VJoyCapabilities after = inspectVJoy(m_configuration.vjoyDeviceId);
-    m_plan = planFor(m_physical, m_inspectedRequirements, after, m_plan.hidhide, VerificationMode::Full);
+
+    // vJoy can publish the new descriptor after the helper exits.  Re-read
+    // the actual selected device at a short bounded cadence; process success
+    // is never accepted as proof of Device 2 convergence.
+    constexpr int kScopedVJoyReadbackAttempts = 8;
+    constexpr unsigned long kScopedVJoyReadbackIntervalMs = 150;
+    VJoyCapabilities after;
+    for (int attempt = 0; attempt != kScopedVJoyReadbackAttempts; ++attempt) {
+        after = inspectVJoy(m_configuration.vjoyDeviceId);
+        m_plan = planFor(m_physical, m_inspectedRequirements, after, m_plan.hidhide,
+                         VerificationMode::Full);
+        if (!m_plan.vjoyNeedsChanges) break;
+        if (attempt + 1 != kScopedVJoyReadbackAttempts) QThread::msleep(kScopedVJoyReadbackIntervalMs);
+    }
     if (m_plan.vjoyNeedsChanges) {
         m_plan.state = ControllerReadinessState::Failed;
         m_plan.status = QStringLiteral("vJoy did not expose the selected controller's required capabilities after configuration.");
