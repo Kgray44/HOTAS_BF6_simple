@@ -97,6 +97,12 @@ Item {
     property string learnedSourcePortId: ""
     property var pendingLearnDestination: ({})
     property var dragWire: ({ "active": false, "source": ({}), "x": 0, "y": 0 })
+    // A DropArea is permitted to report its drop either before or after the
+    // source DragHandler becomes inactive. Keep the initiating port through
+    // that handoff so a real release over a destination never loses its
+    // connection request to event ordering.
+    property var lastSourceDragPort: ({})
+    property bool sourceDragDropHandled: false
     property var connectionPreview: ({})
     property string pendingProcessorRouteId: ""
     property string pendingProcessorSegmentId: ""
@@ -396,7 +402,7 @@ Item {
     }
     function destinationPorts() { return ports("output").filter(function(port) { return matching(port, true) && !groupCollapsed("output", port.group) }) }
     function visibleCardPorts(nodeData, destination) {
-        const result = []
+        let result = []
         const state = cardGroups(nodeData)
         for (let index = 0; index < state.length; ++index) {
             const group = String(state[index].group || "")
@@ -600,6 +606,8 @@ Item {
     function beginSourceDrag(port, point) {
         if (!port || !port.id) return false
         selectSource(port)
+        lastSourceDragPort = port
+        sourceDragDropHandled = false
         dragWire = ({ "active": true, "source": port,
             "x": Number(point && point.x || 0), "y": Number(point && point.y || 0) })
         return true
@@ -609,8 +617,54 @@ Item {
         dragWire = ({ "active": true, "source": dragWire.source,
             "x": Number(point && point.x || 0), "y": Number(point && point.y || 0) })
     }
+    function sourceDragPortFromDrop(drop) {
+        const reported = drop && drop.source && drop.source.port
+        if (reported && reported.id) return reported
+        const active = dragWire && dragWire.source
+        if (active && active.id) return active
+        return lastSourceDragPort && lastSourceDragPort.id ? lastSourceDragPort : null
+    }
+    function sourceDragDestinationAt(point) {
+        if (!point) return null
+        const output = node("output")
+        if (!output || !output.id) return null
+        const candidates = visibleCardPorts(output, true)
+        const hitRadius = 18
+        const hitRadiusSquared = hitRadius * hitRadius
+        let closest = null
+        let closestDistanceSquared = hitRadiusSquared
+        for (let index = 0; index < candidates.length; ++index) {
+            const candidate = candidates[index]
+            const center = currentGraphSpacePortCenter(candidate.endpointId, candidate.id, output, false)
+            const dx = Number(point.x) - Number(center.x)
+            const dy = Number(point.y) - Number(center.y)
+            const distanceSquared = dx * dx + dy * dy
+            if (distanceSquared <= closestDistanceSquared) {
+                closest = candidate
+                closestDistanceSquared = distanceSquared
+            }
+        }
+        return closest
+    }
+    function completeSourceDrag(sourcePort, destinationPort) {
+        if (sourceDragDropHandled || !sourcePort || !sourcePort.id || !destinationPort || !destinationPort.id)
+            return false
+        sourceDragDropHandled = true
+        connectDragged(sourcePort, destinationPort)
+        return true
+    }
     function endSourceDrag() {
         if (!dragWire.active) return
+        const sourcePort = sourceDragPortFromDrop(null)
+        const releasePoint = ({ "x": Number(dragWire.x || 0), "y": Number(dragWire.y || 0) })
+        // Some Qt Quick delivery paths deactivate the handler before the
+        // destination DropArea gets onDropped. Resolve the actual rendered
+        // target from the release point in that case; DropArea uses the same
+        // one-shot completion helper when it arrives first.
+        if (!sourceDragDropHandled) {
+            const destinationPort = sourceDragDestinationAt(releasePoint)
+            if (destinationPort) completeSourceDrag(sourcePort, destinationPort)
+        }
         dragWire = ({ "active": false, "source": ({}), "x": 0, "y": 0 })
         connectionPreview = ({})
     }
@@ -2074,8 +2128,9 @@ Item {
             onEntered: function(drag) { if (drag.source && drag.source.port) root.previewDestination(flowPort.port) }
             onExited: function(drag) { root.clearDestinationPreview(flowPort.port) }
             onDropped: function(drop) {
-                if (drop.source && drop.source.port) {
-                    root.connectDragged(drop.source.port, flowPort.port)
+                const sourcePort = root.sourceDragPortFromDrop(drop)
+                if (sourcePort) {
+                    root.completeSourceDrag(sourcePort, flowPort.port)
                     root.endSourceDrag()
                     drop.accepted = true
                 }
@@ -2272,7 +2327,11 @@ Item {
                 onEntered: function(drag) { root.previewDestination(graphPortRow.port) }
                 onExited: root.clearDestinationPreview(graphPortRow.port)
                 onDropped: function(drop) {
-                    if (drop.source && drop.source.port) root.connectDragged(drop.source.port, graphPortRow.port)
+                    const sourcePort = root.sourceDragPortFromDrop(drop)
+                    if (sourcePort) {
+                        root.completeSourceDrag(sourcePort, graphPortRow.port)
+                        root.endSourceDrag()
+                    }
                     drop.accepted = true
                 }
             }
