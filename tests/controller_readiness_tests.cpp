@@ -336,6 +336,7 @@ private slots:
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisCapabilitySupersetIsReady();
     void vjoyShortSliderAliasesRemainReady();
+    void scopedHidHideRepairPreservesVJoyOperationScope();
     void validVJoySupersetCannotDisagreeWithAggregateHealth();
     void staleVJoyPlanBecomesReadyImmediatelyAfterCorrection();
     void currentCandidateExecutableMustBeAllowlistedAndReadBack();
@@ -964,6 +965,31 @@ void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
         defaultConfiguration(), connectedController(), requirements);
     QVERIFY(!plan.vjoyNeedsChanges);
     QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+}
+
+void ControllerReadinessTests::scopedHidHideRepairPreservesVJoyOperationScope()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    QVERIFY(service.plan().hidhideNeedsChanges);
+    QVERIFY(service.plan().hidhideCanApply);
+    QVERIFY(service.applyHidHideConfiguration());
+    QVERIFY(!service.plan().hidhideNeedsChanges);
+    QVERIFY(std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("helper:"))
+            && call.contains(QStringLiteral("--dev-hide HID\\VID_044F&PID_B68D\\exact-instance"),
+                             Qt::CaseInsensitive);
+    }));
+    QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("helper:")) && call.contains(QStringLiteral(" -f -a "));
+    }));
 }
 
 void ControllerReadinessTests::validVJoySupersetCannotDisagreeWithAggregateHealth()

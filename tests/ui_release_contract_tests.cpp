@@ -726,11 +726,15 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("UNKNOWN / INSPECTION FAILED")));
     QVERIFY(backend.contains(QStringLiteral("SetupConvergenceStage::Results")));
     QVERIFY(backend.contains(QStringLiteral("applyScopedVJoyRepair")));
+    QVERIFY(backend.contains(QStringLiteral("applyScopedHidHideRepair")));
+    QVERIFY(backend.contains(QStringLiteral("issue.value(u\"code\"_qs).toString() != u\"HidHideMismatch\"_qs")));
     QVERIFY(backend.contains(QStringLiteral("m_setupTruthBeforeSnapshot = m_setupTruthSnapshot")));
     QVERIFY(readiness.contains(QStringLiteral("QString vJoyConfigurationAxisToken(VirtualAxis axis)")));
     QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider0: return QStringLiteral(\"Sl0\")")));
     QVERIFY(readiness.contains(QStringLiteral("case VirtualAxis::Slider1: return QStringLiteral(\"Sl1\")")));
     QVERIFY(readiness.contains(QStringLiteral("arguments.append(vJoyConfigurationAxisToken")));
+    QVERIFY(readiness.contains(QStringLiteral("bool ControllerReadinessService::applyHidHideConfiguration()")));
+    QVERIFY(readiness.contains(QStringLiteral("hidhideOnlyPlan.vjoyNeedsChanges = false")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));

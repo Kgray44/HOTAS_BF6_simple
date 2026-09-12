@@ -1428,6 +1428,56 @@ bool ControllerReadinessService::applyVJoyConfiguration()
     return true;
 }
 
+bool ControllerReadinessService::applyHidHideConfiguration()
+{
+    if (m_transactionActive || !m_plan.hidhideNeedsChanges || !m_plan.hidhideCanApply) return false;
+    m_transactionActive = true;
+    m_plan.state = ControllerReadinessState::AwaitingPermission;
+    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Applying only the selected physical-controller HidHide repair.");
+
+    // repairOperationsFor is deliberately reused for its established
+    // allowlist → exact-device-hide → cloak ordering and rollback journal.
+    // Suppressing the vJoy branch is what makes this a genuine per-issue
+    // operation rather than another trip through the legacy aggregate gate.
+    ControllerReadinessPlan hidhideOnlyPlan = m_plan;
+    hidhideOnlyPlan.vjoyNeedsChanges = false;
+    Journal journal;
+    const QList<RepairOperation> operations = repairOperationsFor(hidhideOnlyPlan, &journal);
+    m_lastRepairResult = runRepairTransaction(operations);
+    if (m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled) {
+        m_plan.state = ControllerReadinessState::Cancelled;
+        m_plan.status = m_lastRepairResult.message;
+        m_transactionActive = false;
+        return false;
+    }
+    if (m_lastRepairResult.outcome != AutomaticRepairOutcome::Ready) {
+        m_plan.state = ControllerReadinessState::Failed;
+        m_plan.status = QStringLiteral("HIDHIDE REPAIR FAILED — %1").arg(m_lastRepairResult.message);
+        m_transactionActive = false;
+        return false;
+    }
+
+    journal.available = journal.mapperWasAdded || journal.controllerWasHidden || journal.cloakWasEnabled;
+    m_journal = journal;
+    persistRecoveryJournal();
+    const VJoyCapabilities vjoy = inspectVJoy(m_configuration.vjoyDeviceId);
+    const HidHideCapabilities hidhide = inspectHidHide(m_physical);
+    m_plan = planFor(m_physical, m_inspectedRequirements, vjoy, hidhide, VerificationMode::Full);
+    if (m_plan.hidhideNeedsChanges) {
+        m_lastRepairResult.outcome = AutomaticRepairOutcome::Attention;
+        m_lastRepairResult.message = QStringLiteral("HidHide transaction completed, but exact physical-controller read-back still needs attention: %1")
+            .arg(m_plan.hidhideSummary);
+        m_plan.state = ControllerReadinessState::Attention;
+        m_plan.status = QStringLiteral("HIDHIDE READ-BACK INCOMPLETE — %1").arg(m_plan.hidhideSummary);
+        m_transactionActive = false;
+        return false;
+    }
+    m_lastRepairResult.outcome = AutomaticRepairOutcome::Ready;
+    m_lastRepairResult.message = QStringLiteral("Selected physical-controller HidHide repair completed and read back successfully.");
+    m_transactionActive = false;
+    return true;
+}
+
 SetupProcessResult ControllerReadinessService::runHidHide(bool elevated, const QStringList &arguments) const
 {
     const QString cli = hidhideCliPath();

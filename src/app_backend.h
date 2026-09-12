@@ -1114,6 +1114,8 @@ private:
     void continueSetupConvergence();
     bool applyScopedVJoyRepair(const QString &layoutId, const MapperConfiguration &configuration,
                                const MapperOutputRequirements &requirements);
+    bool applyScopedHidHideRepair(const MapperConfiguration &configuration,
+                                  const PhysicalControllerCapabilities &physical);
     void appendSetupRepairProgress(const QString &id, const QString &subsystem,
                                    const QString &title, const QString &status,
                                    const QString &detail = {}, bool requiresElevation = false,
@@ -1201,6 +1203,7 @@ private:
     QSet<QString> m_setupConvergenceAttemptedIssues;
     bool m_setupConvergenceIdentityVerificationFailed = false;
     bool m_setupConvergenceVJoyRepairFailed = false;
+    bool m_setupConvergenceHidHideRepairFailed = false;
     bool m_setupConvergenceCancelled = false;
     QString m_setupConvergenceCurrentIssueId;
     // Output inspection is explicit and scoped.  A rig/device check must not

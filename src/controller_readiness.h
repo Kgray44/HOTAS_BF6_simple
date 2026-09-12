@@ -308,6 +308,10 @@ public:
     // A controller switch may require only vJoy capability expansion. Keep
     // HidHide untouched and verify the target output before mapping resumes.
     bool applyVJoyConfiguration();
+    // The setup convergence session may need only the exact selected
+    // physical-controller HidHide repair. Keep vJoy descriptors out of this
+    // transaction even when an unrelated output needs attention.
+    bool applyHidHideConfiguration();
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
     // The mapper performs this proof after a forced DirectInput reopen. A

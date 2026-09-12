@@ -5978,6 +5978,7 @@ QVariantMap AppBackend::repairSetupHealth()
         m_setupConvergenceAttemptedIssues.clear();
         m_setupConvergenceIdentityVerificationFailed = false;
         m_setupConvergenceVJoyRepairFailed = false;
+        m_setupConvergenceHidHideRepairFailed = false;
         m_setupConvergenceCancelled = false;
     }
     if (m_setupTruthBeforeSnapshot.isEmpty()) m_setupTruthBeforeSnapshot = m_setupTruthSnapshot;
@@ -6037,9 +6038,9 @@ QVariantMap AppBackend::repairSetupHealth()
         MapperConfiguration outputConfiguration = m_configuration;
         outputConfiguration.vjoyDeviceId = layout->requirements.deviceId;
         m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
-        setSetupConvergenceStage(SetupConvergenceStage::RepairingVJoy);
-        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"RUNNING"_qs,
-            QString(u"Repairing vJoy Device %1 for %2 only; Device 1 and HidHide are not part of this operation."_qs)
+        setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"WAITING FOR USER"_qs,
+            QString(u"Waiting for administrator approval to repair vJoy Device %1 for %2 only; Device 1 and HidHide are not part of this operation."_qs)
                 .arg(layout->requirements.deviceId).arg(layout->name), {},
             QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId}}, true);
         if (applyScopedVJoyRepair(layoutId, outputConfiguration,
@@ -6056,6 +6057,32 @@ QVariantMap AppBackend::repairSetupHealth()
         return actionResult(false, u"Virtual output repair could not start"_qs,
             u"No driver change was applied. HOTAS BF6 will still complete a final inspection."_qs,
             u"virtualOutput"_qs, layoutId, u"wait"_qs, {}, {}, true);
+    }
+    for (const QVariant &value : issues) {
+        const QVariantMap issue = value.toMap();
+        if (issue.value(u"code"_qs).toString() != u"HidHideMismatch"_qs
+            || !issue.value(u"repairable"_qs).toBool() || !approved(issue.value(u"id"_qs).toString())) continue;
+        const QString attemptKey = u"HidHideMismatch:"_qs + issue.value(u"id"_qs).toString();
+        if (m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
+        m_setupConvergenceAttemptedIssues.insert(attemptKey);
+        m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
+        setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"WAITING FOR USER"_qs,
+            u"Waiting for administrator approval to allow HOTAS BF6 and hide only the freshly resolved physical-controller interfaces."_qs,
+            {}, issue.value(u"evidence"_qs).toMap(), true);
+        if (applyScopedHidHideRepair(m_configuration, currentPhysicalCapabilities())) {
+            return actionResult(true, u"Repairing device isolation"_qs,
+                u"HOTAS BF6 is applying the approved exact physical-controller HidHide repair and will re-inspect the complete Device Rig."_qs,
+                u"deviceIsolation"_qs, {}, u"wait"_qs, {}, {}, true);
+        }
+        m_setupConvergenceHidHideRepairFailed = true;
+        updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"FAILED"_qs,
+            u"The approved HidHide repair could not start; final inspection will preserve the actual device-isolation truth."_qs);
+        setSetupConvergenceStage(SetupConvergenceStage::Repairing);
+        QTimer::singleShot(0, this, &AppBackend::repairSetupHealth);
+        return actionResult(false, u"Device isolation repair could not start"_qs,
+            u"No unplanned driver change was applied. HOTAS BF6 will still complete a final inspection."_qs,
+            u"deviceIsolation"_qs, {}, u"wait"_qs, {}, {}, true);
     }
     setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
     const bool finalAlreadyListed = std::any_of(m_setupRepairProgress.cbegin(), m_setupRepairProgress.cend(),
@@ -6169,6 +6196,7 @@ void AppBackend::continueSetupConvergence()
         captureSetupTruthSnapshot(true);
         const QString finalState = m_setupConvergenceCancelled ? u"CANCELLED"_qs
             : (m_setupConvergenceIdentityVerificationFailed || m_setupConvergenceVJoyRepairFailed
+                || m_setupConvergenceHidHideRepairFailed
                 || m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() != u"READY"_qs)
                 ? u"FAILED"_qs : u"READY"_qs;
         completeSetupConvergence(finalState);
@@ -6227,6 +6255,92 @@ bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConf
                 updateSetupRepairProgress(stepId, u"FAILED"_qs, detail, u"READ-BACK FAILED"_qs,
                     QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, repair->plan().vjoy.deviceId},
                         {u"descriptor"_qs, repair->plan().vjoy.descriptorReport}});
+            }
+            if (m_setupConvergenceCancelled) {
+                setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
+                appendSetupRepairProgress(u"final-inspect"_qs, u"Setup"_qs, u"Performing final full inspection"_qs,
+                    u"RUNNING"_qs, u"Reading final setup truth after the cancelled repair request."_qs);
+                verifyHotasSetup();
+            } else {
+                setSetupConvergenceStage(SetupConvergenceStage::Repairing);
+                QTimer::singleShot(0, this, &AppBackend::continueSetupConvergence);
+            }
+            emit stateChanged();
+        }, Qt::QueuedConnection);
+    });
+    m_verificationThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_verificationThread == thread) m_verificationThread = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
+    return true;
+}
+
+bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configuration,
+                                          const PhysicalControllerCapabilities &physical)
+{
+    if (m_verificationInProgress) return false;
+    const bool mappingWasRequested = m_worker.mappingRequested();
+    const QString issueId = m_setupConvergenceCurrentIssueId;
+    m_verificationInProgress = true;
+    emit stateChanged();
+
+    auto repair = std::make_shared<ControllerReadinessService>();
+    QThread *thread = QThread::create([this, repair, configuration, physical, mappingWasRequested, issueId] {
+        bool prepared = m_worker.prepareForDriverConfiguration();
+        bool completed = false;
+        bool cancelled = false;
+        bool physicalReacquired = false;
+        bool recoveryAttempted = false;
+        bool recoverySucceeded = false;
+        bool restored = false;
+        if (prepared) {
+            repair->inspect(configuration, physical, VerificationMode::Full);
+            const ControllerReadinessPlan before = repair->plan();
+            if (before.hidhideNeedsChanges && before.hidhideCanApply) {
+                completed = repair->applyHidHideConfiguration();
+                cancelled = repair->plan().state == ControllerReadinessState::Cancelled;
+                if (completed) {
+                    physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                    if (!physicalReacquired) {
+                        recoveryAttempted = true;
+                        recoverySucceeded = repair->recoverFromPhysicalAccessFailure();
+                        if (recoverySucceeded) physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                    }
+                }
+            }
+            restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
+        }
+        QMetaObject::invokeMethod(this, [this, repair, issueId, prepared, completed, cancelled, physicalReacquired,
+                                         recoveryAttempted, recoverySucceeded, restored] {
+            m_verificationInProgress = false;
+            const QString stepId = u"repair:"_qs + issueId;
+            if (cancelled) {
+                m_setupConvergenceCancelled = true;
+                updateSetupRepairProgress(stepId, u"CANCELLED"_qs,
+                    u"The administrator HidHide request was cancelled. Existing allowlist, cloak, and device rules were left unchanged."_qs,
+                    u"CANCELLED"_qs);
+            } else if (completed && restored && physicalReacquired && !repair->plan().hidhideNeedsChanges) {
+                updateSetupRepairProgress(stepId, u"SUCCEEDED"_qs,
+                    u"The exact current physical-controller interfaces are hidden, the candidate remains allowlisted, and fresh HidHide read-back succeeded."_qs,
+                    u"READ-BACK VERIFIED"_qs,
+                    QVariantMap{{u"hiddenCollections"_qs, repair->plan().hidhide.hiddenDeviceInstanceIds},
+                                {u"resolvedCollections"_qs, repair->plan().hidhide.selectedControllerInstanceIds}});
+            } else {
+                m_setupConvergenceHidHideRepairFailed = true;
+                const QString detail = !prepared
+                    ? u"HOTAS BF6 could not safely release its mapping output for the exact physical-controller HidHide repair."_qs
+                    : !restored ? u"HidHide repair did not restore the prior mapping state; final inspection will show the actual result."_qs
+                    : recoveryAttempted
+                        ? (recoverySucceeded
+                            ? u"HidHide changes were rolled back after physical-controller reacquisition failed."_qs
+                            : u"HidHide repair could not reacquire the physical controller and its rollback also needs attention."_qs)
+                        : !physicalReacquired ? u"HidHide repair completed but HOTAS BF6 could not reacquire the exact physical controller."_qs
+                        : repair->plan().hidhideSummary;
+                updateSetupRepairProgress(stepId, u"FAILED"_qs, detail, u"READ-BACK FAILED"_qs,
+                    QVariantMap{{u"hiddenCollections"_qs, repair->plan().hidhide.hiddenDeviceInstanceIds},
+                                {u"resolvedCollections"_qs, repair->plan().hidhide.selectedControllerInstanceIds}});
             }
             if (m_setupConvergenceCancelled) {
                 setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
