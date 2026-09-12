@@ -6559,11 +6559,15 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     // live-drag test cannot observe.
     QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
         "(function() {"
-        " const inputNodeData = node('input'); if (!inputNodeData || !inputNodeData.objectId || !graph.editable) return ({});"
+        " const inputNodeData = node('input'); const viewport = graphViewport;"
+        " if (!inputNodeData || !inputNodeData.objectId || !graph.editable || !viewport) return ({});"
         " const wasLocked = Boolean(graph.workspace && graph.workspace.layoutLocked);"
-        " const oldMode = mode; mode = 'configured'; if (wasLocked && !toggleLayoutLocked()) return ({});"
+        " const oldMode = mode; const oldZoom = Number(zoom);"
+        " const panX = Number(viewport.contentX); const panY = Number(viewport.contentY);"
+        " mode = 'configured'; if (wasLocked && !toggleLayoutLocked()) return ({});"
+        " viewport.cancelFlick(); zoom = 1; viewport.contentX = 0; viewport.contentY = 0;"
         " return { nodeId: String(inputNodeData.id || inputNodeData.objectId), objectId: String(inputNodeData.objectId), x: Number(inputNodeData.x), y: Number(inputNodeData.y),"
-        "   pinned: Boolean(inputNodeData.pinned), wasLocked: wasLocked, oldMode: oldMode };"
+        "   pinned: Boolean(inputNodeData.pinned), wasLocked: wasLocked, oldMode: oldMode, oldZoom: oldZoom, panX: panX, panY: panY };"
         "})()"));
     const QVariantMap setup = prepare.evaluate().toMap();
     if (prepare.hasError() || setup.value(QStringLiteral("objectId")).toString().isEmpty()) {
@@ -6574,11 +6578,15 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     settlePresentation();
     const QString nodeId = setup.value(QStringLiteral("nodeId")).toString();
     const QString objectId = setup.value(QStringLiteral("objectId")).toString();
+    auto *scene = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowGraphScene"));
+    auto *viewport = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowGraphViewport"));
     auto *card = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
         QStringLiteral("signalFlowNodeCard:") + nodeId);
     auto *dragSurface = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
         QStringLiteral("signalFlowNodeDrag:") + nodeId);
-    if (!card || !dragSurface || dragSurface->width() < 20.0 || dragSurface->height() < 20.0) {
+    if (!scene || !viewport || !card || !dragSurface || dragSurface->width() < 20.0 || dragSurface->height() < 20.0) {
         if (setup.value(QStringLiteral("wasLocked")).toBool()) {
             QQmlExpression restoreLock(qmlContext(page), page, QStringLiteral("toggleLayoutLocked()"));
             restoreLock.evaluate();
@@ -6587,18 +6595,45 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
             "Signal Flow native card drag did not expose a rendered card body for %1").arg(nodeId));
     }
     const QPointF before(card->x(), card->y());
-    const QPointF press = dragSurface->mapToScene(QPointF(dragSurface->width() * 0.5,
-        std::min<qreal>(18.0, dragSurface->height() * 0.5)));
-    const QPointF release = press + QPointF(46.0, 28.0);
-    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press.toPoint());
+    const QPoint press = dragSurface->mapToScene(QPointF(dragSurface->width() * 0.5,
+        std::min<qreal>(18.0, dragSurface->height() * 0.5))).toPoint();
+    // The card itself moves after every pointer update. Verify several native
+    // pointer samples in the graph's stable coordinate system so a card-local
+    // feedback loop cannot make the card chase, drift from, or oscillate
+    // around the pointer.
+    const QPointF graphPress = scene->mapFromScene(press);
+    const std::array<QPoint, 4> dragOffsets{
+        QPoint{9, 6}, QPoint{21, 13}, QPoint{34, 21}, QPoint{46, 28}};
+    QPoint release = press;
+    QPointF expected = before;
+    QPointF during = before;
+    bool trackedEveryNativeSample = true;
+    QStringList sampleTrace;
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press);
     QTest::qWait(8);
     const bool pressDelivered = page->property("liveDragNodeId").toString() == nodeId;
-    QTest::mouseMove(window, release.toPoint(), 24);
-    QTest::qWait(16);
-    const QPointF during(card->x(), card->y());
-    const bool movedDuringPointerDrag = std::hypot(during.x() - before.x(), during.y() - before.y()) > 8.0
-        && page->property("liveDragNodeId").toString() == nodeId;
-    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, release.toPoint());
+    for (const QPoint &offset : dragOffsets) {
+        release = press + offset;
+        QTest::mouseMove(window, release, 8);
+        QTest::qWait(8);
+        const QPointF graphPointer = scene->mapFromScene(release);
+        expected = before + graphPointer - graphPress;
+        during = QPointF(card->x(), card->y());
+        sampleTrace << QStringLiteral("actual=(%1,%2) expected=(%3,%4) pan=(%5,%6)")
+            .arg(during.x(), 0, 'f', 2).arg(during.y(), 0, 'f', 2)
+            .arg(expected.x(), 0, 'f', 2).arg(expected.y(), 0, 'f', 2)
+            .arg(viewport->property("contentX").toDouble(), 0, 'f', 2)
+            .arg(viewport->property("contentY").toDouble(), 0, 'f', 2);
+        trackedEveryNativeSample = trackedEveryNativeSample
+            // The fixture freezes the Flickable before the press, leaving
+            // only the integer-window-to-logical-coordinate conversion.
+            // One graph pixel is ample room for that conversion and catches
+            // the multi-sample feedback jump this test was added to prevent.
+            && std::hypot(during.x() - expected.x(), during.y() - expected.y()) < 1.0
+            && page->property("liveDragNodeId").toString() == nodeId;
+    }
+    const bool movedDuringPointerDrag = std::hypot(during.x() - before.x(), during.y() - before.y()) > 8.0;
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, release);
     settlePresentation();
 
     // Restore exactly the original test fixture placement, irrespective of
@@ -6610,18 +6645,25 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     page->setProperty("graph", backend.signalFlowGraph());
     settlePresentation();
     QQmlExpression restore(qmlContext(page), page, QStringLiteral(
-        "(function() { mode = '%1'; const locked = Boolean(graph.workspace && graph.workspace.layoutLocked);"
-        " return locked === %2 ? true : toggleLayoutLocked(); })()")
+        "(function() { mode = '%1'; zoom = %2; graphViewport.cancelFlick(); graphViewport.contentX = %3; graphViewport.contentY = %4;"
+        " const locked = Boolean(graph.workspace && graph.workspace.layoutLocked);"
+        " return locked === %5 ? true : toggleLayoutLocked(); })()")
         .arg(setup.value(QStringLiteral("oldMode")).toString())
+        .arg(setup.value(QStringLiteral("oldZoom")).toDouble(), 0, 'g', 16)
+        .arg(setup.value(QStringLiteral("panX")).toDouble(), 0, 'g', 16)
+        .arg(setup.value(QStringLiteral("panY")).toDouble(), 0, 'g', 16)
         .arg(setup.value(QStringLiteral("wasLocked")).toBool() ? QStringLiteral("true") : QStringLiteral("false")));
     const bool workspaceRestored = restore.evaluate().toBool() && !restore.hasError();
     settlePresentation();
-    if (!pressDelivered || !movedDuringPointerDrag || !placementRestored || !workspaceRestored) {
+    if (!pressDelivered || !movedDuringPointerDrag || !trackedEveryNativeSample
+        || !placementRestored || !workspaceRestored) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native card pointer drag failed (press=%1 moved=%2 before=(%3,%4) during=(%5,%6) restored=%7 workspace=%8)")
-            .arg(pressDelivered).arg(movedDuringPointerDrag).arg(before.x(), 0, 'f', 2).arg(before.y(), 0, 'f', 2)
+            "Signal Flow native card pointer drag failed (press=%1 moved=%2 tracked=%3 before=(%4,%5) expected=(%6,%7) during=(%8,%9) restored=%10 workspace=%11 samples=[%12])")
+            .arg(pressDelivered).arg(movedDuringPointerDrag).arg(trackedEveryNativeSample)
+            .arg(before.x(), 0, 'f', 2).arg(before.y(), 0, 'f', 2)
+            .arg(expected.x(), 0, 'f', 2).arg(expected.y(), 0, 'f', 2)
             .arg(during.x(), 0, 'f', 2).arg(during.y(), 0, 'f', 2)
-            .arg(placementRestored).arg(workspaceRestored));
+            .arg(placementRestored).arg(workspaceRestored).arg(sampleTrace.join(QStringLiteral("; "))));
     }
     return true;
 }

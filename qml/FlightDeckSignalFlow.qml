@@ -2957,22 +2957,24 @@ Item {
                                 // A graph pan must never take ownership once a card body
                                 // press begins. Port hit targets remain above this body area.
                                 preventStealing: true
-                                property real pointerStartX: 0
-                                property real pointerStartY: 0
+                                property real pointerStartSceneX: 0
+                                property real pointerStartSceneY: 0
                                 property real nodeStartX: 0
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
                                 onPressed: function(mouse) {
                                     if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
-                                    pointerStartX = mouse.x; pointerStartY = mouse.y
+                                    const point = mapToItem(scene, mouse.x, mouse.y)
+                                    pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                     nodeStartX = inputNode.x; nodeStartY = inputNode.y
                                     pointerMoved = false
                                     root.beginLiveNodeDrag(inputNode.nodeData)
                                 }
                                 onPositionChanged: function(mouse) {
                                     if (!pressed || !root.isLiveNodeDrag(inputNode.nodeData)) return
-                                    const x = nodeStartX + mouse.x - pointerStartX
-                                    const y = nodeStartY + mouse.y - pointerStartY
+                                    const point = mapToItem(scene, mouse.x, mouse.y)
+                                    const x = nodeStartX + point.x - pointerStartSceneX
+                                    const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
                                     if (pointerMoved) root.updateLiveNodeDrag(inputNode.nodeData, x, y)
                                 }
@@ -3025,22 +3027,24 @@ Item {
                                     anchors.fill: parent
                                     z: 0
                                     preventStealing: true
-                                    property real pointerStartX: 0
-                                    property real pointerStartY: 0
+                                    property real pointerStartSceneX: 0
+                                    property real pointerStartSceneY: 0
                                     property real nodeStartX: 0
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
                                     onPressed: function(mouse) {
                                         if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
-                                        pointerStartX = mouse.x; pointerStartY = mouse.y
+                                        const point = mapToItem(scene, mouse.x, mouse.y)
+                                        pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                         nodeStartX = secondaryInputNode.x; nodeStartY = secondaryInputNode.y
                                         pointerMoved = false
                                         root.beginLiveNodeDrag(modelData)
                                     }
                                     onPositionChanged: function(mouse) {
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
-                                        const x = nodeStartX + mouse.x - pointerStartX
-                                        const y = nodeStartY + mouse.y - pointerStartY
+                                        const point = mapToItem(scene, mouse.x, mouse.y)
+                                        const x = nodeStartX + point.x - pointerStartSceneX
+                                        const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
                                         if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
                                     }
@@ -3146,22 +3150,24 @@ Item {
                                     anchors.fill: parent
                                     z: 0
                                     preventStealing: true
-                                    property real pointerStartX: 0
-                                    property real pointerStartY: 0
+                                    property real pointerStartSceneX: 0
+                                    property real pointerStartSceneY: 0
                                     property real nodeStartX: 0
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
                                     onPressed: function(mouse) {
                                         if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
-                                        pointerStartX = mouse.x; pointerStartY = mouse.y
+                                        const point = mapToItem(scene, mouse.x, mouse.y)
+                                        pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                         nodeStartX = processorNode.x; nodeStartY = processorNode.y
                                         pointerMoved = false
                                         root.beginLiveNodeDrag(modelData)
                                     }
                                     onPositionChanged: function(mouse) {
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
-                                        const x = nodeStartX + mouse.x - pointerStartX
-                                        const y = nodeStartY + mouse.y - pointerStartY
+                                        const point = mapToItem(scene, mouse.x, mouse.y)
+                                        const x = nodeStartX + point.x - pointerStartSceneX
+                                        const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
                                         if (pointerMoved) root.updateLiveNodeDrag(modelData, x, y)
                                     }
@@ -3209,22 +3215,24 @@ Item {
                                 anchors.fill: parent
                                 z: 0
                                 preventStealing: true
-                                property real pointerStartX: 0
-                                property real pointerStartY: 0
+                                property real pointerStartSceneX: 0
+                                property real pointerStartSceneY: 0
                                 property real nodeStartX: 0
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
                                 onPressed: function(mouse) {
                                     if (root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
-                                    pointerStartX = mouse.x; pointerStartY = mouse.y
+                                    const point = mapToItem(scene, mouse.x, mouse.y)
+                                    pointerStartSceneX = point.x; pointerStartSceneY = point.y
                                     nodeStartX = outputNode.x; nodeStartY = outputNode.y
                                     pointerMoved = false
                                     root.beginLiveNodeDrag(outputNode.nodeData)
                                 }
                                 onPositionChanged: function(mouse) {
                                     if (!pressed || !root.isLiveNodeDrag(outputNode.nodeData)) return
-                                    const x = nodeStartX + mouse.x - pointerStartX
-                                    const y = nodeStartY + mouse.y - pointerStartY
+                                    const point = mapToItem(scene, mouse.x, mouse.y)
+                                    const x = nodeStartX + point.x - pointerStartSceneX
+                                    const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 1 || Math.abs(y - nodeStartY) > 1) pointerMoved = true
                                     if (pointerMoved) root.updateLiveNodeDrag(outputNode.nodeData, x, y)
                                 }
