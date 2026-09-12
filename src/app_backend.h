@@ -1119,6 +1119,10 @@ private:
     ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
     QVariantMap buildSetupTruthSnapshot() const;
     void captureSetupTruthSnapshot(bool finalSnapshot = false);
+    // A convergence session records operation history, but the fresh AFTER
+    // snapshot is the authority for its terminal outcome. Reconcile transient
+    // operation failures once their exact postconditions are proven there.
+    void reconcileSetupRepairProgressWithAfterSnapshot();
     void continueSetupConvergence();
     bool applyScopedVJoyRepair(const QString &layoutId, const MapperConfiguration &configuration,
                                const MapperOutputRequirements &requirements);

@@ -6006,6 +6006,79 @@ void AppBackend::captureSetupTruthSnapshot(bool finalSnapshot)
     if (finalSnapshot) m_setupTruthAfterSnapshot = m_setupTruthSnapshot;
 }
 
+void AppBackend::reconcileSetupRepairProgressWithAfterSnapshot()
+{
+    if (m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() != u"READY"_qs) return;
+
+    const auto group = [this](const QString &id) {
+        for (const QVariant &entry : m_setupTruthAfterSnapshot.value(u"groups"_qs).toList()) {
+            const QVariantMap candidate = entry.toMap();
+            if (candidate.value(u"id"_qs).toString() == id) return candidate;
+        }
+        return QVariantMap{};
+    };
+    const QVariantMap physical = group(u"physical"_qs);
+    const QVariantMap verification = group(u"verification"_qs);
+    const QVariantMap virtualOutput = group(u"vjoy"_qs);
+    const QVariantMap isolation = group(u"isolation"_qs);
+    const auto verifiedPhysicalRecord = [&physical, &verification](const QString &recordId) {
+        if (recordId.isEmpty() || verification.value(u"status"_qs).toString() != u"READY"_qs) return false;
+        for (const QVariant &entry : physical.value(u"evidence"_qs).toMap().value(u"members"_qs).toList()) {
+            const QVariantMap member = entry.toMap();
+            if (member.value(u"recordId"_qs).toString() == recordId
+                && member.value(u"identityVerified"_qs).toBool()
+                && member.value(u"identityMatch"_qs).toBool()
+                && !member.value(u"lastVerified"_qs).toString().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto readyOutput = [&virtualOutput](const QString &layoutId) {
+        if (layoutId.isEmpty() || virtualOutput.value(u"status"_qs).toString() != u"READY"_qs) return false;
+        for (const QVariant &entry : virtualOutput.value(u"evidence"_qs).toMap().value(u"outputs"_qs).toList()) {
+            const QVariantMap output = entry.toMap();
+            if (output.value(u"layoutId"_qs).toString() == layoutId
+                && output.value(u"status"_qs).toString() == u"READY"_qs) return true;
+        }
+        return false;
+    };
+
+    for (const QVariant &entry : m_setupRepairProgress) {
+        const QVariantMap step = entry.toMap();
+        if (step.value(u"status"_qs).toString() != u"FAILED"_qs
+            || !step.value(u"id"_qs).toString().startsWith(u"repair:"_qs)) continue;
+        const QVariantMap evidence = step.value(u"evidence"_qs).toMap();
+        const QString recordId = evidence.value(u"recordId"_qs).toString();
+        const QString layoutId = evidence.value(u"layoutId"_qs).toString();
+        const QString subsystem = step.value(u"subsystem"_qs).toString();
+        const bool exactRecordReady = verifiedPhysicalRecord(recordId);
+        const bool exactOutputReady = readyOutput(layoutId);
+        const bool isolationReady = subsystem == u"Device isolation"_qs
+            && isolation.value(u"status"_qs).toString() == u"READY"_qs;
+        // Every required group is Ready. An earlier failed operation which
+        // now has its exact postcondition proven is resolved history, not a
+        // continuing failed repair. Keep that reconciliation in the detail.
+        if (exactRecordReady || exactOutputReady || isolationReady) {
+            const QString detail = exactRecordReady
+                ? u"Completed after verification reconciliation: fresh read-back proved the same saved controller record is verified and identity-matched."_qs
+                : exactOutputReady
+                    ? u"Completed after descriptor reconciliation: fresh read-back proved this exact Device Rig output is ready."_qs
+                    : u"Completed after device-isolation reconciliation: fresh read-back proved the required HidHide state is ready."_qs;
+            updateSetupRepairProgress(step.value(u"id"_qs).toString(), u"SUCCEEDED"_qs, detail,
+                u"SUCCEEDED AFTER FINAL RECHECK"_qs, evidence);
+        }
+    }
+
+    // A final READY snapshot is stronger than any provisional asynchronous
+    // failure flag. The failure text remains in the session report only if a
+    // required postcondition remains unresolved in the AFTER snapshot.
+    m_setupConvergenceIdentityVerificationFailed = false;
+    m_setupConvergenceVJoyRepairFailed = false;
+    m_setupConvergenceHidHideRepairFailed = false;
+    m_setupConvergenceIdentityVerificationFailure.clear();
+}
+
 QVariantMap AppBackend::checkSetupHealth()
 {
     if (m_verificationInProgress) return actionResult(false, u"Setup check is already running"_qs,
@@ -6287,11 +6360,14 @@ void AppBackend::continueSetupConvergence()
     if (m_setupConvergenceStage == SetupConvergenceStage::FinalChecking) {
         refreshSelectedRigOutputReadiness();
         captureSetupTruthSnapshot(true);
-        const QString finalState = m_setupConvergenceCancelled ? u"CANCELLED"_qs
-            : (m_setupConvergenceIdentityVerificationFailed || m_setupConvergenceVJoyRepairFailed
-                || m_setupConvergenceHidHideRepairFailed
-                || m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() != u"READY"_qs)
-                ? u"FAILED"_qs : u"READY"_qs;
+        const bool afterReady = m_setupTruthAfterSnapshot.value(u"overallStatus"_qs).toString() == u"READY"_qs;
+        // The final fresh snapshot is the sole terminal authority. A callback
+        // may have been late or provisional, but it cannot leave the session
+        // red after its exact persisted postcondition and every required
+        // subsystem have been independently re-read as Ready.
+        if (afterReady) reconcileSetupRepairProgressWithAfterSnapshot();
+        const QString finalState = afterReady ? u"READY"_qs
+            : m_setupConvergenceCancelled ? u"CANCELLED"_qs : u"FAILED"_qs;
         completeSetupConvergence(finalState);
     }
 }

@@ -96,6 +96,10 @@ Item {
             automaticGameDetection: backendObject.automaticGameDetection,
             activeCategoryName: backendObject.activeCategoryName,
             activeCategoryRules: category.executableRules || [],
+            // After a setup session completes, this is the same authoritative
+            // aggregate snapshot shown by the Devices dialog. Do not allow
+            // the older runtime-only readiness projection to contradict it.
+            setupTruth: backendObject.setupTruthSnapshot || ({}),
             runningApplications: runningApplications
         };
     }
@@ -103,6 +107,17 @@ Item {
     // Kept as a pure function so the startup test can prove the important
     // no-controller, output, attention, partial, and ready combinations.
     function presentationFor(state) {
+        const setupTruth = state.setupTruth || {};
+        const truthStatus = String(setupTruth.overallStatus || "");
+        if (setupTruth.fresh && truthStatus.length > 0 && truthStatus !== "CHECKING") {
+            if (truthStatus === "READY")
+                return { label: "READY", tone: "healthy", detail: "The current setup truth is ready for use." };
+            if (truthStatus === "ACTION NEEDED" || truthStatus === "ATTENTION")
+                return { label: "ACTION NEEDED", tone: "attention", detail: "The current setup truth needs attention." };
+            if (truthStatus === "UNKNOWN / INSPECTION FAILED")
+                return { label: truthStatus, tone: "informational", detail: "A required setup fact could not be inspected." };
+            return { label: truthStatus, tone: "fault", detail: "The current setup truth requires action." };
+        }
         const readiness = String(state.controllerReadinessState || "").toUpperCase();
         const outputUnavailable = !state.vjoyReady || String(state.vjoyStatusSeverity || "").toLowerCase() === "error";
         const checking = readiness.indexOf("CHECK") >= 0 || readiness.indexOf("UNKNOWN") >= 0;

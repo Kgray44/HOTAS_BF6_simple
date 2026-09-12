@@ -704,6 +704,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("commitExactControllerVerification")));
     QVERIFY(backend.contains(QStringLiteral("exactIdentityRepairInFlight")));
     QVERIFY(backend.contains(QStringLiteral("terminal commit result")));
+    QVERIFY(backend.contains(QStringLiteral("reconcileSetupRepairProgressWithAfterSnapshot")));
+    QVERIFY(backend.contains(QStringLiteral("The final fresh snapshot is the sole terminal authority")));
     QVERIFY(backend.contains(QStringLiteral("without changing the active rig")));
     QVERIFY(backend.contains(QStringLiteral("physicalStatus == VerificationSubsystemState::Ready")));
     QVERIFY(backend.contains(QStringLiteral("HidHideUnavailable")));
