@@ -6250,9 +6250,12 @@ void AppBackend::continueSetupConvergence()
         const QString stepId = u"repair:"_qs + m_setupConvergenceCurrentIssueId;
         if (m_setupConvergenceIdentityVerificationFailed || !verified) {
             m_setupConvergenceIdentityVerificationFailed = true;
-            const QString detail = m_setupConvergenceIdentityVerificationFailure.isEmpty()
-                ? u"The exact saved controller did not complete identity verification. The remaining approved repairs will still be processed."_qs
-                : m_setupConvergenceIdentityVerificationFailure;
+            if (m_setupConvergenceIdentityVerificationFailure.isEmpty()) {
+                m_setupConvergenceIdentityVerificationFailure = record
+                    ? u"The identity-repair workflow ended without a terminal commit result for this exact saved controller. Its verification timestamp remains unchanged; no controller, HidHide, or vJoy setting was changed."_qs
+                    : u"The identity-repair workflow ended after its saved-controller record became unavailable, so no verification timestamp was written."_qs;
+            }
+            const QString detail = m_setupConvergenceIdentityVerificationFailure;
             updateSetupRepairProgress(stepId, u"FAILED"_qs,
                 detail,
                 u"IDENTITY NOT COMMITTED"_qs, QVariantMap{{u"recordId"_qs, recordId}});
@@ -12892,7 +12895,16 @@ QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)
 
 void AppBackend::verifyHotasSetup()
 {
-    if (m_readiness.reconnectVerificationPending() || m_readiness.reconnectReconciliationPending()) {
+    // A user-approved exact-identity repair already has a fresh DirectInput
+    // acquisition in flight. It must run the full verifier and commit its
+    // selected record even when an earlier driver transaction left recovery
+    // bookkeeping behind. Sending it through observeControllerReconnect()
+    // would consume that proof without returning a terminal commit result.
+    const bool exactIdentityRepairInFlight = !m_pendingSetupVerificationRecordId.isEmpty()
+        || (m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity
+            && !m_setupConvergenceIdentityRecordId.isEmpty());
+    if (!exactIdentityRepairInFlight
+        && (m_readiness.reconnectVerificationPending() || m_readiness.reconnectReconciliationPending())) {
         observeControllerReconnect();
         return;
     }
