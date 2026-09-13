@@ -6,6 +6,7 @@ QString setupTruthStatusLabel(SetupTruthStatus status)
 {
     switch (status) {
     case SetupTruthStatus::Ready: return QStringLiteral("READY");
+    case SetupTruthStatus::ReadyToActivate: return QStringLiteral("READY TO ACTIVATE");
     case SetupTruthStatus::Checking: return QStringLiteral("CHECKING");
     case SetupTruthStatus::Repairable: return QStringLiteral("ACTION NEEDED");
     case SetupTruthStatus::WaitingForUser: return QStringLiteral("WAITING FOR USER");
@@ -28,6 +29,10 @@ int setupTruthStatusPriority(SetupTruthStatus status)
     case SetupTruthStatus::Attention: return 5;
     case SetupTruthStatus::Checking: return 6;
     case SetupTruthStatus::Ready: return 7;
+    // This must never make an otherwise healthy setup report a degraded
+    // overall state. It is an explicit manual command, not an automatic
+    // selection requirement or a repairable fault.
+    case SetupTruthStatus::ReadyToActivate: return 8;
     }
     return 8;
 }

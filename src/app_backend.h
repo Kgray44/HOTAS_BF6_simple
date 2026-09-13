@@ -202,6 +202,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(double overviewInputRate READ overviewInputRate NOTIFY telemetryChanged)
     Q_PROPERTY(double overviewMapperLatencyUs READ overviewMapperLatencyUs NOTIFY telemetryChanged)
     Q_PROPERTY(double overviewOutputRate READ overviewOutputRate NOTIFY telemetryChanged)
+    Q_PROPERTY(QVariantMap outputRuntimeTelemetry READ outputRuntimeTelemetry NOTIFY telemetryChanged)
     Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY telemetryChanged)
     Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY telemetryChanged)
     Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY telemetryChanged)
@@ -303,6 +304,12 @@ public:
     // compiled only into the isolated startup suites and cannot alter a
     // production mapper, driver, or visibility transaction.
     bool configureActivationTransactionFixtureForTest();
+    bool configureRigOwnedOutputFixtureForTest();
+    bool configureSetupTruthReadyToActivateFixtureForTest();
+    bool configureStartupSetupTruthFixtureForTest();
+    bool finishStartupSetupTruthInspectionForTest();
+    bool startupSetupTruthInspectionScheduledForTest() const;
+    bool configureStartupSetupTruthInspectionFailureForTest();
     void setActivationFaultInjectionsForTest(const QStringList &stages);
 #endif
     QVariantList buttons() const;
@@ -423,6 +430,7 @@ public:
     double overviewInputRate() const { return m_overviewInputRate; }
     double overviewMapperLatencyUs() const { return m_overviewMapperLatencyUs; }
     double overviewOutputRate() const { return m_overviewOutputRate; }
+    QVariantMap outputRuntimeTelemetry() const;
     qulonglong latencyCurrentUs() const;
     qulonglong latencyAverageUs() const;
     qulonglong latencyPeakUs() const;
@@ -595,6 +603,7 @@ public:
     Q_INVOKABLE bool setProfileEnabled(const QString &profileId, bool enabled);
     Q_INVOKABLE bool deleteProfile(const QString &profileId);
     Q_INVOKABLE bool activateProfile(const QString &profileId);
+    Q_INVOKABLE QVariantMap activateProfileResult(const QString &profileId);
     Q_INVOKABLE bool createProfileCategory(const QString &name);
     Q_INVOKABLE bool renameProfileCategory(const QString &categoryId, const QString &name);
     Q_INVOKABLE bool deleteProfileCategory(const QString &categoryId);
@@ -689,6 +698,9 @@ public:
     // per-card actions remain compatibility/advanced routes only.
     Q_INVOKABLE QVariantMap checkSetupHealth();
     Q_INVOKABLE QVariantMap repairSetupHealth();
+    // Completes a healthy (or manual-review) CHECK-only session without
+    // inventing repair work. The frozen check becomes its final snapshot.
+    Q_INVOKABLE QVariantMap completeSetupCheck();
     Q_INVOKABLE bool copySetupHealthDiagnostics();
     Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
                                                              const QString &scopeId = {});
@@ -717,6 +729,11 @@ public:
     Q_INVOKABLE bool addDetectedDeviceToRig(const QString &rigId, const QString &directInputId,
                                             bool required = true);
     Q_INVOKABLE bool activateDeviceRig(const QString &rigId);
+    Q_INVOKABLE QVariantMap activateDeviceRigResult(const QString &rigId,
+                                                    const QString &profileContextId = {});
+    // The Setup Complete page uses this explicit command so its frozen
+    // session refreshes to the actual post-activation system state.
+    Q_INVOKABLE QVariantMap activateSetupTruthDeviceRig(const QString &rigId);
     Q_INVOKABLE bool deactivateDeviceRig(const QString &rigId);
     Q_INVOKABLE bool setDefaultDeviceRig(const QString &rigId);
     Q_INVOKABLE bool clearDefaultDeviceRig(const QString &rigId);
@@ -728,6 +745,7 @@ public:
                                                bool enabled);
     Q_INVOKABLE bool setDeviceRigMemberOutput(const QString &rigId, const QString &controllerRecordId,
                                               const QString &outputLayoutId);
+    Q_INVOKABLE bool setDeviceRigPrimaryOutput(const QString &rigId, const QString &outputLayoutId);
     Q_INVOKABLE bool addDeviceRigOutput(const QString &rigId, const QString &outputLayoutId);
     Q_INVOKABLE bool removeDeviceRigOutput(const QString &rigId, const QString &outputLayoutId);
     Q_INVOKABLE bool setDeviceRigOutputEnabled(const QString &rigId, const QString &outputLayoutId,
@@ -1030,7 +1048,8 @@ private:
     QVariantMap activationDecisionVariant(const ActivationDecision &decision) const;
     void scheduleActivationResolution(const QString &reason);
     void resolveActivationNow();
-    bool applyActivationDecision(const ActivationDecision &decision, ActivationIntent intent);
+    bool applyActivationDecision(const ActivationDecision &decision, ActivationIntent intent,
+                                 QString *failure = nullptr);
     void clearManualActivationOverride(const QString &reason = {});
     void sampleForegroundGameContext();
     void updateRequiredDeviceDisconnectGrace();
@@ -1091,6 +1110,11 @@ private:
     bool axisIsOneSided(int physicalAxis) const;
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
+    // A Profile selects a Device Rig; the Rig selects its primary output.
+    // Configuration edits must use that ownership even while the Rig is only
+    // being viewed and has not been activated at runtime.
+    const VirtualOutputLayout *profilePrimaryOutputLayout(const ControllerProfile &profile) const;
+    VirtualOutputLayout *profilePrimaryOutputLayoutForWrite(const ControllerProfile &profile);
     const VirtualOutputLayout *activeOutputLayout() const;
     VirtualOutputLayout *activeOutputLayout();
     void synchronizeActiveOutputLayout();
@@ -1099,6 +1123,21 @@ private:
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
     void startVerification(VerificationMode mode);
+    // Startup uses the established read-only quick verifier, then inspects
+    // every output on the viewed Rig before publishing the first durable
+    // Setup Truth snapshot.  This is intentionally separate from the
+    // interactive setup/repair session: it neither creates a session nor
+    // authorizes a driver change.
+    void scheduleStartupSetupTruthInspection();
+    void startStartupSetupTruthInspection();
+    void inspectStartupSetupTruthOutputs();
+    void completeStartupSetupTruthInspection(
+        QHash<QString, ControllerReadinessPlan> outputPlans = {});
+    // Later control-plane transitions use the same passive inspection path
+    // as startup. Requests are coalesced so a Profile/Rig/output hand-off
+    // cannot create a utility-process storm.
+    void scheduleAutomaticSetupTruthRefresh();
+    void startAutomaticSetupTruthRefresh();
     bool applyControllerReadinessForConfiguration(const MapperConfiguration &configuration);
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
     QString setupTruthDirectInputId() const;
@@ -1110,6 +1149,10 @@ private:
                                   int calibratedAxisCount);
     bool calibrationNeedsSetup(const PhysicalControllerCapabilities &physical) const;
     enum class SetupConvergenceStage;
+    // A repair may safely expand an older saved descriptor to the exact
+    // proven Rig contract. It never removes a user-provisioned capability.
+    bool reconcileOutputLayoutRequirements(const QString &layoutId,
+                                           const MapperOutputRequirements &requirements);
     void refreshVirtualOutputReadiness(const QString &layoutId);
     // A complete rig can target more than the currently selected Profile
     // output.  These probes stay on the setup control plane and never alter
@@ -1214,6 +1257,9 @@ private:
     QDateTime m_setupConvergenceStarted;
     QDateTime m_setupConvergenceFinished;
     QVariantMap m_setupTruthSnapshot;
+    // The CHECK result remains available throughout the modal session, even
+    // after a final read-back replaces the current global truth projection.
+    QVariantMap m_setupTruthCheckSnapshot;
     QVariantMap m_setupTruthBeforeSnapshot;
     QVariantMap m_setupTruthAfterSnapshot;
     QVariantList m_setupRepairProgress;
@@ -1253,6 +1299,18 @@ private:
     QString m_pendingControllerArrivalId;
     bool m_verificationInProgress = false;
     QPointer<QThread> m_verificationThread;
+    // A quick startup inspection is followed by bounded, read-only probes
+    // for non-active outputs on the viewed Rig.  Keep that worker distinct
+    // from the primary verifier so shutdown can join both safely.
+    QPointer<QThread> m_setupTruthOutputInspectionThread;
+    QTimer m_setupTruthStartupInspectionTimer;
+    QTimer m_setupTruthAutomaticRefreshTimer;
+    bool m_setupTruthStartupInspectionPending = false;
+    bool m_setupTruthStartupInspectionInFlight = false;
+    bool m_setupTruthAutomaticRefreshPending = false;
+    bool m_setupTruthAutomaticRefreshInFlight = false;
+    bool m_setupTruthAutomaticRefreshFollowUp = false;
+    bool m_setupTruthSynchronousActivationRefresh = false;
     bool m_controllerSelectionInProgress = false;
     QPointer<QThread> m_controllerSelectionThread;
     // Discovery and process inspection are intentionally short-lived,

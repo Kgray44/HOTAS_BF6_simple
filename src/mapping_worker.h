@@ -134,6 +134,16 @@ struct AtomicRuntimeState {
     std::atomic_int mappingEffectiveState{static_cast<int>(MappingEffectiveState::Off)};
     std::atomic_bool outputNeutralized{true};
     std::atomic_bool vjoyReady{false};
+    // Runtime-output proof is written only as fixed-size atomics from the
+    // mapper thread. QML and setup diagnostics sample it later; no report
+    // allocates, logs, or wakes the GUI.
+    std::atomic_int activeOutputVjoyDeviceId{0};
+    std::atomic_bool outputReportsSucceeding{false};
+    std::atomic_uint64_t successfulOutputReportSequence{0};
+    std::atomic_uint64_t lastSuccessfulOutputReportMs{0};
+    std::atomic_uint64_t outputWriteFailures{0};
+    std::array<std::atomic<float>, kVirtualAxisSlotCount> mappedOutputAxes{};
+    std::array<std::atomic_bool, kMaximumVirtualButtons> mappedOutputButtons{};
     std::atomic_bool hidhideAvailable{false};
     std::atomic_bool hidhideCloakStateKnown{false};
     std::atomic_bool hidhideCloaked{false};

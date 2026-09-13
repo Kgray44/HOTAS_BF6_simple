@@ -322,7 +322,6 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
     for (const ControllerProfile &profile : configuration.profiles) {
         if (!resolvedProfileIds.contains(profile.id)) continue;
         selectedCategoryIds.insert(profile.categoryId);
-        selectedLayoutIds.insert(profile.outputLayoutId);
         for (const AxisMapping &axis : profile.axes) {
             if (axis.curve.family == CurveFamily::Personal && !axis.curve.presetId.isEmpty()) {
                 selectedCurveIds.insert(axis.curve.presetId);
@@ -351,15 +350,24 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
     for (const PersonalCurvePreset &curve : configuration.personalCurvePresets) {
         if (selectedCurveIds.contains(curve.id)) curves.append(ConfigStore::portableCurveToJson(curve));
     }
-    QJsonArray layouts;
-    for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
-        if (selectedLayoutIds.contains(layout.id)) layouts.append(ConfigStore::portableOutputLayoutToJson(layout));
-    }
     QJsonArray automations;
     for (const AutomationDefinition &automation : configuration.automations) {
         if (includeAutomations && automationReferencesAnyProfile(automation, resolvedProfileIds)) {
             automations.append(ConfigStore::portableAutomationToJson(automation));
+            // Automation actions may intentionally target a named output.
+            // That is advanced routing data, not Profile output ownership.
+            for (const AutomationActionDefinition &action : automation.actions) {
+                if (!action.outputLayoutId.isEmpty()) selectedLayoutIds.insert(action.outputLayoutId);
+            }
         }
+    }
+    // Only a deliberately explicit Automation target can carry a portable
+    // output descriptor. Profiles and ordinary Packs never derive an output
+    // from a Profile field; a destination Device Rig remains responsible for
+    // its own primary output.
+    QJsonArray layouts;
+    for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
+        if (selectedLayoutIds.contains(layout.id)) layouts.append(ConfigStore::portableOutputLayoutToJson(layout));
     }
     // Carry only the custom Adaptive Response presets that this export can
     // actually reference. Built-ins travel by stable ID and are reconstructed
@@ -770,9 +778,9 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
         setError(error, u"The portable configuration device manifest does not match its payload"_qs); return false;
     }
     for (const ControllerProfile &profile : parsed.profiles) {
-        if (!layoutIds.contains(profile.outputLayoutId)) {
-            setError(error, u"A portable profile is missing its required vJoy contract"_qs); return false;
-        }
+        // Device Rigs and their primary output are machine-local setup truth.
+        // A portable Profile carries mappings only and is intentionally
+        // assigned to a destination Rig after import.
         for (const AxisMapping &axis : profile.axes) {
             if (axis.curve.family == CurveFamily::Personal
                 && (!curveIds.contains(axis.curve.presetId)
@@ -782,6 +790,13 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
         }
         if (!adaptiveLayerReferencesAvailable(profile.adaptiveResponse, adaptivePresetIds)) {
             setError(error, u"A portable profile references a missing Adaptive Response preset"_qs); return false;
+        }
+    }
+    for (const AutomationDefinition &automation : parsed.automations) {
+        for (const AutomationActionDefinition &action : automation.actions) {
+            if (!action.outputLayoutId.isEmpty() && !layoutIds.contains(action.outputLayoutId)) {
+                setError(error, u"An Automation references a missing explicit vJoy output"_qs); return false;
+            }
         }
     }
     for (const ProfileCategory &category : parsed.categories) {
@@ -1063,8 +1078,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
         copied.name = destinationName;
         copied.categoryId = destinationCategoryId;
         copied.enabled = true;
-        const QString mappedLayout = layoutIds.value(copied.outputLayoutId);
-        copied.outputLayoutId = mappedLayout.isEmpty() ? candidate.outputLayouts.front().id : mappedLayout;
+        copied.outputLayoutId.clear();
         // A Device Rig is an explicitly verified, machine-local relationship
         // between physical controller records and output ownership. Its UUID
         // cannot be meaningful on another computer, and neither a Rig name nor

@@ -166,38 +166,25 @@ Flickable {
                     Text { text: backend.virtualAxisStatus + "  ·  " + backend.vjoyButtonCount + " buttons  ·  " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                     Text { text: "Required: " + backend.vjoyRequiredButtonCount + " buttons  ·  Optional recommended headroom: " + backend.vjoyRecommendedButtonCount; color: root.faintColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                SpinBox { id: vjoyDeviceSelector; from: 1; to: 16; value: backend.vjoyDeviceId; implicitWidth: 84; implicitHeight: 32; onValueModified: backend.setVjoyDeviceId(value)
-                    background: Rectangle { color: root.insetColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
-                    contentItem: TextInput { text: vjoyDeviceSelector.textFromValue(vjoyDeviceSelector.value, vjoyDeviceSelector.locale); readOnly: true; color: root.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 6; rightPadding: 27; font.family: theme.telemetryFont }
-                    up.indicator: Rectangle { x: vjoyDeviceSelector.mirrored ? 0 : parent.width - width; y: 0; width: 26; height: parent.height / 2; radius: theme.topGun ? 1 : theme.controlRadius
-                        color: !vjoyDeviceSelector.enabled ? theme.controlDisabled : vjoyDeviceSelector.up.pressed ? root.accentColor : vjoyDeviceSelector.up.hovered ? theme.buttonSecondaryHover : theme.buttonSecondary
-                        border.color: root.borderColor
-                        Text { anchors.centerIn: parent; text: "+"; color: root.textColor; font.pixelSize: 13; font.bold: true }
-                    }
-                    down.indicator: Rectangle { x: vjoyDeviceSelector.mirrored ? 0 : parent.width - width; y: parent.height / 2; width: 26; height: parent.height - y; radius: theme.topGun ? 1 : theme.controlRadius
-                        color: !vjoyDeviceSelector.enabled ? theme.controlDisabled : vjoyDeviceSelector.down.pressed ? root.accentColor : vjoyDeviceSelector.down.hovered ? theme.buttonSecondaryHover : theme.buttonSecondary
-                        border.color: root.borderColor
-                        Text { anchors.centerIn: parent; text: "−"; color: root.textColor; font.pixelSize: 13; font.bold: true }
-                    }
-                }
+                Text { text: "RIG-OWNED"; color: root.accentColor; font.pixelSize: 9; font.bold: true; font.family: theme.telemetryFont }
                 ActionButton { label: "CONFIGURE VJOY"; subdued: true; onTriggered: backend.openVjoyConfiguration() }
             }
         }
 
-        Card { visible: false; Layout.fillWidth: true; title: "Virtual Outputs"; detail: "Profiles reuse preconfigured vJoy layouts. Creating a layout records its intended descriptor; vJoy provisioning stays an explicit setup action."; accent: root.borderColor
+        Card { visible: false; Layout.fillWidth: true; title: "Virtual Outputs"; detail: "Device Rigs own preconfigured vJoy layouts. Creating a layout records its intended descriptor; vJoy provisioning stays an explicit setup action."; accent: root.borderColor
             Repeater { model: backend.virtualOutputLayouts
                 delegate: Rectangle { Layout.fillWidth: true; implicitHeight: layoutRow.implicitHeight + 14; color: root.insetColor; border.color: modelData.active ? root.readyColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
                     RowLayout { id: layoutRow; anchors.fill: parent; anchors.margins: 9; spacing: 9
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
                             Text { text: modelData.name.toUpperCase() + (modelData.active ? " · ACTIVE" : ""); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                            Text { text: "vJoy " + modelData.deviceId + "  ·  " + modelData.axes + "  ·  USED BY " + modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S"); color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: "vJoy " + modelData.deviceId + "  ·  " + modelData.axes + "  ·  PROVIDED TO " + modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + " THROUGH RIGS"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                         }
                         StatusPill { label: modelData.managedVisibility ? "VISIBILITY MANAGED" : "SETUP"; tone: modelData.managedVisibility ? root.readyColor : root.mutedColor }
                     }
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Use each profile's OUTPUT selector to reuse a compatible layout."; color: root.faintColor; font.pixelSize: 9 }
+                Text { Layout.fillWidth: true; text: "Choose each Device Rig's primary output in Devices."; color: root.faintColor; font.pixelSize: 9 }
                 ActionButton { label: "CREATE 5-AXIS OUTPUT"; subdued: true; actionEnabled: root.nextOutputDeviceId() > 0
                     onTriggered: { const id = root.nextOutputDeviceId(); backend.createFiveAxisOutputLayout("5-Axis Output " + id, id) } }
             }
@@ -303,7 +290,7 @@ Flickable {
         }
     }
 
-    Dialog { id: readinessDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(740, root.width - 36); height: Math.min(readinessScroll.implicitHeight + 36, root.height - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18; onOpened: backend.checkSetupHealth()
+    Dialog { id: readinessDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: Math.min(740, root.width - 36); height: Math.min(readinessScroll.implicitHeight + 36, root.height - 36); title: ""; standardButtons: Dialog.NoButton; padding: 18; onOpened: readinessPanel.beginNewSession()
         background: Rectangle { color: root.panelColor; border.color: root.accentColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: Flickable {
             id: readinessScroll

@@ -201,6 +201,21 @@ SetupProcessResult WindowsSetupProcessRunner::run(const QString &program, const 
                                                    int timeoutMs)
 {
     SetupProcessResult result;
+#ifdef HOTAS_STARTUP_TESTING
+    // The native QML lifecycle binary deliberately renders the real setup UI
+    // against deterministic fixtures.  It must never contend with the
+    // owner's HidHide or vJoy utilities merely because a visual interaction
+    // refreshes a readiness card.  This switch is set only by that test
+    // executable before AppBackend is constructed; production inspection and
+    // repair paths are unchanged.
+    if (qEnvironmentVariableIsSet("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION")) {
+        Q_UNUSED(program);
+        Q_UNUSED(arguments);
+        Q_UNUSED(timeoutMs);
+        result.error = QStringLiteral("External setup utility inspection is disabled by the native test fixture.");
+        return result;
+    }
+#endif
     if (!QFileInfo::exists(program)) {
         result.error = QStringLiteral("Utility was not found: %1").arg(program);
         return result;
@@ -345,26 +360,40 @@ void ControllerReadinessService::clearRecoveryJournal() const
 MapperOutputRequirements ControllerReadinessService::requirementsFor(const MapperConfiguration &configuration)
 {
     MapperOutputRequirements requirements;
-    const ControllerProfile *active = findProfile(configuration, configuration.activeProfileId);
-    const VirtualOutputLayout *layout = active
-        ? findOutputLayout(configuration, active->outputLayoutId) : nullptr;
+    // A Device Rig, rather than the selected Profile, owns the active vJoy
+    // descriptor. Profiles may switch mappings inside a Rig but must never
+    // silently move the mapper to a different virtual device.
+    const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    const VirtualOutputLayout *layout = activeRig
+        ? findOutputLayout(configuration, deviceRigPrimaryOutputLayoutId(*activeRig)) : nullptr;
     if (layout) {
         requirements = requirementsFor(layout->requirements);
-        // Output-layout button counts are provisioned capacity, not a live
-        // mapping requirement. Keep the exact layout axes, then derive the
-        // minimum button floor from every profile that can switch onto this
-        // same descriptor without a driver reconfiguration.
+        // The saved layout is a provisioning baseline, not a claim that an
+        // older descriptor covers every route. Derive the complete capacity
+        // floor from every Profile that can switch inside this Rig.
         requirements.buttons = 0;
         for (const ControllerProfile &profile : configuration.profiles) {
-            if (profile.outputLayoutId != layout->id) continue;
+            if (!activeRig || profile.deviceRigId != activeRig->id) continue;
+            for (const AxisMapping &axis : profile.axes) {
+                const int index = static_cast<int>(axis.target);
+                if (index > 0 && index < kVirtualAxisSlotCount) {
+                    requirements.axes[static_cast<size_t>(index)] = true;
+                }
+            }
             requirements.buttons = std::max(requirements.buttons, highestButton(profile.buttons));
             requirements.buttons = std::max(requirements.buttons, highestPovButton(profile.povs));
         }
     } else {
-        // Pre-migration/malformed callers retain the old conservative route
-        // union, but valid v2.0.10 configurations always take the exact
-        // descriptor path above.
-        for (const ControllerProfile &profile : configuration.profiles) {
+        // A configuration without an active Rig has no authoritative output
+        // owner.  It must not revive the retired Profile-output model by
+        // unioning mappings from unrelated Profiles: that can make setup
+        // provision a descriptor for a Profile the user neither selected nor
+        // activated.  Keep this bounded compatibility path to the active
+        // Profile only. Valid schema-29 configurations always take the exact
+        // Rig-primary path above.
+        if (const ControllerProfile *activeProfile = findProfile(
+                configuration, configuration.activeProfileId)) {
+            const ControllerProfile &profile = *activeProfile;
             for (const AxisMapping &axis : profile.axes) {
                 const int index = static_cast<int>(axis.target);
                 if (index > 0 && index < kVirtualAxisSlotCount) requirements.axes[static_cast<size_t>(index)] = true;
@@ -384,14 +413,16 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     // Canonical Signal Flow can retain fan-out legs which intentionally do
     // not fit in the historical one-target compatibility projections.  The
     // active output contract must therefore derive its capability floor from
-    // every enabled canonical sink in profiles that share this output layout.
+    // every enabled canonical sink in profiles assigned to this active Rig.
     // This also makes imported topology safe when an older layout descriptor
     // did not yet record a secondary button, axis, or native POV endpoint.
     if (configuration.signalFlow.topologyVersion >= 1) {
         for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
             if (!route.enabled) continue;
             const ControllerProfile *routeProfile = findProfile(configuration, route.profileId);
-            if (!routeProfile || (layout && routeProfile->outputLayoutId != layout->id)) continue;
+            if (!routeProfile
+                || (activeRig ? routeProfile->deviceRigId != activeRig->id
+                              : routeProfile->id != configuration.activeProfileId)) continue;
             if (route.destinationKind == SignalFlowPortKind::Axis
                 && route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount) {
                 requirements.axes[static_cast<size_t>(route.destinationIndex)] = true;
@@ -425,6 +456,36 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     requirements.discretePovs = std::clamp(requirements.discretePovs, 0, 4);
     requirements.incompatiblePovMix = requirements.continuousPovs > 0 && requirements.discretePovs > 0;
     return requirements;
+}
+
+MapperOutputRequirements ControllerReadinessService::requirementsForOutputLayout(
+    const MapperConfiguration &configuration, const QString &outputLayoutId)
+{
+    const VirtualOutputLayout *layout = findOutputLayout(configuration, outputLayoutId);
+    if (!layout) return {};
+
+    // Preserve a deterministic descriptor for legacy/unassigned layouts, then
+    // union every Rig deliberately assigned to this output. This makes
+    // inspection, repair, and final read-back use one identical contract.
+    MapperOutputRequirements result = requirementsFor(layout->requirements);
+    for (const DeviceRig &rig : configuration.deviceRigs) {
+        if (deviceRigPrimaryOutputLayoutId(rig) != layout->id) continue;
+        MapperConfiguration scoped = configuration;
+        scoped.activeDeviceRigId = rig.id;
+        const MapperOutputRequirements rigRequirements = requirementsFor(scoped);
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            result.axes[static_cast<size_t>(axis)] = result.axes[static_cast<size_t>(axis)]
+                || rigRequirements.axes[static_cast<size_t>(axis)];
+        }
+        result.buttons = std::max(result.buttons, rigRequirements.buttons);
+        result.continuousPovs = std::max(result.continuousPovs, rigRequirements.continuousPovs);
+        result.discretePovs = std::max(result.discretePovs, rigRequirements.discretePovs);
+    }
+    result.buttons = std::clamp(result.buttons, 0, kMaximumVirtualButtons);
+    result.continuousPovs = std::clamp(result.continuousPovs, 0, 4);
+    result.discretePovs = std::clamp(result.discretePovs, 0, 4);
+    result.incompatiblePovMix = result.continuousPovs > 0 && result.discretePovs > 0;
+    return result;
 }
 
 MapperOutputRequirements ControllerReadinessService::requirementsFor(

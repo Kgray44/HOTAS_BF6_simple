@@ -114,6 +114,10 @@ QList<DeviceRigStatus> evaluateDeviceRigs(const MapperConfiguration &configurati
                                           const QList<DiscoveredController> &inventory);
 DeviceRigActivationDecision chooseDeviceRigActivation(const MapperConfiguration &configuration,
                                                       const QList<DeviceRigStatus> &statuses);
+// An enabled active Device Rig is an explicit runtime topology even when it
+// has only one physical member and one virtual output. That simple shape
+// still owns controller-qualified mappings and canonical Signal Flow routes.
+bool hasActiveDeviceRigRuntime(const MapperConfiguration &configuration);
 CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &configuration,
                                                  const QString &rigId,
                                                  const QString &profileId = {});

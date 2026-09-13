@@ -221,6 +221,12 @@ DeviceRigActivationDecision chooseDeviceRigActivation(const MapperConfiguration 
     return decision;
 }
 
+bool hasActiveDeviceRigRuntime(const MapperConfiguration &configuration)
+{
+    const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    return rig && rig->enabled;
+}
+
 CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &configuration,
                                                  const QString &rigId,
                                                  const QString &profileId)
@@ -234,6 +240,11 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
     if (rig->members.empty() || rig->members.size() > kMaximumDeviceRigMembers
         || rig->outputs.empty() || rig->outputs.size() > kMaximumDeviceRigOutputs) {
         runtime.issue = u"The Device Rig has an invalid number of members or outputs."_qs;
+        return runtime;
+    }
+    const QString primaryOutputLayoutId = deviceRigPrimaryOutputLayoutId(*rig);
+    if (primaryOutputLayoutId.isEmpty()) {
+        runtime.issue = u"The Device Rig needs an enabled Primary Virtual Output."_qs;
         return runtime;
     }
     const ControllerProfile *profile = findProfile(configuration,
@@ -306,8 +317,11 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
             runtime.issue = u"The active profile has no enabled mapping for a Device Rig member."_qs;
             return runtime;
         }
+        // Member-specific destinations remain Rig topology. A member without
+        // an explicit advanced assignment always routes to the Rig-owned
+        // primary output; a Profile can never redirect it.
         QString outputLayoutId = configured.preferredOutputLayoutId;
-        if (outputLayoutId.isEmpty()) outputLayoutId = profile->outputLayoutId;
+        if (outputLayoutId.isEmpty()) outputLayoutId = primaryOutputLayoutId;
         if (compiledOutputFor(outputLayoutId) < 0) {
             // A one-output rig makes the safe/simple relationship implicit;
             // a multi-output rig requires an explicit member destination.

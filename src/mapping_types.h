@@ -684,11 +684,29 @@ struct DeviceRig {
     DeviceRigDisconnectBehavior disconnectBehavior = DeviceRigDisconnectBehavior::SuspendAffectedRoutes;
     std::vector<DeviceRigMember> members;
     std::vector<DeviceRigOutputTarget> outputs;
+    // A Device Rig, not a Profile, owns the active Virtual Output topology.
+    // The current runtime has one authoritative output; future simultaneous
+    // output routing remains represented by outputs plus member assignments.
+    QString primaryOutputLayoutId;
     // V2.4 preserves the existing opt-in HidHide ownership contract.  It is
     // presentation/control-plane metadata only; reports never change it.
     bool hidhideManaged = false;
     int presentationOrder = 0;
 };
+
+inline bool deviceRigOwnsEnabledOutput(const DeviceRig &rig, const QString &outputLayoutId)
+{
+    return !outputLayoutId.isEmpty() && std::any_of(rig.outputs.cbegin(), rig.outputs.cend(),
+        [&outputLayoutId](const DeviceRigOutputTarget &output) {
+            return output.enabled && output.outputLayoutId == outputLayoutId;
+        });
+}
+
+inline QString deviceRigPrimaryOutputLayoutId(const DeviceRig &rig)
+{
+    return deviceRigOwnsEnabledOutput(rig, rig.primaryOutputLayoutId)
+        ? rig.primaryOutputLayoutId : QString{};
+}
 
 // A profile still owns gameplay behavior, but each physical member owns a
 // separate mapping payload.  The legacy fields remain temporarily on
@@ -718,9 +736,9 @@ struct ControllerProfile {
     // Empty means an unassigned portable/legacy profile.  A V2.4 migration
     // fills it only when an existing active controller can be proven.
     QString deviceRigId;
-    // A profile chooses a reusable pre-provisioned virtual controller.  The
-    // report loop receives only the already-resolved device ID at a
-    // configuration boundary; it never looks this string up.
+    // Schema-28 and earlier persisted a Profile-owned output. It is read only
+    // as migration evidence and is never consulted by runtime activation,
+    // readiness, vJoy repair, HidHide, or normal Profile editing.
     QString outputLayoutId;
     // Profiles inherit the global bumpless-transfer behavior unless this
     // explicit advanced override is selected.
@@ -1602,7 +1620,6 @@ inline MapperConfiguration defaultConfiguration()
     general.id = generalProfileCategoryId();
     general.name = u"General"_qs;
     ControllerProfile normal = defaultProfile(normalProfileId(), u"Normal"_qs);
-    normal.outputLayoutId = defaultOutputLayoutId();
     normal.categoryId = general.id;
     ControllerProfile precision = normal;
     precision.id = precisionProfileId();

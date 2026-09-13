@@ -25,7 +25,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 28;
+constexpr int kProfileSchemaVersion = 29;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -1467,6 +1467,7 @@ QJsonObject deviceRigToJson(const DeviceRig &rig)
             {u"activationPriority"_qs, rig.activationPriority}, {u"fallbackRigId"_qs, rig.fallbackRigId},
             {u"disconnectBehavior"_qs, static_cast<int>(rig.disconnectBehavior)},
             {u"members"_qs, members}, {u"outputs"_qs, outputs},
+            {u"primaryOutputLayoutId"_qs, deviceRigPrimaryOutputLayoutId(rig)},
             {u"hidhideManaged"_qs, rig.hidhideManaged}, {u"presentationOrder"_qs, rig.presentationOrder}};
 }
 
@@ -1491,6 +1492,8 @@ bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
     if (behavior < static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes)
         || behavior > static_cast<int>(DeviceRigDisconnectBehavior::UseFallback)) return false;
     restored.disconnectBehavior = static_cast<DeviceRigDisconnectBehavior>(behavior);
+    restored.primaryOutputLayoutId = json.value(u"primaryOutputLayoutId"_qs)
+        .toString().trimmed().left(96);
     restored.hidhideManaged = json.value(u"hidhideManaged"_qs).toBool(false);
     restored.presentationOrder = std::max(0, json.value(u"presentationOrder"_qs).toInt());
     QSet<QString> memberIds;
@@ -1543,7 +1546,6 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"enabled"_qs, profile.enabled},
         {u"automaticSelectionMode"_qs, profileAutomaticSelectionModeKey(profile.automaticSelectionMode)},
         {u"deviceRigId"_qs, profile.deviceRigId},
-        {u"outputLayoutId"_qs, profile.outputLayoutId},
         {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
         {u"curveTransitionSmoothing"_qs,
          curveTransitionSmoothingToJson(profile.curveTransitionSmoothing)},
@@ -1904,26 +1906,12 @@ bool seedBundledBattlefieldHelicopterProfile(MapperConfiguration *configuration)
         seeded.name = uniqueBundledProfileName(*configuration, seeded.name, seeded.categoryId);
         if (seeded.name.isEmpty()) return false;
     }
-
-    if (!findOutputLayout(*configuration, seeded.outputLayoutId)) {
-        const VirtualOutputLayout *sourceLayout = nullptr;
-        for (const VirtualOutputLayout &layout : bundle.outputLayouts) {
-            if (layout.id == seeded.outputLayoutId) {
-                sourceLayout = &layout;
-                break;
-            }
-        }
-        if (!sourceLayout) return false;
-        const auto sameDevice = std::find_if(configuration->outputLayouts.cbegin(),
-            configuration->outputLayouts.cend(), [sourceLayout](const VirtualOutputLayout &layout) {
-                return layout.requirements.deviceId == sourceLayout->requirements.deviceId;
-            });
-        if (sameDevice != configuration->outputLayouts.cend()) {
-            seeded.outputLayoutId = sameDevice->id;
-        } else {
-            configuration->outputLayouts.push_back(*sourceLayout);
-        }
-    }
+    // A bundled Profile is portable mapping behavior, not a virtual-device
+    // provisioning recipe. It deliberately arrives unattached so the owner
+    // selects a verified local Device Rig; it must never create or redirect a
+    // vJoy output during startup seeding.
+    seeded.deviceRigId.clear();
+    seeded.outputLayoutId.clear();
 
     configuration->profiles.push_back(std::move(seeded));
     destinationCategory->profileIds.push_back(configuration->profiles.back().id);
@@ -1934,6 +1922,96 @@ bool seedBundledBattlefieldHelicopterProfile(MapperConfiguration *configuration)
         destinationCategory->lastActiveProfileId = configuration->profiles.back().id;
     }
     return true;
+}
+
+void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
+{
+    if (!configuration) return;
+
+    QStringList unresolvedRigs;
+    for (DeviceRig &rig : configuration->deviceRigs) {
+        QStringList enabledOutputs;
+        for (const DeviceRigOutputTarget &target : rig.outputs) {
+            if (target.enabled && !target.outputLayoutId.isEmpty()
+                && findOutputLayout(*configuration, target.outputLayoutId)
+                && !enabledOutputs.contains(target.outputLayoutId)) {
+                enabledOutputs.append(target.outputLayoutId);
+            }
+        }
+
+        if (deviceRigOwnsEnabledOutput(rig, rig.primaryOutputLayoutId)) continue;
+
+        QString selected;
+        // A one-output Rig is never ambiguous. This is the exact owner
+        // configuration: BF6 Test Rig's Flight Deck Output 2 must win over
+        // every stale Profile field.
+        if (enabledOutputs.size() == 1) {
+            selected = enabledOutputs.front();
+        }
+
+        // For a historical multi-output Rig, the active coherent route is
+        // stronger evidence than a stale non-active Profile field.
+        if (selected.isEmpty() && rig.id == configuration->activeDeviceRigId) {
+            if (const ControllerProfile *active = findProfile(*configuration,
+                                                               configuration->activeProfileId);
+                active && active->deviceRigId == rig.id
+                    && enabledOutputs.contains(active->outputLayoutId)) {
+                selected = active->outputLayoutId;
+            }
+        }
+
+        // If every attached legacy Profile agrees on an output already owned
+        // by this Rig, that agreement is safe migration evidence.
+        if (selected.isEmpty()) {
+            QSet<QString> agreedOutputs;
+            for (const ControllerProfile &profile : configuration->profiles) {
+                if (profile.deviceRigId == rig.id
+                    && enabledOutputs.contains(profile.outputLayoutId)) {
+                    agreedOutputs.insert(profile.outputLayoutId);
+                }
+            }
+            if (agreedOutputs.size() == 1) selected = *agreedOutputs.cbegin();
+        }
+
+        if (selected.isEmpty()) {
+            rig.primaryOutputLayoutId.clear();
+            unresolvedRigs.append(rig.name);
+        } else {
+            rig.primaryOutputLayoutId = selected;
+        }
+    }
+
+    // Legacy Profile output fields are migration evidence only. Clearing them
+    // here makes it structurally impossible for a later runtime consumer to
+    // restore Profile-owned output selection.
+    for (ControllerProfile &profile : configuration->profiles) profile.outputLayoutId.clear();
+
+    if (const DeviceRig *activeRig = findDeviceRig(*configuration,
+                                                    configuration->activeDeviceRigId)) {
+        if (const VirtualOutputLayout *layout = findOutputLayout(
+                *configuration, deviceRigPrimaryOutputLayoutId(*activeRig))) {
+            configuration->vjoyDeviceId = layout->requirements.deviceId;
+            // Automation output IDs are an explicit advanced-routing target,
+            // not a Profile ownership field. Fill only formerly implicit
+            // actions so they continue to follow the now-canonical Rig route.
+            for (AutomationDefinition &automation : configuration->automations) {
+                for (AutomationActionDefinition &action : automation.actions) {
+                    if ((action.type == AutomationActionType::VJoyButtonHold
+                         || action.type == AutomationActionType::VJoyButtonToggle
+                         || action.type == AutomationActionType::VJoyButtonTap)
+                        && action.outputLayoutId.isEmpty()) {
+                        action.outputLayoutId = layout->id;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!unresolvedRigs.isEmpty()) {
+        configuration->deviceRigMigrationWarning = QString(
+            u"Choose a Primary Virtual Output for %1 before it can become ready. "
+            u"Profiles no longer choose virtual outputs."_qs).arg(unresolvedRigs.join(u", "_qs));
+    }
 }
 
 } // namespace
@@ -1972,10 +2050,11 @@ bool ConfigStore::save(const MapperConfiguration &configuration)
 QJsonObject ConfigStore::toJson(const MapperConfiguration &input)
 {
     // Exporting a fixture or a freshly created configuration must produce the
-    // same schema-28 canonical topology as an immediate-persistence edit.
+    // same schema-29 canonical topology as an immediate-persistence edit.
     // This remains control-plane work; MappingWorker receives an already
     // reconciled snapshot from AppBackend.
     MapperConfiguration configuration = input;
+    migrateDeviceRigOutputOwnership(&configuration);
     reconcileSignalFlowState(&configuration);
     QJsonArray calibration;
     for (const Calibration &axis : configuration.calibration) calibration.append(calibrationToJson(axis));
@@ -2087,6 +2166,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         && version != 21 && version != 22 && version != 23 && version != 24 && version != 25
         && version != 26
         && version != 27
+        && version != 28
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -2457,19 +2537,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (!findProfile(configuration, configuration.activeProfileId)) {
         configuration.activeProfileId = normalProfileId();
     }
-    for (ControllerProfile &profile : configuration.profiles) {
-        if (!findOutputLayout(configuration, profile.outputLayoutId)) {
-            if (version >= 18) {
-                if (valid) *valid = false;
-                return fallbackWithGlobalSettings(json);
-            }
-            profile.outputLayoutId = defaultOutputLayoutId();
-        }
-    }
-    if (const VirtualOutputLayout *activeLayout = findOutputLayout(configuration,
-            activeProfile(configuration).outputLayoutId)) {
-        configuration.vjoyDeviceId = activeLayout->requirements.deviceId;
-    }
+    // Profile outputLayoutId is legacy migration data only. It is deliberately
+    // not validated as an active runtime dependency: a stale vJoy Device 1
+    // reference must never invalidate a healthy Rig-owned Device 2 route.
     if (version >= 23) {
         const QJsonArray rigs = json.value(u"deviceRigs"_qs).toArray();
         if (rigs.size() > 64) {
@@ -2598,7 +2668,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
                 profile.deviceRigId = migrated.id;
                 DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, legacyRecord->id);
                 mapping.nativePovBindings = configuration.nativePovBindings;
-                profileOutputs.insert(profile.outputLayoutId);
+                if (!profile.outputLayoutId.isEmpty()) profileOutputs.insert(profile.outputLayoutId);
             }
             for (const QString &outputId : profileOutputs) migrated.outputs.push_back({outputId, true});
             if (migrated.outputs.empty()) migrated.outputs.push_back({defaultOutputLayoutId(), true});
@@ -2612,7 +2682,6 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
                 }
                 for (AutomationActionDefinition &action : automation.actions) {
                     action.sourceControllerRecordId = legacyRecord->id;
-                    if (action.outputLayoutId.isEmpty()) action.outputLayoutId = activeProfile(configuration).outputLayoutId;
                 }
             }
         } else {
@@ -2652,6 +2721,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version < kProfileSchemaVersion) {
         seedBundledBattlefieldHelicopterProfile(&configuration);
     }
+    migrateDeviceRigOutputOwnership(&configuration);
     // Schema 27 made topology canonical. Restore the one-target focused
     // editor projection before reconciliation so a parser's legacy duplicate
     // normalizer cannot erase an explicit mixer/fan-out route from disk.

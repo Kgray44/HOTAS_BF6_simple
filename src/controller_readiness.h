@@ -272,6 +272,11 @@ public:
                                         SetupUtilityPaths utilityPaths = {});
 
     static MapperOutputRequirements requirementsFor(const MapperConfiguration &configuration);
+    // One Device Rig owns each virtual output.  Its capability contract must
+    // include every Profile that can explicitly switch inside that Rig, not
+    // merely the descriptor that happened to be persisted on the layout.
+    static MapperOutputRequirements requirementsForOutputLayout(const MapperConfiguration &configuration,
+                                                                 const QString &outputLayoutId);
     // Saved controller records capture an exact output contract at verified
     // setup time. Convert it without consulting a live mapping profile so a
     // switch can enforce the target controller's capability floor.

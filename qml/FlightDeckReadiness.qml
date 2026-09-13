@@ -109,6 +109,14 @@ Item {
     function presentationFor(state) {
         const setupTruth = state.setupTruth || {};
         const truthStatus = String(setupTruth.overallStatus || "");
+        // Startup publishes the same Setup Truth object before its first
+        // read-only result. Do not let legacy runtime telemetry call that
+        // uninspected interval READY (or UNKNOWN) in the rail while Devices
+        // and Overview correctly say CHECKING.
+        if (truthStatus === "CHECKING") {
+            return { label: "CHECKING SETUP", tone: "informational",
+                detail: "HOTAS BF6 is reading the current controller, virtual output, and isolation state." };
+        }
         if (setupTruth.fresh && truthStatus.length > 0 && truthStatus !== "CHECKING") {
             if (truthStatus === "READY")
                 return { label: "READY", tone: "healthy", detail: "The current setup truth is ready for use." };

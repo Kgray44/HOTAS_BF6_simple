@@ -632,7 +632,15 @@ if (BUILD_TESTING)
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
-    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
+    # The native QML lifecycle suite supplies its own deterministic controller,
+    # output, and setup-assistant fixtures.  Do not let a release test inspect
+    # or hold the owner's live DirectInput, vJoy, or HidHide state while those
+    # fixtures are executing.
+    # --isolated-presentation keeps the real QML geometry visible to the
+    # offscreen test platform while AppBackend retains its smoke-safe hardware
+    # boundary.  --startup-smoke would hide the window and invalidate Popup
+    # placement assertions that are part of this lifecycle suite.
+    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")

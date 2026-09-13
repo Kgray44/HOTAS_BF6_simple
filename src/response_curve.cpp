@@ -1135,7 +1135,9 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                      : configuration.curveTransitionSmoothing);
         compileSignalFlowTopology(configuration, profile, {}, &runtime);
-        const VirtualOutputLayout *layout = findOutputLayout(configuration, profile.outputLayoutId);
+        const DeviceRig *rig = findDeviceRig(configuration, profile.deviceRigId);
+        const VirtualOutputLayout *layout = rig ? findOutputLayout(
+            configuration, deviceRigPrimaryOutputLayoutId(*rig)) : nullptr;
         cache.profileVjoyDeviceIds.push_back(layout ? layout->requirements.deviceId
                                                     : configuration.vjoyDeviceId);
         if (profile.id == configuration.activeProfileId) cache.baseProfileIndex = profileIndex;

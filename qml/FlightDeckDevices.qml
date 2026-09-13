@@ -15,12 +15,11 @@ Flickable {
     // touching AppBackend, device discovery, or persisted configuration.
     // Production never assigns this and always consumes backend.controllers.
     property var controllerPresentationOverride: null
-    // Test-only presentation data keeps legacy geometry fixtures isolated.
-    // Production setup actions route exclusively through setupHealthDialog.
-    property var proposedChangesPresentationOverride: null
+    // Test-only plan data keeps dialog geometry fixtures independent from
+    // driver state. Production always reads the authoritative Setup Truth plan.
+    property var repairPlanPresentationFixture: null
     property bool virtualDetailsOpen: false
     property bool isolationDetailsOpen: false
-    property bool verificationDetailsOpen: false
     // Device Rigs remain configuration-owned data.  This page keeps only the
     // currently inspected ID and transient acknowledgement state; every
     // create/edit/activate operation below is routed through AppBackend.
@@ -50,18 +49,12 @@ Flickable {
         ? backend.controllers : controllerPresentationOverride
     readonly property var rigItems: backend.deviceRigs || []
     readonly property var outputLayouts: backend.virtualOutputLayouts || []
+    // This is read-only control-plane telemetry sampled from the mapper's
+    // fixed atomics. It lets the owner distinguish a configured descriptor
+    // from a mapper that has actually published to the active Rig output.
+    readonly property var outputRuntime: backend.outputRuntimeTelemetry || ({})
     readonly property var axisItems: backend.axes
     readonly property bool checking: backend.setupRepairSessionActive
-    readonly property bool canRepairSetup: (setupTruth.repairPlan || []).length > 0 && !checking
-    readonly property bool canUndoRepair: state.controllerSetupCanUndo === undefined
-        ? backend.controllerSetupCanUndo : state.controllerSetupCanUndo
-    readonly property bool canRepairHidHideAccess: (state.hidhideAvailable === undefined
-        ? backend.hidhideAvailable : state.hidhideAvailable)
-        && (state.hidhideCloakStateKnown === undefined
-            ? backend.hidhideCloakStateKnown : state.hidhideCloakStateKnown)
-        && (state.hidhideCloaked === undefined ? backend.hidhideCloaked : state.hidhideCloaked)
-        && !(state.hidhideMapperAllowed === undefined
-            ? backend.hidhideMapperAllowed : state.hidhideMapperAllowed)
     readonly property bool vjoyReady: state.vjoyReady === undefined ? backend.vjoyReady : state.vjoyReady
     readonly property string vjoyDeviceId: state.vjoyDeviceId === undefined
         ? backend.vjoyDeviceId : state.vjoyDeviceId
@@ -72,22 +65,10 @@ Flickable {
         ? backend.vjoyContinuousPovCount : state.vjoyContinuousPovCount
     readonly property int vjoyDiscretePovCount: state.vjoyDiscretePovCount === undefined
         ? backend.vjoyDiscretePovCount : state.vjoyDiscretePovCount
-    readonly property string verificationState: state.controllerReadinessState === undefined
-        ? backend.controllerReadinessState : state.controllerReadinessState
-    readonly property string verificationStatus: state.controllerReadinessStatus === undefined
-        ? backend.controllerReadinessStatus : state.controllerReadinessStatus
-    readonly property var proposedChanges: proposedChangesPresentationOverride !== null
-        ? proposedChangesPresentationOverride
-        : state.controllerReadinessProposedChanges === undefined
-            ? backend.controllerReadinessProposedChanges : state.controllerReadinessProposedChanges
     // Production repair approval is always the frozen central Setup Truth
-    // plan. The presentation override remains exclusively fixture-owned.
-    readonly property var setupRepairPlan: proposedChangesPresentationOverride !== null
-        ? proposedChanges : (setupTruth.repairPlan || [])
-    readonly property bool reconnectRequired: state.controllerReconnectRequired === undefined
-        ? backend.controllerReconnectRequired : state.controllerReconnectRequired
-    readonly property bool disconnectObserved: state.controllerDisconnectObserved === undefined
-        ? backend.controllerDisconnectObserved : state.controllerDisconnectObserved
+    // plan. The fixture never receives a ControllerReadiness plan.
+    readonly property var setupRepairPlan: repairPlanPresentationFixture !== null
+        ? repairPlanPresentationFixture : (setupTruth.repairPlan || [])
     readonly property bool hidhideAvailable: state.hidhideAvailable === undefined
         ? backend.hidhideAvailable : state.hidhideAvailable
     readonly property bool hidhideCloakStateKnown: state.hidhideCloakStateKnown === undefined
@@ -148,6 +129,20 @@ Flickable {
         return "informational";
     }
 
+    function outputPublicationSummary() {
+        const target = Number(outputRuntime.activeVjoyDeviceId || 0);
+        if (target <= 0)
+            return "MAPPER OUTPUT · Waiting for an active Device Rig output.";
+        const sequence = Number(outputRuntime.successfulOutputReportSequence || 0);
+        const failures = Number(outputRuntime.outputWriteFailures || 0);
+        if (!outputRuntime.outputReportsSucceeding || sequence <= 0)
+            return "MAPPER OUTPUT · vJoy Device " + target + " · Waiting for the first successful mapped report.";
+        let summary = "MAPPER OUTPUT · vJoy Device " + target + " · Publishing mapped reports · #" + sequence;
+        if (failures > 0)
+            summary += " · " + failures + " write error" + (failures === 1 ? "" : "s");
+        return summary;
+    }
+
     function markerFor(tone) {
         if (tone === "healthy") return "✓";
         if (tone === "attention" || tone === "fault") return "!";
@@ -198,8 +193,7 @@ Flickable {
 
     function rigState(rig) {
         if (!rig) return "Offline";
-        if (rig.inUse) return "IN USE";
-        if (rig.configured) return "CONFIGURED";
+        if (rig.configured) return "ACTIVE";
         return "VIEWING";
     }
 
@@ -316,6 +310,14 @@ Flickable {
         return showActionFeedback({ success: !!succeeded,
             title: succeeded ? successTitle : failureTitle,
             message: succeeded ? successMessage : failureMessage }, failureTitle, failureMessage);
+    }
+
+    function activateRig(rig) {
+        if (!rig || !rig.id) return showActionFeedback({}, "Device Rig was not activated",
+                                                        "The selected Device Rig is no longer available.");
+        return showActionFeedback(backend.activateDeviceRigResult(String(rig.id)),
+                                  "Device Rig was not activated",
+                                  "No activation decision was returned.");
     }
 
     function openRigDetails(rigId) {
@@ -868,7 +870,10 @@ Flickable {
                         }
                         Text {
                             visible: (rig.outputs || []).length > 0
-                            text: "OUTPUT  ·  " + (rig.outputs || []).map(function(output) { return String(output.name || "Virtual Output"); }).join("  ·  ")
+                            text: "RIG PRIMARY OUTPUT  ·  " + (rig.outputs || []).map(function(output) {
+                                return (output.primary ? "PRIMARY · " : "") + String(output.name || "Virtual Output")
+                                    + " · vJoy " + String(output.deviceId || "?");
+                            }).join("  ·  ")
                             color: deck.textMuted
                             font.family: deck.telemetryFont
                             font.pixelSize: 9
@@ -889,9 +894,7 @@ Flickable {
                                 objectName: "flightDeckActivateRig_" + String(rig.id || "")
                                 text: rig.configured ? "ACTIVE" : "SET ACTIVE"
                                 enabled: !!rig.enabled && !rig.configured
-                                onClicked: root.reportBooleanAction(backend.activateDeviceRig(String(rig.id || "")),
-                                    "Device Rig activated", "HOTAS BF6 selected a compatible Profile, Rig, and Virtual Output together.",
-                                    "Device Rig was not activated", "Resolve the indicated Profile, required controller, or Virtual Output issue and try again.")
+                                onClicked: root.activateRig(rig)
                             }
                         }
                     }
@@ -917,11 +920,21 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: deck.space4
-                        Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.vjoyReady ? "Online" : "Action needed"; color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
-                        Text { text: root.vjoyCheck.message || output.detail || "Checking virtual output."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "CURRENT ACTIVE OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                        Text { text: root.toneFor(root.vjoyCheck) === "healthy" ? "Online" : "Action needed"; color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
+                        Text { text: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId + "\n" + (root.vjoyCheck.message || output.detail || "Checking virtual output."); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text {
+                            visible: Number(root.outputRuntime.activeVjoyDeviceId || 0) > 0
+                            text: root.outputPublicationSummary()
+                            color: root.outputRuntime.outputReportsSucceeding ? deck.healthy : deck.warning
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
                     }
-                    FlightDeckStatusChip { tokens: deck; label: root.vjoyReady ? "ONLINE" : "ACTION NEEDED"; value: "vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
+                    FlightDeckStatusChip { tokens: deck; label: root.toneFor(root.vjoyCheck) === "healthy" ? "ONLINE" : "ACTION NEEDED"; value: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
                 }
                 Text { text: "Virtual output is the controller signal games receive from HOTAS BF6."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
@@ -929,7 +942,7 @@ Flickable {
                     Button {
                         // Manual driver configuration is an advanced fallback,
                         // never a competing normal repair route.
-                        visible: !root.vjoyReady && root.virtualDetailsOpen
+                        visible: root.toneFor(root.vjoyCheck) !== "healthy" && root.virtualDetailsOpen
                         text: "OPEN VJOY SETUP"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
@@ -1071,116 +1084,6 @@ Flickable {
                 }
             }
         }
-        FlightDeckCard {
-            objectName: "flightDeckVerification"
-            tokens: deck
-            Layout.fillWidth: true
-            implicitHeight: verificationContent.implicitHeight + deck.space32
-            border.color: root.requestedContext === "verification" ? deck.accent : deck.border
-            ColumnLayout {
-                id: verificationContent
-                anchors.fill: parent
-                anchors.margins: deck.space16
-                spacing: deck.space12
-                RowLayout {
-                    Layout.fillWidth: true
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: deck.space4
-                        Text { text: "CONTROLLER VERIFICATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: checking ? "Checking setup" : String(root.verificationState || "Not checked"); color: deck.statusColor(readiness.tone || "informational"); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
-                        Text { text: root.verificationStatus || "Verify the selected controller, virtual output, and device isolation."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    }
-                    Button {
-                        objectName: "flightDeckVerifySetup"
-                        text: "VIEW SETUP HEALTH"
-                        enabled: !checking
-                        focusPolicy: Qt.StrongFocus
-                        implicitHeight: deck.controlHeight
-                        onClicked: setupHealthDialog.open()
-                        background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    }
-                }
-                Repeater {
-                    model: state.checks || []
-                    delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: verificationRow.implicitHeight + deck.space16
-                        radius: deck.radiusControl
-                        color: deck.elevatedSurface
-                        border.color: deck.border
-                        RowLayout {
-                            id: verificationRow
-                            anchors.fill: parent
-                            anchors.margins: deck.space8
-                            spacing: deck.space8
-                            Text { text: root.markerFor(root.toneFor(modelData)); color: deck.statusColor(root.toneFor(modelData)); font.pixelSize: 15; font.bold: true }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: deck.space4
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: modelData.name || "Setup check"; color: deck.textPrimary; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: String(modelData.state || "Checking").toUpperCase(); color: deck.statusColor(root.toneFor(modelData)); font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                }
-                                Text { text: modelData.message || ""; color: deck.textSecondary; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                            }
-                        }
-                    }
-                }
-                Rectangle {
-                    visible: root.proposedChanges.length > 0
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? proposedChanges.implicitHeight + deck.space24 : 0
-                    radius: deck.radiusControl
-                    color: deck.secondarySurface
-                    border.color: deck.attention
-                    ColumnLayout {
-                        id: proposedChanges
-                        anchors.fill: parent
-                        anchors.margins: deck.space12
-                        spacing: deck.space4
-                        Text { text: "RECOMMENDED NEXT STEP"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Repeater {
-                            model: root.proposedChanges
-                            delegate: Text { text: "• " + (modelData.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        }
-                    }
-                }
-                Text {
-                    visible: root.reconnectRequired
-                    text: root.disconnectObserved ? "Controller disconnected. Reconnect the selected controller and move a control to complete verification." : "Device isolation changed visibility. Unplug and reconnect the selected controller when prompted to complete verification."
-                    color: deck.attention
-                    font.pixelSize: 10
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: deck.space8
-                    Button {
-                        visible: root.canUndoRepair
-                        text: "UNDO REPAIR"
-                        focusPolicy: Qt.StrongFocus
-                        implicitHeight: deck.compactControlHeight
-                        onClicked: undoConfirmation.open()
-                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.attention; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    }
-                    Item { Layout.fillWidth: true }
-                    Button {
-                        text: "OPEN DIAGNOSTICS"
-                        focusPolicy: Qt.StrongFocus
-                        implicitHeight: deck.compactControlHeight
-                        onClicked: root.navigateToPage(3)
-                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    }
-                }
-            }
-        }
-
         FlightDeckCard {
             tokens: deck
             contentPadding: deck.cardPaddingCompact
@@ -1398,8 +1301,8 @@ Flickable {
                 RowLayout {
                     Layout.fillWidth: true
                     FlightDeckStatusChip { tokens: deck; label: rigDetailsContent.rig ? String(rigDetailsContent.rig.healthLabel || "Offline").toUpperCase() : "OFFLINE"; value: root.rigState(rigDetailsContent.rig); tone: root.rigTone(rigDetailsContent.rig) }
-                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile / Output pair." : "Viewing and editing this Rig does not activate it."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                    RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE" : "SET ACTIVE"; enabled: rigDetailsContent.rig && rigDetailsContent.rig.enabled && !rigDetailsContent.rig.configured; onClicked: root.reportBooleanAction(backend.activateDeviceRig(String(rigDetailsContent.rig.id || "")), "Device Rig activated", "HOTAS BF6 selected a compatible Profile, Rig, and Virtual Output together.", "Device Rig was not activated", "Resolve the indicated Profile, required controller, or Virtual Output issue and try again.") }
+                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE" : "SET ACTIVE"; enabled: rigDetailsContent.rig && rigDetailsContent.rig.enabled && !rigDetailsContent.rig.configured; onClicked: root.activateRig(rigDetailsContent.rig) }
                 }
                 Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                 RowLayout {
@@ -1485,7 +1388,7 @@ Flickable {
                     RigButton { text: "ADD CONTROLLER"; enabled: rigMemberAdder.currentIndex >= 0; onClicked: { const controller = root.controllerForCandidate(rigDetailsDialog.addMemberId); const added = controller && controller.id ? backend.addDeviceRigMember(String(rigDetailsContent.rig.id || ""), String(controller.id || ""), true) : controller ? backend.addDetectedDeviceToRig(String(rigDetailsContent.rig.id || ""), String(controller.directInputId || ""), true) : false; root.reportBooleanAction(added, "Controller added", "Review the controller routes and requirement before activation.", "Controller was not added", "Refresh devices or choose a controller that is not already in this Rig."); rigDetailsDialog.resetChoices(); } }
                 }
 
-                Text { text: "VIRTUAL OUTPUTS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "VIRTUAL OUTPUTS · PRIMARY REQUIRED"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
                 Repeater {
                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.outputs || []) : []
                     delegate: Rectangle {
@@ -1503,10 +1406,11 @@ Flickable {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                Text { text: String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: (modelData.primary ? "PRIMARY · " : "") + String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Text { text: String(modelData.status || "Output unavailable") + "  ·  " + Number(modelData.routeCount || 0) + " configured routes"; color: modelData.ready ? deck.textMuted : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                             RigButton { text: "OPEN"; subdued: true; onClicked: { rigDetailsDialog.close(); root.openRigOutput(String(modelData.id || "")); } }
+                            RigButton { text: modelData.primary ? "PRIMARY" : "MAKE PRIMARY"; subdued: !!modelData.primary; enabled: !modelData.primary && !!modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigPrimaryOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Rig primary output updated", "Profiles assigned to this Rig now use this Virtual Output.", "Rig primary output was not updated", "Choose an enabled Virtual Output in this Rig.") }
                             RigButton { text: modelData.enabled ? "IN USE" : "ENABLE"; subdued: !modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigOutputEnabled(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.enabled), "Virtual Output updated", !modelData.enabled ? "This Virtual Output is enabled for the Rig." : "This Virtual Output is disabled for the Rig.", "Virtual Output was not updated", "A Rig needs at least one enabled, unassigned output.") }
                             RigButton { text: "REMOVE"; destructive: true; enabled: (rigDetailsContent.rig.outputs || []).length > 1; onClicked: root.reportBooleanAction(backend.removeDeviceRigOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Virtual Output removed", "The output is no longer part of this Rig.", "Virtual Output was not removed", "Move member assignments first, then keep at least one output in the Rig.") }
                         }
@@ -1575,7 +1479,7 @@ Flickable {
         tokens: deck
         heading: "Setup health & repair"
         preferredWidth: 760
-        onOpened: backend.checkSetupHealth()
+        onOpened: setupHealthPanel.beginNewSession()
         contentItem: Flickable {
             width: setupHealthDialog.availableWidth
             implicitHeight: Math.min(setupHealthPanel.implicitHeight, setupHealthDialog.maximumBodyHeight)

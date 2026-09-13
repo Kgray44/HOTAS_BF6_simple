@@ -25,6 +25,8 @@ Flickable {
     property bool replaceCategoryConfirmed: false
     property bool replaceProfilesConfirmed: false
     property var runningApplications: []
+    property string activationNotice: ""
+    property bool activationNoticeFailed: false
     // The shell owns this compact snapshot while the heavy page Loader is
     // inactive. It intentionally excludes delegates, dialogs, and models.
     property var presentationState: ({})
@@ -67,6 +69,13 @@ Flickable {
         return result
     }
     function copyValue(value) { return JSON.parse(JSON.stringify(value)) }
+    function activateProfile(id) {
+        const result = backendObject.activateProfileResult(String(id || ""))
+        activationNotice = String(result.title || "Profile activation")
+            + "\n" + String(result.message || "")
+        activationNoticeFailed = !result.success
+        return !!result.success
+    }
     function restorePresentationState() {
         const saved = presentationState || ({})
         if (!saved.view) return
@@ -375,6 +384,27 @@ Flickable {
             ActionButton { visible: root.view === "library"; label: "+ PROFILE"; onTriggered: { createProfileDialog.categoryId = backendObject.activeCategoryId; createProfileDialog.open() } }
         }
 
+        Card {
+            Layout.fillWidth: true
+            visible: root.activationNotice.length > 0
+            cardAccent: root.activationNoticeFailed ? root.danger : root.good
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    Layout.fillWidth: true
+                    text: root.activationNotice
+                    color: root.text
+                    font.pixelSize: 10
+                    wrapMode: Text.WordWrap
+                }
+                ActionButton {
+                    label: "DISMISS"
+                    subdued: true
+                    onTriggered: root.activationNotice = ""
+                }
+            }
+        }
+
         // Library
         Item { Layout.fillWidth: true; Layout.preferredHeight: root.view === "library" ? libraryColumn.implicitHeight : 0; visible: root.view === "library"
             ColumnLayout { id: libraryColumn; width: parent.width; spacing: 13
@@ -429,12 +459,12 @@ Flickable {
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
                             Text { text: modelData.mappedAxes + " AXES  ·  " + modelData.mappedButtons + " BUTTONS  ·  " + modelData.mappedPovs + " POV"; color: root.muted; font.pixelSize: 9; font.family: theme.telemetryFont }
-                            Text { text: modelData.customCurves + " CUSTOM CURVES  ·  " + modelData.automationCount + " AUTOMATIONS  ·  VJOY " + modelData.outputDeviceId; color: root.muted; font.pixelSize: 8; font.family: theme.telemetryFont }
+                            Text { text: modelData.customCurves + " CUSTOM CURVES  ·  " + modelData.automationCount + " AUTOMATIONS  ·  RIG OUTPUT · vJoy " + modelData.outputDeviceId; color: root.muted; font.pixelSize: 8; font.family: theme.telemetryFont }
                             Item { Layout.fillHeight: true }
                             RowLayout { Layout.fillWidth: true
                                 ActionButton { label: "DETAIL"; subdued: true; onTriggered: root.openProfile(modelData.id) }
                                 Item { Layout.fillWidth: true }
-                                ActionButton { label: modelData.active ? "ACTIVE" : "ACTIVATE"; actionEnabled: !modelData.active && modelData.enabled; onTriggered: backendObject.activateProfile(modelData.id) }
+                                ActionButton { label: modelData.active ? "ACTIVE" : "ACTIVATE"; actionEnabled: !modelData.active && modelData.enabled; onTriggered: root.activateProfile(modelData.id) }
                             }
                         }
                     }
@@ -526,14 +556,14 @@ Flickable {
                             Text { text: (root.detail.category || "").toUpperCase() + "  ·  " + (root.detail.active ? "ACTIVE" : "INACTIVE") + "  ·  " + (root.detail.enabled ? "ENABLED" : "DISABLED"); color: root.muted; font.pixelSize: 9; font.bold: true }
                         }
                         ActionButton { label: "EXPORT PROFILE"; subdued: true; onTriggered: root.openTransfer("export", "profile", root.selectedProfileId, "") }
-                        ActionButton { label: root.detail.active ? "ACTIVE" : "SET ACTIVE"; actionEnabled: Boolean(!root.detail.active && root.detail.enabled); onTriggered: backendObject.activateProfile(root.selectedProfileId) }
+                        ActionButton { label: root.detail.active ? "ACTIVE" : "SET ACTIVE"; actionEnabled: Boolean(!root.detail.active && root.detail.enabled); onTriggered: root.activateProfile(root.selectedProfileId) }
                     }
                     RowLayout { Layout.fillWidth: true; spacing: 6
                         Pill { label: root.detail.mappedAxes + " AXES"; tone: root.accent }
                         Pill { label: root.detail.mappedButtons + " BUTTONS"; tone: root.accent }
                         Pill { label: root.detail.mappedPovs + " POV"; tone: root.accent }
                         Pill { label: root.detail.customCurves + " CURVES"; tone: root.accent }
-                        Pill { label: "VJOY " + root.detail.vjoyDevice; tone: root.accent }
+                        Pill { label: "RIG OUTPUT · VJOY " + root.detail.vjoyDevice; tone: root.accent }
                         Pill { label: root.detail.compatibility || "Compatibility pending"; tone: (root.detail.compatibility || "").indexOf("Partial") >= 0 ? root.warning : root.good }
                     }
                 }
@@ -589,8 +619,8 @@ Flickable {
                         ActionButton { label: "OPEN AUTOMATION"; subdued: true; onTriggered: root.navigateToPage(7) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "VIRTUAL OUTPUT"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: root.detail.outputName + "  ·  vJoy Device " + root.detail.vjoyDevice; color: root.text; font.pixelSize: 10; font.bold: true }
+                        Text { text: "OUTPUT PROVIDED BY DEVICE RIG"; color: root.text; font.pixelSize: 11; font.bold: true }
+                        Text { text: root.detail.deviceRigName + "  ·  " + root.detail.outputName + "  ·  vJoy Device " + root.detail.vjoyDevice; color: root.text; font.pixelSize: 10; font.bold: true }
                         Text { text: "Active output axes: " + root.detail.outputAxes + "  ·  Unmapped output axes: " + root.detail.unmappedOutputAxes; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Pill { label: root.detail.vjoyReady ? "READY" : "REVIEW OUTPUT"; tone: root.detail.vjoyReady ? root.good : root.warning }
                         Text { text: root.detail.controllerName ? "CURRENT CONTROLLER: " + root.detail.controllerName : "No current controller"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }

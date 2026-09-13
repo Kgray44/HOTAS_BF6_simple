@@ -10,6 +10,9 @@ namespace hotas {
 // display sentence.
 enum class SetupTruthStatus {
     Ready,
+    // The selected Rig has passed every setup prerequisite but is only being
+    // viewed. This is healthy, explicit work for the owner, not a defect.
+    ReadyToActivate,
     Checking,
     Repairable,
     WaitingForUser,

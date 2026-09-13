@@ -722,26 +722,26 @@ Flickable {
             title: "Virtual output"
             detail: displayValue("vjoyStatus", backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus)
             SettingsRow {
-                title: "VJOY DEVICE"
-                detail: backend.virtualAxisStatus + " · " + backend.vjoyButtonCount + " buttons · " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"
+                objectName: "flightDeckSettingsActiveRigPrimaryOutput"
+                title: "ACTIVE RIG PRIMARY OUTPUT"
+                detail: backend.activeOutputLayoutName + " · vJoy Device " + backend.vjoyDeviceId + " · " + backend.virtualAxisStatus + " · " + backend.vjoyButtonCount + " buttons · " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"
                 RowLayout {
-                    DeckStepper {
-                        id: vjoyDevice
-                        objectName: "flightDeckSettingsVjoyDevice"
-                        from: 1
-                        to: 16
-                        value: backend.vjoyDeviceId
-                        onValueModified: backend.setVjoyDeviceId(value)
-                    }
                     DeckButton {
+                        objectName: "flightDeckSettingsConfigureVjoy"
                         text: "CONFIGURE VJOY"
                         onClicked: backend.openVjoyConfiguration()
+                    }
+                    DeckButton {
+                        objectName: "flightDeckSettingsManageActiveRig"
+                        text: "MANAGE RIGS"
+                        onClicked: root.navigateToPage(10)
                     }
                 }
             }
             SettingsRow {
+                objectName: "flightDeckSettingsOutputLayouts"
                 title: "OUTPUT LAYOUTS"
-                detail: outputLayouts.length + " configured layout" + (outputLayouts.length === 1 ? "" : "s") + ". Profiles choose a compatible layout from their output setting."
+                detail: outputLayouts.length + " configured layout" + (outputLayouts.length === 1 ? "" : "s") + ". Device Rigs own the primary output used by their Profiles."
                 RowLayout {
                     DeckButton {
                         objectName: "flightDeckSettingsCreateOutput"
@@ -753,8 +753,8 @@ Flickable {
                         }
                     }
                     DeckButton {
-                        text: "MANAGE PROFILES"
-                        onClicked: root.navigateToPage(5)
+                        text: "MANAGE RIGS"
+                        onClicked: root.navigateToPage(10)
                     }
                 }
             }

@@ -2168,7 +2168,7 @@ Page {
     }
     Dialog {
         id: controllerSetupDialog
-        onOpened: backend.checkSetupHealth()
+        onOpened: setupAssistantPanel.beginNewSession()
         objectName: "controllerSetupDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent

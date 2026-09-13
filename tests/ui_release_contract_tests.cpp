@@ -33,7 +33,7 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void axisConflictsRequireExplicitSignalFlowDecisions();
-    void installerUpgradeAcceptanceTracksSchema28();
+    void installerUpgradeAcceptanceTracksSchema29();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -120,8 +120,14 @@ void UiReleaseContractTests::sharedSettingsKeepOfflineControllersAndControlsVisu
     QVERIFY(!settings.contains(QStringLiteral("NO CONTROLLERS CONNECTED")));
     QVERIFY(devices.contains(QStringLiteral("EDIT THIS")));
     QVERIFY(devices.contains(QStringLiteral("OFFLINE")));
-    QVERIFY(settings.contains(QStringLiteral("up.indicator")));
-    QVERIFY(settings.contains(QStringLiteral("down.indicator")));
+    // Settings no longer lets a Profile independently choose vJoy. It must
+    // point the owner to the active Device Rig primary-output authority.
+    QVERIFY(settings.contains(QStringLiteral("RIG-OWNED")));
+    QVERIFY(settings.contains(QStringLiteral("Device Rigs own preconfigured vJoy layouts")));
+    QVERIFY(settings.contains(QStringLiteral("CONFIGURE VJOY")));
+    QVERIFY(!settings.contains(QStringLiteral("setVJoyDeviceId")));
+    QVERIFY(devices.contains(QStringLiteral("MAKE PRIMARY")));
+    QVERIFY(backend.contains(QStringLiteral("setDeviceRigPrimaryOutput")));
     QVERIFY(backend.contains(QStringLiteral("Selected · Offline · Verified")));
 }
 
@@ -289,11 +295,14 @@ void UiReleaseContractTests::unifiedVerifierUsesSharedThemedButtons()
     // and uses the common button primitive rather than native controls.
     QVERIFY(readinessPanel.contains(QStringLiteral("ThemedButton")));
     QVERIFY(!readinessPanel.contains(QStringLiteral("\n            Button {")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("emphasis: root.hasRepair() ? \"warning\" : \"ready\"")));
     QVERIFY(readinessPanel.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
     QVERIFY(readinessPanel.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(readinessPanel.contains(QStringLiteral("return session.active && session.currentStep")));
-    QVERIFY(readinessPanel.contains(QStringLiteral("CHECK & REPAIR SETUP")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("property string presentationPage: \"CHECK\"")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("[\"CHECK\", \"REPAIR\", \"COMPLETE\"]")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("CONTINUE TO REPAIR")));
+    QVERIFY(readinessPanel.contains(QStringLiteral("SETUP REPAIR COMPLETE")));
+    QVERIFY(!readinessPanel.contains(QStringLiteral("CHECK & REPAIR SETUP")));
     QVERIFY(themedButton.contains(QStringLiteral("property string emphasis")));
     QVERIFY(legacy.contains(QStringLiteral("ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true; showTitle: false")));
 }
@@ -437,6 +446,9 @@ void UiReleaseContractTests::profileLibraryPortabilityIsSharedAndThemed()
     QVERIFY(library.contains(QStringLiteral("id: deleteCategoryDialog")));
     QVERIFY(library.contains(QStringLiteral("component SelectionToggle")));
     QVERIFY(library.contains(QStringLiteral("component ThemedComboBox")));
+    QVERIFY(library.contains(QStringLiteral("function activateProfile(id)")));
+    QVERIFY(library.contains(QStringLiteral("backendObject.activateProfileResult")));
+    QVERIFY(library.contains(QStringLiteral("activationNotice")));
     QVERIFY(!library.contains(QStringLiteral("CheckBox")));
     QVERIFY(!library.contains(QStringLiteral("\n                    ComboBox { id:")));
     QVERIFY(standard.contains(QStringLiteral("ProfileLibrary")));
@@ -714,6 +726,16 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backend.contains(QStringLiteral("deviceRigMeaningfulOutputSequence")));
     QVERIFY(backend.contains(QStringLiteral("m_virtualOutputReadinessPlans")));
     QVERIFY(backend.contains(QStringLiteral("refreshVirtualOutputReadiness(normalizedId)")));
+    // A healthy viewed Rig is a manual activation action, not a generic
+    // Mapping ATTENTION. The Complete page must show the reason and perform
+    // the existing transactional activation before refreshing its snapshot.
+    QVERIFY(backendHeader.contains(QStringLiteral("activateSetupTruthDeviceRig")));
+    QVERIFY(backend.contains(QStringLiteral("SetupTruthStatus::ReadyToActivate")));
+    QVERIFY(backend.contains(QStringLiteral("manualActions")));
+    QVERIFY(assistant.contains(QStringLiteral("READY TO ACTIVATE")));
+    QVERIFY(assistant.contains(QStringLiteral("Setup is healthy. 1 manual action remains: activate ")));
+    QVERIFY(assistant.contains(QStringLiteral("completePageActivateRigButton")));
+    QVERIFY(assistant.contains(QStringLiteral("activateSetupTruthDeviceRig")));
     QVERIFY(backend.contains(QStringLiteral("An absent custom calibration is a safe, supported default")));
     QVERIFY(!backend.contains(QStringLiteral("const bool ready = active && !m_configuration.activeDeviceRigId.isEmpty()")));
     QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::setupAssistantSteps")));
@@ -728,7 +750,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     for (const QString &ui : {standard, legacy}) {
         QVERIFY(ui.contains(QStringLiteral("controllerSetupDialog.open()")));
         QVERIFY(ui.contains(QStringLiteral("backend.setEditingDeviceContext(rigId, deviceId !== \"\" ? [deviceId] : [])")));
-        QVERIFY(ui.contains(QStringLiteral("onOpened: backend.checkSetupHealth()")));
+        QVERIFY(ui.contains(QStringLiteral("onOpened: setupAssistantPanel.beginNewSession()")));
     }
     QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
     QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
@@ -766,12 +788,16 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupTruthSnapshot")));
     QVERIFY(assistant.contains(QStringLiteral("backendObject ? backendObject.setupRepairSession")));
     QVERIFY(assistant.contains(QStringLiteral("CURRENT STEP")));
-    QVERIFY(assistant.contains(QStringLiteral("STAGE PROGRESS")));
+    QVERIFY(assistant.contains(QStringLiteral("REPAIR PROGRESS")));
     QVERIFY(assistant.contains(QStringLiteral("setupStageTimeline")));
     QVERIFY(assistant.contains(QStringLiteral("progressPercent")));
-    QVERIFY(assistant.contains(QStringLiteral("REPAIR PLAN")));
-    QVERIFY(assistant.contains(QStringLiteral("COPY FULL DIAGNOSTICS")));
+    QVERIFY(assistant.contains(QStringLiteral("APPROVED REPAIR PLAN")));
+    QVERIFY(assistant.contains(QStringLiteral("COPY REPAIR REPORT")));
     QVERIFY(assistant.contains(QStringLiteral("repairSetupHealth")));
+    QVERIFY(assistant.contains(QStringLiteral("completeSetupCheck")));
+    QVERIFY(assistant.contains(QStringLiteral("WHAT WAS REPAIRED")));
+    QVERIFY(assistant.contains(QStringLiteral("BEFORE → AFTER")));
+    QVERIFY(assistant.contains(QStringLiteral("property string presentationPage: \"CHECK\"")));
     QVERIFY(assistant.contains(QStringLiteral("checkingColor")));
     QVERIFY(assistant.contains(QStringLiteral("useHostRepairConfirmation")));
     QVERIFY(assistant.contains(QStringLiteral("ThemedDialogHeader")));
@@ -779,6 +805,10 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(flightDeckDevices.contains(QStringLiteral("onRepairRequested: repairConfirmation.open()")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("model: root.setupRepairPlan")));
     QVERIFY(flightDeckDevices.contains(QStringLiteral("setupTruth.repairPlan")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("objectName: \"flightDeckVerification\"")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("controllerReadinessStatus")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("controllerReadinessState")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("controllerReadinessProposedChanges")));
     QVERIFY(flightDeckOverview.contains(QStringLiteral("backend.setupTruthSnapshot")));
     QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupPhysical: setupGroup(\"physical\")")));
     QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupOutput: setupGroup(\"vjoy\")")));
@@ -869,7 +899,7 @@ void UiReleaseContractTests::inputLearningAndLiveNameDraftsStayOnControlPlane()
     QVERIFY(backend.contains(QStringLiteral("RELEASE HELD BUTTONS")));
     QVERIFY(backend.contains(QStringLiteral("processInputLearning();")));
     QVERIFY(!sourceFile(QStringLiteral("src/mapping_worker.cpp")).contains(QStringLiteral("InputLearning")));
-    QVERIFY(readiness.contains(QStringLiteral("Output-layout button counts are provisioned capacity")));
+    QVERIFY(readiness.contains(QStringLiteral("The saved layout is a provisioning baseline")));
     QVERIFY(readiness.contains(QStringLiteral("requirements.buttons = 0;")));
 }
 
@@ -940,23 +970,23 @@ void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
     }
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema28()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema29()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 28")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v28")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v28")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 29")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v29")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v29")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v28")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v28")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v29")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v29")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v28")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v29")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 
@@ -1058,7 +1088,9 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(profiles.contains(QStringLiteral("flightDeckCategoryActivationResolver")));
     QVERIFY(profiles.contains(QStringLiteral("flightDeckProfileAutomaticPolicySelector")));
     QVERIFY(profiles.contains(QStringLiteral("reorderCategoryAutomaticProfiles")));
+    QVERIFY(profiles.contains(QStringLiteral("backend.activateProfileResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QVariantMap activationResolverState")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE QVariantMap activateProfileResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool resumeAutomaticActivation")));
     QVERIFY(standard.contains(QStringLiteral("root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("objectName: \"flightDeckCurveEditor\"")));

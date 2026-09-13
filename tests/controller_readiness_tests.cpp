@@ -340,6 +340,7 @@ private slots:
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
     void canonicalSignalFlowFanOutContributesOutputRequirements();
+    void rigOwnedOutputRequirementsIncludeEverySwitchableProfileAxis();
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisCapabilitySupersetIsReady();
     void vjoyShortSliderAliasesRemainReady();
@@ -886,6 +887,45 @@ void ControllerReadinessTests::canonicalSignalFlowFanOutContributesOutputRequire
     QCOMPARE(requirements.continuousPovs, 1);
     QCOMPARE(requirements.discretePovs, 2);
     QVERIFY(requirements.incompatiblePovMix);
+}
+
+void ControllerReadinessTests::rigOwnedOutputRequirementsIncludeEverySwitchableProfileAxis()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    VirtualOutputLayout &output = configuration.outputLayouts.front();
+    output.id = QStringLiteral("flight-deck-output-2");
+    output.requirements.deviceId = 2;
+    output.requirements.axes[static_cast<size_t>(VirtualAxis::Rx)] = false;
+
+    DeviceRig rig;
+    rig.id = QStringLiteral("bf6-test-rig");
+    rig.name = QStringLiteral("BF6 Test Rig");
+    rig.outputs = {{output.id, true}};
+    rig.primaryOutputLayoutId = output.id;
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    configuration.vjoyDeviceId = output.requirements.deviceId;
+
+    ControllerProfile &normal = configuration.profiles.front();
+    normal.deviceRigId = rig.id;
+    ControllerProfile helicopter = normal;
+    helicopter.id = QStringLiteral("battlefield-6-helicopter");
+    helicopter.name = QStringLiteral("Helicopter");
+    helicopter.axes.front().target = VirtualAxis::Rx;
+    configuration.profiles.push_back(helicopter);
+
+    const MapperOutputRequirements active = ControllerReadinessService::requirementsFor(configuration);
+    const MapperOutputRequirements scoped =
+        ControllerReadinessService::requirementsForOutputLayout(configuration, output.id);
+    QVERIFY(active.axes[static_cast<size_t>(VirtualAxis::Rx)]);
+    QVERIFY(scoped.axes[static_cast<size_t>(VirtualAxis::Rx)]);
+    QVERIFY(scoped.buttons >= active.buttons);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.deviceId = output.requirements.deviceId;
+    vjoy.axes[static_cast<size_t>(VirtualAxis::Rx)] = false;
+    QVERIFY(ControllerReadinessService::planFor(
+        connectedController(), scoped, vjoy, readyHidHide()).vjoyNeedsChanges);
 }
 
 void ControllerReadinessTests::buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout()
