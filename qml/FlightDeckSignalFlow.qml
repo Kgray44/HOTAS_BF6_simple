@@ -97,6 +97,11 @@ Item {
     // when the pointer is released.
     property var liveNodePositions: ({})
     property string liveDragNodeId: ""
+    // Pointer input can arrive much faster than a visible frame. Keep only
+    // the newest position and apply it once per frame so Canvas, snap guides,
+    // and the incident-wire cache do not compete with the next pointer event.
+    property var pendingLiveNodeDrag: ({})
+    property int liveDragFrameCount: 0
     // Assistive snapping is a workspace-only release decision.  The ghost and
     // guides are transient; a held card always tracks the pointer freely.
     property var nodeSnapPreview: ({})
@@ -142,6 +147,10 @@ Item {
     readonly property real magneticPortRadius: 28
     readonly property real magneticPortHysteresis: 6
     property var dragWire: ({ "active": false, "source": ({}), "x": 0, "y": 0 })
+    // Source-wire dragging also performs compatibility preview work. Coalesce
+    // high-rate pointer samples here for the same frame budget as card drags.
+    property var pendingSourceDragPoint: ({})
+    property int liveWireDragFrameCount: 0
     // A DropArea is permitted to report its drop either before or after the
     // source DragHandler becomes inactive. Keep the initiating port through
     // that handoff so a real release over a destination never loses its
@@ -544,6 +553,8 @@ Item {
     }
     function cancelRouting(reason, announceCancellation) {
         const hadRouting = routingActive || Boolean(dragWire && dragWire.active)
+        pendingSourceDragPoint = ({})
+        sourceDragFrameTimer.stop()
         interaction = ({ "mode": "IDLE", "source": ({}), "target": ({}),
             "expectedRevision": 0, "profileId": "", "rigId": "", "token": interactionToken })
         source = ({})
@@ -778,6 +789,8 @@ Item {
     }
     function beginSourceDrag(port, point) {
         if (!armSource(port, true)) return false
+        pendingSourceDragPoint = ({})
+        sourceDragFrameTimer.stop()
         lastSourceDragPort = port
         sourceDragDropHandled = false
         dragWire = ({ "active": true, "source": port,
@@ -795,6 +808,21 @@ Item {
         dragWire = ({ "active": true, "source": interactionSource(),
             "x": Number(point && point.x || 0), "y": Number(point && point.y || 0),
             "target": target || ({}) })
+    }
+    function queueSourceDrag(point) {
+        if (!dragWire.active || !point || !isFinite(Number(point.x)) || !isFinite(Number(point.y))) return false
+        pendingSourceDragPoint = ({ "x": Number(point.x), "y": Number(point.y) })
+        if (!sourceDragFrameTimer.running) sourceDragFrameTimer.start()
+        return true
+    }
+    function flushQueuedSourceDrag() {
+        const pending = pendingSourceDragPoint || ({})
+        pendingSourceDragPoint = ({})
+        sourceDragFrameTimer.stop()
+        if (!dragWire.active || !isFinite(Number(pending.x)) || !isFinite(Number(pending.y))) return false
+        updateSourceDrag(pending)
+        liveWireDragFrameCount += 1
+        return true
     }
     function sourceDragPortFromDrop(drop) {
         const reported = drop && drop.source && drop.source.port
@@ -861,6 +889,11 @@ Item {
     }
     function endSourceDrag() {
         if (!dragWire.active) return
+        if (!sourceDragDropHandled) flushQueuedSourceDrag()
+        else {
+            pendingSourceDragPoint = ({})
+            sourceDragFrameTimer.stop()
+        }
         const sourcePort = sourceDragPortFromDrop(null)
         const releasePoint = ({ "x": Number(dragWire.x || 0), "y": Number(dragWire.y || 0) })
         // Some Qt Quick delivery paths deactivate the handler before the
@@ -1617,7 +1650,7 @@ Item {
         // routes receive a replacement segments array.
         const next = wireGeometry
         const changedRoutes = ({})
-        const changed = []
+        let changedCount = 0
         for (let refIndex = 0; refIndex < refs.length; ++refIndex) {
             const ref = refs[refIndex]
             const entry = next[ref.entryIndex]
@@ -1639,41 +1672,28 @@ Item {
             const updated = geometryForCanonicalSegment(replacement.routeId, canonical, sourceNode, destinationNode,
                 replacement.lane, true)
             replacement.segments[ref.segmentIndex] = updated
-            changed.push({ "route": replacement.route, "routeId": replacement.routeId, "segment": updated,
-                "oldCacheKey": oldSegment.cacheKey || routeSegmentCacheKey(replacement.routeId, oldSegment) })
+            changedCount += 1
         }
         for (const entryIndex in changedRoutes) {
             const replacement = changedRoutes[entryIndex]
             next[Number(entryIndex)] = routeGeometryEntry(replacement.route, replacement.segments, replacement.lane)
         }
-        if (changed.length === 0) return 0
-        // These maps are presentation caches. Mutating only the bucket keys
-        // belonging to affected segments avoids copying or rebuilding the
-        // complete spatial index for an otherwise local drag.
-        const buckets = wireBuckets
-        const segmentBucketKeys = wireSegmentBucketKeys
-        for (let changedIndex = 0; changedIndex < changed.length; ++changedIndex) {
-            const previous = changed[changedIndex]
-            const oldKeys = segmentBucketKeys[previous.oldCacheKey] || []
-            for (let keyIndex = 0; keyIndex < oldKeys.length; ++keyIndex) {
-                const bucketKey = oldKeys[keyIndex]
-                const bucket = buckets[bucketKey] || []
-                const remaining = bucket.filter(function(candidate) { return candidate.cacheKey !== previous.oldCacheKey })
-                if (remaining.length > 0) buckets[bucketKey] = remaining
-                else delete buckets[bucketKey]
-            }
-            delete segmentBucketKeys[previous.oldCacheKey]
-            addSegmentToBuckets(buckets, segmentBucketKeys, previous.route, previous.routeId, previous.segment)
-        }
+        if (changedCount === 0) return 0
+        // A card owns the pointer throughout its drag, so wire hit testing is
+        // not meaningful until release. Keep the settled spatial index intact
+        // instead of allocating/filtering every touched bucket on every frame.
+        // finishLiveNodeDrag() performs the single complete cache rebuild.
         wireGeometry = next
         liveDragGeometryUpdates += 1
-        liveDragAffectedSegments += changed.length
+        liveDragAffectedSegments += changedCount
         if (diagram) diagram.requestPaint()
-        return changed.length
+        return changedCount
     }
     function beginLiveNodeDrag(nodeData) {
         const id = nodeIdentity(nodeData)
         if (!id) return false
+        pendingLiveNodeDrag = ({})
+        dragFrameTimer.stop()
         liveDragNodeId = id
         return true
     }
@@ -1696,9 +1716,33 @@ Item {
         if (portAnchorDiagnosticsEnabled) requestPortAnchorMeasurement()
         return refreshLiveDragGeometry(id)
     }
+    function queueLiveNodeDrag(nodeData, x, y, altBypass) {
+        const id = nodeIdentity(nodeData)
+        if (!id || !isFinite(x) || !isFinite(y) || !isLiveNodeDrag(nodeData)) return false
+        pendingLiveNodeDrag = ({ "nodeId": id, "x": Number(x), "y": Number(y),
+            "altBypass": Boolean(altBypass) })
+        if (!dragFrameTimer.running) dragFrameTimer.start()
+        return true
+    }
+    function flushQueuedLiveNodeDrag() {
+        const pending = pendingLiveNodeDrag || ({})
+        pendingLiveNodeDrag = ({})
+        dragFrameTimer.stop()
+        if (!pending.nodeId) return false
+        const nodeData = nodeForId(pending.nodeId)
+        if (!nodeData || !isLiveNodeDrag(nodeData)) return false
+        updateLiveNodeDrag(nodeData, pending.x, pending.y)
+        updateNodeSnapPreview(nodeData, pending.x, pending.y, pending.altBypass)
+        liveDragFrameCount += 1
+        return true
+    }
     function finishLiveNodeDrag(nodeData, x, y, persist, altBypass) {
         const id = nodeIdentity(nodeData)
         if (!id) return false
+        flushQueuedLiveNodeDrag()
+        const livePosition = nodePosition(nodeData, x, y)
+        x = Number(livePosition.x)
+        y = Number(livePosition.y)
         updateLiveNodeDrag(nodeData, x, y)
         // Test-only callers that explicitly suppress persistence keep their
         // historical exact-coordinate fixture semantics. Product drags use
@@ -1739,6 +1783,8 @@ Item {
     }
     function cancelLiveNodeDrag(nodeData) {
         if (!isLiveNodeDrag(nodeData)) return
+        pendingLiveNodeDrag = ({})
+        dragFrameTimer.stop()
         const id = nodeIdentity(nodeData)
         const storedId = nodeStorageIdentity(nodeData)
         const next = ({})
@@ -2523,10 +2569,24 @@ Item {
     Timer {
         id: wireGeometryTimer
         // Layout/port changes coalesce to the next event turn. Pointer drags
-        // bypass this timer and update connected geometry synchronously.
+        // use their own frame timer and never queue a graph-wide rebuild.
         interval: 0
         repeat: false
         onTriggered: root.rebuildWireGeometry()
+    }
+
+    Timer {
+        id: dragFrameTimer
+        interval: 16
+        repeat: false
+        onTriggered: root.flushQueuedLiveNodeDrag()
+    }
+
+    Timer {
+        id: sourceDragFrameTimer
+        interval: 16
+        repeat: false
+        onTriggered: root.flushQueuedSourceDrag()
     }
 
     Timer {
@@ -2714,7 +2774,7 @@ Item {
                 if (!active) return
                 const point = flowPort.mapToItem(scene, flowPort.width + translation.x,
                     flowPort.height * 0.5 + translation.y)
-                root.updateSourceDrag(point)
+                root.queueSourceDrag(point)
             }
         }
         DropArea {
@@ -2933,7 +2993,7 @@ Item {
                 dragThreshold: 8
                 function updateWireAtPointer() {
                     const point = hitTarget.mapToItem(scene, centroid.position.x, centroid.position.y)
-                    root.updateSourceDrag(point)
+                    root.queueSourceDrag(point)
                 }
                 onActiveChanged: {
                     if (active) {
@@ -3603,8 +3663,7 @@ Item {
                                     const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
                                     if (pointerMoved) {
-                                        root.updateLiveNodeDrag(inputNode.nodeData, x, y)
-                                        root.updateNodeSnapPreview(inputNode.nodeData, x, y,
+                                        root.queueLiveNodeDrag(inputNode.nodeData, x, y,
                                             Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                 }
@@ -3680,8 +3739,7 @@ Item {
                                         const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
                                         if (pointerMoved) {
-                                            root.updateLiveNodeDrag(modelData, x, y)
-                                            root.updateNodeSnapPreview(modelData, x, y,
+                                            root.queueLiveNodeDrag(modelData, x, y,
                                                 Boolean(mouse.modifiers & Qt.AltModifier))
                                         }
                                     }
@@ -3810,8 +3868,7 @@ Item {
                                         const y = nodeStartY + point.y - pointerStartSceneY
                                         if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
                                         if (pointerMoved) {
-                                            root.updateLiveNodeDrag(modelData, x, y)
-                                            root.updateNodeSnapPreview(modelData, x, y,
+                                            root.queueLiveNodeDrag(modelData, x, y,
                                                 Boolean(mouse.modifiers & Qt.AltModifier))
                                         }
                                     }
@@ -3883,8 +3940,7 @@ Item {
                                     const y = nodeStartY + point.y - pointerStartSceneY
                                     if (Math.abs(x - nodeStartX) > 6 || Math.abs(y - nodeStartY) > 6) pointerMoved = true
                                     if (pointerMoved) {
-                                        root.updateLiveNodeDrag(outputNode.nodeData, x, y)
-                                        root.updateNodeSnapPreview(outputNode.nodeData, x, y,
+                                        root.queueLiveNodeDrag(outputNode.nodeData, x, y,
                                             Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                 }

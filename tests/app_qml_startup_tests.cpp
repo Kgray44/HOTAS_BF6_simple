@@ -8477,12 +8477,19 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
         " const routingEmphasis = routingNodeState(node('input')) === 'source'"
         "   && routingNodeState(node('output')) === 'target'"
         "   && String(connectionPreview.ownerNodeId || '') === String(node('output').id || '');"
-        " updateSourceDrag({ x: Number(destinationPoint.x) + 80, y: Number(destinationPoint.y) + 80 });"
+        " const wireFramesBefore = liveWireDragFrameCount;"
+        " queueSourceDrag({ x: Number(destinationPoint.x) + 40, y: Number(destinationPoint.y) + 40 });"
+        " queueSourceDrag({ x: Number(destinationPoint.x) + 80, y: Number(destinationPoint.y) + 80 });"
+        " const queuedWire = pendingSourceDragPoint && Number(pendingSourceDragPoint.x) === Number(destinationPoint.x) + 80"
+        "   && Number(dragWire.x) === Number(destinationPoint.x);"
+        " flushQueuedSourceDrag();"
+        " const frameBoundedWire = liveWireDragFrameCount - wireFramesBefore === 1"
+        "   && Number(dragWire.x) === Number(destinationPoint.x) + 80 && !pendingSourceDragPoint.x;"
         " endSourceDrag();"
         " const liveOn = keyboardAction('live'); const liveOff = keyboardAction('live');"
         " const baseZoom = zoom; zoom = 0.60; const overview = semanticDensity === 'overview'; zoom = baseZoom;"
         " query = 'axis'; const focused = focusSearchResult(); query = ''; source = ({}); inspectedRoute = ({}); inspectedNode = ({});"
-        " return cardInspectable && dragVisible && previewEndsAtPointer && dropCompletionReady && routingEmphasis && liveOn && liveOff && overview && focused;"
+        " return cardInspectable && dragVisible && previewEndsAtPointer && dropCompletionReady && routingEmphasis && queuedWire && frameBoundedWire && liveOn && liveOff && overview && focused;"
         "})()"));
     const bool deckInteractionReady = deckInteractionSurface.evaluate().toBool();
     if (deckInteractionSurface.hasError() || !deckInteractionReady) {

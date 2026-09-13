@@ -1169,6 +1169,9 @@ private:
     QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;
     QString m_pendingCalibrationRecordId;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
+    // The profile index is a worker-owned, low-cost change detector for the
+    // small effective-profile fields that share the input telemetry notifier.
+    int m_presentedEffectiveProfileIndex = -2;
     ControllerReadinessService m_readiness;
     // Retained only for upgrade compatibility with the v1.9.0 preference.
     // v1.9.1 never shows a first-run setup modal.
@@ -1329,6 +1332,9 @@ private:
     quint64 m_controllersChangedNotifications = 0;
     quint64 m_controllerDiscoveryBackgroundRuns = 0;
     quint64 m_gameDetectionBackgroundRuns = 0;
+    quint64 m_uiSnapshotCount = 0;
+    quint64 m_uiSnapshotTotalDurationUs = 0;
+    qint64 m_uiSnapshotMaxDurationUs = 0;
     qint64 m_uiEventLoopMaxDelayMs = 0;
     quint64 m_uiEventLoopDelayOver16Ms = 0;
     quint64 m_uiEventLoopDelayOver50Ms = 0;

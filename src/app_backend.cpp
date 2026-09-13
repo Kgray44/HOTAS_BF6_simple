@@ -14537,6 +14537,8 @@ void AppBackend::processInputLearning()
 
 void AppBackend::refreshUiSnapshot()
 {
+    QElapsedTimer snapshotClock;
+    if (m_uiPerformanceInstrumentationEnabled) snapshotClock.start();
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
@@ -14566,7 +14568,11 @@ void AppBackend::refreshUiSnapshot()
         rebuildControllerUiModel();
         rebuildButtonUiModel();
     }
-    if (refreshButtonUiModelRuntimeState()) emit buttonTelemetryChanged();
+    // A disconnected controller cannot change its pressed/virtual pressed
+    // runtime fields. Avoid copying every cached button QVariantMap at the
+    // presentation cadence while an offline graph or saved rig is open; the
+    // connection transition above rebuilds this model before QML observes it.
+    if (connected && refreshButtonUiModelRuntimeState()) emit buttonTelemetryChanged();
     const bool workerRequested = m_worker.mappingRequested();
     const bool mappingIntentChanged = workerRequested != m_mappingDesired;
     if (mappingIntentChanged) m_mappingDesired = workerRequested;
@@ -14582,10 +14588,22 @@ void AppBackend::refreshUiSnapshot()
     const int effectiveMappingState = m_worker.runtime().mappingEffectiveState.load();
     const bool mappingEffectiveChanged = effectiveMappingState != m_presentedMappingEffectiveState;
     if (mappingEffectiveChanged) m_presentedMappingEffectiveState = effectiveMappingState;
+    const int effectiveProfileIndex = m_worker.runtime().effectiveProfileIndex.load();
+    const bool effectiveProfileChanged = effectiveProfileIndex != m_presentedEffectiveProfileIndex;
+    if (effectiveProfileChanged) m_presentedEffectiveProfileIndex = effectiveProfileIndex;
     if (selectedAxisChanged || connectionChanged || mappingIntentChanged || mappingEffectiveChanged) emit stateChanged();
-    // Analog and POV presentation is useful at 30 Hz; this broad property no
-    // longer wakes QML at the former 62.5 Hz snapshot rate.
-    emit inputTelemetryChanged();
+    // Analog and POV presentation is useful at 30 Hz while a device is
+    // connected. An offline Signal Flow workspace has no changing input to
+    // publish, however. Re-emitting this broad notifier in that state made
+    // every QML binding rebuild on each snapshot and starved direct graph
+    // manipulation. Connection/profile transitions still publish exactly once.
+    if (connected || connectionChanged || effectiveProfileChanged) emit inputTelemetryChanged();
+    if (m_uiPerformanceInstrumentationEnabled) {
+        const qint64 elapsedUs = snapshotClock.nsecsElapsed() / 1000;
+        ++m_uiSnapshotCount;
+        m_uiSnapshotTotalDurationUs += static_cast<quint64>(std::max<qint64>(0, elapsedUs));
+        m_uiSnapshotMaxDurationUs = std::max(m_uiSnapshotMaxDurationUs, elapsedUs);
+    }
 }
 
 void AppBackend::sampleAdaptiveResponseHistory()
@@ -14717,6 +14735,9 @@ QVariantMap AppBackend::uiPerformanceCounters() const
             {u"controllerDiscoveryBackgroundRuns"_qs, QVariant::fromValue(m_controllerDiscoveryBackgroundRuns)},
             {u"controllerDiscoveryTimerActive"_qs, m_controllerDiscoveryTimer.isActive()},
             {u"gameDetectionBackgroundRuns"_qs, QVariant::fromValue(m_gameDetectionBackgroundRuns)},
+            {u"uiSnapshotCount"_qs, QVariant::fromValue(m_uiSnapshotCount)},
+            {u"uiSnapshotTotalDurationUs"_qs, QVariant::fromValue(m_uiSnapshotTotalDurationUs)},
+            {u"uiSnapshotMaxDurationUs"_qs, m_uiSnapshotMaxDurationUs},
             {u"uiEventLoopMaxDelayMs"_qs, m_uiEventLoopMaxDelayMs},
             {u"uiEventLoopDelayOver16Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver16Ms)},
             {u"uiEventLoopDelayOver50Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver50Ms)},
@@ -14740,6 +14761,9 @@ void AppBackend::resetUiPerformanceCounters()
     m_controllersChangedNotifications = 0;
     m_controllerDiscoveryBackgroundRuns = 0;
     m_gameDetectionBackgroundRuns = 0;
+    m_uiSnapshotCount = 0;
+    m_uiSnapshotTotalDurationUs = 0;
+    m_uiSnapshotMaxDurationUs = 0;
     m_uiEventLoopMaxDelayMs = 0;
     m_uiEventLoopDelayOver16Ms = 0;
     m_uiEventLoopDelayOver50Ms = 0;
@@ -14897,6 +14921,10 @@ void AppBackend::persistAndApply()
     rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit stateChanged();
+    // Axes, POVs, and adaptive presentation use the input telemetry notifier.
+    // A committed configuration is an explicit control-plane change, so it
+    // must refresh those values once even while no controller is connected.
+    emit inputTelemetryChanged();
     emit signalFlowChanged();
     // Configuration commits happen on the UI/control plane. Coalescing here
     // covers topology, profile, and output edits without adding work to the

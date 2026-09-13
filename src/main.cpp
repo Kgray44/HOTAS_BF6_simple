@@ -13,6 +13,7 @@
 #include <QQmlError>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQuickWindow>
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include <QTimer>
@@ -130,17 +131,49 @@ int main(int argc, char *argv[])
         [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
     if (engine.rootObjects().isEmpty()) return -1;
+    int signalFlowFrameCount = 0;
     if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
         backend.attachMainWindow(window);
+        if (signalFlowIdleProbe) {
+            if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+                QObject::connect(quickWindow, &QQuickWindow::frameSwapped, &application,
+                    [&signalFlowFrameCount] { ++signalFlowFrameCount; });
+            }
+        }
     }
     if (signalFlowIdleProbe) {
-        QTimer::singleShot(4000, &application, [&application, &engine] {
+        QTimer::singleShot(4000, &application, [&application, &engine, &backend, &signalFlowFrameCount] {
             QObject *signalFlow = engine.rootObjects().isEmpty() ? nullptr
                 : engine.rootObjects().constFirst()->findChild<QObject *>(QStringLiteral("flightDeckSignalFlow"));
             const int paints = signalFlow ? signalFlow->property("canvasPaintCount").toInt() : -1;
             const int rebuilds = signalFlow ? signalFlow->property("geometryRebuildCount").toInt() : -1;
             const int anchors = signalFlow ? signalFlow->property("portAnchorMeasurementEpoch").toInt() : -1;
-            std::fprintf(stderr, "signal-flow-idle-probe paints=%d rebuilds=%d anchorEpoch=%d\n", paints, rebuilds, anchors);
+            const int sceneWidth = signalFlow ? qRound(signalFlow->property("sceneLogicalWidth").toDouble()) : -1;
+            const int sceneHeight = signalFlow ? qRound(signalFlow->property("sceneLogicalHeight").toDouble()) : -1;
+            const QVariantMap graph = signalFlow ? signalFlow->property("graph").toMap() : QVariantMap{};
+            const int nodeCount = static_cast<int>(graph.value(QStringLiteral("nodes")).toList().size());
+            const int routeCount = static_cast<int>(graph.value(QStringLiteral("routes")).toList().size());
+            const int liveSamples = signalFlow ? signalFlow->property("liveSampleCount").toInt() : -1;
+            const bool liveMode = signalFlow && signalFlow->property("liveMode").toBool();
+            const bool signalFocus = signalFlow && signalFlow->property("signalFocus").toBool();
+            const QVariantMap performance = backend.uiPerformanceCounters();
+            const qulonglong inputSignals = performance.value(QStringLiteral("inputTelemetryChanged")).toULongLong();
+            const qulonglong controllerGets = performance.value(QStringLiteral("controllerGetterCalls")).toULongLong();
+            const qulonglong snapshotCount = performance.value(QStringLiteral("uiSnapshotCount")).toULongLong();
+            const qulonglong snapshotTotalUs = performance.value(QStringLiteral("uiSnapshotTotalDurationUs")).toULongLong();
+            const qint64 snapshotMaxUs = performance.value(QStringLiteral("uiSnapshotMaxDurationUs")).toLongLong();
+            const qint64 eventLoopMaxDelayMs = performance.value(QStringLiteral("uiEventLoopMaxDelayMs")).toLongLong();
+            std::fprintf(stderr,
+                         "signal-flow-idle-probe frames=%d paints=%d rebuilds=%d anchorEpoch=%d liveSamples=%d live=%d focus=%d inputSignals=%llu controllerGets=%llu snapshots=%llu snapshotTotalUs=%llu snapshotMaxUs=%lld eventLoopMaxDelayMs=%lld scene=%dx%d nodes=%d routes=%d\n",
+                         signalFlowFrameCount,
+                         paints, rebuilds, anchors, liveSamples, liveMode, signalFocus,
+                         static_cast<unsigned long long>(inputSignals),
+                         static_cast<unsigned long long>(controllerGets),
+                         static_cast<unsigned long long>(snapshotCount),
+                         static_cast<unsigned long long>(snapshotTotalUs),
+                         static_cast<long long>(snapshotMaxUs),
+                         static_cast<long long>(eventLoopMaxDelayMs),
+                         sceneWidth, sceneHeight, nodeCount, routeCount);
             application.quit();
         });
     }

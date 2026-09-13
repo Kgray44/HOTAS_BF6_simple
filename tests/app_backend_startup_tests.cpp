@@ -242,7 +242,10 @@ int main(int argc, char *argv[])
                             && backend.controllerDiscoveryIntervalMs() == 2500
                             && backend.mappingRequested() == mappingWasRequested
                             && restoredCounters.value(QStringLiteral("telemetryChanged")).toULongLong() >= 1
-                            && restoredCounters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() >= 1;
+                            // Restoring a static offline surface must not
+                            // manufacture an input update solely because the
+                            // window became visible again.
+                            && restoredCounters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() == 0;
                         backend.setAutomaticGameDetection(false);
                         const bool gameDetectionStopsWhenDisabled = !backend.gameDetectionTimerActive();
                         backend.setAutomaticGameDetection(true);
@@ -308,17 +311,15 @@ int main(int argc, char *argv[])
                          controllerDiscoveryTimerActive ? 1 : 0,
                          static_cast<unsigned long long>(gameBackgroundRuns),
                          static_cast<unsigned long long>(uiStallsOver250Ms));
-            // Live analog presentation is capped near 30 Hz and numeric
-            // telemetry near 10 Hz. Neither cached controller nor 128-button
-            // structure may rebuild during that activity. The controller
-            // scheduler may have been phase-reset by the tray restore while a
-            // DirectInput call remains external and isolated; it must either
-            // have sampled or remain active without stalling the UI heartbeat.
+            // The isolated backend has no physical controller, so its static
+            // workspace must not wake every input-bound QML property at the
+            // 30 Hz snapshot cadence. Numeric telemetry continues at 10 Hz;
+            // controller model structures remain cached throughout.
             passed = controllerGetterCalls == 1 && buttonGetterCalls == 1
                 && profileGetterCalls == 1 && categoryGetterCalls == 1
                 && controllerRebuilds == 0 && buttonRebuilds == 0 && controllerNotifications == 0
                 && telemetryNotifications >= 80 && telemetryNotifications <= 130
-                && inputNotifications >= 100 && inputNotifications <= 340
+                && inputNotifications == 0
                 && stateNotifications < telemetryNotifications / 4
                 && (controllerBackgroundRuns >= 1 || controllerDiscoveryTimerActive)
                 && gameBackgroundRuns >= 1
