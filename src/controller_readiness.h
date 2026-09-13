@@ -51,6 +51,10 @@ struct VJoyCapabilities {
     bool ownedByHotasBf6 = false;
     bool outputReportsSucceeding = false;
     bool reportValid = false;
+    // A descriptor is not truth until every supported read used to interpret
+    // it completed. Raw output is retained on the control plane for setup
+    // diagnostics and parser qualification.
+    bool inspectionComplete = false;
     int deviceId = 1;
     QList<int> availableDeviceIds;
     std::array<bool, kVirtualAxisSlotCount> axes{};
@@ -64,6 +68,9 @@ struct VJoyCapabilities {
     QStringList forceFeedbackEffects;
     QString restoreCommand;
     QString diagnostic;
+    QString descriptorReport;
+    QString configurationReport;
+    QString deviceListReport;
 };
 
 struct HidHideCapabilities {
@@ -75,11 +82,17 @@ struct HidHideCapabilities {
     bool mapperAllowlisted = false;
     bool selectedControllerResolved = false;
     bool selectedControllerHidden = false;
+    bool inspectionComplete = false;
     QString mapperExecutable;
     QStringList allowlistedApplications;
     QStringList hiddenDeviceInstanceIds;
     QStringList selectedControllerInstanceIds;
     QString diagnostic;
+    QString cloakReport;
+    QString appListReport;
+    QString gamingDevicesReport;
+    QString deviceListReport;
+    QStringList inspectionFailures;
 };
 
 // A normal profile switch may adjust only HOTAS BF6-managed virtual outputs.
@@ -259,6 +272,11 @@ public:
                                         SetupUtilityPaths utilityPaths = {});
 
     static MapperOutputRequirements requirementsFor(const MapperConfiguration &configuration);
+    // One Device Rig owns each virtual output.  Its capability contract must
+    // include every Profile that can explicitly switch inside that Rig, not
+    // merely the descriptor that happened to be persisted on the layout.
+    static MapperOutputRequirements requirementsForOutputLayout(const MapperConfiguration &configuration,
+                                                                 const QString &outputLayoutId);
     // Saved controller records capture an exact output contract at verified
     // setup time. Convert it without consulting a live mapping profile so a
     // switch can enforce the target controller's capability floor.
@@ -295,6 +313,10 @@ public:
     // A controller switch may require only vJoy capability expansion. Keep
     // HidHide untouched and verify the target output before mapping resumes.
     bool applyVJoyConfiguration();
+    // The setup convergence session may need only the exact selected
+    // physical-controller HidHide repair. Keep vJoy descriptors out of this
+    // transaction even when an unrelated output needs attention.
+    bool applyHidHideConfiguration();
     bool applyAutomatically();
     bool undoLastAutomaticSetup();
     // The mapper performs this proof after a forced DirectInput reopen. A
@@ -336,6 +358,12 @@ public:
         const QStringList &instanceIds, bool hidden) const;
     ManagedVisibilityTransactionResult applyManagedVirtualOutputVisibility(
         const QStringList &instanceIds, bool hidden) const;
+    // An interrupted automatic repair leaves a narrow, app-owned recovery
+    // journal. A later full inspection may retire it only when fresh
+    // DirectInput and driver read-back prove every recorded change is already
+    // safe. This does not mutate HidHide or vJoy.
+    bool reconcilePendingRecoveryAfterVerifiedReadback(
+        const PhysicalControllerCapabilities &observedPhysical);
     bool hasPendingRecovery() const { return m_journal.available; }
 
     const ControllerReadinessPlan &plan() const { return m_plan; }

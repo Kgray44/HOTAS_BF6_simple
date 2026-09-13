@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -17,6 +18,7 @@ bool verifyActivationTransactionFaults()
     const QString targetProfile = hotas::precisionProfileId();
     const QString baselineProfile = hotas::normalProfileId();
     const QString baselineRig = QStringLiteral("activation-transaction-rig");
+    const QString targetRig = QStringLiteral("activation-transaction-alternate-rig");
     const auto retainsBaseline = [&backend, &baselineProfile, &baselineRig]() {
         return backend->activeProfileId() == baselineProfile
             && backend->activeDeviceRigId() == baselineRig;
@@ -47,9 +49,280 @@ bool verifyActivationTransactionFaults()
     backend->setActivationFaultInjectionsForTest({});
     if (!backend->activateProfile(targetProfile)
         || backend->activeProfileId() != targetProfile
-        || backend->activeDeviceRigId() != baselineRig
+        || backend->activeDeviceRigId() != targetRig
         || backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
         std::fprintf(stderr, "activation transaction normal path did not commit the full route\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyManualRigUsesRigOwnedOutputTransaction()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString rigId = QStringLiteral("activation-transaction-rig");
+    const QString outputId = QStringLiteral("activation-transaction-output");
+    if (!backend->configureRigOwnedOutputFixtureForTest()) {
+        std::fprintf(stderr, "Rig-owned output fixture could not be configured\n");
+        return false;
+    }
+    const QVariantMap result = backend->activateDeviceRigResult(rigId);
+    if (!result.value(QStringLiteral("success")).toBool()
+        || result.value(QStringLiteral("profileId")).toString() != hotas::normalProfileId()
+        || result.value(QStringLiteral("deviceRigId")).toString() != rigId
+        || result.value(QStringLiteral("outputLayoutId")).toString() != outputId
+        || backend->activeProfileId() != hotas::normalProfileId()
+        || backend->activeDeviceRigId() != rigId
+        || backend->vjoyDeviceId() != 2) {
+        std::fprintf(stderr, "manual Rig activation did not commit its Rig-owned coherent route\n");
+        return false;
+    }
+    for (const QVariant &entry : backend->profiles()) {
+        const QVariantMap profile = entry.toMap();
+        if (profile.value(QStringLiteral("id")).toString() == hotas::normalProfileId()
+            && profile.value(QStringLiteral("outputLayoutId")).toString() == outputId) {
+            return true;
+        }
+    }
+    std::fprintf(stderr, "manual Rig activation did not expose its Rig primary output\n");
+    return false;
+}
+
+bool verifyManualProfileUsesRigOwnedOutputTransaction()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString profileId = hotas::normalProfileId();
+    const QString rigId = QStringLiteral("activation-transaction-rig");
+    const QString outputId = QStringLiteral("activation-transaction-output");
+    if (!backend->configureRigOwnedOutputFixtureForTest()) {
+        std::fprintf(stderr, "Rig-owned output fixture could not be configured\n");
+        return false;
+    }
+    const QVariantMap result = backend->activateProfileResult(profileId);
+    if (!result.value(QStringLiteral("success")).toBool()
+        || result.value(QStringLiteral("intent")).toString() != QStringLiteral("manual-profile")
+        || result.value(QStringLiteral("requestedProfileId")).toString() != profileId
+        || result.value(QStringLiteral("profileId")).toString() != profileId
+        || result.value(QStringLiteral("deviceRigId")).toString() != rigId
+        || result.value(QStringLiteral("outputLayoutId")).toString() != outputId
+        || backend->activeProfileId() != profileId
+        || backend->activeDeviceRigId() != rigId
+        || backend->vjoyDeviceId() != 2) {
+        std::fprintf(stderr, "manual Profile activation did not commit its Rig-owned coherent route\n");
+        return false;
+    }
+    const QVariantMap precision = backend->activateProfileResult(hotas::precisionProfileId());
+    if (!precision.value(QStringLiteral("success")).toBool()
+        || backend->activeProfileId() != hotas::precisionProfileId()
+        || backend->activeDeviceRigId() != rigId
+        || backend->vjoyDeviceId() != 2) {
+        std::fprintf(stderr, "same-Rig Profile switch did not retain the Rig-owned vJoy 2 route\n");
+        return false;
+    }
+    const QVariantMap normal = backend->activateProfileResult(profileId);
+    if (!normal.value(QStringLiteral("success")).toBool()
+        || backend->activeProfileId() != profileId
+        || backend->activeDeviceRigId() != rigId
+        || backend->vjoyDeviceId() != 2) {
+        std::fprintf(stderr, "same-Rig switch back did not retain the Rig-owned vJoy 2 route\n");
+        return false;
+    }
+    for (const QVariant &entry : backend->profiles()) {
+        const QVariantMap profile = entry.toMap();
+        if (profile.value(QStringLiteral("id")).toString() == profileId
+            && profile.value(QStringLiteral("outputLayoutId")).toString() == outputId) {
+            return true;
+        }
+    }
+    std::fprintf(stderr, "manual Profile activation did not expose its Rig primary output\n");
+    return false;
+}
+
+bool verifyViewedProfileUsesRigOwnedOutputForMappingEdits()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureSetupTruthReadyToActivateFixtureForTest()
+        || !backend->activeDeviceRigId().isEmpty()) {
+        std::fprintf(stderr, "viewed-Profile mapping fixture did not preserve inactive Rig state\n");
+        return false;
+    }
+
+    // This is the exact VIEWING-versus-ACTIVE seam: the Profile's selected
+    // Rig owns its vJoy 2 output, but no Rig is yet active.  Editing remains
+    // valid and must not silently activate the Rig.
+    backend->setVirtualAxisAvailabilityForTest(true);
+    if (!backend->setMapping(0, QStringLiteral("X"), true)
+        || !backend->activeDeviceRigId().isEmpty()) {
+        std::fprintf(stderr,
+            "a viewed Profile could not write through its Device Rig primary output without activating it\n");
+        return false;
+    }
+    const QVariantList axes = backend->axes();
+    if (axes.isEmpty() || axes.front().toMap().value(QStringLiteral("target")).toString()
+            != QStringLiteral("X")) {
+        std::fprintf(stderr, "viewed-Profile mapping edit did not persist its selected virtual axis\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifySetupTruthReadyToActivateCompletion()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString rigId = QStringLiteral("activation-transaction-rig");
+    const auto mappingGroup = [](const QVariantMap &snapshot) {
+        for (const QVariant &entry : snapshot.value(QStringLiteral("groups")).toList()) {
+            const QVariantMap group = entry.toMap();
+            if (group.value(QStringLiteral("id")).toString() == QStringLiteral("mapping")) return group;
+        }
+        return QVariantMap{};
+    };
+    if (!backend->configureSetupTruthReadyToActivateFixtureForTest()) {
+        std::fprintf(stderr, "ready-to-activate setup truth fixture could not be configured\n");
+        return false;
+    }
+
+    const QVariantMap before = backend->setupTruthSnapshot();
+    const QVariantMap beforeMapping = mappingGroup(before);
+    const QVariantList beforeActions = before.value(QStringLiteral("manualActions")).toList();
+    const bool checkComplete = backend->completeSetupCheck().value(QStringLiteral("success")).toBool();
+    if (before.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("READY")
+        || beforeMapping.value(QStringLiteral("status")).toString() != QStringLiteral("READY TO ACTIVATE")
+        || beforeActions.size() != 1
+        || beforeActions.front().toMap().value(QStringLiteral("rigId")).toString() != rigId
+        || !checkComplete) {
+        std::fprintf(stderr,
+            "healthy viewed Rig did not produce expected action: overall=%s mapping=%s actions=%d actionRig=%s complete=%d\n",
+            before.value(QStringLiteral("overallStatus")).toString().toUtf8().constData(),
+            beforeMapping.value(QStringLiteral("status")).toString().toUtf8().constData(),
+            static_cast<int>(beforeActions.size()), beforeActions.isEmpty() ? "" : beforeActions.front().toMap()
+                .value(QStringLiteral("rigId")).toString().toUtf8().constData(), checkComplete ? 1 : 0);
+        return false;
+    }
+
+    const QVariantMap activated = backend->activateSetupTruthDeviceRig(rigId);
+    const QVariantMap after = activated.value(QStringLiteral("setupTruth")).toMap();
+    const QVariantMap afterMapping = mappingGroup(after);
+    const QVariantMap session = backend->setupRepairSession();
+    if (!activated.value(QStringLiteral("success")).toBool()
+        || backend->activeDeviceRigId() != rigId
+        || after.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("READY")
+        || afterMapping.value(QStringLiteral("status")).toString() != QStringLiteral("READY")
+        || !after.value(QStringLiteral("manualActions")).toList().isEmpty()
+        || !session.value(QStringLiteral("afterSnapshot")).toMap().value(QStringLiteral("manualActions")).toList().isEmpty()
+        || session.value(QStringLiteral("mode")).toString() != QStringLiteral("COMPLETE")) {
+        std::fprintf(stderr, "Setup Complete did not refresh to the activated Profile, Rig, and output state\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyStartupSetupTruthPublication()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const auto groupStatus = [](const QVariantMap &snapshot, const QString &id) {
+        for (const QVariant &entry : snapshot.value(QStringLiteral("groups")).toList()) {
+            const QVariantMap group = entry.toMap();
+            if (group.value(QStringLiteral("id")).toString() == id)
+                return group.value(QStringLiteral("status")).toString();
+        }
+        return QString{};
+    };
+    const QVariantMap launchSnapshot = backend->setupTruthSnapshot();
+    if (!backend->startupSetupTruthInspectionScheduledForTest()
+        || launchSnapshot.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("CHECKING")) {
+        std::fprintf(stderr, "normal startup did not schedule a typed CHECKING setup-truth inspection\n");
+        return false;
+    }
+    if (!backend->configureStartupSetupTruthFixtureForTest()) {
+        std::fprintf(stderr, "startup setup truth fixture could not be configured\n");
+        return false;
+    }
+
+    const QVariantMap before = backend->setupTruthSnapshot();
+    const QVariantMap beforeSession = backend->setupRepairSession();
+    if (before.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("CHECKING")
+        || groupStatus(before, QStringLiteral("physical")) != QStringLiteral("CHECKING")
+        || groupStatus(before, QStringLiteral("vjoy")) != QStringLiteral("CHECKING")
+        || groupStatus(before, QStringLiteral("isolation")) != QStringLiteral("CHECKING")
+        || beforeSession.value(QStringLiteral("active")).toBool()
+        || beforeSession.value(QStringLiteral("mode")).toString() != QStringLiteral("IDLE")) {
+        std::fprintf(stderr, "startup setup truth did not publish CHECKING without opening a repair session\n");
+        return false;
+    }
+
+    if (!backend->finishStartupSetupTruthInspectionForTest()) {
+        std::fprintf(stderr, "startup setup truth fixture did not finish its passive inspection\n");
+        return false;
+    }
+    const QVariantMap after = backend->setupTruthSnapshot();
+    const QVariantMap afterSession = backend->setupRepairSession();
+    if (after.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("READY")
+        || groupStatus(after, QStringLiteral("physical")) != QStringLiteral("READY")
+        || groupStatus(after, QStringLiteral("vjoy")) != QStringLiteral("READY")
+        || groupStatus(after, QStringLiteral("isolation")) != QStringLiteral("READY")
+        || !after.value(QStringLiteral("fresh")).toBool()
+        || afterSession.value(QStringLiteral("active")).toBool()
+        || afterSession.value(QStringLiteral("mode")).toString() != QStringLiteral("IDLE")) {
+        QVariantMap verificationGroup;
+        for (const QVariant &entry : after.value(QStringLiteral("groups")).toList()) {
+            const QVariantMap group = entry.toMap();
+            if (group.value(QStringLiteral("id")).toString() == QStringLiteral("verification")) {
+                verificationGroup = group;
+                break;
+            }
+        }
+        const QVariantList verificationMembers = verificationGroup.value(QStringLiteral("evidence"))
+            .toMap().value(QStringLiteral("members")).toList();
+        const QVariantMap firstVerificationMember = verificationMembers.isEmpty()
+            ? QVariantMap{} : verificationMembers.front().toMap();
+        std::fprintf(stderr,
+            "startup setup truth did not publish one fresh ready snapshot after passive inspection: overall=%s physical=%s verification=%s vjoy=%s isolation=%s mapping=%s fresh=%d sessionActive=%d sessionMode=%s memberVerified=%d lastVerified=%s\n",
+            after.value(QStringLiteral("overallStatus")).toString().toUtf8().constData(),
+            groupStatus(after, QStringLiteral("physical")).toUtf8().constData(),
+            groupStatus(after, QStringLiteral("verification")).toUtf8().constData(),
+            groupStatus(after, QStringLiteral("vjoy")).toUtf8().constData(),
+            groupStatus(after, QStringLiteral("isolation")).toUtf8().constData(),
+            groupStatus(after, QStringLiteral("mapping")).toUtf8().constData(),
+            after.value(QStringLiteral("fresh")).toBool() ? 1 : 0,
+            afterSession.value(QStringLiteral("active")).toBool() ? 1 : 0,
+            afterSession.value(QStringLiteral("mode")).toString().toUtf8().constData(),
+            firstVerificationMember.value(QStringLiteral("identityVerified")).toBool() ? 1 : 0,
+            firstVerificationMember.value(QStringLiteral("lastVerified")).toString().toUtf8().constData());
+        return false;
+    }
+
+    const QVariantMap activated = backend->activateDeviceRigResult(
+        QStringLiteral("activation-transaction-rig"));
+    const QVariantMap duringActivationRefresh = backend->setupTruthSnapshot();
+    if (!activated.value(QStringLiteral("success")).toBool()
+        || backend->activeDeviceRigId() != QStringLiteral("activation-transaction-rig")
+        || duringActivationRefresh.value(QStringLiteral("overallStatus")).toString()
+               != QStringLiteral("CHECKING")
+        || !backend->finishStartupSetupTruthInspectionForTest()) {
+        std::fprintf(stderr, "activation did not invalidate setup truth for a coalesced passive refresh\n");
+        return false;
+    }
+    const QVariantMap afterActivation = backend->setupTruthSnapshot();
+    if (groupStatus(afterActivation, QStringLiteral("mapping")) != QStringLiteral("READY")
+        || !afterActivation.value(QStringLiteral("manualActions")).toList().isEmpty()
+        || backend->setupRepairSession().value(QStringLiteral("mode")).toString() != QStringLiteral("IDLE")) {
+        std::fprintf(stderr, "activation did not immediately refresh startup setup truth without a wizard session\n");
+        return false;
+    }
+
+    auto failureBackend = std::make_unique<hotas::AppBackend>();
+    if (!failureBackend->configureStartupSetupTruthInspectionFailureForTest()) {
+        std::fprintf(stderr, "startup inspection-failure fixture could not be configured\n");
+        return false;
+    }
+    const QVariantMap failure = failureBackend->setupTruthSnapshot();
+    if (!failure.value(QStringLiteral("fresh")).toBool()
+        || failure.value(QStringLiteral("overallStatus")).toString()
+               != QStringLiteral("UNKNOWN / INSPECTION FAILED")
+        || groupStatus(failure, QStringLiteral("isolation"))
+               != QStringLiteral("UNKNOWN / INSPECTION FAILED")) {
+        std::fprintf(stderr, "a completed inspection failure was not projected as UNKNOWN\n");
         return false;
     }
     return true;
@@ -61,13 +334,29 @@ int main(int argc, char *argv[])
 {
     QStandardPaths::setTestModeEnabled(true);
     qputenv("HOTAS_ENABLE_UI_PERFORMANCE_INSTRUMENTATION", "1");
+    // Startup timing is measured against an isolated control plane.  A live
+    // HidHide/vJoy inspection can block the owner machine and would turn this
+    // presentation test into a driver-integration test.
+    qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
     QApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
+    // This suite exercises a known-good startup fixture.  A narrow recovery
+    // journal is intentionally durable in production, so remove any record
+    // left by another test process before the AppBackend constructors load
+    // it.  Recovery semantics themselves are covered by readiness tests.
+    QSettings testSettings;
+    testSettings.remove(QStringLiteral("readiness/pendingAutomaticRepairRecovery"));
+    testSettings.sync();
 
     hotas::AppBackend backend;
+    if (!verifyStartupSetupTruthPublication()) return 1;
     if (!verifyActivationTransactionFaults()) return 1;
+    if (!verifyManualRigUsesRigOwnedOutputTransaction()) return 1;
+    if (!verifyManualProfileUsesRigOwnedOutputTransaction()) return 1;
+    if (!verifyViewedProfileUsesRigOwnedOutputForMappingEdits()) return 1;
+    if (!verifySetupTruthReadyToActivateCompletion()) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real
     // presentation lifecycle and then taking the visible steady-state sample.

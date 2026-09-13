@@ -84,6 +84,8 @@ public:
     bool cancelElevation = false;
     bool repairApplied = false;
     bool cloakEnabled = false;
+    bool vjoy219HumanReadableOutput = false;
+    int transientGamingProbeFailures = 0;
     int staleVJoyCapabilityInspections = 0;
     int elevatedTransactions = 0;
     QString lastRepairRequest;
@@ -98,6 +100,10 @@ public:
     {
         Q_UNUSED(program)
         calls.append(arguments.join(u' '));
+        if (arguments.contains(QStringLiteral("--dev-gaming")) && transientGamingProbeFailures > 0) {
+            --transientGamingProbeFailures;
+            return {true, true, 1, {}, QStringLiteral("Timed out after 2500 ms")};
+        }
         const bool visibilityOperation = arguments.contains(QStringLiteral("--dev-hide"))
             || arguments.contains(QStringLiteral("--dev-unhide"));
         if (visibilityOperation) ++runtimeVisibilityOperations;
@@ -277,17 +283,25 @@ private:
             return {true, true, 0, QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance"), {}};
         }
         if (joined.contains(QStringLiteral("-t -c"))) {
-            return {true, true, 0, QStringLiteral("vJoyConfig 1 -f -a X Y Z Rz -b 4\n"), {}};
+            const QString device = arguments.isEmpty() ? QStringLiteral("1") : arguments.back();
+            return {true, true, 0, vjoy219HumanReadableOutput
+                ? QStringLiteral("vJoyConfig %1 -f -a X Y Z Rx Ry Rz -b 15 -e all\n").arg(device)
+                : QStringLiteral("vJoyConfig %1 -f -a X Y Z Rz -b 4\n").arg(device), {}};
         }
         if (joined.contains(QStringLiteral("-t"))) {
-            const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), QStringLiteral("1")};
+            const QString device = arguments.size() >= 2 ? arguments.back() : QStringLiteral("1");
+            const bool targetedCapabilityReport = arguments == QStringList{QStringLiteral("-t"), device};
             bool capabilitiesConverged = repairApplied;
             if (capabilitiesConverged && targetedCapabilityReport && staleVJoyCapabilityInspections > 0) {
                 --staleVJoyCapabilityInspections;
                 capabilitiesConverged = false;
             }
-            return {true, true, 0, QStringLiteral("Device: 1\nState: FREE\nButtons: %1\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
-                .arg(capabilitiesConverged ? 32 : 4), {}};
+            const QString report = vjoy219HumanReadableOutput
+                ? QStringLiteral("Device %1 FREE\nButtons %2\nContinous POVs 0\nDescrete POVs 0\nAxes X Y Z Rx Ry Rz Sl0 Sl1\nFFB All Effects\n")
+                      .arg(device).arg(capabilitiesConverged ? 32 : 15)
+                : QStringLiteral("Device: %1\nState: FREE\nButtons: %2\nContinous POVs: 0\nDescrete POVs: 0\nAxes: X Y Z Rx Ry Rz Sl0 Sl1\nFFB Effects: None\n")
+                      .arg(device).arg(capabilitiesConverged ? 32 : 4);
+            return {true, true, 0, report, {}};
         }
         return {true, true, 0, {}, {}};
     }
@@ -326,18 +340,24 @@ private slots:
     void uacCancellationIsNotReportedAsRepairFailure();
     void requirementsCoverProfilesAutomationAndExtendedAxes();
     void canonicalSignalFlowFanOutContributesOutputRequirements();
+    void rigOwnedOutputRequirementsIncludeEverySwitchableProfileAxis();
     void buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout();
     void virtualAxisCapabilitySupersetIsReady();
     void vjoyShortSliderAliasesRemainReady();
+    void scopedVJoyRepairUsesCandidateOwnedDevice2Transaction();
+    void scopedHidHideRepairPreservesVJoyOperationScope();
     void validVJoySupersetCannotDisagreeWithAggregateHealth();
     void staleVJoyPlanBecomesReadyImmediatelyAfterCorrection();
     void currentCandidateExecutableMustBeAllowlistedAndReadBack();
+    void transientHidHideGamingProbeRetriesAndRemainsRepairable();
     void physicalControllerContainerIdentitySurvivesReenumeration();
+    void interruptedHidHideRepairReconcilesOnlyAfterFreshProof();
     void automaticRepairConvergesWithoutChangingUnrelatedHidHideRules();
     void savedControllerVjoyRequirementsDetectInsufficientOutput();
     void managedVirtualOutputIdentityRequiresExactEnumeratedVjoy();
     void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
     void managedPhysicalInputsRequireExactIdentityAndRollBackOnFailure();
+    void vjoy219HumanReadableOutputIsParsedAsHealthyDescriptor();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -347,6 +367,28 @@ void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
     QVERIFY(!plan.vjoyNeedsChanges);
     QVERIFY(!plan.hidhideNeedsChanges);
     QCOMPARE(plan.state, ControllerReadinessState::Ready);
+}
+
+void ControllerReadinessTests::vjoy219HumanReadableOutputIsParsedAsHealthyDescriptor()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    fake->vjoy219HumanReadableOutput = true;
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    MapperConfiguration configuration = defaultConfiguration();
+    service.inspect(configuration, connectedController(), VerificationMode::Full);
+    const VJoyCapabilities &vjoy = service.plan().vjoy;
+    QVERIFY(vjoy.inspectionComplete);
+    QVERIFY(vjoy.devicePresent);
+    QVERIFY(vjoy.driverReady);
+    QCOMPARE(vjoy.buttons, 15);
+    QVERIFY(vjoy.axes[static_cast<size_t>(VirtualAxis::Rz)]);
+    QVERIFY(vjoy.forceFeedbackKnown);
+    QVERIFY(vjoy.forceFeedbackEffects.contains(QStringLiteral("all")));
 }
 
 void ControllerReadinessTests::exactRequiredVJoyCapacityIsReady()
@@ -847,6 +889,45 @@ void ControllerReadinessTests::canonicalSignalFlowFanOutContributesOutputRequire
     QVERIFY(requirements.incompatiblePovMix);
 }
 
+void ControllerReadinessTests::rigOwnedOutputRequirementsIncludeEverySwitchableProfileAxis()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    VirtualOutputLayout &output = configuration.outputLayouts.front();
+    output.id = QStringLiteral("flight-deck-output-2");
+    output.requirements.deviceId = 2;
+    output.requirements.axes[static_cast<size_t>(VirtualAxis::Rx)] = false;
+
+    DeviceRig rig;
+    rig.id = QStringLiteral("bf6-test-rig");
+    rig.name = QStringLiteral("BF6 Test Rig");
+    rig.outputs = {{output.id, true}};
+    rig.primaryOutputLayoutId = output.id;
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    configuration.vjoyDeviceId = output.requirements.deviceId;
+
+    ControllerProfile &normal = configuration.profiles.front();
+    normal.deviceRigId = rig.id;
+    ControllerProfile helicopter = normal;
+    helicopter.id = QStringLiteral("battlefield-6-helicopter");
+    helicopter.name = QStringLiteral("Helicopter");
+    helicopter.axes.front().target = VirtualAxis::Rx;
+    configuration.profiles.push_back(helicopter);
+
+    const MapperOutputRequirements active = ControllerReadinessService::requirementsFor(configuration);
+    const MapperOutputRequirements scoped =
+        ControllerReadinessService::requirementsForOutputLayout(configuration, output.id);
+    QVERIFY(active.axes[static_cast<size_t>(VirtualAxis::Rx)]);
+    QVERIFY(scoped.axes[static_cast<size_t>(VirtualAxis::Rx)]);
+    QVERIFY(scoped.buttons >= active.buttons);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.deviceId = output.requirements.deviceId;
+    vjoy.axes[static_cast<size_t>(VirtualAxis::Rx)] = false;
+    QVERIFY(ControllerReadinessService::planFor(
+        connectedController(), scoped, vjoy, readyHidHide()).vjoyNeedsChanges);
+}
+
 void ControllerReadinessTests::buttonCapacityUsesMappedRoutesRatherThanProvisionedLayout()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -936,6 +1017,64 @@ void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
     QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
 }
 
+void ControllerReadinessTests::scopedVJoyRepairUsesCandidateOwnedDevice2Transaction()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    configuration.vjoyDeviceId = 2;
+    MapperOutputRequirements requirements;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Y)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Z)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Rx)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)] = true;
+    requirements.axes[static_cast<size_t>(VirtualAxis::Slider1)] = true;
+    requirements.buttons = 32;
+
+    QVERIFY(service.inspectForRequirements(configuration, connectedController(), requirements).vjoyNeedsChanges);
+    QVERIFY(service.applyVJoyConfiguration());
+    QCOMPARE(probe->elevatedTransactions, 1);
+    QVERIFY(containsCanonicalApplicationPath(probe->elevatedPrograms));
+    QVERIFY(!probe->lastRepairRequest.isEmpty());
+    const QString helperCommands = probe->calls.join(u'\n');
+    QVERIFY(helperCommands.contains(QStringLiteral("helper:2 -f -a Y Z Rx Sl0 Sl1 -b 32")));
+    QVERIFY(!helperCommands.contains(QStringLiteral("helper:--dev-hide")));
+    QVERIFY(!service.plan().vjoyNeedsChanges);
+    QCOMPARE(service.plan().vjoy.deviceId, 2);
+}
+
+void ControllerReadinessTests::scopedHidHideRepairPreservesVJoyOperationScope()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    QVERIFY(service.plan().hidhideNeedsChanges);
+    QVERIFY(service.plan().hidhideCanApply);
+    QVERIFY(service.applyHidHideConfiguration());
+    QVERIFY(!service.plan().hidhideNeedsChanges);
+    QVERIFY(std::any_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("helper:"))
+            && call.contains(QStringLiteral("--dev-hide HID\\VID_044F&PID_B68D\\exact-instance"),
+                             Qt::CaseInsensitive);
+    }));
+    QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
+        return call.startsWith(QStringLiteral("helper:")) && call.contains(QStringLiteral(" -f -a "));
+    }));
+}
+
 void ControllerReadinessTests::validVJoySupersetCannotDisagreeWithAggregateHealth()
 {
     MapperOutputRequirements requirements;
@@ -1004,6 +1143,27 @@ void ControllerReadinessTests::currentCandidateExecutableMustBeAllowlistedAndRea
     }));
 }
 
+void ControllerReadinessTests::transientHidHideGamingProbeRetriesAndRemainsRepairable()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    FakeRunner *probe = fake.get();
+    probe->transientGamingProbeFailures = 1;
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    const ControllerReadinessPlan &plan = service.plan();
+    QVERIFY(plan.hidhide.inspectionComplete);
+    QVERIFY(plan.hidhide.selectedControllerResolved);
+    QVERIFY(plan.hidhideNeedsChanges);
+    QVERIFY(plan.hidhideCanApply);
+    QCOMPARE(std::count(probe->calls.cbegin(), probe->calls.cend(), QStringLiteral("--dev-gaming")), 2);
+}
+
 void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenumeration()
 {
     PhysicalControllerCapabilities before = connectedController();
@@ -1016,6 +1176,29 @@ void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenum
     // even if it happens to share a product family.
     after.hidContainerId = QStringLiteral("{C4CE6D3A-3A34-4F8B-80E1-987654321ABC}");
     QVERIFY(!ControllerReadinessService::samePhysicalController(before, after));
+}
+
+void ControllerReadinessTests::interruptedHidHideRepairReconcilesOnlyAfterFreshProof()
+{
+    auto fake = std::make_unique<FakeRunner>();
+    SetupUtilityPaths utilities;
+    utilities.supplied = true;
+    utilities.vjoyConfig = QStringLiteral("fake-vJoyConfig.exe");
+    utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
+    utilities.hidhideServiceReady = true;
+    ControllerReadinessService service(std::move(fake), utilities);
+
+    service.inspect(defaultConfiguration(), connectedController(), VerificationMode::Full);
+    QVERIFY(service.applyHidHideConfiguration());
+    QVERIFY(service.hasPendingRecovery());
+
+    PhysicalControllerCapabilities observed = connectedController();
+    QVERIFY(!service.reconcilePendingRecoveryAfterVerifiedReadback(observed));
+    QVERIFY(service.hasPendingRecovery());
+
+    observed.inputReportsReceived = true;
+    QVERIFY(service.reconcilePendingRecoveryAfterVerifiedReadback(observed));
+    QVERIFY(!service.hasPendingRecovery());
 }
 
 void ControllerReadinessTests::automaticRepairConvergesWithoutChangingUnrelatedHidHideRules()

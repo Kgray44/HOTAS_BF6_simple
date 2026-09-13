@@ -1529,8 +1529,8 @@ Page {
         }
         Component {
             id: standardOverviewComponent
-            OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
-                onSetupRequested: { controllerSetupDialog.open(); backend.startSetupAssistantCheckForScope("application") } }
+                OverviewPage { anchors.fill: parent; visible: root.currentPage === 8; legacy: false
+                    onSetupRequested: controllerSetupDialog.open() }
         }
         Component {
             id: flightDeckOverviewComponent
@@ -1571,16 +1571,8 @@ Page {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.themeTokens; legacy: false
                     onVerificationRequested: function(rigId, deviceId, outputId) {
+                        if (rigId !== "") backend.setEditingDeviceContext(rigId, deviceId !== "" ? [deviceId] : [])
                         controllerSetupDialog.open()
-                        if (outputId && outputId !== "") {
-                            backend.startSetupAssistantCheckForScope("virtualOutput", outputId)
-                        } else if (deviceId !== "") {
-                            if (rigId !== "") backend.setEditingDeviceContext(rigId, [deviceId])
-                            backend.startSetupAssistantCheckForScope("device", deviceId)
-                        } else if (rigId !== "") {
-                            backend.setEditingDeviceContext(rigId, [])
-                            backend.startSetupAssistantCheckForScope("deviceRig", rigId)
-                        } else backend.startSetupAssistantCheckForScope("application")
                     }
                     onCalibrationRequested: function(deviceId) {
                         if (backend.beginCalibrationForDevice(deviceId)) {
@@ -2566,6 +2558,7 @@ Page {
     }
     Dialog {
         id: controllerSetupDialog
+        onOpened: setupAssistantPanel.beginNewSession()
         objectName: "controllerSetupDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent
@@ -2578,7 +2571,7 @@ Page {
         header: ThemedDialogHeader {
             id: setupAssistantHeader
             theme: root.themeTokens
-            heading: "HOTAS BF6 SETUP ASSISTANT"
+            heading: "SETUP HEALTH & REPAIR"
             detail: backend.activeDeviceRigName
             dialog: controllerSetupDialog
         }
@@ -2590,7 +2583,8 @@ Page {
             contentWidth: width
             contentHeight: setupAssistantPanel.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
-            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.themeTokens; activityMonitoring: controllerSetupDialog.visible
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ControllerReadinessPanel { id: setupAssistantPanel; width: setupAssistantScroll.width; backendObject: backend; themeTokens: root.themeTokens; showTitle: false; activityMonitoring: controllerSetupDialog.visible
                 onCloseRequested: controllerSetupDialog.close()
                 onCalibrationRequested: {
                     root.setupAssistantReturnAfterCalibration = true

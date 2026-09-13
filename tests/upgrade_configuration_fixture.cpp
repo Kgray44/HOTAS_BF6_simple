@@ -18,7 +18,7 @@ namespace {
 using namespace Qt::StringLiterals;
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kExpectedPersistedSchemaVersion = 28;
+constexpr int kExpectedPersistedSchemaVersion = 29;
 
 QString settingsFilePath()
 {
@@ -100,7 +100,7 @@ bool assertMigratedFixture()
     const QJsonDocument document = QJsonDocument::fromJson(settings.value(QLatin1String(kConfigKey)).toByteArray());
     if (!document.isObject()
         || document.object().value(QStringLiteral("version")).toInt() != kExpectedPersistedSchemaVersion) {
-        std::cerr << "Expected the installed mapper to persist schema 28.\n";
+        std::cerr << "Expected the installed mapper to persist schema 29.\n";
         return false;
     }
 
@@ -123,7 +123,7 @@ bool assertMigratedFixture()
         || profile.buttons.size() != 6 || profile.buttons[5].target != 28
         || profile.povs.size() != 1
         || profile.povs[0][static_cast<size_t>(hotas::povDirectionIndex(hotas::PovDirection::Up))].target != 29
-        || profile.outputLayoutId != hotas::defaultOutputLayoutId()
+        || !profile.outputLayoutId.isEmpty()
         || configuration.outputLayouts.front().requirements.deviceId != 2
         || !hotas::ConfigStore::toJson(configuration).value(QStringLiteral("profiles")).toArray()
                 .first().toObject().value(QStringLiteral("axes")).toArray().first().toObject()
@@ -162,9 +162,9 @@ int main(int argc, char *argv[])
     }
     if (arguments.contains(QStringLiteral("--seed-v14"))) return writeFixture(14) ? 0 : 1;
     if (arguments.contains(QStringLiteral("--seed-v15"))) return writeFixture(15) ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-fresh-v28"))) return assertFreshStarter() ? 0 : 1;
-    if (arguments.contains(QStringLiteral("--assert-v28"))) return assertMigratedFixture() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-fresh-v29"))) return assertFreshStarter() ? 0 : 1;
+    if (arguments.contains(QStringLiteral("--assert-v29"))) return assertMigratedFixture() ? 0 : 1;
 
-    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v28, or --assert-v28 (optionally with --test-mode).\n";
+    std::cerr << "Use --clear, --seed-v14, --seed-v15, --assert-fresh-v29, or --assert-v29 (optionally with --test-mode).\n";
     return 2;
 }

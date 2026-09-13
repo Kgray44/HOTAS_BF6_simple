@@ -15,6 +15,7 @@ enum class ActivationDecisionReason : int {
     CurrentPairRetained,
     PreferredCandidateSelected,
     FallbackCandidateSelected,
+    ManualRigCandidateSelected,
     NoEligibleCandidate,
     IsolationBlocked,
     StaleDecisionDiscarded,
@@ -38,6 +39,8 @@ struct ActivationCandidateEvaluation {
     QString deviceRigName;
     QString outputLayoutId;
     QString outputLayoutName;
+    QString resolvedOutputLayoutId;
+    QString resolvedOutputLayoutName;
     ProfileAutomaticSelectionMode mode = ProfileAutomaticSelectionMode::Preferred;
     DeviceRigHealth rigHealth = DeviceRigHealth::Offline;
     bool eligible = false;
@@ -79,6 +82,9 @@ struct ActivationContext {
 };
 
 struct ActivationDecision {
+    QString requestedProfileId;
+    QString requestedRigId;
+    ActivationIntent intent = ActivationIntent::Automatic;
     QString categoryId;
     QString profileId;
     QString deviceRigId;
@@ -98,6 +104,7 @@ struct ActivationDecision {
 };
 
 QString activationDecisionReasonKey(ActivationDecisionReason reason);
+QString activationIntentKey(ActivationIntent intent);
 QString profileAutomaticSelectionModeKey(ProfileAutomaticSelectionMode mode);
 QString profileAutomaticSelectionModeLabel(ProfileAutomaticSelectionMode mode);
 bool profileAutomaticSelectionModeFromKey(const QString &key,

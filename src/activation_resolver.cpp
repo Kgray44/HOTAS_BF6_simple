@@ -17,6 +17,7 @@ const DeviceRigStatus *statusFor(const QList<DeviceRigStatus> &statuses, const Q
 struct CandidateResult {
     const ControllerProfile *profile = nullptr;
     const DeviceRig *rig = nullptr;
+    QString outputLayoutId;
     QString blocker;
     QStringList warnings;
 };
@@ -91,20 +92,19 @@ CandidateResult candidateFor(const MapperConfiguration &configuration,
             result.warnings.append(rig->name + QStringLiteral(" has a managed physical input whose HidHide state is not currently known."));
         }
     }
-    if (!findOutputLayout(configuration, profile->outputLayoutId)) {
-        result.blocker = profile->name + QStringLiteral(" references an unavailable virtual output.");
+    // Profiles describe mapping behaviour. The Device Rig owns the active
+    // vJoy topology and is the only authority that can select an output.
+    const QString outputLayoutId = deviceRigPrimaryOutputLayoutId(*rig);
+    if (outputLayoutId.isEmpty()) {
+        result.blocker = rig->name + QStringLiteral(" needs an enabled Primary Virtual Output.");
         return result;
     }
-    if (context.unavailableOutputLayoutIds.contains(profile->outputLayoutId)) {
-        result.blocker = profile->name + QStringLiteral(" requires a virtual output that is unavailable.");
+    if (!findOutputLayout(configuration, outputLayoutId)) {
+        result.blocker = rig->name + QStringLiteral(" primary Virtual Output is unavailable.");
         return result;
     }
-    const bool rigUsesOutput = std::any_of(rig->outputs.cbegin(), rig->outputs.cend(),
-        [&profile](const DeviceRigOutputTarget &output) {
-            return output.enabled && output.outputLayoutId == profile->outputLayoutId;
-        });
-    if (!rigUsesOutput) {
-        result.blocker = rig->name + QStringLiteral(" does not enable the Profile's virtual output.");
+    if (context.unavailableOutputLayoutIds.contains(outputLayoutId)) {
+        result.blocker = rig->name + QStringLiteral(" primary Virtual Output is unavailable.");
         return result;
     }
     const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(configuration, rig->id, profile->id);
@@ -114,6 +114,7 @@ CandidateResult candidateFor(const MapperConfiguration &configuration,
     }
     result.profile = profile;
     result.rig = rig;
+    result.outputLayoutId = outputLayoutId;
     return result;
 }
 
@@ -126,7 +127,7 @@ ActivationDecision selectedDecision(const CandidateResult &candidate,
     decision.categoryId = candidate.profile->categoryId;
     decision.profileId = candidate.profile->id;
     decision.deviceRigId = candidate.rig->id;
-    decision.outputLayoutId = candidate.profile->outputLayoutId;
+    decision.outputLayoutId = candidate.outputLayoutId;
     decision.reason = reason;
     decision.explanation = explanation;
     decision.valid = true;
@@ -170,19 +171,26 @@ void appendCandidateEvaluations(const MapperConfiguration &configuration,
         const QString &profileId = category->profileIds.at(index);
         const ControllerProfile *profile = findProfile(configuration, profileId);
         if (!profile) continue;
-        const bool explicitManual = context.intent == ActivationIntent::ManualProfile
-            && context.requestedProfileId == profileId;
-        const CandidateResult candidate = candidateFor(configuration, context, *category, profileId, explicitManual);
+        const bool explicitManual = (context.intent == ActivationIntent::ManualProfile
+            && context.requestedProfileId == profileId)
+            || context.intent == ActivationIntent::ManualRig;
+        const CandidateResult candidate = candidateFor(configuration, context, *category, profileId,
+                                                        explicitManual);
         ActivationCandidateEvaluation evaluation;
         evaluation.profileId = profileId;
         evaluation.profileName = profile->name;
         evaluation.deviceRigId = profile->deviceRigId;
-        if (const DeviceRig *rig = findDeviceRig(configuration, profile->deviceRigId)) {
+        const DeviceRig *rig = findDeviceRig(configuration, profile->deviceRigId);
+        if (rig) {
             evaluation.deviceRigName = rig->name;
         }
-        evaluation.outputLayoutId = profile->outputLayoutId;
-        if (const VirtualOutputLayout *output = findOutputLayout(configuration, profile->outputLayoutId)) {
+        evaluation.outputLayoutId = rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{};
+        if (const VirtualOutputLayout *output = findOutputLayout(configuration, evaluation.outputLayoutId)) {
             evaluation.outputLayoutName = output->name;
+        }
+        evaluation.resolvedOutputLayoutId = candidate.outputLayoutId;
+        if (const VirtualOutputLayout *output = findOutputLayout(configuration, candidate.outputLayoutId)) {
+            evaluation.resolvedOutputLayoutName = output->name;
         }
         evaluation.mode = profile->automaticSelectionMode;
         if (const DeviceRigStatus *status = statusFor(context.rigStatuses, profile->deviceRigId)) {
@@ -215,11 +223,24 @@ QString activationDecisionReasonKey(ActivationDecisionReason reason)
     case ActivationDecisionReason::CurrentPairRetained: return QStringLiteral("current-pair-retained");
     case ActivationDecisionReason::PreferredCandidateSelected: return QStringLiteral("preferred-selected");
     case ActivationDecisionReason::FallbackCandidateSelected: return QStringLiteral("fallback-selected");
+    case ActivationDecisionReason::ManualRigCandidateSelected: return QStringLiteral("manual-rig-selected");
     case ActivationDecisionReason::NoEligibleCandidate: return QStringLiteral("no-eligible-candidate");
     case ActivationDecisionReason::IsolationBlocked: return QStringLiteral("isolation-blocked");
     case ActivationDecisionReason::StaleDecisionDiscarded: return QStringLiteral("stale-decision-discarded");
     }
     return QStringLiteral("unknown");
+}
+
+QString activationIntentKey(ActivationIntent intent)
+{
+    switch (intent) {
+    case ActivationIntent::Automatic: return QStringLiteral("automatic");
+    case ActivationIntent::ManualProfile: return QStringLiteral("manual-profile");
+    case ActivationIntent::ManualCategory: return QStringLiteral("manual-category");
+    case ActivationIntent::ManualRig: return QStringLiteral("manual-rig");
+    case ActivationIntent::RecommendedCandidate: return QStringLiteral("recommended-candidate");
+    }
+    return QStringLiteral("automatic");
 }
 
 QString profileAutomaticSelectionModeKey(ProfileAutomaticSelectionMode mode)
@@ -259,6 +280,9 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
 {
     ActivationDecision decision;
     const auto finish = [&](ActivationDecision result) {
+        result.requestedProfileId = context.requestedProfileId;
+        result.requestedRigId = context.requestedRigId;
+        result.intent = context.intent;
         result.configurationGeneration = context.configurationGeneration;
         result.inventoryGeneration = context.inventoryGeneration;
         result.gameContextGeneration = context.gameContextGeneration;
@@ -283,11 +307,19 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
     QString categoryId = context.matchedCategoryId;
     if (context.intent == ActivationIntent::ManualProfile && requestedProfile) {
         categoryId = requestedProfile->categoryId;
-    } else if (context.intent == ActivationIntent::ManualRig && categoryId.isEmpty()) {
-        categoryId = context.activeCategoryId;
-        if (categoryId.isEmpty()) {
-            if (const ControllerProfile *active = findProfile(configuration, context.activeProfileId)) {
-                categoryId = active->categoryId;
+    } else if (context.intent == ActivationIntent::ManualRig) {
+        // A Profile explicitly supplied by a focused UI context is an
+        // intentional manual choice, but it must already belong to the
+        // requested Rig. Otherwise a ManualRig command remains constrained
+        // to the current category and never hops into an unrelated game.
+        if (requestedProfile && requestedProfile->deviceRigId == context.requestedRigId) {
+            categoryId = requestedProfile->categoryId;
+        } else if (categoryId.isEmpty()) {
+            categoryId = context.activeCategoryId;
+            if (categoryId.isEmpty()) {
+                if (const ControllerProfile *active = findProfile(configuration, context.activeProfileId)) {
+                    categoryId = active->categoryId;
+                }
             }
         }
     }
@@ -304,10 +336,13 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
             const ControllerProfile *manualProfile = findProfile(configuration, context.manualOverrideProfileId);
             const ProfileCategory *manualCategory = manualProfile
                 ? findProfileCategory(configuration, manualProfile->categoryId) : nullptr;
-            const CandidateResult manual = manualCategory
-                ? candidateFor(configuration, context, *manualCategory, context.manualOverrideProfileId, true)
-                : CandidateResult{nullptr, nullptr,
-                    QStringLiteral("The selected manual configuration no longer exists.")};
+            CandidateResult manual;
+            if (manualCategory) {
+                manual = candidateFor(configuration, context, *manualCategory,
+                                      context.manualOverrideProfileId, true);
+            } else {
+                manual.blocker = QStringLiteral("The selected manual configuration no longer exists.");
+            }
             if (manual.profile) {
                 decision = selectedDecision(manual, context, ActivationDecisionReason::ManualOverrideRetained,
                     QStringLiteral("Manual Override is retaining %1 for this application context.").arg(manual.profile->name));
@@ -334,9 +369,12 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
     decision.categoryId = category->id;
 
     if (context.intent == ActivationIntent::ManualProfile) {
-        const CandidateResult explicitProfile = requestedProfile
-            ? candidateFor(configuration, context, *category, requestedProfile->id, true)
-            : CandidateResult{nullptr, nullptr, QStringLiteral("The selected Profile no longer exists.")};
+        CandidateResult explicitProfile;
+        if (requestedProfile) {
+            explicitProfile = candidateFor(configuration, context, *category, requestedProfile->id, true);
+        } else {
+            explicitProfile.blocker = QStringLiteral("The selected Profile no longer exists.");
+        }
         if (explicitProfile.profile) {
             ActivationDecision selected = selectedDecision(explicitProfile, context,
                 ActivationDecisionReason::ManualOverrideRetained,
@@ -370,16 +408,39 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
             decision.explanation = QStringLiteral("The requested Device Rig no longer exists.");
             return finish(decision);
         }
-        CandidateResult preferredForRig = findByMode(ProfileAutomaticSelectionMode::Preferred,
-                                                     context.requestedRigId);
-        CandidateResult fallbackForRig = findByMode(ProfileAutomaticSelectionMode::Fallback,
-                                                    context.requestedRigId);
-        CandidateResult selected = preferredForRig.profile ? preferredForRig : fallbackForRig;
+        CandidateResult selected;
+        QStringList blockers;
+        const auto evaluateForRequestedRig = [&](const QString &profileId) {
+            const ControllerProfile *profile = findProfile(configuration, profileId);
+            if (!profile || profile->deviceRigId != context.requestedRigId) return CandidateResult{};
+            CandidateResult candidate = candidateFor(configuration, context, *category, profileId, true);
+            if (!candidate.profile && !candidate.blocker.isEmpty() && !blockers.contains(candidate.blocker)) {
+                blockers.append(candidate.blocker);
+            }
+            return candidate;
+        };
+        // Explicit activation keeps the selected/current Profile when it
+        // already belongs to this Rig. This makes the result predictable
+        // while preserving ManualOnly as a valid manual policy.
+        selected = evaluateForRequestedRig(context.activeProfileId);
+        if (!selected.profile && requestedProfile && requestedProfile->id != context.activeProfileId) {
+            selected = evaluateForRequestedRig(requestedProfile->id);
+        }
+        // The category owns an intentional profile order. Walk that order
+        // deterministically; automatic preference is not an eligibility gate
+        // for this explicit command.
+        if (!selected.profile) {
+            for (const QString &profileId : category->profileIds) {
+                CandidateResult candidate = evaluateForRequestedRig(profileId);
+                if (candidate.profile) {
+                    selected = std::move(candidate);
+                    break;
+                }
+            }
+        }
         if (selected.profile) {
             ActivationDecision applied = selectedDecision(selected, context,
-                selected.profile->automaticSelectionMode == ProfileAutomaticSelectionMode::Preferred
-                    ? ActivationDecisionReason::PreferredCandidateSelected
-                    : ActivationDecisionReason::FallbackCandidateSelected,
+                ActivationDecisionReason::ManualRigCandidateSelected,
                 QStringLiteral("User selected compatible Device Rig %1 with Profile %2.")
                     .arg(selected.rig->name, selected.profile->name));
             applied.manualOverride = true;
@@ -387,10 +448,8 @@ ActivationDecision resolveActivation(const MapperConfiguration &configuration,
         }
         decision.reason = ActivationDecisionReason::ManualOverrideUnavailable;
         decision.explanation = QStringLiteral("No compatible Profile can safely activate the requested Device Rig.");
-        if (!preferredForRig.blocker.isEmpty()) decision.blockers.append(preferredForRig.blocker);
-        if (!fallbackForRig.blocker.isEmpty() && fallbackForRig.blocker != preferredForRig.blocker) {
-            decision.blockers.append(fallbackForRig.blocker);
-        }
+        decision.blockers = blockers;
+        if (decision.blockers.isEmpty()) decision.blockers.append(QStringLiteral("No enabled Profile in the current category references this Device Rig."));
         return finish(decision);
     }
 

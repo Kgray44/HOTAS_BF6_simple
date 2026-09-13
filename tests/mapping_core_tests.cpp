@@ -749,6 +749,7 @@ MapperConfiguration activationResolverFixture()
     preferred.name = QStringLiteral("Preferred Rig");
     preferred.members = {{controller.id, true, true, defaultOutputLayoutId()}};
     preferred.outputs = {{defaultOutputLayoutId(), true}};
+    preferred.primaryOutputLayoutId = defaultOutputLayoutId();
     DeviceRig fallback = preferred;
     fallback.id = QStringLiteral("resolver-fallback-rig");
     fallback.name = QStringLiteral("Fallback Rig");
@@ -863,6 +864,8 @@ private slots:
     void v24MigrationPreservesOfflineSavedController();
     void v24MigrationRefusesAmbiguousLegacyController();
     void v24MigrationNoticeIsOneLaunchOnly();
+    void v29MigrationMakesDeviceRigOwnExactBf6Output();
+    void singleMemberDeviceRigRuntimeRetainsControllerQualifiedRoutes();
     void deviceRigRuntimeCompilesDistinctInputsAndOutputs();
     void deviceRigRuntimeRejectsAmbiguousAxisDestination();
     void deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput();
@@ -873,6 +876,10 @@ private slots:
     void activationResolverSelectsSafelyAndExplainsFallbacks();
     void activationResolverPersistsPolicyAndMigratesV24();
     void activationResolverStateMachineInvariants();
+    void manualRigActivationAllowsManualOnlyAndUsesDeterministicCategoryOrder();
+    void manualRigActivationUsesRigPrimaryOutput();
+    void manualProfileActivationUsesRigPrimaryOutput();
+    void manualProfileActivationFollowsTargetRigPrimaryOutput();
     void controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection();
     void vjoyAxisDescriptorSupersetsAreAccepted();
     void physicalAxisActivityRequiresCompletedCalibrationTravel();
@@ -1822,7 +1829,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -3803,7 +3810,7 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
 
     bool valid = false;
     const QJsonObject serialized = ConfigStore::toJson(configuration);
-    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 28);
+    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 29);
     QVERIFY(serialized.value(QStringLiteral("signalFlow")).isObject());
     const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
     QVERIFY(valid);
@@ -4347,6 +4354,176 @@ void MappingCoreTests::v24MigrationNoticeIsOneLaunchOnly()
     QVERIFY(reopened.deviceRigMigrationWarning.isEmpty());
 }
 
+void MappingCoreTests::v29MigrationMakesDeviceRigOwnExactBf6Output()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    VirtualOutputLayout flightDeckOutput2 = configuration.outputLayouts.front();
+    flightDeckOutput2.id = QStringLiteral("flight-deck-output-2");
+    flightDeckOutput2.name = QStringLiteral("Flight Deck Output 2");
+    flightDeckOutput2.requirements.deviceId = 2;
+    configuration.outputLayouts.push_back(flightDeckOutput2);
+
+    SavedControllerRecord hotas = legacyMigrationRecord(QStringLiteral("tflight-hotas-one"),
+        QStringLiteral("{TFLIGHT-HOTAS-ONE}"), true);
+    hotas.displayName = QStringLiteral("T.Flight Hotas One");
+    configuration.savedControllers = {hotas};
+    configuration.activeControllerRecordId = hotas.id;
+
+    QString battlefieldCategory;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Battlefield 6"), &battlefieldCategory));
+    QString helicopterId;
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Helicopter"), battlefieldCategory,
+                                    precisionProfileId(), &helicopterId));
+
+    DeviceRig rig;
+    rig.id = QStringLiteral("bf6-test-rig");
+    rig.name = QStringLiteral("BF6 Test Rig");
+    rig.members = {{hotas.id, true, true, flightDeckOutput2.id}};
+    rig.outputs = {{flightDeckOutput2.id, true}};
+    rig.primaryOutputLayoutId = flightDeckOutput2.id;
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    configuration.activeProfileId = normalProfileId();
+    QSet<QString> ownerProfileIds;
+    for (ControllerProfile &profile : configuration.profiles) {
+        profile.deviceRigId = rig.id;
+        ensureDeviceProfileMapping(profile, hotas.id);
+        ownerProfileIds.insert(profile.id);
+    }
+
+    QJsonObject legacy = ConfigStore::toJson(configuration);
+    legacy.insert(QStringLiteral("version"), 28);
+    QJsonArray legacyRigs = legacy.value(QStringLiteral("deviceRigs")).toArray();
+    QJsonObject legacyRig = legacyRigs.first().toObject();
+    legacyRig.remove(QStringLiteral("primaryOutputLayoutId"));
+    legacyRigs[0] = legacyRig;
+    legacy.insert(QStringLiteral("deviceRigs"), legacyRigs);
+    QJsonArray legacyProfiles = legacy.value(QStringLiteral("profiles")).toArray();
+    for (int index = 0; index < legacyProfiles.size(); ++index) {
+        QJsonObject profile = legacyProfiles[index].toObject();
+        // Simulate stale Profile-era vJoy 1 fields on all three owner
+        // profiles. The one enabled Rig output is vJoy 2 and must win.
+        profile.insert(QStringLiteral("outputLayoutId"), defaultOutputLayoutId());
+        legacyProfiles[index] = profile;
+    }
+    legacy.insert(QStringLiteral("profiles"), legacyProfiles);
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    const DeviceRig *migratedRig = findDeviceRig(migrated, rig.id);
+    QVERIFY(migratedRig);
+    QCOMPARE(deviceRigPrimaryOutputLayoutId(*migratedRig), flightDeckOutput2.id);
+    QCOMPARE(migrated.vjoyDeviceId, 2);
+    for (const ControllerProfile &profile : migrated.profiles) {
+        if (ownerProfileIds.contains(profile.id)) QCOMPARE(profile.deviceRigId, rig.id);
+        QVERIFY(profile.outputLayoutId.isEmpty());
+    }
+    QVERIFY(compileDeviceRigRuntime(migrated, rig.id, normalProfileId()).valid);
+
+    const QJsonObject persisted = ConfigStore::toJson(migrated);
+    const QJsonObject persistedRig = persisted.value(QStringLiteral("deviceRigs")).toArray().first().toObject();
+    QCOMPARE(persistedRig.value(QStringLiteral("primaryOutputLayoutId")).toString(), flightDeckOutput2.id);
+    for (const QJsonValue &value : persisted.value(QStringLiteral("profiles")).toArray()) {
+        QVERIFY(!value.toObject().contains(QStringLiteral("outputLayoutId")));
+    }
+}
+
+void MappingCoreTests::singleMemberDeviceRigRuntimeRetainsControllerQualifiedRoutes()
+{
+    // This is the owner's real topology shape: one physical HOTAS, one
+    // Rig-owned vJoy Device 2 output, and canonical routes qualified by the
+    // saved controller ID. It must never fall back to the legacy profile-only
+    // runtime, because that compiler receives no controller ID and drops every
+    // qualified Signal Flow route.
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord hotas = legacyMigrationRecord(QStringLiteral("tflight-hotas-one"),
+        QStringLiteral("{TFLIGHT-HOTAS-ONE}"), true);
+    configuration.savedControllers = {hotas};
+
+    VirtualOutputLayout output2 = configuration.outputLayouts.front();
+    output2.id = QStringLiteral("flight-deck-output-2");
+    output2.name = QStringLiteral("Flight Deck Output 2");
+    output2.requirements.deviceId = 2;
+    output2.requirements.axes.fill(false);
+    output2.requirements.axes[static_cast<size_t>(VirtualAxis::X)] = true;
+    output2.requirements.axes[static_cast<size_t>(VirtualAxis::Rx)] = true;
+    output2.requirements.buttons = 32;
+    configuration.outputLayouts.push_back(output2);
+
+    DeviceRig rig;
+    rig.id = QStringLiteral("bf6-test-rig");
+    rig.name = QStringLiteral("BF6 Test Rig");
+    rig.members = {{hotas.id, true, true, output2.id}};
+    rig.outputs = {{output2.id, true}};
+    rig.primaryOutputLayoutId = output2.id;
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    configuration.vjoyDeviceId = output2.requirements.deviceId;
+
+    ControllerProfile &profile = activeProfile(configuration);
+    profile.deviceRigId = rig.id;
+    // Deliberately retain a stale legacy field. The Rig's primary output, not
+    // this Profile field, is the runtime target authority.
+    profile.outputLayoutId = defaultOutputLayoutId();
+    DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, hotas.id);
+    for (AxisMapping &axis : mapping.axes) axis.target = VirtualAxis::Disabled;
+    mapping.buttons.resize(1);
+    mapping.buttons[0].type = ButtonActionType::VirtualButton;
+    mapping.buttons[0].target = 14;
+    mapping.buttons[0].explicitlyConfigured = true;
+
+    configuration.signalFlow.topologyVersion = 1;
+    SignalFlowRoute axisRoute;
+    axisRoute.profileId = profile.id;
+    axisRoute.controllerRecordId = hotas.id;
+    axisRoute.sourceKind = SignalFlowPortKind::Axis;
+    axisRoute.sourceIndex = static_cast<int>(PhysicalAxis::X);
+    axisRoute.destinationKind = SignalFlowPortKind::Axis;
+    axisRoute.destinationIndex = static_cast<int>(VirtualAxis::X);
+    configuration.signalFlow.routes.push_back(axisRoute);
+    SignalFlowRoute buttonRoute;
+    buttonRoute.profileId = profile.id;
+    buttonRoute.controllerRecordId = hotas.id;
+    buttonRoute.sourceKind = SignalFlowPortKind::Button;
+    buttonRoute.sourceIndex = 0;
+    buttonRoute.destinationKind = SignalFlowPortKind::Button;
+    buttonRoute.destinationIndex = 14;
+    configuration.signalFlow.routes.push_back(buttonRoute);
+
+    QVERIFY(hasActiveDeviceRigRuntime(configuration));
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rig.id, profile.id);
+    QVERIFY(runtime.valid);
+    QCOMPARE(runtime.memberCount, 1);
+    QCOMPARE(runtime.outputCount, 1);
+    QCOMPARE(runtime.outputs[0].vjoyDeviceId, 2);
+    QCOMPARE(runtime.members[0].outputIndex, 0);
+    QVERIFY(runtime.members[0].mapping.signalFlowTopologyCompiled);
+    QCOMPARE(runtime.members[0].mapping.signalFlowAxisRouteCount, 1);
+    QCOMPARE(runtime.members[0].mapping.signalFlowDigitalRouteCount, 1);
+
+    std::array<bool, kPhysicalAxisCount> availableAxes{};
+    availableAxes[static_cast<size_t>(PhysicalAxis::X)] = true;
+    std::array<float, kPhysicalAxisCount> transformedAxes{};
+    transformedAxes[static_cast<size_t>(PhysicalAxis::X)] = 0.73F;
+    const VirtualAxisOutputPlan axes = buildVirtualAxisOutputPlan(runtime.members[0].mapping,
+        availableAxes, transformedAxes, runtime.outputs[0].requiredAxes, 0.0F);
+    QCOMPARE(axes.values[static_cast<size_t>(VirtualAxis::X)], 0.73F);
+    QCOMPARE(axes.sourceIndexes[static_cast<size_t>(VirtualAxis::X)],
+             static_cast<int>(PhysicalAxis::X));
+
+    PhysicalButtonStates physicalButtons{};
+    physicalButtons[0] = true;
+    PhysicalPovValues physicalPovs{};
+    physicalPovs.fill(-1);
+    const RuntimeButtonTargets buttonOwnership = buildRuntimeButtonTargets(
+        runtime.members[0].mapping.buttons, 32);
+    const RuntimePovTargets povOwnership{};
+    const VirtualButtonStates buttons = mapSignalFlowDigitalStates(physicalButtons, physicalPovs, 0,
+        runtime.members[0].mapping, buttonOwnership, povOwnership, 32);
+    QVERIFY(buttons[14]);
+}
+
 void MappingCoreTests::deviceRigRuntimeCompilesDistinctInputsAndOutputs()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -4366,6 +4543,7 @@ void MappingCoreTests::deviceRigRuntimeCompilesDistinctInputsAndOutputs()
     rig.members = {{stick.id, true, true, defaultOutputLayoutId()},
                    {throttle.id, true, true, secondLayout.id}};
     rig.outputs = {{defaultOutputLayoutId(), true}, {secondLayout.id, true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
     configuration.deviceRigs = {rig};
     configuration.activeDeviceRigId = rig.id;
     ControllerProfile &profile = activeProfile(configuration);
@@ -4406,6 +4584,7 @@ void MappingCoreTests::deviceRigRuntimeRejectsAmbiguousAxisDestination()
     rig.members = {{first.id, true, true, defaultOutputLayoutId()},
                    {second.id, true, true, defaultOutputLayoutId()}};
     rig.outputs = {{defaultOutputLayoutId(), true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
     configuration.deviceRigs = {rig};
     configuration.activeDeviceRigId = rig.id;
     ControllerProfile &profile = activeProfile(configuration);
@@ -4437,6 +4616,7 @@ void MappingCoreTests::deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutp
     rig.members = {{stick.id, true, true, defaultOutputLayoutId()},
                    {throttle.id, true, true, defaultOutputLayoutId()}};
     rig.outputs = {{defaultOutputLayoutId(), true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
     configuration.deviceRigs = {rig};
     configuration.activeDeviceRigId = rig.id;
     ControllerProfile &profile = activeProfile(configuration);
@@ -4483,6 +4663,7 @@ void MappingCoreTests::deviceRigRuntimeRejectsUnqualifiedMultiDeviceAutomation()
     rig.members = {{first.id, true, true, defaultOutputLayoutId()},
                    {second.id, true, true, defaultOutputLayoutId()}};
     rig.outputs = {{defaultOutputLayoutId(), true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
     configuration.deviceRigs = {rig};
     configuration.activeDeviceRigId = rig.id;
     ControllerProfile &profile = activeProfile(configuration);
@@ -4589,6 +4770,7 @@ void MappingCoreTests::deviceRigHealthKeepsOptionalOfflineNonBlocking()
     rig.members = {{required.id, true, true, defaultOutputLayoutId()},
                    {optional.id, true, false, defaultOutputLayoutId()}};
     rig.outputs = {{defaultOutputLayoutId(), true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
 
     DiscoveredController connectedRequired;
     connectedRequired.name = required.displayName;
@@ -4755,7 +4937,7 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
     configuration.manualOverrideProfileId = precision->id;
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
     QVERIFY(!json.contains(QStringLiteral("activationManualOverride")));
     QVERIFY(!json.contains(QStringLiteral("manualOverrideProfileId")));
 
@@ -4959,12 +5141,201 @@ void MappingCoreTests::activationResolverStateMachineInvariants()
         const DeviceRig *rig = findDeviceRig(configuration, decision.deviceRigId);
         QVERIFY(profile && rig);
         QCOMPARE(profile->deviceRigId, rig->id);
-        QCOMPARE(profile->outputLayoutId, decision.outputLayoutId);
+        QCOMPARE(deviceRigPrimaryOutputLayoutId(*rig), decision.outputLayoutId);
         QVERIFY(compileDeviceRigRuntime(configuration, rig->id, profile->id).valid);
         if (context.intent == ActivationIntent::Automatic) {
             QVERIFY(profile->automaticSelectionMode != ProfileAutomaticSelectionMode::ManualOnly);
         }
     }
+}
+
+void MappingCoreTests::manualRigActivationAllowsManualOnlyAndUsesDeterministicCategoryOrder()
+{
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString categoryId = QStringLiteral("resolver-category");
+    const QString preferredRigId = QStringLiteral("resolver-preferred-rig");
+    const QString fallbackRigId = QStringLiteral("resolver-fallback-rig");
+    ControllerProfile *normal = findProfile(configuration, normalProfileId());
+    ControllerProfile *precision = findProfile(configuration, precisionProfileId());
+    QVERIFY(normal && precision);
+
+    ActivationContext context;
+    context.matchedCategoryId = categoryId;
+    context.rigStatuses = {readyResolverRigStatus(preferredRigId), readyResolverRigStatus(fallbackRigId)};
+    context.intent = ActivationIntent::ManualRig;
+    context.requestedRigId = fallbackRigId;
+    precision->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+
+    // ManualOnly governs automatic selection only. The explicit Rig command
+    // still uses the compatible Profile and never reports a fake setup fault.
+    ActivationDecision decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, precisionProfileId());
+    QCOMPARE(decision.deviceRigId, fallbackRigId);
+    QCOMPARE(decision.reason, ActivationDecisionReason::ManualRigCandidateSelected);
+
+    // The same ManualOnly Profile must remain invisible to automatic
+    // resolution when no other automatic candidate is eligible.
+    normal->enabled = false;
+    context.intent = ActivationIntent::Automatic;
+    context.requestedRigId.clear();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(!decision.valid);
+    QCOMPARE(decision.reason, ActivationDecisionReason::NoEligibleCandidate);
+
+    // Multiple profiles on a Rig resolve predictably: retain the active
+    // compatible profile first; without one, use category profile order.
+    normal->enabled = true;
+    normal->deviceRigId = preferredRigId;
+    normal->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+    precision->deviceRigId = preferredRigId;
+    precision->automaticSelectionMode = ProfileAutomaticSelectionMode::Preferred;
+    context.intent = ActivationIntent::ManualRig;
+    context.requestedRigId = preferredRigId;
+    context.activeProfileId = precision->id;
+    context.activeDeviceRigId = preferredRigId;
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, precisionProfileId());
+    context.activeProfileId.clear();
+    context.activeDeviceRigId.clear();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.profileId, normalProfileId());
+}
+
+void MappingCoreTests::manualRigActivationUsesRigPrimaryOutput()
+{
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString preferredRigId = QStringLiteral("resolver-preferred-rig");
+    ControllerProfile *normal = findProfile(configuration, normalProfileId());
+    QVERIFY(normal);
+    VirtualOutputLayout alternate = configuration.outputLayouts.front();
+    alternate.id = QStringLiteral("resolver-alternate-output");
+    alternate.name = QStringLiteral("Alternate Output");
+    alternate.requirements.deviceId = 2;
+    configuration.outputLayouts.push_back(alternate);
+    normal->outputLayoutId = alternate.id;
+
+    ActivationContext context;
+    context.matchedCategoryId = QStringLiteral("resolver-category");
+    context.rigStatuses = {readyResolverRigStatus(preferredRigId),
+                           readyResolverRigStatus(QStringLiteral("resolver-fallback-rig"))};
+    context.intent = ActivationIntent::ManualRig;
+    context.requestedRigId = preferredRigId;
+    ActivationDecision decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.outputLayoutId, defaultOutputLayoutId());
+
+    // A stale legacy Profile output is not a candidate input. The Rig's
+    // explicit primary controls ManualRig activation even with many outputs.
+    DeviceRig *rig = findDeviceRig(configuration, preferredRigId);
+    QVERIFY(rig);
+    VirtualOutputLayout secondRigOutput = alternate;
+    secondRigOutput.id = QStringLiteral("resolver-second-rig-output");
+    secondRigOutput.name = QStringLiteral("Second Rig Output");
+    configuration.outputLayouts.push_back(secondRigOutput);
+    rig->outputs.push_back({secondRigOutput.id, true});
+    rig->primaryOutputLayoutId = secondRigOutput.id;
+    decision = resolveActivation(configuration, context);
+    QVERIFY(decision.valid);
+    QCOMPARE(decision.outputLayoutId, secondRigOutput.id);
+
+    // A multi-output Rig without an owner-selected primary is not ready for
+    // manual activation; the resolver must request a real setup choice.
+    rig->primaryOutputLayoutId.clear();
+    decision = resolveActivation(configuration, context);
+    QVERIFY(!decision.valid);
+    QVERIFY(!decision.blockers.isEmpty());
+}
+
+void MappingCoreTests::manualProfileActivationUsesRigPrimaryOutput()
+{
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString preferredRigId = QStringLiteral("resolver-preferred-rig");
+    ControllerProfile *normal = findProfile(configuration, normalProfileId());
+    QVERIFY(normal);
+    VirtualOutputLayout alternate = configuration.outputLayouts.front();
+    alternate.id = QStringLiteral("resolver-manual-profile-alternate-output");
+    alternate.name = QStringLiteral("Manual Profile Alternate Output");
+    alternate.requirements.deviceId = 2;
+    configuration.outputLayouts.push_back(alternate);
+    normal->outputLayoutId = alternate.id;
+    normal->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+
+    ActivationContext context;
+    context.matchedCategoryId = QStringLiteral("resolver-category");
+    context.rigStatuses = {readyResolverRigStatus(preferredRigId),
+                           readyResolverRigStatus(QStringLiteral("resolver-fallback-rig"))};
+    context.intent = ActivationIntent::ManualProfile;
+    context.requestedProfileId = normal->id;
+    const ActivationDecision manual = resolveActivation(configuration, context);
+    QVERIFY(manual.valid);
+    QCOMPARE(manual.intent, ActivationIntent::ManualProfile);
+    QCOMPARE(manual.requestedProfileId, normal->id);
+    QCOMPARE(manual.profileId, normal->id);
+    QCOMPARE(manual.outputLayoutId, defaultOutputLayoutId());
+    QCOMPARE(manual.candidates.size(), 2);
+    QVERIFY(manual.candidates.front().eligible);
+    QCOMPARE(manual.candidates.front().resolvedOutputLayoutId, defaultOutputLayoutId());
+
+    // ManualOnly is eligible for an explicit owner command, but it must
+    // remain invisible to automatic selection.
+    context.intent = ActivationIntent::Automatic;
+    context.requestedProfileId.clear();
+    const ActivationDecision automatic = resolveActivation(configuration, context);
+    QVERIFY(automatic.valid);
+    QCOMPARE(automatic.profileId, precisionProfileId());
+    QVERIFY(findProfile(configuration, automatic.profileId)->automaticSelectionMode
+        != ProfileAutomaticSelectionMode::ManualOnly);
+
+    // The explicit primary remains the source of truth after adding another
+    // Rig output. A Profile cannot redirect it with its stale legacy field.
+    DeviceRig *rig = findDeviceRig(configuration, preferredRigId);
+    QVERIFY(rig);
+    VirtualOutputLayout secondRigOutput = alternate;
+    secondRigOutput.id = QStringLiteral("resolver-manual-profile-second-output");
+    secondRigOutput.name = QStringLiteral("Manual Profile Second Output");
+    configuration.outputLayouts.push_back(secondRigOutput);
+    rig->outputs.push_back({secondRigOutput.id, true});
+    rig->primaryOutputLayoutId = secondRigOutput.id;
+    context.intent = ActivationIntent::ManualProfile;
+    context.requestedProfileId = normal->id;
+    const ActivationDecision primaryChanged = resolveActivation(configuration, context);
+    QVERIFY(primaryChanged.valid);
+    QCOMPARE(primaryChanged.outputLayoutId, secondRigOutput.id);
+}
+
+void MappingCoreTests::manualProfileActivationFollowsTargetRigPrimaryOutput()
+{
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString preferredRigId = QStringLiteral("resolver-preferred-rig");
+    const QString fallbackRigId = QStringLiteral("resolver-fallback-rig");
+    VirtualOutputLayout alternate = configuration.outputLayouts.front();
+    alternate.id = QStringLiteral("resolver-cross-rig-output");
+    alternate.name = QStringLiteral("Cross Rig Output");
+    alternate.requirements.deviceId = 2;
+    configuration.outputLayouts.push_back(alternate);
+    DeviceRig *fallbackRig = findDeviceRig(configuration, fallbackRigId);
+    QVERIFY(fallbackRig);
+    fallbackRig->outputs.push_back({alternate.id, true});
+    fallbackRig->primaryOutputLayoutId = alternate.id;
+
+    ActivationContext context;
+    context.matchedCategoryId = QStringLiteral("resolver-category");
+    context.rigStatuses = {readyResolverRigStatus(preferredRigId), readyResolverRigStatus(fallbackRigId)};
+    context.intent = ActivationIntent::ManualProfile;
+    context.requestedProfileId = precisionProfileId();
+    const ActivationDecision precision = resolveActivation(configuration, context);
+    QVERIFY(precision.valid);
+    QCOMPARE(precision.deviceRigId, fallbackRigId);
+    QCOMPARE(precision.outputLayoutId, alternate.id);
+
+    context.requestedProfileId = normalProfileId();
+    const ActivationDecision normal = resolveActivation(configuration, context);
+    QVERIFY(normal.valid);
+    QCOMPARE(normal.deviceRigId, preferredRigId);
+    QCOMPARE(normal.outputLayoutId, defaultOutputLayoutId());
 }
 
 void MappingCoreTests::controllerIdentityUsesLayeredMatchingWithoutAmbiguousAutoSelection()
@@ -5054,7 +5425,7 @@ void MappingCoreTests::v17ConfigurationMigratesToPreservedOutputLayout()
     QCOMPARE(layout.requirements.deviceId, 2);
     QVERIFY(layout.requirements.axes[static_cast<size_t>(VirtualAxis::Slider0)]);
     QCOMPARE(layout.requirements.buttons, 20);
-    QCOMPARE(activeProfile(migrated).outputLayoutId, defaultOutputLayoutId());
+    QVERIFY(activeProfile(migrated).outputLayoutId.isEmpty());
     QCOMPARE(activeProfile(migrated).axes[static_cast<size_t>(PhysicalAxis::Rx)].target,
              VirtualAxis::Slider0);
     QCOMPARE(migrated.calibration[static_cast<size_t>(PhysicalAxis::Rx)].maximum, 0.9F);
@@ -5907,6 +6278,19 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     MapperConfiguration source = defaultConfiguration();
+    AutomationDefinition explicitOutputAutomation;
+    explicitOutputAutomation.id = QStringLiteral("portable-explicit-output");
+    explicitOutputAutomation.name = QStringLiteral("Portable explicit output");
+    AutomationConditionDefinition profileCondition;
+    profileCondition.type = AutomationConditionType::BaseProfileIs;
+    profileCondition.profileId = normalProfileId();
+    explicitOutputAutomation.conditions = {profileCondition};
+    AutomationActionDefinition explicitOutputAction;
+    explicitOutputAction.type = AutomationActionType::VJoyButtonTap;
+    explicitOutputAction.virtualButton = 1;
+    explicitOutputAction.outputLayoutId = defaultOutputLayoutId();
+    explicitOutputAutomation.actions = {explicitOutputAction};
+    source.automations = {explicitOutputAutomation};
     QString category;
     QVERIFY(createProfileCategory(source, QStringLiteral("Battlefield 6"), &category));
     QString profileId;
@@ -5924,9 +6308,10 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     sourceRig.name = QStringLiteral("Flight Controls");
     sourceRig.members = {{sourceController.id, true, true, defaultOutputLayoutId()}};
     sourceRig.outputs = {{defaultOutputLayoutId(), true}};
+    sourceRig.primaryOutputLayoutId = defaultOutputLayoutId();
     source.deviceRigs.push_back(sourceRig);
     sourceProfile->deviceRigId = sourceRig.id;
-    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceProfile->outputLayoutId);
+    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceRig.primaryOutputLayoutId);
     QVERIFY(sourceLayout);
     sourceLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\SOURCE-MACHINE-ONLY");
     sourceLayout->hidhideManaged = true;
@@ -5992,9 +6377,9 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QCOMPARE(bundle.profiles.size(), size_t{1});
     QCOMPARE(bundle.profiles.front().automaticSelectionMode, ProfileAutomaticSelectionMode::ManualOnly);
     QCOMPARE(bundle.profiles.front().deviceRigId, sourceRig.id);
-    QCOMPARE(bundle.outputLayouts.size(), size_t{1});
-    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
-    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
+    // Profile portability carries mappings and the category only. The
+    // destination machine intentionally chooses its local Device Rig/output.
+    QCOMPARE(bundle.outputLayouts.size(), size_t{0});
     QVERIFY(bundle.includesSignalFlowTopology);
     QCOMPARE(bundle.signalFlow.routes.size(), size_t{4});
     QCOMPARE(bundle.signalFlow.mixers.size(), size_t{1});
@@ -6012,6 +6397,7 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     destinationRig.name = sourceRig.name;
     destinationRig.members = {{destinationController.id, true, true, defaultOutputLayoutId()}};
     destinationRig.outputs = {{defaultOutputLayoutId(), true}};
+    destinationRig.primaryOutputLayoutId = defaultOutputLayoutId();
     target.deviceRigs.push_back(destinationRig);
     VirtualOutputLayout *destinationLayout = findOutputLayout(target, defaultOutputLayoutId());
     QVERIFY(destinationLayout);
@@ -6020,6 +6406,7 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     QStringList warnings;
     QVERIFY2(ProfilePortability::apply(&target, bundle, {}, &warnings, &error), qPrintable(error));
     QCOMPARE(target.profiles.size(), size_t{3});
+    QCOMPARE(target.outputLayouts.size(), size_t{1});
     const auto imported = std::find_if(target.profiles.cbegin(), target.profiles.cend(),
         [](const ControllerProfile &profile) { return profile.name == QStringLiteral("Helicopter"); });
     QVERIFY(imported != target.profiles.cend());
@@ -6069,15 +6456,14 @@ void MappingCoreTests::bundledBattlefieldHelicopterStarterProfileMigratesSafely(
     QCOMPARE(bundle.profiles.size(), size_t{1});
     QCOMPARE(bundle.curves.size(), size_t{0});
     QCOMPARE(bundle.automations.size(), size_t{0});
-    QCOMPARE(bundle.outputLayouts.size(), size_t{1});
+    QCOMPARE(bundle.outputLayouts.size(), size_t{0});
+    QVERIFY(bundle.profiles.front().outputLayoutId.isEmpty());
     QVERIFY(!bundle.includesDevices);
     QVERIFY(!bundle.includesCalibration);
     QVERIFY(bundle.deviceDescriptors.empty());
     QVERIFY(!bundle.sourceController.contains(QStringLiteral("lastDirectInputId")));
     QVERIFY(!bundle.sourceController.contains(QStringLiteral("hidInstanceId")));
     QVERIFY(!bundle.sourceController.contains(QStringLiteral("hidContainerId")));
-    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
-    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
     QCOMPARE(bundle.categories.front().id, QLatin1String(kCategoryId));
     QCOMPARE(bundle.profiles.front().id, QLatin1String(kProfileId));
     QCOMPARE(bundle.profiles.front().name, QStringLiteral("Helicopter"));
@@ -6200,9 +6586,10 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     sourceRig.name = QStringLiteral("Travel Flight Controls");
     sourceRig.members = {{sourceController.id, true, true, defaultOutputLayoutId()}};
     sourceRig.outputs = {{defaultOutputLayoutId(), true}};
+    sourceRig.primaryOutputLayoutId = defaultOutputLayoutId();
     source.deviceRigs.push_back(sourceRig);
     sourceProfile->deviceRigId = sourceRig.id;
-    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceProfile->outputLayoutId);
+    VirtualOutputLayout *sourceLayout = findOutputLayout(source, sourceRig.primaryOutputLayoutId);
     QVERIFY(sourceLayout);
     sourceLayout->hidHideDeviceInstanceId = QStringLiteral("HID\\PACK-SOURCE-MACHINE-ONLY");
     sourceLayout->hidhideManaged = true;
@@ -6246,8 +6633,7 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     QCOMPARE(bundle.profiles.size(), size_t{1});
     QCOMPARE(bundle.profiles.front().automaticSelectionMode, ProfileAutomaticSelectionMode::Fallback);
     QCOMPARE(bundle.profiles.front().deviceRigId, sourceRig.id);
-    QVERIFY(bundle.outputLayouts.front().hidHideDeviceInstanceId.isEmpty());
-    QVERIFY(!bundle.outputLayouts.front().hidhideManaged);
+    QCOMPARE(bundle.outputLayouts.size(), size_t{0});
     QCOMPARE(bundle.adaptiveResponsePresets.size(), size_t{1});
     QCOMPARE(bundle.automations.size(), size_t{1});
 
@@ -6262,6 +6648,7 @@ void MappingCoreTests::portablePackRoundTripPreservesCategoryAndSkipsHardwareByD
     destinationRig.name = sourceRig.name;
     destinationRig.members = {{destinationController.id, true, true, defaultOutputLayoutId()}};
     destinationRig.outputs = {{defaultOutputLayoutId(), true}};
+    destinationRig.primaryOutputLayoutId = defaultOutputLayoutId();
     target.deviceRigs.push_back(destinationRig);
     VirtualOutputLayout *destinationLayout = findOutputLayout(target, defaultOutputLayoutId());
     QVERIFY(destinationLayout);
@@ -6493,6 +6880,20 @@ void MappingCoreTests::portableFormatValidationRejectsFutureAndInvalidDependenci
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     MapperConfiguration source = defaultConfiguration();
+    // An explicit Automation output is an advanced routing choice. It is the
+    // one portable case that may carry a vJoy descriptor; Profiles themselves
+    // still do not own an output.
+    AutomationDefinition explicitAutomation;
+    explicitAutomation.id = QStringLiteral("portable-explicit-output");
+    explicitAutomation.name = QStringLiteral("Portable explicit output");
+    explicitAutomation.conditions = {{AutomationConditionType::BaseProfileIs, 0, 0.0F, 0.0F, 0.0F,
+                                      1, 1, PovDirection::Up, normalProfileId()}};
+    AutomationActionDefinition explicitAction;
+    explicitAction.type = AutomationActionType::VJoyButtonTap;
+    explicitAction.virtualButton = 1;
+    explicitAction.outputLayoutId = defaultOutputLayoutId();
+    explicitAutomation.actions = {explicitAction};
+    source.automations = {explicitAutomation};
     const QString fileName = temporary.filePath(QStringLiteral("normal.hbf6profile"));
     QString error;
     QVERIFY2(ProfilePortability::exportProfile(source, normalProfileId(), fileName, &error), qPrintable(error));
@@ -6513,11 +6914,15 @@ void MappingCoreTests::portableFormatValidationRejectsFutureAndInvalidDependenci
     file.write(QJsonDocument(document).toJson());
     file.close();
     QJsonObject payload = document.value(QStringLiteral("payload")).toObject();
-    QJsonArray profiles = payload.value(QStringLiteral("profiles")).toArray();
-    QJsonObject profile = profiles.at(0).toObject();
-    profile.insert(QStringLiteral("outputLayoutId"), QStringLiteral("missing-layout"));
-    profiles[0] = profile;
-    payload.insert(QStringLiteral("profiles"), profiles);
+    QJsonArray automations = payload.value(QStringLiteral("automations")).toArray();
+    QJsonObject automation = automations.at(0).toObject();
+    QJsonArray actions = automation.value(QStringLiteral("actions")).toArray();
+    QJsonObject action = actions.at(0).toObject();
+    action.insert(QStringLiteral("outputLayoutId"), QStringLiteral("missing-layout"));
+    actions[0] = action;
+    automation.insert(QStringLiteral("actions"), actions);
+    automations[0] = automation;
+    payload.insert(QStringLiteral("automations"), automations);
     document.insert(QStringLiteral("payload"), payload);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(QJsonDocument(document).toJson());
@@ -6526,7 +6931,7 @@ void MappingCoreTests::portableFormatValidationRejectsFutureAndInvalidDependenci
     const QJsonObject before = ConfigStore::toJson(target);
     PortableConfigurationBundle invalidBundle;
     QVERIFY(!ProfilePortability::inspect(fileName, &invalidBundle, &error));
-    QVERIFY(error.contains(QStringLiteral("vJoy contract")));
+    QVERIFY(error.contains(QStringLiteral("missing explicit vJoy output")));
     QCOMPARE(ConfigStore::toJson(target), before);
 }
 
@@ -6737,7 +7142,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -6980,7 +7385,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 28);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

@@ -537,17 +537,6 @@ struct DirectInputDevice {
     QString name;
 };
 
-bool requiresMultiDeviceRuntime(const MapperConfiguration &configuration)
-{
-    const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId);
-    if (!rig || !rig->enabled) return false;
-    const int memberCount = static_cast<int>(std::count_if(rig->members.cbegin(), rig->members.cend(),
-        [](const DeviceRigMember &member) { return member.enabled; }));
-    const int outputCount = static_cast<int>(std::count_if(rig->outputs.cbegin(), rig->outputs.cend(),
-        [](const DeviceRigOutputTarget &output) { return output.enabled; }));
-    return memberCount > 1 || outputCount > 1;
-}
-
 struct EnumerationContext {
     std::vector<DirectInputDevice> devices;
 };
@@ -814,9 +803,9 @@ void MappingWorker::updateConfiguration(const MapperConfiguration &configuration
     const auto compileUs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - compileStarted).count());
-    const bool requestedMultiRuntime = requiresMultiDeviceRuntime(configuration);
+    const bool requestedDeviceRigRuntime = hasActiveDeviceRigRuntime(configuration);
     QMutexLocker locker(&m_configurationMutex);
-    if (requiresMultiDeviceRuntime(m_configuration) != requestedMultiRuntime) {
+    if (hasActiveDeviceRigRuntime(m_configuration) != requestedDeviceRigRuntime) {
         m_runtimeTopologyChangeRequested = true;
     }
     m_configuration = configuration;
@@ -909,6 +898,96 @@ bool MappingWorker::selectPhysicalController(const QString &expectedDirectInputI
         QThread::msleep(25);
     }
     return false;
+}
+
+DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QString &expectedDirectInputId)
+{
+    DirectInputControllerProbe result;
+    const QString expected = expectedDirectInputId.trimmed();
+    if (expected.isEmpty()) {
+        result.diagnostic = u"No exact DirectInput controller identity was supplied for setup proof."_qs;
+        return result;
+    }
+
+    LPDIRECTINPUT8W directInput = nullptr;
+    const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
+        IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
+    if (FAILED(initialized)) {
+        result.diagnostic = u"DirectInput initialization failed: "_qs + inputErrorMessage(initialized);
+        return result;
+    }
+
+    const std::optional<DirectInputDevice> selected = selectDeviceByPersistedId(directInput, expected);
+    if (!selected) {
+        directInput->Release();
+        result.diagnostic = u"The exact saved controller was not visible through DirectInput."_qs;
+        return result;
+    }
+
+    LPDIRECTINPUTDEVICE8W device = nullptr;
+    const HRESULT created = directInput->CreateDevice(selected->guid, &device, nullptr);
+    if (FAILED(created)) {
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not open the exact saved controller: "_qs
+            + inputErrorMessage(created);
+        return result;
+    }
+    const HRESULT format = device->SetDataFormat(&c_dfDIJoystick2);
+    const HRESULT cooperative = SUCCEEDED(format)
+        ? device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE)
+        : format;
+    if (FAILED(cooperative)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs
+            + inputErrorMessage(cooperative);
+        return result;
+    }
+
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    ObjectEnumerationContext objects{device, &result.axes, &buttons};
+    device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+    HRESULT acquired = device->Acquire();
+    if (FAILED(acquired)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs
+            + inputErrorMessage(acquired);
+        return result;
+    }
+
+    DIJOYSTATE2 state{};
+    HRESULT read = device->Poll();
+    if (SUCCEEDED(read)) read = device->GetDeviceState(sizeof(state), &state);
+    if (read == DIERR_INPUTLOST || read == DIERR_NOTACQUIRED) {
+        acquired = device->Acquire();
+        if (SUCCEEDED(acquired)) {
+            read = device->Poll();
+            if (SUCCEEDED(read)) read = device->GetDeviceState(sizeof(state), &state);
+        }
+    }
+    if (FAILED(read)) {
+        device->Unacquire();
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"The exact saved controller did not deliver a DirectInput state report: "_qs
+            + inputErrorMessage(read);
+        return result;
+    }
+
+    result.acquired = true;
+    result.name = selected->name;
+    result.directInputId = guidToString(selected->guid);
+    result.hidInstanceId = hidInstanceIdForDevice(device);
+    result.hidContainerId = hidDeviceContainerId(result.hidInstanceId);
+    result.axisCount = objects.axisCount;
+    result.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
+    result.povCount = objects.povCount;
+    result.diagnostic = u"Exact DirectInput controller acquired and returned a live state report."_qs;
+    device->Unacquire();
+    device->Release();
+    directInput->Release();
+    return result;
 }
 
 void MappingWorker::requestStop()
@@ -1008,7 +1087,7 @@ void MappingWorker::run()
     }
 
     while (!m_stopRequested.load()) {
-        if (requiresMultiDeviceRuntime(configurationCopy())) {
+        if (hasActiveDeviceRigRuntime(configurationCopy())) {
             runDeviceRig(directInput);
         } else {
             runSingleDevice(directInput);
@@ -1052,8 +1131,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             == PhysicalAxisActivity::Fixed;
     }
     std::array<bool, kVirtualAxisSlotCount> outputLayoutAxes{};
-    if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
-        if (const VirtualOutputLayout *layout = findOutputLayout(configuration, profile->outputLayoutId)) {
+    if (const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId)) {
+        if (const VirtualOutputLayout *layout = findOutputLayout(
+                configuration, deviceRigPrimaryOutputLayoutId(*rig))) {
             outputLayoutAxes = layout->requirements.axes;
         }
     }
@@ -1420,8 +1500,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 == PhysicalAxisActivity::Fixed;
         }
         outputLayoutAxes.fill(false);
-        if (const ControllerProfile *profile = findProfile(configuration, configuration.activeProfileId)) {
-            if (const VirtualOutputLayout *layout = findOutputLayout(configuration, profile->outputLayoutId)) {
+        if (const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId)) {
+            if (const VirtualOutputLayout *layout = findOutputLayout(
+                    configuration, deviceRigPrimaryOutputLayoutId(*rig))) {
                 outputLayoutAxes = layout->requirements.axes;
             }
         }
@@ -2188,6 +2269,18 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
 
     std::array<InputSession, kMaximumDeviceRigMembers> inputs{};
     std::array<OutputSession, kMaximumDeviceRigOutputs> outputs{};
+    m_runtime.activeOutputVjoyDeviceId.store(
+        plan.outputCount > 0 ? plan.outputs.front().vjoyDeviceId : 0, std::memory_order_relaxed);
+    m_runtime.outputReportsSucceeding.store(false, std::memory_order_relaxed);
+    m_runtime.successfulOutputReportSequence.store(0, std::memory_order_relaxed);
+    m_runtime.lastSuccessfulOutputReportMs.store(0, std::memory_order_relaxed);
+    m_runtime.outputWriteFailures.store(0, std::memory_order_relaxed);
+    for (std::atomic<float> &value : m_runtime.mappedOutputAxes) {
+        value.store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
+    }
+    for (std::atomic_bool &pressed : m_runtime.mappedOutputButtons) {
+        pressed.store(false, std::memory_order_relaxed);
+    }
     m_runtime.meaningfulInputSequence.store(0, std::memory_order_relaxed);
     for (std::atomic_uint64_t &sequence : m_runtime.deviceRigMeaningfulInputSequence) {
         sequence.store(0, std::memory_order_relaxed);
@@ -2371,6 +2464,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             m_runtime.mappingActive = false;
             m_runtime.outputNeutralized = true;
             m_runtime.vjoyReady = false;
+            m_runtime.outputReportsSucceeding = false;
             m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
             setVjoyStatus(u"vJoy released for controller verification"_qs);
             m_vjoyReleasedForControlPlane = true;
@@ -2398,6 +2492,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             m_runtime.mappingActive = false;
             m_runtime.physicalConnected = false;
             m_runtime.vjoyReady = false;
+            m_runtime.outputReportsSucceeding = false;
             m_runtime.mappingEffectiveState = m_mappingRequested.load()
                 ? static_cast<int>(MappingEffectiveState::Suspended)
                 : static_cast<int>(MappingEffectiveState::Off);
@@ -2651,12 +2746,17 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 }
             }
             if (acquired) {
+                const float parkedAxisValue = sanitizedDisabledAxisValue(configuration.disabledAxisValue);
+                for (std::atomic<float> &value : m_runtime.virtualValues) {
+                    value.store(parkedAxisValue, std::memory_order_relaxed);
+                }
                 for (int outputIndex = 0; outputIndex < plan.outputCount; ++outputIndex) {
                     OutputSession &output = outputs[static_cast<size_t>(outputIndex)];
                     std::array<float, kVirtualAxisSlotCount> desiredAxes{};
                     desiredAxes.fill(sanitizedDisabledAxisValue(configuration.disabledAxisValue));
                     VirtualButtonStates desiredButtons{};
                     bool outputChanged = false;
+                    bool outputWriteFailed = false;
                     quint64 mappedInputSequence = 0;
                     for (int memberIndex = 0; memberIndex < plan.memberCount; ++memberIndex) {
                         InputSession &input = inputs[static_cast<size_t>(memberIndex)];
@@ -2673,6 +2773,14 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
                             if (output.axes[static_cast<size_t>(axis)]) {
                                 desiredAxes[static_cast<size_t>(axis)] = localAxisPlan.values[static_cast<size_t>(axis)];
+                                if (outputIndex == 0) {
+                                    const int source = localAxisPlan.sourceIndexes[static_cast<size_t>(axis)];
+                                    if (source >= 0 && source < kPhysicalAxisCount) {
+                                        m_runtime.virtualValues[static_cast<size_t>(source)].store(
+                                            localAxisPlan.values[static_cast<size_t>(axis)],
+                                            std::memory_order_relaxed);
+                                    }
+                                }
                             }
                         }
                         const RuntimeButtonTargets buttonTargets = buildRuntimeButtonTargets(
@@ -2719,6 +2827,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                     ++m_runtime.vjoyWrites;
                                     ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
                                     outputChanged = true;
+                                } else {
+                                    outputWriteFailed = true;
                                 }
                             }
                         } else {
@@ -2737,6 +2847,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                     ++m_runtime.vjoyWrites;
                                     ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
                                     outputChanged = true;
+                                } else {
+                                    outputWriteFailed = true;
                                 }
                             }
                         }
@@ -2751,6 +2863,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                             ++m_runtime.vjoyWrites;
                             ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
                             outputChanged = true;
+                        } else {
+                            outputWriteFailed = true;
                         }
                     }
                     for (int button = 1; button <= output.buttonCapacity; ++button) {
@@ -2758,10 +2872,40 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         if (desired == output.lastButtons[static_cast<size_t>(button)]) continue;
                         if (output.vjoy.setButton(button, desired)) {
                             output.lastButtons[static_cast<size_t>(button)] = desired;
+                            if (outputIndex == 0) {
+                                m_runtime.virtualButtonPressed[static_cast<size_t>(button - 1)].store(
+                                    desired, std::memory_order_relaxed);
+                            }
                             ++m_runtime.vjoyWrites;
                             ++m_runtime.deviceRigOutputWrites[static_cast<size_t>(outputIndex)];
                             outputChanged = true;
+                        } else {
+                            outputWriteFailed = true;
                         }
+                    }
+                    if (outputWriteFailed) {
+                        m_runtime.outputWriteFailures.fetch_add(1, std::memory_order_relaxed);
+                        m_runtime.outputReportsSucceeding.store(false, std::memory_order_relaxed);
+                    }
+                    if (outputChanged) {
+                        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+                            if (output.axes[static_cast<size_t>(axis)]) {
+                                m_runtime.mappedOutputAxes[static_cast<size_t>(axis)].store(
+                                    desiredAxes[static_cast<size_t>(axis)], std::memory_order_relaxed);
+                            }
+                        }
+                        for (int button = 1; button <= output.buttonCapacity; ++button) {
+                            m_runtime.mappedOutputButtons[static_cast<size_t>(button - 1)].store(
+                                desiredButtons[static_cast<size_t>(button)], std::memory_order_relaxed);
+                        }
+                        const auto outputTimestamp = std::chrono::steady_clock::now();
+                        const auto outputTimestampMs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                outputTimestamp.time_since_epoch()).count());
+                        m_runtime.successfulOutputReportSequence.fetch_add(1, std::memory_order_relaxed);
+                        m_runtime.lastSuccessfulOutputReportMs.store(outputTimestampMs,
+                            std::memory_order_relaxed);
+                        m_runtime.outputReportsSucceeding.store(true, std::memory_order_relaxed);
                     }
                     if (outputChanged && mappedInputSequence > 0) {
                         m_runtime.deviceRigMeaningfulOutputSequence[static_cast<size_t>(outputIndex)].store(
@@ -2780,7 +2924,11 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 ? static_cast<int>(MappingEffectiveState::Suspended)
                 : static_cast<int>(MappingEffectiveState::Off);
         }
-        m_runtime.vjoyReady = allOutputsReady;
+        // A descriptor alone is not enough while mapping is enabled. The
+        // active Rig must also have successfully published at least one
+        // report through the actual vJoy API.
+        m_runtime.vjoyReady = allOutputsReady
+            && (!m_mappingRequested.load() || m_runtime.outputReportsSucceeding.load());
         if (!outputStatus.isEmpty()) setVjoyStatus(outputStatus);
         if (connectedCount == 0) QThread::msleep(25);
         else QThread::msleep(kPhysicalPollIntervalMs);
@@ -2794,6 +2942,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
     m_runtime.mappingActive = false;
     m_runtime.outputNeutralized = true;
     m_runtime.vjoyReady = false;
+    m_runtime.outputReportsSucceeding = false;
+    m_runtime.activeOutputVjoyDeviceId = 0;
     m_runtime.physicalConnected = false;
     clearPrimarySnapshot();
 }

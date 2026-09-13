@@ -228,7 +228,10 @@ Flickable {
     function activateProfile(id) {
         if (usingPresentationFixture)
             return false;
-        return backend.activateProfile(String(id || ""));
+        const result = backend.activateProfileResult(String(id || ""));
+        actionNotice = String(result.title || "Profile activation") + "\n" + String(result.message || "");
+        actionNoticeTone = result.success ? "healthy" : "fault";
+        return !!result.success;
     }
     function openActiveProfileEditor(page) {
         // Axes and Buttons are intentionally active-profile editors in this
@@ -753,6 +756,15 @@ Flickable {
                     font.pixelSize: 8
                     elide: Text.ElideRight
                 }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "RIG OUTPUT  ·  " + String(profile.outputLayoutName || "Output needs selection")
+                    + (Number(profile.outputDeviceId || 0) > 0 ? " · vJoy " + Number(profile.outputDeviceId) : "")
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 8
+                elide: Text.ElideRight
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -1669,6 +1681,15 @@ Flickable {
                         Text {
                             text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
+                            font.pixelSize: 9
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            text: "Output provided by Rig  ·  " + String(root.selectedDetail.outputName || "Output needs selection")
+                                + (Number(root.selectedDetail.vjoyDevice || 0) > 0 ? " · vJoy " + Number(root.selectedDetail.vjoyDevice) : "")
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
                             font.pixelSize: 9
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap

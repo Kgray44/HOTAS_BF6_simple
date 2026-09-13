@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current version: v2.6.1**
+**Current version: v2.6.2**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -258,6 +258,8 @@ One shared Device Rig setup and verification system explains a single controller
 - Full verification and any driver repair restore the Mapping On/Off state that existed before the operation.
 - Shows themed repair confirmation, low-frequency repair progress, structured operation outcomes, last-verified time, clear Physical HOTAS/vJoy/HidHide states, and only contextual repair actions.
 - One shared verification model presents required/optional input identity, reports, calibration, output capabilities, exact HidHide visibility, compiled routing, and per-member/per-output live evidence through Legacy, Standard, Top Gun, and Day Ops.
+- Setup Health & Repair publishes one typed, frozen read-only snapshot for the selected Device Rig, retains supported vJoyConfig and HidHideCLI output in copyable diagnostics, and distinguishes verified Ready state from repairable, waiting, unavailable, failed, and unknown inspection results.
+- A single explicit Check & Repair Setup flow first inspects every enabled rig output without mutation, then sequentially verifies saved controller identity and applies only approved, scoped vJoy/HidHide repair with fresh final read-back.
 
 ## Launcher, Installer, and Updates
 

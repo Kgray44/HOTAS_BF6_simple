@@ -9,7 +9,7 @@
             "relatedAutomations": 0,
             "requiredAdaptiveResponsePresets": 0,
             "requiredCurves": 0,
-            "requiredOutputLayouts": 1
+            "requiredOutputLayouts": 0
         },
         "description": "",
         "includesAdaptiveResponseGlobal": false,
@@ -301,29 +301,6 @@
         "curves": [
         ],
         "outputLayouts": [
-            {
-                "hidHideDeviceInstanceId": "",
-                "hidhideManaged": false,
-                "id": "bf6-output",
-                "name": "BF6 Output",
-                "requirements": {
-                    "axes": [
-                        false,
-                        true,
-                        true,
-                        true,
-                        true,
-                        true,
-                        true,
-                        true,
-                        true
-                    ],
-                    "buttons": 32,
-                    "continuousPovs": 0,
-                    "deviceId": 1,
-                    "discretePovs": 0
-                }
-            }
         ],
         "povProfileTriggers": [
         ],
@@ -1068,7 +1045,6 @@
                 "enabled": true,
                 "id": "starter-battlefield-6-helicopter",
                 "name": "Helicopter",
-                "outputLayoutId": "bf6-output",
                 "povs": [
                 ],
                 "virtualAxisAliases": {

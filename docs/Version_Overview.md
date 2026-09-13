@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.1**
+**Current version: v2.6.2**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.2 — Setup Truth & Repair Convergence
+
+Replaces fragmented Devices setup projections with one typed, read-only truth snapshot and one explicit repair-convergence entry point.
+
+- Setup Health publishes one authoritative, fresh readiness model across Overview, Devices, Device Rigs, System Readiness, and the repair workflow. It distinguishes Ready evidence from repairable faults, user-action waits, unavailable dependencies, definitive failures, and failed inspections.
+- Check, Repair, Complete performs read-only inspection before it proposes a scoped repair, shows live verified progress, and retains before/after diagnostics and clear partial-failure reporting.
+- Exact saved-controller verification converges from DirectInput and HID identity evidence. vJoy descriptor repair and HidHide executable, interface, and cloak repair use supported utilities, scoped rollback, and independent read-back.
+- Device Rigs own their Virtual Outputs. Explicit Profile and Rig activation now switches the coherent Profile, Rig, and output together; same-Rig Profile switches preserve the Rig-owned vJoy target and runtime output health verifies actual writes.
+- Native owner acceptance deliberately removed HOTAS BF6 vJoy and HidHide provisioning, used the app to rebuild it, confirmed live T.Flight-to-vJoy Device 2 output, and confirmed healthy setup truth after a cold restart.
 
 ## v2.6.1 — Flight Deck performance optimization (candidate)
 

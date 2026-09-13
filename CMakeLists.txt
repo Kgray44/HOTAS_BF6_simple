@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 # HOTAS_VERSION is the single release version authority.  Its non-generic name
 # avoids shadowing the C++20 <version> header on case-insensitive Windows paths.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/HOTAS_VERSION")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/HOTAS_VERSION" HOTAS_BF6_VERSION_RAW)
 string(STRIP "${HOTAS_BF6_VERSION_RAW}" HOTAS_BF6_VERSION)
 if (NOT HOTAS_BF6_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
@@ -73,6 +75,7 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_discovery.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/setup_truth.cpp
     src/controller_diagnostics.h
     src/controller_diagnostics.cpp
     src/app_issue.h
@@ -629,7 +632,15 @@ if (BUILD_TESTING)
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
-    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
+    # The native QML lifecycle suite supplies its own deterministic controller,
+    # output, and setup-assistant fixtures.  Do not let a release test inspect
+    # or hold the owner's live DirectInput, vJoy, or HidHide state while those
+    # fixtures are executing.
+    # --isolated-presentation keeps the real QML geometry visible to the
+    # offscreen test platform while AppBackend retains its smoke-safe hardware
+    # boundary.  --startup-smoke would hide the window and invalidate Popup
+    # placement assertions that are part of this lifecycle suite.
+    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")

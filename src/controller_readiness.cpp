@@ -30,6 +30,11 @@ namespace {
 
 constexpr int kInspectionTimeoutMs = 2500;
 constexpr int kApplyTimeoutMs = 30000;
+// HidHide's device graph can briefly be busy while Windows refreshes a USB
+// controller.  This is a read-only query, so one short, bounded retry avoids
+// converting a transient control-plane delay into an "unknown" setup state.
+constexpr int kHidHideGamingReadAttempts = 2;
+constexpr int kHidHideGamingReadRetryIntervalMs = 150;
 constexpr auto kPendingRecoveryKey = "readiness/pendingAutomaticRepairRecovery";
 
 QStringList installRoots()
@@ -177,12 +182,40 @@ QString decodeProcessOutput(const QByteArray &bytes)
     return QString::fromLocal8Bit(bytes);
 }
 
+QString vJoyConfigurationAxisToken(VirtualAxis axis)
+{
+    // vJoyConfig's display spelling ("Slider 0") is not its command-line
+    // spelling. Passing the display label makes an elevated repair appear to
+    // run, but the driver rejects its required slider axes. Keep this adapter
+    // at the driver boundary; UI labels remain human-readable everywhere else.
+    switch (axis) {
+    case VirtualAxis::Slider0: return QStringLiteral("Sl0");
+    case VirtualAxis::Slider1: return QStringLiteral("Sl1");
+    default: return virtualAxisLabel(axis);
+    }
+}
+
 } // namespace
 
 SetupProcessResult WindowsSetupProcessRunner::run(const QString &program, const QStringList &arguments,
                                                    int timeoutMs)
 {
     SetupProcessResult result;
+#ifdef HOTAS_STARTUP_TESTING
+    // The native QML lifecycle binary deliberately renders the real setup UI
+    // against deterministic fixtures.  It must never contend with the
+    // owner's HidHide or vJoy utilities merely because a visual interaction
+    // refreshes a readiness card.  This switch is set only by that test
+    // executable before AppBackend is constructed; production inspection and
+    // repair paths are unchanged.
+    if (qEnvironmentVariableIsSet("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION")) {
+        Q_UNUSED(program);
+        Q_UNUSED(arguments);
+        Q_UNUSED(timeoutMs);
+        result.error = QStringLiteral("External setup utility inspection is disabled by the native test fixture.");
+        return result;
+    }
+#endif
     if (!QFileInfo::exists(program)) {
         result.error = QStringLiteral("Utility was not found: %1").arg(program);
         return result;
@@ -327,26 +360,40 @@ void ControllerReadinessService::clearRecoveryJournal() const
 MapperOutputRequirements ControllerReadinessService::requirementsFor(const MapperConfiguration &configuration)
 {
     MapperOutputRequirements requirements;
-    const ControllerProfile *active = findProfile(configuration, configuration.activeProfileId);
-    const VirtualOutputLayout *layout = active
-        ? findOutputLayout(configuration, active->outputLayoutId) : nullptr;
+    // A Device Rig, rather than the selected Profile, owns the active vJoy
+    // descriptor. Profiles may switch mappings inside a Rig but must never
+    // silently move the mapper to a different virtual device.
+    const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    const VirtualOutputLayout *layout = activeRig
+        ? findOutputLayout(configuration, deviceRigPrimaryOutputLayoutId(*activeRig)) : nullptr;
     if (layout) {
         requirements = requirementsFor(layout->requirements);
-        // Output-layout button counts are provisioned capacity, not a live
-        // mapping requirement. Keep the exact layout axes, then derive the
-        // minimum button floor from every profile that can switch onto this
-        // same descriptor without a driver reconfiguration.
+        // The saved layout is a provisioning baseline, not a claim that an
+        // older descriptor covers every route. Derive the complete capacity
+        // floor from every Profile that can switch inside this Rig.
         requirements.buttons = 0;
         for (const ControllerProfile &profile : configuration.profiles) {
-            if (profile.outputLayoutId != layout->id) continue;
+            if (!activeRig || profile.deviceRigId != activeRig->id) continue;
+            for (const AxisMapping &axis : profile.axes) {
+                const int index = static_cast<int>(axis.target);
+                if (index > 0 && index < kVirtualAxisSlotCount) {
+                    requirements.axes[static_cast<size_t>(index)] = true;
+                }
+            }
             requirements.buttons = std::max(requirements.buttons, highestButton(profile.buttons));
             requirements.buttons = std::max(requirements.buttons, highestPovButton(profile.povs));
         }
     } else {
-        // Pre-migration/malformed callers retain the old conservative route
-        // union, but valid v2.0.10 configurations always take the exact
-        // descriptor path above.
-        for (const ControllerProfile &profile : configuration.profiles) {
+        // A configuration without an active Rig has no authoritative output
+        // owner.  It must not revive the retired Profile-output model by
+        // unioning mappings from unrelated Profiles: that can make setup
+        // provision a descriptor for a Profile the user neither selected nor
+        // activated.  Keep this bounded compatibility path to the active
+        // Profile only. Valid schema-29 configurations always take the exact
+        // Rig-primary path above.
+        if (const ControllerProfile *activeProfile = findProfile(
+                configuration, configuration.activeProfileId)) {
+            const ControllerProfile &profile = *activeProfile;
             for (const AxisMapping &axis : profile.axes) {
                 const int index = static_cast<int>(axis.target);
                 if (index > 0 && index < kVirtualAxisSlotCount) requirements.axes[static_cast<size_t>(index)] = true;
@@ -366,14 +413,16 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     // Canonical Signal Flow can retain fan-out legs which intentionally do
     // not fit in the historical one-target compatibility projections.  The
     // active output contract must therefore derive its capability floor from
-    // every enabled canonical sink in profiles that share this output layout.
+    // every enabled canonical sink in profiles assigned to this active Rig.
     // This also makes imported topology safe when an older layout descriptor
     // did not yet record a secondary button, axis, or native POV endpoint.
     if (configuration.signalFlow.topologyVersion >= 1) {
         for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
             if (!route.enabled) continue;
             const ControllerProfile *routeProfile = findProfile(configuration, route.profileId);
-            if (!routeProfile || (layout && routeProfile->outputLayoutId != layout->id)) continue;
+            if (!routeProfile
+                || (activeRig ? routeProfile->deviceRigId != activeRig->id
+                              : routeProfile->id != configuration.activeProfileId)) continue;
             if (route.destinationKind == SignalFlowPortKind::Axis
                 && route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount) {
                 requirements.axes[static_cast<size_t>(route.destinationIndex)] = true;
@@ -407,6 +456,36 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     requirements.discretePovs = std::clamp(requirements.discretePovs, 0, 4);
     requirements.incompatiblePovMix = requirements.continuousPovs > 0 && requirements.discretePovs > 0;
     return requirements;
+}
+
+MapperOutputRequirements ControllerReadinessService::requirementsForOutputLayout(
+    const MapperConfiguration &configuration, const QString &outputLayoutId)
+{
+    const VirtualOutputLayout *layout = findOutputLayout(configuration, outputLayoutId);
+    if (!layout) return {};
+
+    // Preserve a deterministic descriptor for legacy/unassigned layouts, then
+    // union every Rig deliberately assigned to this output. This makes
+    // inspection, repair, and final read-back use one identical contract.
+    MapperOutputRequirements result = requirementsFor(layout->requirements);
+    for (const DeviceRig &rig : configuration.deviceRigs) {
+        if (deviceRigPrimaryOutputLayoutId(rig) != layout->id) continue;
+        MapperConfiguration scoped = configuration;
+        scoped.activeDeviceRigId = rig.id;
+        const MapperOutputRequirements rigRequirements = requirementsFor(scoped);
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            result.axes[static_cast<size_t>(axis)] = result.axes[static_cast<size_t>(axis)]
+                || rigRequirements.axes[static_cast<size_t>(axis)];
+        }
+        result.buttons = std::max(result.buttons, rigRequirements.buttons);
+        result.continuousPovs = std::max(result.continuousPovs, rigRequirements.continuousPovs);
+        result.discretePovs = std::max(result.discretePovs, rigRequirements.discretePovs);
+    }
+    result.buttons = std::clamp(result.buttons, 0, kMaximumVirtualButtons);
+    result.continuousPovs = std::clamp(result.continuousPovs, 0, 4);
+    result.discretePovs = std::clamp(result.discretePovs, 0, 4);
+    result.incompatiblePovMix = result.continuousPovs > 0 && result.discretePovs > 0;
+    return result;
 }
 
 MapperOutputRequirements ControllerReadinessService::requirementsFor(
@@ -784,20 +863,26 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
     result.reportValid = !report.trimmed().isEmpty();
     result.installed = result.reportValid;
     result.configurationUtilityAvailable = result.reportValid;
-    result.busy = lower.contains(QStringLiteral("state:")) && lower.contains(QStringLiteral("busy"));
-    result.devicePresent = lower.contains(QStringLiteral("device:"))
+    // vJoy 2.1.9 emits the supported human-readable form "Device 1 FREE"
+    // (without colons), while earlier releases used "Device: 1". Treat both
+    // formats as descriptors; otherwise a healthy native installation is
+    // falsely read as an absent zero-button device.
+    const QRegularExpression deviceLine(QStringLiteral("(?im)\\bdevice\\s*:?[\\t ]*%1\\b")
+        .arg(deviceId));
+    result.busy = deviceLine.match(report).hasMatch() && lower.contains(QStringLiteral("busy"));
+    result.devicePresent = deviceLine.match(report).hasMatch()
         && !lower.contains(QStringLiteral("does not exist")) && !lower.contains(QStringLiteral("not configured"));
     result.driverReady = result.devicePresent && !lower.contains(QStringLiteral("driver is disabled"))
         && !lower.contains(QStringLiteral("not enabled"));
-    const QString buttons = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)buttons\\s*:\\s*(\\d+)")));
+    const QString buttons = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)buttons\\s*:?[\\t ]*(\\d+)")));
     result.buttons = buttons.toInt();
     const QString continuous = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)contin(?:u|o)ous\\s+POVs?\\s*:\\s*(\\d+)")));
+        QStringLiteral("(?im)contin(?:u|o)ous\\s+POVs?\\s*:?[\\t ]*(\\d+)")));
     result.continuousPovs = continuous.toInt();
     const QString discrete = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)desc(?:r|re)ete\\s+POVs?\\s*:\\s*(\\d+)")));
+        QStringLiteral("(?im)desc(?:r|re)ete\\s+POVs?\\s*:?[\\t ]*(\\d+)")));
     result.discretePovs = discrete.toInt();
-    const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:\\s*([^\\r\\n]+)")));
+    const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:?[\\t ]*([^\\r\\n]+)")));
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         const VirtualAxis axis = static_cast<VirtualAxis>(index);
         const QString name = virtualAxisLabel(axis);
@@ -817,12 +902,16 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
         });
     }
     const QString ffb = firstRegexCapture(report, QRegularExpression(
-        QStringLiteral("(?im)FFB\\s+Effects?\\s*:\\s*([^\\r\\n]+)")));
+        QStringLiteral("(?im)FFB(?:\\s+All)?\\s+Effects?\\s*:?[\\t ]*([^\\r\\n]*)")));
     if (!ffb.isEmpty()) {
         result.forceFeedbackKnown = true;
         if (ffb.compare(QStringLiteral("none"), Qt::CaseInsensitive) != 0) {
             result.forceFeedbackEffects = ffb.split(QRegularExpression(QStringLiteral("[\\s,]+")), Qt::SkipEmptyParts);
         }
+    } else if (lower.contains(QStringLiteral("ffb all effects"))) {
+        // This exact spelling has no delimiter or payload in vJoy 2.1.9.
+        result.forceFeedbackKnown = true;
+        result.forceFeedbackEffects = {QStringLiteral("all")};
     }
     result.diagnostic = report.trimmed();
     return result;
@@ -875,6 +964,7 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
         return result;
     }
     result = parseVJoyReport(report.output, deviceId);
+    result.descriptorReport = report.output;
     result.installed = true;
     result.configurationUtilityAvailable = true;
     if (!report.succeeded() && result.diagnostic.isEmpty()) result.diagnostic = report.error;
@@ -883,31 +973,44 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
     // narrow device-1 snapshot for rollback. Never use vJoyConfig -r.
     const SetupProcessResult command = runVJoy(false,
         {QStringLiteral("-t"), QStringLiteral("-c"), QString::number(deviceId)});
+    result.configurationReport = command.output;
     if (command.succeeded()) {
         const QRegularExpression configurationLine(QStringLiteral("(?im)^\\s*vJoyConfig\\s+(.+)$"));
         const QRegularExpressionMatch match = configurationLine.match(command.output);
         if (match.hasMatch()) result.restoreCommand = match.captured(1).trimmed();
+    } else {
+        result.diagnostic += QStringLiteral("\nvJoyConfig -t -c %1 failed: %2").arg(deviceId).arg(
+            command.error.isEmpty() ? command.output.trimmed() : command.error);
     }
     const SetupProcessResult devices = runVJoy(false, {QStringLiteral("-t")});
+    result.deviceListReport = devices.output;
     if (devices.succeeded()) {
-        const QRegularExpression deviceLine(QStringLiteral("(?im)^\\s*Device\\s*:\\s*(\\d+)"));
+        const QRegularExpression deviceLine(QStringLiteral("(?im)^\\s*Device\\s*:?[\\t ]*(\\d+)"));
         QRegularExpressionMatchIterator iterator = deviceLine.globalMatch(devices.output);
         while (iterator.hasNext()) result.availableDeviceIds.append(iterator.next().captured(1).toInt());
         std::sort(result.availableDeviceIds.begin(), result.availableDeviceIds.end());
         result.availableDeviceIds.erase(
             std::unique(result.availableDeviceIds.begin(), result.availableDeviceIds.end()),
             result.availableDeviceIds.end());
+    } else {
+        result.diagnostic += QStringLiteral("\nvJoyConfig -t failed: %1").arg(
+            devices.error.isEmpty() ? devices.output.trimmed() : devices.error);
     }
     if (!result.devicePresent) {
         // There is no descriptor to preserve. A deletion of this newly created
         // device is the exact rollback snapshot for a previously absent target.
         result.forceFeedbackKnown = true;
+        result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
         return result;
     }
-    if (result.forceFeedbackKnown) return result;
+    if (result.forceFeedbackKnown) {
+        result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
+        return result;
+    }
     // An absent FFB line is only safe when the report explicitly says no FFB.
     result.forceFeedbackKnown = report.output.contains(QStringLiteral("FFB Effects"), Qt::CaseInsensitive)
         && report.output.contains(QStringLiteral("None"), Qt::CaseInsensitive);
+    result.inspectionComplete = report.succeeded() && command.succeeded() && devices.succeeded();
     return result;
 }
 
@@ -924,27 +1027,44 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
         return result;
     }
     const SetupProcessResult cloak = runHidHide(false, {QStringLiteral("--cloak-state")});
+    result.cloakReport = cloak.output;
     if (cloak.succeeded()) {
         result.cloakKnown = true;
         result.cloaked = cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive);
     } else {
         result.diagnostic = cloak.error.isEmpty() ? cloak.output.trimmed() : cloak.error;
+        result.inspectionFailures.append(QStringLiteral("--cloak-state: %1").arg(result.diagnostic));
     }
     result.mapperExecutable = mapperExecutablePath();
     const SetupProcessResult apps = runHidHide(false, {QStringLiteral("--app-list")});
+    result.appListReport = apps.output;
     if (apps.succeeded()) {
         result.allowlistedApplications = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
         result.mapperAllowlisted = std::any_of(result.allowlistedApplications.cbegin(),
             result.allowlistedApplications.cend(), [&result](const QString &entry) {
                 return samePath(entry, result.mapperExecutable);
             });
+    } else {
+        result.inspectionFailures.append(QStringLiteral("--app-list: %1").arg(
+            apps.error.isEmpty() ? apps.output.trimmed() : apps.error));
     }
     QStringList gamingDevices;
-    const SetupProcessResult devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+    SetupProcessResult devices;
+    for (int attempt = 0; attempt < kHidHideGamingReadAttempts; ++attempt) {
+        devices = runHidHide(false, {QStringLiteral("--dev-gaming")});
+        // Never retry a cancellation. A timeout or transport failure is safe
+        // to re-read once because this command does not mutate HidHide.
+        if (devices.succeeded() || devices.cancelled) break;
+        if (attempt + 1 != kHidHideGamingReadAttempts) QThread::msleep(kHidHideGamingReadRetryIntervalMs);
+    }
+    result.gamingDevicesReport = devices.output;
     if (devices.succeeded()) gamingDevices = parseHidHideGamingDevices(devices.output);
+    else result.inspectionFailures.append(QStringLiteral("--dev-gaming: %1").arg(
+        devices.error.isEmpty() ? devices.output.trimmed() : devices.error));
     result.selectedControllerInstanceIds = selectedPhysicalHidInstances(physical, gamingDevices);
     result.selectedControllerResolved = !result.selectedControllerInstanceIds.isEmpty();
     const SetupProcessResult hidden = runHidHide(false, {QStringLiteral("--dev-list")});
+    result.deviceListReport = hidden.output;
     if (hidden.succeeded()) {
         result.hiddenDeviceInstanceIds = parseHidHideCommands(hidden.output, QStringLiteral("dev-hide"));
         result.selectedControllerHidden = !result.selectedControllerInstanceIds.isEmpty()
@@ -958,7 +1078,12 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
         if (!result.selectedControllerHidden && result.selectedControllerResolved) {
             result.diagnostic = QStringLiteral("One or more current HID collections for the selected controller are not cloaked.");
         }
+    } else {
+        result.inspectionFailures.append(QStringLiteral("--dev-list: %1").arg(
+            hidden.error.isEmpty() ? hidden.output.trimmed() : hidden.error));
     }
+    result.inspectionComplete = cloak.succeeded() && apps.succeeded() && devices.succeeded() && hidden.succeeded();
+    if (!result.inspectionFailures.isEmpty()) result.diagnostic = result.inspectionFailures.join(QStringLiteral("\n"));
     return result;
 }
 
@@ -1353,25 +1478,99 @@ bool ControllerReadinessService::applyVJoyConfiguration()
 {
     if (m_transactionActive || !m_plan.vjoyNeedsChanges || !m_plan.vjoyCanApply) return false;
     m_transactionActive = true;
-    m_plan.state = ControllerReadinessState::Applying;
-    m_plan.status = QStringLiteral("CONFIGURING VJOY — Applying the selected controller's output requirements.");
-    const SetupProcessResult result = runVJoy(true, vjoyConfigurationArguments(m_plan.vjoy, m_plan.requirements));
-    if (!result.succeeded()) {
-        m_plan.state = result.cancelled ? ControllerReadinessState::Cancelled : ControllerReadinessState::Failed;
-        m_plan.status = result.cancelled
+    m_plan.state = ControllerReadinessState::AwaitingPermission;
+    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Applying only the selected vJoy device descriptor.");
+
+    // A scoped Device 2 repair must cross the same product-owned elevated
+    // boundary as every other automatic setup mutation.  ShellExecute'ing
+    // vJoyConfig directly loses its structured stdout/stderr and made a
+    // successful UAC consent indistinguishable from a driver no-op.  Build a
+    // vJoy-only transaction so the helper can return per-operation evidence;
+    // suppressing HidHide preserves the frozen per-issue repair scope.
+    ControllerReadinessPlan vjoyOnlyPlan = m_plan;
+    vjoyOnlyPlan.hidhideNeedsChanges = false;
+    Journal journal;
+    const QList<RepairOperation> operations = repairOperationsFor(vjoyOnlyPlan, &journal);
+    m_lastRepairResult = runRepairTransaction(operations);
+    if (m_lastRepairResult.outcome != AutomaticRepairOutcome::Ready) {
+        m_plan.state = m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled
+            ? ControllerReadinessState::Cancelled : ControllerReadinessState::Failed;
+        m_plan.status = m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled
             ? QStringLiteral("vJoy configuration was cancelled.")
-            : QStringLiteral("vJoy configuration failed: %1").arg(result.error);
+            : QStringLiteral("vJoy configuration failed: %1").arg(m_lastRepairResult.message);
         m_transactionActive = false;
         return false;
     }
-    const VJoyCapabilities after = inspectVJoy(m_configuration.vjoyDeviceId);
-    m_plan = planFor(m_physical, m_inspectedRequirements, after, m_plan.hidhide, VerificationMode::Full);
+
+    // vJoy can publish the new descriptor after the helper exits.  Re-read
+    // the actual selected device at a short bounded cadence; process success
+    // is never accepted as proof of Device 2 convergence.
+    constexpr int kScopedVJoyReadbackAttempts = 8;
+    constexpr unsigned long kScopedVJoyReadbackIntervalMs = 150;
+    VJoyCapabilities after;
+    for (int attempt = 0; attempt != kScopedVJoyReadbackAttempts; ++attempt) {
+        after = inspectVJoy(m_configuration.vjoyDeviceId);
+        m_plan = planFor(m_physical, m_inspectedRequirements, after, m_plan.hidhide,
+                         VerificationMode::Full);
+        if (!m_plan.vjoyNeedsChanges) break;
+        if (attempt + 1 != kScopedVJoyReadbackAttempts) QThread::msleep(kScopedVJoyReadbackIntervalMs);
+    }
     if (m_plan.vjoyNeedsChanges) {
         m_plan.state = ControllerReadinessState::Failed;
         m_plan.status = QStringLiteral("vJoy did not expose the selected controller's required capabilities after configuration.");
         m_transactionActive = false;
         return false;
     }
+    m_transactionActive = false;
+    return true;
+}
+
+bool ControllerReadinessService::applyHidHideConfiguration()
+{
+    if (m_transactionActive || !m_plan.hidhideNeedsChanges || !m_plan.hidhideCanApply) return false;
+    m_transactionActive = true;
+    m_plan.state = ControllerReadinessState::AwaitingPermission;
+    m_plan.status = QStringLiteral("WAITING FOR ADMINISTRATOR APPROVAL — Applying only the selected physical-controller HidHide repair.");
+
+    // repairOperationsFor is deliberately reused for its established
+    // allowlist → exact-device-hide → cloak ordering and rollback journal.
+    // Suppressing the vJoy branch is what makes this a genuine per-issue
+    // operation rather than another trip through the legacy aggregate gate.
+    ControllerReadinessPlan hidhideOnlyPlan = m_plan;
+    hidhideOnlyPlan.vjoyNeedsChanges = false;
+    Journal journal;
+    const QList<RepairOperation> operations = repairOperationsFor(hidhideOnlyPlan, &journal);
+    m_lastRepairResult = runRepairTransaction(operations);
+    if (m_lastRepairResult.outcome == AutomaticRepairOutcome::Cancelled) {
+        m_plan.state = ControllerReadinessState::Cancelled;
+        m_plan.status = m_lastRepairResult.message;
+        m_transactionActive = false;
+        return false;
+    }
+    if (m_lastRepairResult.outcome != AutomaticRepairOutcome::Ready) {
+        m_plan.state = ControllerReadinessState::Failed;
+        m_plan.status = QStringLiteral("HIDHIDE REPAIR FAILED — %1").arg(m_lastRepairResult.message);
+        m_transactionActive = false;
+        return false;
+    }
+
+    journal.available = journal.mapperWasAdded || journal.controllerWasHidden || journal.cloakWasEnabled;
+    m_journal = journal;
+    persistRecoveryJournal();
+    const VJoyCapabilities vjoy = inspectVJoy(m_configuration.vjoyDeviceId);
+    const HidHideCapabilities hidhide = inspectHidHide(m_physical);
+    m_plan = planFor(m_physical, m_inspectedRequirements, vjoy, hidhide, VerificationMode::Full);
+    if (m_plan.hidhideNeedsChanges) {
+        m_lastRepairResult.outcome = AutomaticRepairOutcome::Attention;
+        m_lastRepairResult.message = QStringLiteral("HidHide transaction completed, but exact physical-controller read-back still needs attention: %1")
+            .arg(m_plan.hidhideSummary);
+        m_plan.state = ControllerReadinessState::Attention;
+        m_plan.status = QStringLiteral("HIDHIDE READ-BACK INCOMPLETE — %1").arg(m_plan.hidhideSummary);
+        m_transactionActive = false;
+        return false;
+    }
+    m_lastRepairResult.outcome = AutomaticRepairOutcome::Ready;
+    m_lastRepairResult.message = QStringLiteral("Selected physical-controller HidHide repair completed and read back successfully.");
     m_transactionActive = false;
     return true;
 }
@@ -1426,7 +1625,7 @@ QStringList ControllerReadinessService::vjoyConfigurationArguments(const VJoyCap
     QStringList arguments{QString::number(before.deviceId), QStringLiteral("-f"), QStringLiteral("-a")};
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         if (requirements.axes[static_cast<size_t>(index)]) {
-            arguments.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
+            arguments.append(vJoyConfigurationAxisToken(static_cast<VirtualAxis>(index)));
         }
     }
     arguments << QStringLiteral("-b") << QString::number(requirements.buttons);
@@ -1695,6 +1894,52 @@ bool ControllerReadinessService::recoverFromPhysicalAccessFailure()
     }
     m_transactionActive = false;
     return restored;
+}
+
+bool ControllerReadinessService::reconcilePendingRecoveryAfterVerifiedReadback(
+    const PhysicalControllerCapabilities &observedPhysical)
+{
+    // A journal is deliberately retained after a process exit between an
+    // approved change and the original post-change proof. It must not become
+    // a permanent readiness failure once a later, independent full check has
+    // proved the same safety conditions. Conversely, never infer that proof
+    // from a connected device or a successful CLI command alone.
+    if (!m_journal.available || m_transactionActive
+        || m_plan.verificationMode != VerificationMode::Full) {
+        return false;
+    }
+
+    const bool hidHideWasChanged = m_journal.mapperWasAdded
+        || m_journal.controllerWasHidden || m_journal.cloakWasEnabled;
+    if (hidHideWasChanged) {
+        if (!observedPhysical.connected || !observedPhysical.inputReportsReceived
+            || !m_plan.physical.connected
+            || !samePhysicalController(m_plan.physical, observedPhysical)
+            || m_plan.physicalStatus != VerificationSubsystemState::Ready) {
+            return false;
+        }
+
+        const HidHideCapabilities &hidhide = m_plan.hidhide;
+        if (!hidhide.inspectionComplete || !hidhide.installed || !hidhide.cliAvailable
+            || !hidhide.serviceReady) {
+            return false;
+        }
+        if (m_journal.mapperWasAdded && !hidhide.mapperAllowlisted) return false;
+        if (m_journal.controllerWasHidden
+            && (!hidhide.selectedControllerResolved || !hidhide.selectedControllerHidden)) {
+            return false;
+        }
+        if (m_journal.cloakWasEnabled && (!hidhide.cloakKnown || !hidhide.cloaked)) return false;
+    }
+
+    if (m_journal.vjoyChanged
+        && (!m_plan.vjoy.inspectionComplete || m_plan.vjoyNeedsChanges)) {
+        return false;
+    }
+
+    m_journal = {};
+    clearRecoveryJournal();
+    return true;
 }
 
 bool ControllerReadinessService::allowlistMapperOnly()
