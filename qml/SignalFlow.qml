@@ -1358,6 +1358,13 @@ Item {
     function removeSelectedProcessor() {
         if (!selectedNode || selectedNode.kind !== "processor" || !selectedNode.objectId) return
         const route = selectedRoute && selectedRoute.id ? selectedRoute : routeForProcessorNode(selectedNode)
+        if (selectedNode.semantic === "mixer") {
+            mixerDialog.mixerId = String(selectedNode.objectId)
+            mixerDialog.routeId = String(route.id || "")
+            mixerDialog.currentMode = String(selectedNode.mixerMode || "Average").toLowerCase().replace(" ", "-")
+            mixerDialog.open()
+            return
+        }
         const result = selectedNode.shared
             ? backendObject.signalFlowRemoveSharedProcessorChannel(String(selectedNode.objectId), String(route.id || ""),
                 Number(graph.revision || 0))
@@ -3115,6 +3122,34 @@ Item {
     }
 
     Dialog {
+        id: mixerDialog
+        objectName: "signalFlowMixerDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(500, root.width - 40)
+        property string mixerId: ""
+        property string routeId: ""
+        property string currentMode: "average"
+        title: "Explicit analog mixer"
+        onOpened: mixerModeEditor.currentIndex = Math.max(0, mixerModeEditor.model.indexOf(currentMode))
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text { Layout.fillWidth: true; text: "This mixer owns the named input routes shown on the graph. Its mode changes all of those sources atomically."; color: root.text; wrapMode: Text.WordWrap }
+            ComboBox { id: mixerModeEditor; Layout.fillWidth: true; model: ["average", "sum-clamped", "highest-magnitude"]; Accessible.name: "Explicit analog mixer mode" }
+            Text { Layout.fillWidth: true; text: "Removing this input disconnects only the selected source. Removing the mixer disconnects every named source; no direct route is silently retained."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            RowLayout {
+                Layout.fillWidth: true
+                FlowButton { text: "Cancel"; onClicked: mixerDialog.close() }
+                Item { Layout.fillWidth: true }
+                FlowButton { text: "Remove this input"; dangerAction: true; enabled: mixerDialog.routeId.length > 0; onClicked: { const result = root.backendObject.signalFlowRemoveMixerInput(mixerDialog.mixerId, mixerDialog.routeId, Number(root.graph.revision || 0)); root.showResult(result, "Mixer input was not removed."); if (result && result.success) mixerDialog.close() } }
+                FlowButton { text: "Remove mixer + inputs"; dangerAction: true; onClicked: { const result = root.backendObject.signalFlowRemoveMixer(mixerDialog.mixerId, Number(root.graph.revision || 0)); root.showResult(result, "Mixer was not removed."); if (result && result.success) mixerDialog.close() } }
+                FlowButton { text: "Apply mode"; accent: true; onClicked: { const result = root.backendObject.signalFlowSetMixerMode(mixerDialog.mixerId, mixerModeEditor.currentText, Number(root.graph.revision || 0)); root.showResult(result, "Mixer mode was not changed."); if (result && result.success) mixerDialog.close() } }
+            }
+        }
+    }
+
+    Dialog {
         id: defaultsDialog
         objectName: "signalFlowDefaultsPreviewDialog"
         parent: Overlay.overlay
@@ -3127,6 +3162,17 @@ Item {
         contentItem: ColumnLayout {
             spacing: 10
             Text { Layout.fillWidth: true; text: defaultsDialog.preview.message || "Review the change set before applying it."; color: root.text; wrapMode: Text.WordWrap }
+            Text {
+                Layout.fillWidth: true
+                readonly property var summary: defaultsDialog.preview.summary || ({})
+                text: "Added " + Number(summary.added || 0)
+                    + " · Kept " + Number(summary.kept || 0)
+                    + " · Replaced " + Number(summary.replaced || 0)
+                    + " · Mixer changes " + Number(summary.mergeChanges || 0)
+                    + " · Ambiguous " + Number(summary.ambiguous || 0)
+                    + " · Blocked " + Number(summary.blocked || 0)
+                color: root.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap
+            }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(230, defaultsList.implicitHeight)
@@ -3137,7 +3183,7 @@ Item {
                     spacing: 3
                     Repeater {
                         model: defaultsDialog.preview.changes || []
-                        delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? root.warning : root.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                        delegate: Text { required property var modelData; width: parent.width; text: String(modelData.category || "added").toUpperCase() + " · " + modelData.source + ": " + modelData.from + " → " + modelData.to + " · " + (modelData.pairing || "") + (modelData.offline ? " · OFFLINE / configuration valid, live signal unavailable" : "") + (modelData.reason ? " · " + modelData.reason : ""); color: modelData.category === "blocked" || modelData.category === "ambiguous" ? root.warning : modelData.category === "added" || modelData.category === "replaced" ? root.ready : root.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     }
                     Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No routes would change."; color: root.ready; font.pixelSize: 10 }
                 }
@@ -3149,7 +3195,7 @@ Item {
                 FlowButton {
                     text: defaultsDialog.mode === "replace-all" ? "Replace all" : "Apply defaults"
                     accent: true
-                    enabled: Boolean(defaultsDialog.preview.success && (defaultsDialog.preview.count || 0) > 0)
+                    enabled: Boolean(defaultsDialog.preview.success && defaultsDialog.preview.canApply)
                     onClicked: {
                         const result = root.backendObject.signalFlowApplyDefaults(defaultsDialog.mode, Number(defaultsDialog.preview.revision || root.graph.revision || 0))
                         root.showResult(result, "Defaults were not applied.")

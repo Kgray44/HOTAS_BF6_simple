@@ -7,6 +7,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -55,6 +56,122 @@ bool verifyActivationTransactionFaults()
     return true;
 }
 
+QStringList signalFlowRouteSignature(const QVariantMap &graph)
+{
+    QStringList signature;
+    for (const QVariant &entry : graph.value(QStringLiteral("routes")).toList()) {
+        const QVariantMap route = entry.toMap();
+        signature.append(route.value(QStringLiteral("id")).toString()
+            + QStringLiteral("|") + route.value(QStringLiteral("sourcePortId")).toString()
+            + QStringLiteral("|") + route.value(QStringLiteral("destinationPortId")).toString()
+            + QStringLiteral("|") + route.value(QStringLiteral("mixerId")).toString()
+            + QStringLiteral("|") + QString::number(route.value(QStringLiteral("enabled")).toBool()));
+    }
+    std::sort(signature.begin(), signature.end());
+    return signature;
+}
+
+bool verifySignalFlowPhase6Transactions(hotas::AppBackend &backend)
+{
+    // Use the same public command surface as the graph. The smoke-safe test
+    // backend has no vJoy driver, so expose its deliberately isolated virtual
+    // capability before proposing axis routes.
+    backend.resetApplicationConfiguration();
+    backend.setVirtualAxisAvailabilityForTest(true);
+    const auto succeeds = [](const QVariantMap &result) {
+        return result.value(QStringLiteral("success")).toBool();
+    };
+    const QVariantMap first = backend.signalFlowConnect(
+        QStringLiteral("axis"), 0, -1, QStringLiteral("X"), true, backend.signalFlowRevision());
+    const QVariantMap collision = backend.signalFlowConnect(
+        QStringLiteral("axis"), 1, -1, QStringLiteral("X"), false, backend.signalFlowRevision());
+    const QVariantMap createMixer = backend.signalFlowConnectWithMixer(
+        QStringLiteral("axis"), 1, -1, QStringLiteral("X"), QStringLiteral("average"),
+        backend.signalFlowRevision());
+    const QVariantMap growMixer = backend.signalFlowConnect(
+        QStringLiteral("axis"), 2, -1, QStringLiteral("X"), false, backend.signalFlowRevision());
+    const QVariantMap graphAfterGrowth = backend.signalFlowGraph();
+    QString mixerId;
+    QString thirdRouteId;
+    int mixerInputCount = 0;
+    for (const QVariant &entry : graphAfterGrowth.value(QStringLiteral("routes")).toList()) {
+        const QVariantMap route = entry.toMap();
+        if (!route.value(QStringLiteral("mixerId")).toString().isEmpty()) {
+            mixerId = route.value(QStringLiteral("mixerId")).toString();
+            mixerInputCount = std::max(mixerInputCount, route.value(QStringLiteral("mixerInputCount")).toInt());
+        }
+        if (route.value(QStringLiteral("sourceIndex")).toInt() == 2
+            && route.value(QStringLiteral("destinationPortId")).toString() == QStringLiteral("axis:1")) {
+            thirdRouteId = route.value(QStringLiteral("id")).toString();
+        }
+    }
+    const QVariantMap setMode = backend.signalFlowSetMixerMode(
+        mixerId, QStringLiteral("highest-magnitude"), backend.signalFlowRevision());
+    const QVariantMap removeThird = backend.signalFlowRemoveMixerInput(
+        mixerId, thirdRouteId, backend.signalFlowRevision());
+    const QVariantMap defaultsPreview = backend.signalFlowDefaultPreview(QStringLiteral("unassigned"));
+    const QVariantMap beforeDefaults = backend.signalFlowGraph();
+    const QVariantMap applyDefaults = backend.signalFlowApplyDefaults(
+        QStringLiteral("unassigned"), defaultsPreview.value(QStringLiteral("revision")).toULongLong());
+    const QVariantMap afterDefaults = backend.signalFlowGraph();
+    const QVariantMap undoDefaults = backend.signalFlowUndo(backend.signalFlowRevision());
+    const QVariantMap afterUndo = backend.signalFlowGraph();
+    const QVariantMap redoDefaults = backend.signalFlowRedo(backend.signalFlowRevision());
+    const QVariantMap stalePreview = backend.signalFlowDefaultPreview(QStringLiteral("unassigned"));
+    const QVariantMap mutateAfterPreview = backend.signalFlowSetMixerMode(
+        mixerId, QStringLiteral("sum-clamped"), backend.signalFlowRevision());
+    const QVariantMap staleApply = backend.signalFlowApplyDefaults(
+        QStringLiteral("unassigned"), stalePreview.value(QStringLiteral("revision")).toULongLong());
+    const QVariantMap replacePreview = backend.signalFlowDefaultPreview(QStringLiteral("replace-all"));
+    const QVariantMap applyReplace = backend.signalFlowApplyDefaults(
+        QStringLiteral("replace-all"), replacePreview.value(QStringLiteral("revision")).toULongLong());
+    const QVariantMap afterReplace = backend.signalFlowGraph();
+    const QVariantMap undoReplace = backend.signalFlowUndo(backend.signalFlowRevision());
+    const QVariantMap afterReplaceUndo = backend.signalFlowGraph();
+    const QVariantMap redoReplace = backend.signalFlowRedo(backend.signalFlowRevision());
+
+    const QVariantMap summary = defaultsPreview.value(QStringLiteral("summary")).toMap();
+    const QVariantMap replaceSummary = replacePreview.value(QStringLiteral("summary")).toMap();
+    const bool valid = succeeds(first) && !succeeds(collision)
+        && collision.value(QStringLiteral("message")).toString().contains(QStringLiteral("implicit"),
+                                                                            Qt::CaseInsensitive)
+        && succeeds(createMixer) && succeeds(growMixer) && !mixerId.isEmpty()
+        && !thirdRouteId.isEmpty() && mixerInputCount == 3 && succeeds(setMode)
+        && succeeds(removeThird) && defaultsPreview.value(QStringLiteral("canApply")).toBool()
+        && summary.value(QStringLiteral("added")).toInt() > 0 && succeeds(applyDefaults)
+        && signalFlowRouteSignature(beforeDefaults) != signalFlowRouteSignature(afterDefaults)
+        && succeeds(undoDefaults)
+        && signalFlowRouteSignature(beforeDefaults) == signalFlowRouteSignature(afterUndo)
+        && succeeds(redoDefaults) && succeeds(mutateAfterPreview) && !succeeds(staleApply)
+        && replacePreview.value(QStringLiteral("canApply")).toBool()
+        && replaceSummary.value(QStringLiteral("replaced")).toInt() > 0
+        && replaceSummary.value(QStringLiteral("mergeChanges")).toInt() == 1
+        && succeeds(applyReplace)
+        && signalFlowRouteSignature(afterDefaults) != signalFlowRouteSignature(afterReplace)
+        && succeeds(undoReplace)
+        && signalFlowRouteSignature(afterDefaults) == signalFlowRouteSignature(afterReplaceUndo)
+        && succeeds(redoReplace);
+    if (!valid) {
+        std::fprintf(stderr,
+            "phase6_signal_flow_transactions first=%d collision=%d create=%d grow=%d mixer=%s inputs=%d third=%s mode=%d remove=%d preview=%d added=%d apply=%d undo=%d redo=%d mutate=%d stale=%d replacePreview=%d replaced=%d mergeChanges=%d replaceApply=%d replaceUndo=%d replaceRedo=%d changed=%d restored=%d\n",
+            succeeds(first) ? 1 : 0, succeeds(collision) ? 1 : 0, succeeds(createMixer) ? 1 : 0,
+            succeeds(growMixer) ? 1 : 0, mixerId.toUtf8().constData(), mixerInputCount,
+            thirdRouteId.toUtf8().constData(), succeeds(setMode) ? 1 : 0,
+            succeeds(removeThird) ? 1 : 0, defaultsPreview.value(QStringLiteral("canApply")).toBool() ? 1 : 0,
+            summary.value(QStringLiteral("added")).toInt(), succeeds(applyDefaults) ? 1 : 0,
+            succeeds(undoDefaults) ? 1 : 0, succeeds(redoDefaults) ? 1 : 0,
+            succeeds(mutateAfterPreview) ? 1 : 0, succeeds(staleApply) ? 1 : 0,
+            replacePreview.value(QStringLiteral("canApply")).toBool() ? 1 : 0,
+            replaceSummary.value(QStringLiteral("replaced")).toInt(),
+            replaceSummary.value(QStringLiteral("mergeChanges")).toInt(),
+            succeeds(applyReplace) ? 1 : 0, succeeds(undoReplace) ? 1 : 0,
+            succeeds(redoReplace) ? 1 : 0,
+            signalFlowRouteSignature(afterDefaults) != signalFlowRouteSignature(afterReplace) ? 1 : 0,
+            signalFlowRouteSignature(afterDefaults) == signalFlowRouteSignature(afterReplaceUndo) ? 1 : 0);
+    }
+    return valid;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -68,6 +185,7 @@ int main(int argc, char *argv[])
 
     hotas::AppBackend backend;
     if (!verifyActivationTransactionFaults()) return 1;
+    if (!verifySignalFlowPhase6Transactions(backend)) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real
     // presentation lifecycle and then taking the visible steady-state sample.

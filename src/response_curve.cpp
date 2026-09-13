@@ -958,25 +958,58 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
         }
         return;
     }
-    for (const SignalFlowMixer &mixer : configuration.signalFlow.mixers) {
-        if (!mixer.enabled || mixer.profileId != profile.id
-            || mixer.controllerRecordId != controllerRecordId
-            || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount) continue;
-        runtime->signalFlowAxisMixers[static_cast<size_t>(mixer.destinationAxis)] = mixer.mode;
-    }
-    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
-        if (!route.enabled || route.profileId != profile.id
-            || route.controllerRecordId != controllerRecordId
-            || route.sourceKind != SignalFlowPortKind::Axis
-            || route.destinationKind != SignalFlowPortKind::Axis
-            || route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount
-            || route.destinationIndex <= 0 || route.destinationIndex >= kVirtualAxisSlotCount) {
-            continue;
-        }
-        if (runtime->signalFlowAxisRouteCount >= kMaximumRuntimeSignalFlowAxisRoutes) break;
+    const auto validAxisRoute = [&profile, &controllerRecordId](const SignalFlowRoute &route) {
+        return route.enabled && route.profileId == profile.id
+            && route.controllerRecordId == controllerRecordId
+            && route.sourceKind == SignalFlowPortKind::Axis
+            && route.destinationKind == SignalFlowPortKind::Axis
+            && route.sourceIndex >= 0 && route.sourceIndex < kPhysicalAxisCount
+            && route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount;
+    };
+    const auto appendAxisRoute = [&runtime](const SignalFlowRoute &route) {
+        if (runtime->signalFlowAxisRouteCount >= kMaximumRuntimeSignalFlowAxisRoutes) return;
         runtime->signalFlowAxisRoutes[static_cast<size_t>(runtime->signalFlowAxisRouteCount++)] = {
             static_cast<std::uint8_t>(route.sourceIndex),
             static_cast<std::uint8_t>(route.destinationIndex)};
+    };
+    const auto activeMixerForRoute = [&profile, &controllerRecordId](const SignalFlowMixer &mixer,
+                                                                       const SignalFlowRoute &route) {
+        return mixer.enabled && mixer.mode != SignalFlowMixerMode::Disabled
+            && mixer.profileId == profile.id && mixer.controllerRecordId == controllerRecordId
+            && mixer.destinationAxis == route.destinationIndex
+            && std::any_of(mixer.inputs.cbegin(), mixer.inputs.cend(), [&route](
+                const SignalFlowMixerInput &input) {
+                return input.routeIdentityKey == route.identityKey;
+            });
+    };
+    // A mixer's input order is durable topology: it is the deterministic
+    // Highest Magnitude tie-break. Compile named mixer inputs first and in
+    // that exact order; the mapping report remains a fixed-table walk.
+    for (const SignalFlowMixer &mixer : configuration.signalFlow.mixers) {
+        if (!mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled
+            || mixer.profileId != profile.id || mixer.controllerRecordId != controllerRecordId
+            || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount) continue;
+        runtime->signalFlowAxisMixers[static_cast<size_t>(mixer.destinationAxis)] = mixer.mode;
+        for (const SignalFlowMixerInput &input : mixer.inputs) {
+            const auto route = std::find_if(configuration.signalFlow.routes.cbegin(),
+                configuration.signalFlow.routes.cend(), [&input](const SignalFlowRoute &candidate) {
+                return candidate.identityKey == input.routeIdentityKey;
+            });
+            if (route != configuration.signalFlow.routes.cend() && validAxisRoute(*route)
+                && activeMixerForRoute(mixer, *route)) {
+                appendAxisRoute(*route);
+            }
+        }
+    }
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        if (!validAxisRoute(route)) continue;
+        const bool compiledAsMixerInput = std::any_of(configuration.signalFlow.mixers.cbegin(),
+            configuration.signalFlow.mixers.cend(), [&activeMixerForRoute, &route](
+                const SignalFlowMixer &mixer) {
+                return activeMixerForRoute(mixer, route);
+            });
+        if (compiledAsMixerInput) continue;
+        appendAxisRoute(route);
     }
 
     // Digital routes use source buckets rather than a per-report graph scan.

@@ -4156,11 +4156,100 @@ void MappingCoreTests::signalFlowTopologySupportsFanOutAndExplicitMixers()
     QCOMPARE(mixedPlan.values[static_cast<int>(VirtualAxis::X)], 0.25F);
     QCOMPARE(mixedPlan.sourceIndexes[static_cast<int>(VirtualAxis::X)], -1);
 
+    QVERIFY(!configuration.signalFlow.mixers.empty());
+    const SignalFlowMixer &explicitMixer = configuration.signalFlow.mixers.front();
+    QCOMPARE(explicitMixer.inputs.size(), size_t{2});
+    QVERIFY(!explicitMixer.outputPortId.isEmpty());
+    QSet<QString> inputPorts;
+    for (const SignalFlowMixerInput &input : explicitMixer.inputs) {
+        QVERIFY(!input.routeIdentityKey.isEmpty());
+        QVERIFY(!input.portId.isEmpty());
+        inputPorts.insert(input.portId);
+    }
+    QCOMPARE(inputPorts.size(), 2);
+    int outputEdges = 0;
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        for (const SignalFlowRouteSegment &segment : route.segments) {
+            if (segment.sourceEndpointId == explicitMixer.outputPortId) ++outputEdges;
+        }
+    }
+    QCOMPARE(outputEdges, 1);
+
+    // A third source is deliberately adopted by the existing mixer. Its
+    // membership/port are durable topology, rather than an inference from a
+    // matching destination axis.
+    int thirdSource = -1;
+    for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+        const bool alreadyTargetsX = std::any_of(configuration.signalFlow.routes.cbegin(),
+            configuration.signalFlow.routes.cend(), [candidate](const SignalFlowRoute &route) {
+            return route.sourceKind == SignalFlowPortKind::Axis
+                && route.sourceIndex == candidate && route.destinationKind == SignalFlowPortKind::Axis
+                && route.destinationIndex == static_cast<int>(VirtualAxis::X);
+            });
+        if (!alreadyTargetsX) {
+            thirdSource = candidate;
+            break;
+        }
+    }
+    QVERIFY(thirdSource >= 0);
+    SignalFlowRoute thirdInput = mergeInput;
+    thirdInput.sourceIndex = thirdSource;
+    // A graph command projects its primary leg to the focused selector before
+    // the normal reconciliation path runs. Mirror that control-plane boundary
+    // here so this fixture represents a real third source rather than a stale
+    // compatibility selector deleting an otherwise valid topology route.
+    profile.axes[static_cast<size_t>(thirdSource)].target = VirtualAxis::X;
+    thirdInput.primaryProjection = true;
+    thirdInput.identityKey = signalFlowRouteIdentityKey(profile, {}, QStringLiteral("axis"), thirdSource);
+    configuration.signalFlow.routes.push_back(thirdInput);
+    configuration.signalFlow.mixers.front().inputs.push_back({thirdInput.identityKey, {}});
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.mixers.size(), size_t{1});
+    QCOMPARE(configuration.signalFlow.mixers.front().inputs.size(), size_t{3});
+    transformed[static_cast<size_t>(thirdSource)] = 0.10F;
+    const RuntimeMappingConfiguration threeInputRuntime = compileActiveProfile(configuration);
+    QCOMPARE(buildVirtualAxisOutputPlan(threeInputRuntime, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.20F);
+    outputEdges = 0;
+    for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
+        for (const SignalFlowRouteSegment &segment : route.segments) {
+            if (segment.sourceEndpointId == configuration.signalFlow.mixers.front().outputPortId) ++outputEdges;
+        }
+    }
+    QCOMPARE(outputEdges, 1);
+
+    // Removing one named input leaves a valid two-input mixer; it does not
+    // silently fold the remaining source through an inferred route.
+    configuration.signalFlow.routes.erase(std::remove_if(configuration.signalFlow.routes.begin(),
+        configuration.signalFlow.routes.end(), [&mergeInput](const SignalFlowRoute &route) {
+        return route.identityKey == mergeInput.identityKey;
+    }), configuration.signalFlow.routes.end());
+    reconcileSignalFlowState(&configuration);
+    QCOMPARE(configuration.signalFlow.mixers.size(), size_t{1});
+    QCOMPARE(configuration.signalFlow.mixers.front().inputs.size(), size_t{2});
+    const RuntimeMappingConfiguration twoInputRuntime = compileActiveProfile(configuration);
+    QCOMPARE(buildVirtualAxisOutputPlan(twoInputRuntime, available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], 0.40F);
+    configuration.signalFlow.mixers.front().mode = SignalFlowMixerMode::HighestMagnitude;
+    std::rotate(configuration.signalFlow.mixers.front().inputs.begin(),
+                configuration.signalFlow.mixers.front().inputs.end() - 1,
+                configuration.signalFlow.mixers.front().inputs.end());
+    reconcileSignalFlowState(&configuration);
+    transformed[0] = 0.40F;
+    transformed[static_cast<size_t>(thirdSource)] = -0.40F;
+    // Highest Magnitude keeps the earliest durable mixer input on an exact
+    // magnitude tie. The rotation makes that source observable rather than
+    // accidentally relying on physical-axis enumeration order.
+    QCOMPARE(buildVirtualAxisOutputPlan(compileActiveProfile(configuration), available, transformed, targets, 0.0F)
+                 .values[static_cast<int>(VirtualAxis::X)], -0.40F);
+
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
     QVERIFY(valid);
     QCOMPARE(restored.signalFlow.topologyVersion, 1);
     QCOMPARE(restored.signalFlow.mixers.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.mixers.front().inputs.size(), size_t{2});
+    QVERIFY(!restored.signalFlow.mixers.front().outputPortId.isEmpty());
     QCOMPARE(compileActiveProfile(restored).signalFlowAxisRouteCount,
              mixedRuntime.signalFlowAxisRouteCount);
 }
@@ -6131,6 +6220,10 @@ void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
     source.signalFlow.sharedProcessors.push_back(sharedCurve);
     reconcileSignalFlowState(&source);
     QCOMPARE(source.signalFlow.sharedProcessors.size(), size_t{1});
+    SignalFlowState portableTopology;
+    const QJsonObject portableTopologyJson = ConfigStore::portableSignalFlowTopologyToJson(
+        source.signalFlow, {profileId});
+    QVERIFY(ConfigStore::portableSignalFlowTopologyFromJson(portableTopologyJson, &portableTopology));
     const QString sourceSharedId = source.signalFlow.sharedProcessors.front().id;
     QVERIFY(!sourceSharedId.isEmpty());
     const QString fileName = temporary.filePath(QStringLiteral("helicopter.hbf6profile"));

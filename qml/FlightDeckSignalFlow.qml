@@ -2089,6 +2089,13 @@ Item {
     function removeSelectedProcessor() {
         if (!inspectedNode || inspectedNode.kind !== "processor" || !inspectedNode.objectId) return
         const route = inspectedRoute && inspectedRoute.id ? inspectedRoute : routeForProcessorNode(inspectedNode)
+        if (inspectedNode.semantic === "mixer") {
+            deckMixerDialog.mixerId = String(inspectedNode.objectId)
+            deckMixerDialog.routeId = String(route.id || "")
+            deckMixerDialog.currentMode = String(inspectedNode.mixerMode || "Average").toLowerCase().replace(" ", "-")
+            deckMixerDialog.open()
+            return
+        }
         const result = inspectedNode.shared
             ? backendObject.signalFlowRemoveSharedProcessorChannel(String(inspectedNode.objectId), String(route.id || ""),
                 Number(graph.revision || 0))
@@ -4570,6 +4577,34 @@ Item {
     }
 
     Dialog {
+        id: deckMixerDialog
+        objectName: "flightDeckSignalFlowMixerDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(520, root.width - 40)
+        property string mixerId: ""
+        property string routeId: ""
+        property string currentMode: "average"
+        title: "Explicit analog mixer"
+        onOpened: deckMixerModeEditor.currentIndex = Math.max(0, deckMixerModeEditor.model.indexOf(currentMode))
+        contentItem: ColumnLayout {
+            spacing: deck.space12
+            Text { Layout.fillWidth: true; text: "This mixer owns the named input routes shown on the graph. Its mode changes all of those sources atomically."; color: deck.textPrimary; font.family: deck.bodyFont; wrapMode: Text.WordWrap }
+            ComboBox { id: deckMixerModeEditor; Layout.fillWidth: true; model: ["average", "sum-clamped", "highest-magnitude"]; font.family: deck.bodyFont; font.pixelSize: 10; Accessible.name: "Explicit analog mixer mode" }
+            Text { Layout.fillWidth: true; text: "Remove this input disconnects only the selected source. Remove mixer + inputs disconnects every named source; no direct route is silently retained."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            RowLayout {
+                Layout.fillWidth: true
+                DeckButton { text: "Cancel"; onClicked: deckMixerDialog.close() }
+                Item { Layout.fillWidth: true }
+                DeckButton { text: "Remove this input"; destructive: true; enabled: deckMixerDialog.routeId.length > 0; onClicked: { const result = backendObject.signalFlowRemoveMixerInput(deckMixerDialog.mixerId, deckMixerDialog.routeId, Number(root.graph.revision || 0)); root.announce(result, "Mixer input was not removed."); if (result && result.success) deckMixerDialog.close() } }
+                DeckButton { text: "Remove mixer + inputs"; destructive: true; onClicked: { const result = backendObject.signalFlowRemoveMixer(deckMixerDialog.mixerId, Number(root.graph.revision || 0)); root.announce(result, "Mixer was not removed."); if (result && result.success) deckMixerDialog.close() } }
+                DeckButton { text: "Apply mode"; emphasized: true; onClicked: { const result = backendObject.signalFlowSetMixerMode(deckMixerDialog.mixerId, deckMixerModeEditor.currentText, Number(root.graph.revision || 0)); root.announce(result, "Mixer mode was not changed."); if (result && result.success) deckMixerDialog.close() } }
+            }
+        }
+    }
+
+    Dialog {
         id: defaultsDialog
         objectName: "flightDeckSignalFlowDefaultsDialog"
         parent: Overlay.overlay
@@ -4582,10 +4617,21 @@ Item {
         contentItem: ColumnLayout {
             spacing: deck.space12
             Text { Layout.fillWidth: true; text: defaultsDialog.preview.message || "Review pending route changes."; color: deck.textPrimary; font.family: deck.bodyFont; wrapMode: Text.WordWrap }
+            Text {
+                Layout.fillWidth: true
+                readonly property var summary: defaultsDialog.preview.summary || ({})
+                text: "Added " + Number(summary.added || 0)
+                    + " · Kept " + Number(summary.kept || 0)
+                    + " · Replaced " + Number(summary.replaced || 0)
+                    + " · Mixer changes " + Number(summary.mergeChanges || 0)
+                    + " · Ambiguous " + Number(summary.ambiguous || 0)
+                    + " · Blocked " + Number(summary.blocked || 0)
+                color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; wrapMode: Text.WordWrap
+            }
             ScrollView {
                 Layout.fillWidth: true; Layout.preferredHeight: Math.min(220, defaultRows.implicitHeight); clip: true
                 Column { id: defaultRows; width: parent.availableWidth; spacing: 4
-                    Repeater { model: defaultsDialog.preview.changes || []; delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? deck.attention : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; elide: Text.ElideRight } }
+                    Repeater { model: defaultsDialog.preview.changes || []; delegate: Text { required property var modelData; width: parent.width; text: String(modelData.category || "added").toUpperCase() + " · " + modelData.source + ": " + modelData.from + " → " + modelData.to + " · " + (modelData.pairing || "") + (modelData.offline ? " · OFFLINE / configuration valid, live signal unavailable" : "") + (modelData.reason ? " · " + modelData.reason : ""); color: modelData.category === "blocked" || modelData.category === "ambiguous" ? deck.attention : modelData.category === "added" || modelData.category === "replaced" ? deck.healthy : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; wrapMode: Text.WordWrap } }
                     Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No route would change."; color: deck.healthy; font.family: deck.bodyFont; font.pixelSize: 10 }
                 }
             }
@@ -4596,7 +4642,7 @@ Item {
                 DeckButton {
                     text: defaultsDialog.mode === "replace-all" ? "Replace all" : "Apply defaults"
                     emphasized: true
-                    enabled: Boolean(defaultsDialog.preview.success && (defaultsDialog.preview.count || 0) > 0)
+                    enabled: Boolean(defaultsDialog.preview.success && defaultsDialog.preview.canApply)
                     onClicked: {
                         const result = backendObject.signalFlowApplyDefaults(defaultsDialog.mode, Number(defaultsDialog.preview.revision || root.graph.revision || 0))
                         root.announce(result, "Defaults were not applied.")

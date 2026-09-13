@@ -1110,7 +1110,9 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             }
             return QString{};
         };
+        QHash<QString, QString> importedRouteKeys;
         for (SignalFlowRoute route : sourceTopology.routes) {
+            const QString sourceRouteIdentityKey = route.identityKey;
             const QString importedProfileId = profileIds.value(route.profileId);
             ControllerProfile *importedProfile = findProfile(candidate, importedProfileId);
             if (!importedProfile) {
@@ -1129,6 +1131,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
                 : signalFlowFanoutRouteIdentityKey(*importedProfile, route.controllerRecordId,
                     routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex,
                     route.destinationKind, route.destinationIndex, route.destinationSubIndex);
+            importedRouteKeys.insert(sourceRouteIdentityKey, route.identityKey);
             destinationTopology.routes.push_back(std::move(route));
         }
         for (SignalFlowMixer mixer : sourceTopology.mixers) {
@@ -1141,8 +1144,13 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             mixer.profileId = importedProfileId;
             mixer.id.clear();
             mixer.identityKey = signalFlowMixerIdentityKey(*importedProfile,
-                                                           mixer.controllerRecordId,
-                                                           mixer.destinationAxis);
+                                                            mixer.controllerRecordId,
+                                                            mixer.destinationAxis);
+            mixer.outputPortId.clear();
+            for (SignalFlowMixerInput &input : mixer.inputs) {
+                input.routeIdentityKey = importedRouteKeys.value(input.routeIdentityKey);
+                input.portId.clear();
+            }
             destinationTopology.mixers.push_back(std::move(mixer));
         }
         for (SignalFlowSharedProcessor processor : sourceTopology.sharedProcessors) {

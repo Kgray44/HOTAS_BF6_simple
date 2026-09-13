@@ -784,6 +784,15 @@ public:
                                                                       qulonglong expectedRevision) const;
     Q_INVOKABLE QVariantMap signalFlowRemoveOrBypassProcessor(const QString &processorId,
                                                                qulonglong expectedRevision);
+    // Mixer membership and mode are first-class canonical edits. Removing an
+    // input removes that source route; removing a mixer disconnects every
+    // named input so a direct route is never silently selected.
+    Q_INVOKABLE QVariantMap signalFlowSetMixerMode(const QString &mixerId, const QString &mode,
+                                                   qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowRemoveMixerInput(const QString &mixerId, const QString &routeId,
+                                                       qulonglong expectedRevision);
+    Q_INVOKABLE QVariantMap signalFlowRemoveMixer(const QString &mixerId,
+                                                  qulonglong expectedRevision);
     // A shared processor owns one focused setting but can serve several axis
     // channels.  Removing one channel is explicit and leaves the remaining
     // shared processor intact (including its durable identity).

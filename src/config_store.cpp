@@ -216,9 +216,7 @@ bool signalFlowRouteFromJson(const QJsonObject &json, SignalFlowRoute *route)
     // than becoming a graph-local fallback.
     if (json.contains(u"segments"_qs)) {
         const QJsonValue segmentValue = json.value(u"segments"_qs);
-        if (!segmentValue.isArray() || segmentValue.toArray().size() > kMaximumSignalFlowProcessorPath * 2 + 1) {
-            return false;
-        }
+        if (!segmentValue.isArray() || segmentValue.toArray().size() > kMaximumSignalFlowProcessorPath * 2 + 1) return false;
         QSet<QString> segmentIds;
         for (const QJsonValue &value : segmentValue.toArray()) {
             if (!value.isObject()) return false;
@@ -239,13 +237,20 @@ bool signalFlowRouteFromJson(const QJsonObject &json, SignalFlowRoute *route)
 
 QJsonObject signalFlowMixerToJson(const SignalFlowMixer &mixer)
 {
+    QJsonArray inputs;
+    for (const SignalFlowMixerInput &input : mixer.inputs) {
+        inputs.append(QJsonObject{{u"routeIdentityKey"_qs, input.routeIdentityKey.trimmed().left(320)},
+                                  {u"portId"_qs, input.portId.trimmed().left(160)}});
+    }
     return {{u"identityKey"_qs, mixer.identityKey.trimmed().left(320)},
             {u"id"_qs, mixer.id.trimmed().left(96)},
             {u"profileId"_qs, mixer.profileId.trimmed().left(96)},
             {u"controllerRecordId"_qs, mixer.controllerRecordId.trimmed().left(96)},
             {u"destinationAxis"_qs, mixer.destinationAxis},
             {u"mode"_qs, signalFlowMixerModeKey(mixer.mode)},
-            {u"enabled"_qs, mixer.enabled}};
+            {u"enabled"_qs, mixer.enabled},
+            {u"outputPortId"_qs, mixer.outputPortId.trimmed().left(160)},
+            {u"inputs"_qs, inputs}};
 }
 
 bool signalFlowMixerFromJson(const QJsonObject &json, SignalFlowMixer *mixer)
@@ -261,6 +266,25 @@ bool signalFlowMixerFromJson(const QJsonObject &json, SignalFlowMixer *mixer)
         || !signalFlowMixerModeFromJson(json.value(u"mode"_qs), &restored.mode)) return false;
     restored.destinationAxis = json.value(u"destinationAxis"_qs).toInt();
     restored.enabled = json.value(u"enabled"_qs).toBool();
+    restored.outputPortId = json.value(u"outputPortId"_qs).toString().trimmed().left(160);
+    const QJsonValue inputs = json.value(u"inputs"_qs);
+    if (!inputs.isUndefined()) {
+        if (!inputs.isArray() || inputs.toArray().size() > kMaximumSignalFlowMixerInputs) return false;
+        QSet<QString> routeKeys;
+        QSet<QString> portIds;
+        for (const QJsonValue &value : inputs.toArray()) {
+            if (!value.isObject()) return false;
+            const QJsonObject item = value.toObject();
+            SignalFlowMixerInput input;
+            input.routeIdentityKey = item.value(u"routeIdentityKey"_qs).toString().trimmed().left(320);
+            input.portId = item.value(u"portId"_qs).toString().trimmed().left(160);
+            if (input.routeIdentityKey.isEmpty() || (!input.portId.isEmpty() && portIds.contains(input.portId))
+                || routeKeys.contains(input.routeIdentityKey)) return false;
+            routeKeys.insert(input.routeIdentityKey);
+            if (!input.portId.isEmpty()) portIds.insert(input.portId);
+            restored.inputs.push_back(std::move(input));
+        }
+    }
     *mixer = std::move(restored);
     return true;
 }
@@ -471,29 +495,22 @@ bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
     SignalFlowState restored;
     if (json.contains(u"topologyVersion"_qs)) {
         const QJsonValue topologyVersion = json.value(u"topologyVersion"_qs);
+        const bool routesOk = signalFlowArrayFromJson(json.value(u"routes"_qs),
+            kMaximumSignalFlowRoutes, &restored.routes, signalFlowRouteFromJson,
+            [](const auto &route) { return route.identityKey; });
+        const bool mixersOk = signalFlowArrayFromJson(json.value(u"mixers"_qs),
+            kMaximumSignalFlowMixers, &restored.mixers, signalFlowMixerFromJson,
+            [](const auto &mixer) {
+                return mixer.profileId + u":"_qs + mixer.controllerRecordId + u":"_qs
+                    + QString::number(mixer.destinationAxis);
+            });
+        const bool sharedOk = !json.contains(u"sharedProcessors"_qs)
+            || signalFlowArrayFromJson(json.value(u"sharedProcessors"_qs),
+                kMaximumSignalFlowSharedProcessors, &restored.sharedProcessors,
+                signalFlowSharedProcessorFromJson,
+                [](const auto &processor) { return processor.identityKey; });
         if (!topologyVersion.isDouble() || topologyVersion.toInt() != 1
-            || !signalFlowArrayFromJson(json.value(u"routes"_qs),
-                                        kMaximumSignalFlowRoutes, &restored.routes,
-                                        signalFlowRouteFromJson,
-                                        [](const auto &route) { return route.identityKey; })
-            || !signalFlowArrayFromJson(json.value(u"mixers"_qs),
-                                        kMaximumSignalFlowMixers, &restored.mixers,
-                                        signalFlowMixerFromJson,
-                                        [](const auto &mixer) {
-                                            return mixer.profileId + u":"_qs
-                                                + mixer.controllerRecordId + u":"_qs
-                                                + QString::number(mixer.destinationAxis);
-                                        })
-            || (json.contains(u"sharedProcessors"_qs)
-                && !signalFlowArrayFromJson(json.value(u"sharedProcessors"_qs),
-                                             kMaximumSignalFlowSharedProcessors,
-                                             &restored.sharedProcessors,
-                                             signalFlowSharedProcessorFromJson,
-                                             [](const auto &processor) {
-                                                 return processor.identityKey;
-                                             }))) {
-            return false;
-        }
+            || !routesOk || !mixersOk || !sharedOk) return false;
         restored.topologyVersion = topologyVersion.toInt();
     }
     if (!signalFlowArrayFromJson(json.value(u"routeIdentities"_qs),

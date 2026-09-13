@@ -203,6 +203,93 @@ bool startupSmokeRequested()
         || arguments.contains(u"--isolated-presentation-signal-flow"_qs);
 }
 
+bool isolatedSignalFlowPresentationRequested()
+{
+    return QCoreApplication::arguments().contains(u"--isolated-presentation-signal-flow"_qs);
+}
+
+MapperConfiguration isolatedSignalFlowPresentationFixture()
+{
+    MapperConfiguration fixture = defaultConfiguration();
+    ControllerProfile *profile = findProfile(fixture, normalProfileId());
+    if (!profile || fixture.outputLayouts.empty()) return fixture;
+
+    const auto savedController = [&fixture](const QString &id, const QString &name) {
+        SavedControllerRecord record;
+        record.id = id;
+        record.displayName = name;
+        record.lastDirectInputId = QString(u"{isolated-%1}"_qs).arg(id);
+        record.productGuid = QString(u"{isolated-product-%1}"_qs).arg(id);
+        record.hidInstanceId = QString(u"HID\\ISOLATED\\%1"_qs).arg(id);
+        record.axes.fill(true);
+        record.axisCount = 3;
+        record.buttonCount = 16;
+        record.povCount = 1;
+        record.vjoyRequirements = fixture.outputLayouts.front().requirements;
+        // The native review purposefully leaves these saved inputs offline.
+        // The graph must still show their durable configuration without
+        // implying that a live mapping report is available.
+        record.lastVerified = u"2026-09-12T00:00:00Z"_qs;
+        return record;
+    };
+    const SavedControllerRecord gladiator = savedController(u"fixture-gladiator"_qs,
+        u"Fixture Gladiator"_qs);
+    const SavedControllerRecord stecs = savedController(u"fixture-stecs"_qs,
+        u"Fixture STECS"_qs);
+    const SavedControllerRecord pedals = savedController(u"fixture-pedals"_qs,
+        u"Fixture Pedals"_qs);
+    fixture.savedControllers = {gladiator, stecs, pedals};
+
+    DeviceRig rig;
+    rig.id = u"isolated-signal-flow-rig"_qs;
+    rig.name = u"Isolated Signal Flow Review Rig"_qs;
+    rig.isDefault = true;
+    rig.autoActivate = false;
+    rig.members = {{gladiator.id, true, true, fixture.outputLayouts.front().id},
+                   {stecs.id, true, false, fixture.outputLayouts.front().id},
+                   {pedals.id, true, false, fixture.outputLayouts.front().id}};
+    rig.outputs = {{fixture.outputLayouts.front().id, true}};
+    fixture.deviceRigs = {rig};
+    fixture.activeDeviceRigId = rig.id;
+    fixture.editingDeviceRigId = rig.id;
+    fixture.editingDeviceRecordIds = {gladiator.id};
+    profile->deviceRigId = rig.id;
+    profile->outputLayoutId = fixture.outputLayouts.front().id;
+    profile->virtualAxisAliases[static_cast<size_t>(VirtualAxis::X)] = u"BF6 Roll"_qs;
+    profile->virtualAxisAliases[static_cast<size_t>(VirtualAxis::Y)] = u"BF6 Pitch"_qs;
+    profile->virtualAxisAliases[static_cast<size_t>(VirtualAxis::Z)] = u"BF6 Throttle"_qs;
+    profile->virtualAxisAliases[static_cast<size_t>(VirtualAxis::Rz)] = u"BF6 Rz"_qs;
+
+    DeviceProfileMapping &stick = ensureDeviceProfileMapping(*profile, gladiator.id);
+    stick.axes[0].customName = u"Gladiator Roll"_qs;
+    stick.axes[0].target = VirtualAxis::X;
+    stick.axes[0].curve.family = CurveFamily::SCurve;
+    stick.axes[0].curve.strength = 0.42F;
+    stick.axes[1].customName = u"Gladiator Pitch"_qs;
+    stick.axes[1].target = VirtualAxis::Y;
+    stick.axes[2].customName = u"Gladiator Twist"_qs;
+    stick.axes[2].target = VirtualAxis::Rz;
+
+    DeviceProfileMapping &throttle = ensureDeviceProfileMapping(*profile, stecs.id);
+    throttle.axes[0].customName = u"STECS Throttle"_qs;
+    throttle.axes[0].target = VirtualAxis::Z;
+    throttle.axes[1].customName = u"STECS Rotation"_qs;
+    throttle.axes[1].target = VirtualAxis::Ry;
+    throttle.axes[2].customName = u"STECS Spare Axis"_qs;
+
+    DeviceProfileMapping &rudder = ensureDeviceProfileMapping(*profile, pedals.id);
+    rudder.axes[0].customName = u"Pedals Rudder"_qs;
+    // Rz begins occupied by Gladiator Twist. Dragging this saved offline
+    // pedal source onto that output opens the same explicit collision choices
+    // a connected device would use, without pretending a live signal exists.
+    rudder.axes[0].inverted = true;
+    rudder.axes[1].customName = u"Pedals Toe Brake Left"_qs;
+    rudder.axes[2].customName = u"Pedals Toe Brake Right"_qs;
+
+    reconcileSignalFlowState(&fixture);
+    return fixture;
+}
+
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
 {
@@ -601,6 +688,10 @@ AppBackend::AppBackend(QObject *parent)
     // flags are explicit automation entry points handled by main.cpp; normal
     // launches retain the unchanged hardware startup path below.
     const bool startupSmoke = startupSmokeRequested();
+    if (isolatedSignalFlowPresentationRequested()) {
+        m_configuration = isolatedSignalFlowPresentationFixture();
+        m_worker.updateConfiguration(m_configuration);
+    }
     m_adaptiveResponseHistoryClock.start();
     m_adaptiveResponseSimulatorClock.start();
     m_adaptiveResponseSimulatorHistory.resize(1800);
@@ -6408,6 +6499,9 @@ QVariantMap AppBackend::signalFlowGraph() const
             const SignalFlowRouteSegment &segment = route.segments[static_cast<size_t>(index)];
             const bool first = index == 0;
             const bool last = index == static_cast<int>(route.segments.size()) - 1;
+            const bool sourceIsExternal = first && segment.sourceEndpointId.startsWith(u"sf-endpoint:"_qs);
+            const bool destinationIsExternal = last
+                && segment.destinationEndpointId.startsWith(u"sf-endpoint:"_qs);
             const auto nodeForEndpoint = [&sourceNodeId, &destinationNodeId, first, last](const QString &endpoint,
                                                                                             bool sourceSide) {
                 if (endpoint.startsWith(u"sf-port:"_qs)) {
@@ -6420,8 +6514,8 @@ QVariantMap AppBackend::signalFlowGraph() const
                 {u"routeId"_qs, routeId},
                 {u"canonicalSourceEndpointId"_qs, segment.sourceEndpointId},
                 {u"canonicalDestinationEndpointId"_qs, segment.destinationEndpointId},
-                {u"sourceEndpointId"_qs, first ? sourceEndpointId : segment.sourceEndpointId},
-                {u"destinationEndpointId"_qs, last ? destinationEndpointId : segment.destinationEndpointId},
+                {u"sourceEndpointId"_qs, sourceIsExternal ? sourceEndpointId : segment.sourceEndpointId},
+                {u"destinationEndpointId"_qs, destinationIsExternal ? destinationEndpointId : segment.destinationEndpointId},
                 {u"sourceNodeId"_qs, nodeForEndpoint(segment.sourceEndpointId, true)},
                 {u"destinationNodeId"_qs, nodeForEndpoint(segment.destinationEndpointId, false)},
                 {u"ordinal"_qs, index},
@@ -6565,6 +6659,9 @@ QVariantMap AppBackend::signalFlowGraph() const
                 .arg(virtualAxisLabel(static_cast<VirtualAxis>(mixer.destinationAxis))));
             node.insert(u"semantic"_qs, u"mixer"_qs);
             node.insert(u"mixerMode"_qs, mixerModeLabel(mixer.mode));
+            node.insert(u"mixerId"_qs, mixer.id);
+            node.insert(u"mixerInputCount"_qs, static_cast<int>(mixer.inputs.size()));
+            node.insert(u"mixerOutputPortId"_qs, mixer.outputPortId);
             value = node;
             break;
         }
@@ -6619,6 +6716,8 @@ QVariantMap AppBackend::signalFlowGraph() const
         QVariantList processors;
         QVariantList processorDetails;
         QString viaNodeId;
+        const SignalFlowMixer *routeMixer = nullptr;
+        const SignalFlowMixerInput *routeMixerInput = nullptr;
         float processorOrder = 0.0F;
         for (const QString &processorId : route.processorPath) {
             const QString nodeId = addProcessor(processorId, route.sourceIndex, processorOrder++);
@@ -6630,6 +6729,22 @@ QVariantMap AppBackend::signalFlowGraph() const
             if (identityIt != m_configuration.signalFlow.processorIdentities.cend()
                 && identityIt->key.startsWith(u"processor:mixer:"_qs)) {
                 viaNodeId = nodeId;
+                const auto foundMixer = std::find_if(m_configuration.signalFlow.mixers.cbegin(),
+                    m_configuration.signalFlow.mixers.cend(), [&processorId, &route](
+                        const SignalFlowMixer &candidate) {
+                    return candidate.id == processorId && std::any_of(candidate.inputs.cbegin(),
+                        candidate.inputs.cend(), [&route](const SignalFlowMixerInput &input) {
+                        return input.routeIdentityKey == route.identityKey;
+                    });
+                });
+                if (foundMixer != m_configuration.signalFlow.mixers.cend()) {
+                    routeMixer = &*foundMixer;
+                    const auto foundInput = std::find_if(foundMixer->inputs.cbegin(),
+                        foundMixer->inputs.cend(), [&route](const SignalFlowMixerInput &input) {
+                        return input.routeIdentityKey == route.identityKey;
+                    });
+                    if (foundInput != foundMixer->inputs.cend()) routeMixerInput = &*foundInput;
+                }
             }
             if (identityIt != m_configuration.signalFlow.processorIdentities.cend()) {
                 const QString semantic = identityIt->key.startsWith(u"processor:mixer:"_qs)
@@ -6711,7 +6826,12 @@ QVariantMap AppBackend::signalFlowGraph() const
                                   {u"destinationIndex"_qs, route.destinationIndex},
                                   {u"destinationSubIndex"_qs, route.destinationSubIndex},
                                   {u"destinationLabel"_qs, destinationLabel},
-                                  {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails},
+                                   {u"processors"_qs, processors}, {u"processorDetails"_qs, processorDetails},
+                                   {u"mixerId"_qs, routeMixer ? routeMixer->id : QString{}},
+                                   {u"mixerInputPortId"_qs, routeMixerInput ? routeMixerInput->portId : QString{}},
+                                   {u"mixerInputCount"_qs, routeMixer ? static_cast<int>(routeMixer->inputs.size()) : 0},
+                                   {u"mixerOutputCarrier"_qs, routeMixer && !routeMixer->inputs.empty()
+                                       && routeMixer->inputs.front().routeIdentityKey == route.identityKey},
                                   {u"segments"_qs, projectCanonicalSegments(route, routeIdentifier, inputNodeId,
                                       inputEndpointId(route.sourceKind, route.sourceIndex, route.sourceSubIndex),
                                       outputNodeId, outputEndpointId(route.destinationKind, route.destinationIndex,
@@ -7759,7 +7879,33 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
             : signalFlowFanoutRouteIdentityKey(profile, controllerId, u"axis"_qs, sourceIndex, -1,
                                                 SignalFlowPortKind::Axis, targetIndex);
         topology.routes.push_back(std::move(route));
-        description = requestedMixer == SignalFlowMixerMode::Disabled
+        if (requestedMixer != SignalFlowMixerMode::Disabled || mixerActive) {
+            const auto mixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
+                [&profile, &controllerId, targetIndex](const SignalFlowMixer &candidate) {
+                return candidate.profileId == profile.id && candidate.controllerRecordId == controllerId
+                    && candidate.destinationAxis == targetIndex;
+            });
+            if (mixer != topology.mixers.end()) {
+                // Creating or extending a mixer is the explicit decision that
+                // adopts the visible inputs already routed to this exact
+                // destination.  No background reconciliation performs this
+                // adoption for a later, unrelated direct route.
+                for (const SignalFlowRoute &candidate : topology.routes) {
+                    if (!candidate.enabled || candidate.profileId != profile.id
+                        || candidate.controllerRecordId != controllerId
+                        || candidate.sourceKind != SignalFlowPortKind::Axis
+                        || candidate.destinationKind != SignalFlowPortKind::Axis
+                        || candidate.destinationIndex != targetIndex) continue;
+                    if (std::none_of(mixer->inputs.cbegin(), mixer->inputs.cend(), [&candidate](
+                        const SignalFlowMixerInput &input) {
+                        return input.routeIdentityKey == candidate.identityKey;
+                    })) {
+                        mixer->inputs.push_back({candidate.identityKey, {}});
+                    }
+                }
+            }
+        }
+        description = requestedMixer == SignalFlowMixerMode::Disabled && !mixerActive
             ? QString(u"Connected %1 to %2"_qs)
                   .arg(physicalAxisLabel(static_cast<PhysicalAxis>(sourceIndex)), virtualAxisLabel(target))
             : QString(u"Connected %1 to %2 through an explicit mixer"_qs)
@@ -8019,6 +8165,113 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
     }
     commitSignalFlowCommand(std::move(before), description);
     return signalFlowActionResult(true, u"Route disconnected"_qs, description, id);
+}
+
+QVariantMap AppBackend::signalFlowSetMixerMode(const QString &mixerId, const QString &mode,
+                                                qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Mixer was not changed"_qs,
+            u"The graph changed while the mixer editor was open. Review the current topology first."_qs);
+    }
+    SignalFlowMixerMode requested = SignalFlowMixerMode::Disabled;
+    const QString normalized = mode.trimmed().toLower();
+    if (normalized == u"average"_qs) requested = SignalFlowMixerMode::Average;
+    else if (normalized == u"sum-clamped"_qs) requested = SignalFlowMixerMode::SumClamped;
+    else if (normalized == u"highest-magnitude"_qs) requested = SignalFlowMixerMode::HighestMagnitude;
+    else return signalFlowActionResult(false, u"Choose a valid mixer mode"_qs,
+        u"Average, Sum Clamped, and Highest Magnitude are the qualified deterministic mixer modes."_qs);
+    const QString id = mixerId.trimmed();
+    const auto mixer = std::find_if(m_configuration.signalFlow.mixers.begin(),
+        m_configuration.signalFlow.mixers.end(), [&id](const SignalFlowMixer &candidate) {
+        return candidate.id == id;
+    });
+    if (mixer == m_configuration.signalFlow.mixers.end() || mixer->inputs.size() < 2) {
+        return signalFlowActionResult(false, u"Mixer is unavailable"_qs,
+            u"This mixer no longer has the explicit inputs required for an analog merge."_qs);
+    }
+    if (mixer->mode == requested) return signalFlowActionResult(true, u"Mixer already uses that mode"_qs,
+        u"No Signal Flow route changed."_qs, id);
+    MapperConfiguration before = m_configuration;
+    mixer->mode = requested;
+    mixer->enabled = true;
+    commitSignalFlowCommand(std::move(before), u"Changed explicit mixer mode"_qs);
+    return signalFlowActionResult(true, u"Mixer mode changed"_qs,
+        u"The same named inputs remain connected through the selected deterministic mode."_qs, id);
+}
+
+QVariantMap AppBackend::signalFlowRemoveMixerInput(const QString &mixerId, const QString &routeId,
+                                                    qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Mixer input was not removed"_qs,
+            u"The graph changed while this mixer input was selected. Review the current topology first."_qs);
+    }
+    const QString id = mixerId.trimmed();
+    const QString routeIdentifier = routeId.trimmed();
+    const auto mixer = std::find_if(m_configuration.signalFlow.mixers.begin(),
+        m_configuration.signalFlow.mixers.end(), [&id](const SignalFlowMixer &candidate) {
+        return candidate.id == id;
+    });
+    if (mixer == m_configuration.signalFlow.mixers.end()) return signalFlowActionResult(false,
+        u"Mixer is unavailable"_qs, u"This mixer no longer exists in the current Signal Flow topology."_qs);
+    const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeIdentifier);
+    if (!route || std::none_of(mixer->inputs.cbegin(), mixer->inputs.cend(), [route](
+        const SignalFlowMixerInput &input) { return input.routeIdentityKey == route->identityKey; })) {
+        return signalFlowActionResult(false, u"Mixer input is unavailable"_qs,
+            u"The selected route is not one of this mixer's named inputs."_qs);
+    }
+    const QString routeIdentityKey = route->identityKey;
+    MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    const auto currentMixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
+        [&id](const SignalFlowMixer &candidate) { return candidate.id == id; });
+    topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+        [&routeIdentityKey](const SignalFlowRoute &candidate) {
+        return candidate.identityKey == routeIdentityKey;
+    }), topology.routes.end());
+    bool mixerSimplified = false;
+    if (currentMixer != topology.mixers.end()) {
+        currentMixer->inputs.erase(std::remove_if(currentMixer->inputs.begin(), currentMixer->inputs.end(),
+            [&routeIdentityKey](const SignalFlowMixerInput &input) {
+            return input.routeIdentityKey == routeIdentityKey;
+        }), currentMixer->inputs.end());
+        mixerSimplified = currentMixer->inputs.size() < 2;
+        if (mixerSimplified) topology.mixers.erase(currentMixer);
+    }
+    commitSignalFlowCommand(std::move(before), u"Removed an explicit mixer input"_qs);
+    return signalFlowActionResult(true, u"Mixer input removed"_qs,
+        mixerSimplified
+            ? u"The selected source route was disconnected. The one-input mixer was simplified to a direct route."_qs
+            : u"The selected source route was disconnected. The remaining named inputs stay in the explicit mixer."_qs,
+        routeIdentifier);
+}
+
+QVariantMap AppBackend::signalFlowRemoveMixer(const QString &mixerId, qulonglong expectedRevision)
+{
+    if (expectedRevision != m_configurationGeneration) {
+        return signalFlowActionResult(false, u"Mixer was not removed"_qs,
+            u"The graph changed while the mixer editor was open. Review the current topology first."_qs);
+    }
+    const QString id = mixerId.trimmed();
+    const auto mixer = std::find_if(m_configuration.signalFlow.mixers.cbegin(),
+        m_configuration.signalFlow.mixers.cend(), [&id](const SignalFlowMixer &candidate) {
+        return candidate.id == id;
+    });
+    if (mixer == m_configuration.signalFlow.mixers.cend()) return signalFlowActionResult(false,
+        u"Mixer is unavailable"_qs, u"This mixer no longer exists in the current Signal Flow topology."_qs);
+    QSet<QString> routeKeys;
+    for (const SignalFlowMixerInput &input : mixer->inputs) routeKeys.insert(input.routeIdentityKey);
+    MapperConfiguration before = m_configuration;
+    SignalFlowState &topology = m_configuration.signalFlow;
+    topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
+        [&routeKeys](const SignalFlowRoute &route) { return routeKeys.contains(route.identityKey); }),
+        topology.routes.end());
+    topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
+        [&id](const SignalFlowMixer &candidate) { return candidate.id == id; }), topology.mixers.end());
+    commitSignalFlowCommand(std::move(before), u"Removed explicit mixer and inputs"_qs);
+    return signalFlowActionResult(true, u"Mixer removed"_qs,
+        u"All named mixer inputs were disconnected together; no direct source was silently retained."_qs, id);
 }
 
 QVariantMap AppBackend::signalFlowInsertProcessor(const QString &segmentId,
@@ -8541,10 +8794,68 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
     }
     const ControllerProfile &profile = currentProfile();
     const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const AxisMappings &sourceAxes = mapping ? mapping->axes : profile.axes;
+    const bool savedOfflineSource = !controllerId.isEmpty() && savedControllerRecord(controllerId)
+        && !physicalDeviceDetail(controllerId).value(u"connected"_qs).toBool();
+    const auto semanticKey = [](const QString &value) {
+        QString result;
+        for (const QChar character : value.trimmed().toCaseFolded()) {
+            if (character.isLetterOrNumber()) result.append(character);
+        }
+        return result;
+    };
+    std::array<int, kPhysicalAxisCount> desiredDestinations{};
+    std::array<QString, kPhysicalAxisCount> pairingKinds{};
+    desiredDestinations.fill(-1);
+    QHash<int, QList<int>> sourceCandidates;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const QString sourceAlias = semanticKey(sourceAxes[static_cast<size_t>(axis)].customName);
+        QList<int> aliasMatches;
+        if (!sourceAlias.isEmpty()) {
+            for (int destination = 1; destination < kVirtualAxisSlotCount; ++destination) {
+                if (semanticKey(profile.virtualAxisAliases[static_cast<size_t>(destination)]) == sourceAlias) {
+                    aliasMatches.append(destination);
+                }
+            }
+        }
+        if (aliasMatches.size() == 1) {
+            desiredDestinations[static_cast<size_t>(axis)] = aliasMatches.front();
+            pairingKinds[static_cast<size_t>(axis)] = u"configured alias"_qs;
+        } else if (aliasMatches.size() > 1) {
+            pairingKinds[static_cast<size_t>(axis)] = u"ambiguous configured alias"_qs;
+        } else {
+            desiredDestinations[static_cast<size_t>(axis)] = axis + 1;
+            pairingKinds[static_cast<size_t>(axis)] = u"canonical axis pairing"_qs;
+        }
+        if (desiredDestinations[static_cast<size_t>(axis)] > 0) {
+            sourceCandidates[desiredDestinations[static_cast<size_t>(axis)]].append(axis);
+        }
+    }
     QVariantList changes;
     int actionableChanges = 0;
+    int decisionCount = 0;
+    int blockedCount = 0;
+    QVariantMap summary{{u"added"_qs, 0}, {u"kept"_qs, 0}, {u"replaced"_qs, 0},
+                        {u"mergeChanges"_qs, 0}, {u"ambiguous"_qs, 0}, {u"blocked"_qs, 0}};
+    const auto appendChange = [&changes, &summary](QVariantMap change) {
+        const QString category = change.value(u"category"_qs).toString();
+        if (category == u"added"_qs) {
+            summary.insert(u"added"_qs, summary.value(u"added"_qs).toInt() + 1);
+        } else if (category == u"kept"_qs) {
+            summary.insert(u"kept"_qs, summary.value(u"kept"_qs).toInt() + 1);
+        } else if (category == u"replaced"_qs) {
+            summary.insert(u"replaced"_qs, summary.value(u"replaced"_qs).toInt() + 1);
+        } else if (category == u"merge-change"_qs) {
+            summary.insert(u"mergeChanges"_qs, summary.value(u"mergeChanges"_qs).toInt() + 1);
+        } else if (category == u"ambiguous"_qs) {
+            summary.insert(u"ambiguous"_qs, summary.value(u"ambiguous"_qs).toInt() + 1);
+        } else if (category == u"blocked"_qs) {
+            summary.insert(u"blocked"_qs, summary.value(u"blocked"_qs).toInt() + 1);
+        }
+        changes.append(std::move(change));
+    };
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-        const VirtualAxis desired = static_cast<VirtualAxis>(axis + 1);
+        const int desiredIndex = desiredDestinations[static_cast<size_t>(axis)];
         QStringList existing;
         bool hasDesiredOnly = true;
         for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
@@ -8552,36 +8863,111 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
                 || route.sourceKind != SignalFlowPortKind::Axis || route.sourceIndex != axis
                 || route.destinationKind != SignalFlowPortKind::Axis) continue;
             existing.append(virtualAxisLabel(static_cast<VirtualAxis>(route.destinationIndex)));
-            hasDesiredOnly = hasDesiredOnly && route.destinationIndex == static_cast<int>(desired);
+            hasDesiredOnly = hasDesiredOnly && route.destinationIndex == desiredIndex;
         }
-        if (normalized == u"unassigned"_qs && !existing.isEmpty()) continue;
-        if (normalized == u"replace-all"_qs && existing.size() == 1 && hasDesiredOnly) continue;
-        const bool destinationBusy = normalized == u"unassigned"_qs && std::any_of(
+        QVariantMap change{{u"sourceIndex"_qs, axis},
+                            {u"source"_qs, sourceAxes[static_cast<size_t>(axis)].customName.trimmed().isEmpty()
+                                ? physicalAxisLabel(static_cast<PhysicalAxis>(axis))
+                                : sourceAxes[static_cast<size_t>(axis)].customName.trimmed()},
+                            {u"from"_qs, existing.isEmpty() ? u"Unassigned"_qs : existing.join(u", "_qs)},
+                            {u"pairing"_qs, pairingKinds[static_cast<size_t>(axis)]},
+                            {u"destinationIndex"_qs, desiredIndex},
+                            {u"apply"_qs, false},
+                            {u"offline"_qs, savedOfflineSource},
+                            {u"to"_qs, desiredIndex > 0
+                                ? (profile.virtualAxisAliases[static_cast<size_t>(desiredIndex)].trimmed().isEmpty()
+                                    ? virtualAxisLabel(static_cast<VirtualAxis>(desiredIndex))
+                                    : profile.virtualAxisAliases[static_cast<size_t>(desiredIndex)].trimmed())
+                                : u"Needs a destination decision"_qs}};
+        if (m_configuration.axisActivity[static_cast<size_t>(axis)] == PhysicalAxisActivity::Fixed) {
+            change.insert(u"category"_qs, u"blocked"_qs);
+            change.insert(u"reason"_qs, u"This physical axis is inactive until calibration records meaningful travel."_qs);
+            ++blockedCount;
+            appendChange(std::move(change));
+            continue;
+        }
+        if (desiredIndex <= 0 || sourceCandidates.value(desiredIndex).size() > 1) {
+            change.insert(u"category"_qs, u"ambiguous"_qs);
+            change.insert(u"reason"_qs, desiredIndex <= 0
+                ? u"More than one virtual-axis alias matches this source. Choose a destination deliberately."_qs
+                : u"More than one source resolves to this default destination. Choose routes or an explicit mixer deliberately."_qs);
+            ++decisionCount;
+            appendChange(std::move(change));
+            continue;
+        }
+        if (normalized == u"unassigned"_qs && !existing.isEmpty()) {
+            change.insert(u"category"_qs, u"kept"_qs);
+            change.insert(u"reason"_qs, u"Already assigned; Connect Unassigned Only never overwrites an existing source route."_qs);
+            appendChange(std::move(change));
+            continue;
+        }
+        if (normalized == u"replace-all"_qs) {
+            // Replace All is a complete-scope rewrite. Show whether this row
+            // is added, retained, or replaced, while marking every resolved
+            // row for the one atomic target topology.
+            change.insert(u"category"_qs, existing.isEmpty() ? u"added"_qs
+                : existing.size() == 1 && hasDesiredOnly ? u"kept"_qs : u"replaced"_qs);
+            change.insert(u"apply"_qs, true);
+            change.insert(u"reason"_qs, existing.isEmpty()
+                ? u"Added by the complete replacement plan."_qs
+                : existing.size() == 1 && hasDesiredOnly
+                    ? u"Retained by the complete replacement plan."_qs
+                    : u"Existing source routes are replaced by this reviewed default destination."_qs);
+            ++actionableChanges;
+            appendChange(std::move(change));
+            continue;
+        }
+        const bool destinationBusy = std::any_of(
             m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
-            [&profile, &controllerId, axis](const SignalFlowRoute &route) {
+            [&profile, &controllerId, axis, desiredIndex](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
                     && route.controllerRecordId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex != axis
                     && route.destinationKind == SignalFlowPortKind::Axis
-                    && route.destinationIndex == axis + 1;
+                    && route.destinationIndex == desiredIndex;
             });
-        QVariantMap change{{u"source"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(axis))},
-                           {u"from"_qs, existing.isEmpty() ? u"Unassigned"_qs
-                               : existing.join(u", "_qs)},
-                           {u"to"_qs, virtualAxisLabel(desired)},
-                           {u"blocked"_qs, destinationBusy}};
         if (destinationBusy) {
-            change.insert(u"reason"_qs, u"Destination already has an analog source; create a mixer or use Replace All."_qs);
+            change.insert(u"category"_qs, u"blocked"_qs);
+            change.insert(u"reason"_qs, u"Destination already has an analog source; use an explicit mixer or choose Replace All."_qs);
+            ++decisionCount;
+            ++blockedCount;
         } else {
+            change.insert(u"category"_qs, u"added"_qs);
+            change.insert(u"apply"_qs, true);
             ++actionableChanges;
         }
-        changes.append(std::move(change));
+        appendChange(std::move(change));
+    }
+    if (normalized == u"replace-all"_qs) {
+        const auto mixerModeText = [](SignalFlowMixerMode mode) {
+            switch (mode) {
+            case SignalFlowMixerMode::Average: return u"Average"_qs;
+            case SignalFlowMixerMode::SumClamped: return u"Sum Clamped"_qs;
+            case SignalFlowMixerMode::HighestMagnitude: return u"Highest Magnitude"_qs;
+            case SignalFlowMixerMode::Disabled: return u"Disabled"_qs;
+            }
+            return u"Disabled"_qs;
+        };
+        for (const SignalFlowMixer &mixer : m_configuration.signalFlow.mixers) {
+            if (mixer.profileId != profile.id || mixer.controllerRecordId != controllerId) continue;
+            QVariantMap change{{u"sourceIndex"_qs, -1}, {u"source"_qs, u"Mixer"_qs},
+                               {u"from"_qs, mixerModeText(mixer.mode)},
+                               {u"to"_qs, u"Removed with complete replacement"_qs},
+                               {u"pairing"_qs, u"processor / merge change"_qs},
+                               {u"category"_qs, u"merge-change"_qs}, {u"apply"_qs, false},
+                               {u"reason"_qs, u"Replace All removes this explicit mixer and its named analog merge semantics."_qs}};
+            appendChange(std::move(change));
+        }
     }
     return {{u"success"_qs, true}, {u"mode"_qs, normalized}, {u"changes"_qs, changes},
             {u"count"_qs, actionableChanges}, {u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
+            {u"requiresDecision"_qs, decisionCount > 0},
+            {u"summary"_qs, summary},
+            {u"canApply"_qs, actionableChanges > 0 && (normalized == u"unassigned"_qs
+                || (decisionCount == 0 && blockedCount == 0))},
             {u"message"_qs, normalized == u"unassigned"_qs
-                ? u"Only unassigned axes with an unoccupied default destination will be connected 1:1."_qs
-                : u"All axis destinations in this scope will be replaced by the 1:1 default map."_qs}};
+                ? u"Only reviewed, unassigned sources are added. Existing routes are preserved and collisions remain deliberate decisions."_qs
+                : u"Replace All applies this exact reviewed plan atomically. Resolve every highlighted ambiguity or block before it can proceed."_qs}};
 }
 
 QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong expectedRevision)
@@ -8592,6 +8978,12 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
     }
     const QVariantMap preview = signalFlowDefaultPreview(mode);
     if (!preview.value(u"success"_qs).toBool()) return preview;
+    if (!preview.value(u"canApply"_qs).toBool()) {
+        return signalFlowActionResult(false, u"Defaults need review"_qs,
+            preview.value(u"requiresDecision"_qs).toBool()
+                ? u"Resolve the highlighted collision or ambiguity deliberately; defaults did not change the graph."_qs
+                : u"No eligible default route would change in this Signal Flow scope."_qs);
+    }
     const QString normalized = preview.value(u"mode"_qs).toString();
     DeviceProfileMapping *mapping = editingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !mapping) return preview;
@@ -8614,7 +9006,13 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
                 return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId;
             }), topology.mixers.end());
     }
-    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+    for (const QVariant &previewValue : preview.value(u"changes"_qs).toList()) {
+        const QVariantMap change = previewValue.toMap();
+        if (!change.value(u"apply"_qs).toBool()) continue;
+        const int axis = change.value(u"sourceIndex"_qs).toInt();
+        const int destination = change.value(u"destinationIndex"_qs).toInt();
+        if (axis < 0 || axis >= kPhysicalAxisCount || destination <= 0
+            || destination >= kVirtualAxisSlotCount) continue;
         const bool assigned = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
             [&profile, &controllerId, axis](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
@@ -8625,12 +9023,12 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
         if (normalized == u"unassigned"_qs && assigned) continue;
         if (normalized == u"unassigned"_qs) {
             const bool destinationBusy = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
-                [&profile, &controllerId, axis](const SignalFlowRoute &route) {
+                [&profile, &controllerId, axis, destination](const SignalFlowRoute &route) {
                     return route.enabled && route.profileId == profile.id
                         && route.controllerRecordId == controllerId
                         && route.sourceKind == SignalFlowPortKind::Axis
                         && route.sourceIndex != axis && route.destinationKind == SignalFlowPortKind::Axis
-                        && route.destinationIndex == axis + 1;
+                    && route.destinationIndex == destination;
                 });
             if (destinationBusy) continue;
         }
@@ -8641,13 +9039,13 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
         route.sourceIndex = axis;
         route.sourceSubIndex = -1;
         route.destinationKind = SignalFlowPortKind::Axis;
-        route.destinationIndex = axis + 1;
+        route.destinationIndex = destination;
         route.destinationSubIndex = -1;
         route.primaryProjection = true;
         route.enabled = true;
         route.identityKey = signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, axis);
         topology.routes.push_back(std::move(route));
-        layout->requirements.axes[static_cast<size_t>(axis + 1)] = true;
+        layout->requirements.axes[static_cast<size_t>(destination)] = true;
     }
     if (preview.value(u"count"_qs).toInt() == 0) {
         return signalFlowActionResult(true, u"Defaults already match"_qs,
@@ -9167,6 +9565,28 @@ QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QStri
     route.enabled = true;
     route.identityKey = signalFlowRouteIdentityKey(profile, controllerId, u"axis"_qs, physicalAxis);
     topology.routes.push_back(std::move(route));
+    if (mixerMode != SignalFlowMixerMode::Disabled) {
+        const auto mixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
+            [&profile, &controllerId, targetIndex](const SignalFlowMixer &candidate) {
+            return candidate.profileId == profile.id && candidate.controllerRecordId == controllerId
+                && candidate.destinationAxis == targetIndex;
+        });
+        if (mixer != topology.mixers.end()) {
+            for (const SignalFlowRoute &candidate : topology.routes) {
+                if (!candidate.enabled || candidate.profileId != profile.id
+                    || candidate.controllerRecordId != controllerId
+                    || candidate.sourceKind != SignalFlowPortKind::Axis
+                    || candidate.destinationKind != SignalFlowPortKind::Axis
+                    || candidate.destinationIndex != targetIndex) continue;
+                if (std::none_of(mixer->inputs.cbegin(), mixer->inputs.cend(), [&candidate](
+                    const SignalFlowMixerInput &input) {
+                    return input.routeIdentityKey == candidate.identityKey;
+                })) {
+                    mixer->inputs.push_back({candidate.identityKey, {}});
+                }
+            }
+        }
+    }
     layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
 
     const QString description = mixerMode == SignalFlowMixerMode::Disabled

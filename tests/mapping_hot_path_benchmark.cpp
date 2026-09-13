@@ -415,6 +415,7 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
 {
     hotas::MapperConfiguration configuration = hotas::defaultConfiguration();
     hotas::ControllerProfile &profile = hotas::activeProfile(configuration);
+    const bool explicitMixer = name == "Explicit Mixer Average";
     const bool oneSided = name == "One-Sided Linear";
     const bool adaptiveCase = name == "Adaptive Response" || name == "Adaptive Velocity"
         || name == "Adaptive Alpha-Beta" || name == "Adaptive Alpha-Beta-Gamma"
@@ -476,6 +477,34 @@ hotas::MapperConfiguration configurationFor(std::string_view name)
         } else if (name == "Custom-25") {
             profile.axes[static_cast<size_t>(index)].curve = maximumDensityCustom(unipolar);
         }
+    }
+    if (explicitMixer) {
+        // This is the Phase 6 many-to-one report path: two named, bounded
+        // canonical inputs compile into the same fixed route table used by
+        // production MappingWorker reports. No graph object is consulted once
+        // the benchmark begins.
+        hotas::SignalFlowRoute primary;
+        primary.profileId = profile.id;
+        primary.sourceKind = hotas::SignalFlowPortKind::Axis;
+        primary.sourceIndex = 0;
+        primary.destinationKind = hotas::SignalFlowPortKind::Axis;
+        primary.destinationIndex = static_cast<int>(hotas::VirtualAxis::X);
+        primary.identityKey = QStringLiteral("benchmark:mixer:axis:0");
+        hotas::SignalFlowRoute secondary = primary;
+        secondary.sourceIndex = 1;
+        secondary.primaryProjection = false;
+        secondary.identityKey = QStringLiteral("benchmark:mixer:axis:1");
+        hotas::SignalFlowMixer mixer;
+        mixer.identityKey = QStringLiteral("benchmark:mixer");
+        mixer.profileId = profile.id;
+        mixer.destinationAxis = static_cast<int>(hotas::VirtualAxis::X);
+        mixer.mode = hotas::SignalFlowMixerMode::Average;
+        mixer.outputPortId = QStringLiteral("benchmark:mixer:out");
+        mixer.inputs = {{primary.identityKey, QStringLiteral("benchmark:mixer:in:0")},
+                        {secondary.identityKey, QStringLiteral("benchmark:mixer:in:1")}};
+        configuration.signalFlow.topologyVersion = 1;
+        configuration.signalFlow.routes = {primary, secondary};
+        configuration.signalFlow.mixers = {mixer};
     }
     return configuration;
 }
@@ -899,6 +928,7 @@ void runSuite(std::string_view condition, const std::vector<SyntheticReport> &re
                                         "Adaptive Auto", "Adaptive Light", "Adaptive Balanced",
                                         "Adaptive Fast", "Adaptive Aggressive", "Adaptive Extreme",
                                         "Adaptive All 8 Axes",
+                                        "Explicit Mixer Average",
                                         "One-Sided Linear", "J-Curve", "S-Curve", "Advanced",
                                         "Shooter-Flight", "Personal", "Custom-25"}) {
         printResult(condition, benchmark(name, reports));

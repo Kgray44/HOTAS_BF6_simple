@@ -844,6 +844,10 @@ struct CalibrationHistoryEntry {
 constexpr int kMaximumSignalFlowIdentityRecords = 4096;
 constexpr int kMaximumSignalFlowRoutes = 4096;
 constexpr int kMaximumSignalFlowMixers = 512;
+// A mixer is compiled only for physical axis sources.  Keep its authoritative
+// membership bounded independently of the presentation graph so a malformed
+// import cannot turn fan-in reconciliation into unbounded control-plane work.
+constexpr int kMaximumSignalFlowMixerInputs = kPhysicalAxisCount;
 // A shared conditioner is a first-class topology object rather than a copy of
 // a card in the scene.  Keep it bounded with its actual source-axis membership
 // so compilation and migration remain predictably small.
@@ -920,6 +924,14 @@ struct SignalFlowRoute {
     std::vector<SignalFlowRouteSegment> segments;
 };
 
+// A mixer input names one canonical route and one durable port on the mixer.
+// It is intentionally not inferred from routes that happen to share a target:
+// membership is an explicit, serialised topology decision.
+struct SignalFlowMixerInput {
+    QString routeIdentityKey;
+    QString portId;
+};
+
 struct SignalFlowMixer {
     QString identityKey;
     QString id;
@@ -928,6 +940,11 @@ struct SignalFlowMixer {
     int destinationAxis = -1;
     SignalFlowMixerMode mode = SignalFlowMixerMode::Disabled;
     bool enabled = true;
+    // The output and input ports make the operation a real graph object.  IDs
+    // are reconciled from durable route/processor identity records, never
+    // fabricated by QML or inferred from visual wire overlap.
+    QString outputPortId;
+    std::vector<SignalFlowMixerInput> inputs;
 };
 
 // Several routed physical axes can deliberately refer to one conditioning

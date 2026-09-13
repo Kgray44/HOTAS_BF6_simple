@@ -254,6 +254,22 @@ bool validMixerMode(SignalFlowMixerMode mode)
         || mode == SignalFlowMixerMode::HighestMagnitude;
 }
 
+bool routeIsMixerInput(const SignalFlowRoute &route, const SignalFlowMixer &mixer)
+{
+    return route.enabled && route.profileId == mixer.profileId
+        && route.controllerRecordId == mixer.controllerRecordId
+        && route.sourceKind == SignalFlowPortKind::Axis
+        && route.destinationKind == SignalFlowPortKind::Axis
+        && route.destinationIndex == mixer.destinationAxis;
+}
+
+bool mixerOwnsRoute(const SignalFlowMixer &mixer, const SignalFlowRoute &route)
+{
+    return std::any_of(mixer.inputs.cbegin(), mixer.inputs.cend(), [&route](const SignalFlowMixerInput &input) {
+        return input.routeIdentityKey == route.identityKey;
+    });
+}
+
 QString routeScopeKey(const QString &profileId, const QString &controllerRecordId)
 {
     return profileId.trimmed() + u":"_qs
@@ -652,6 +668,7 @@ void normalizeTopology(MapperConfiguration *configuration)
         mixer.controllerRecordId = mixer.controllerRecordId.trimmed().left(96);
         mixer.identityKey = mixer.identityKey.trimmed().left(320);
         mixer.id = mixer.id.trimmed().left(96);
+        mixer.outputPortId = mixer.outputPortId.trimmed().left(160);
         if (!findProfile(*configuration, mixer.profileId)
             || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount
             || !validMixerMode(mixer.mode)) continue;
@@ -664,6 +681,38 @@ void normalizeTopology(MapperConfiguration *configuration)
         if (mixer.identityKey.isEmpty()) {
             mixer.identityKey = mixerKey(*profile, mixer.controllerRecordId, mixer.destinationAxis);
         }
+        // Schema 28/Phase 5 stored only a destination on the mixer.  Backfill
+        // that historic, already-explicit mixer once into durable membership;
+        // after this point a route must be named by the mixer to participate.
+        if (mixer.inputs.empty()) {
+            for (const SignalFlowRoute &route : state.routes) {
+                if (routeIsMixerInput(route, mixer)) {
+                    mixer.inputs.push_back({route.identityKey, {}});
+                }
+            }
+        }
+        std::vector<SignalFlowMixerInput> repairedInputs;
+        repairedInputs.reserve(std::min(mixer.inputs.size(),
+                                        static_cast<size_t>(kMaximumSignalFlowMixerInputs)));
+        QSet<QString> inputRoutes;
+        QSet<QString> inputPorts;
+        for (SignalFlowMixerInput input : mixer.inputs) {
+            input.routeIdentityKey = input.routeIdentityKey.trimmed().left(320);
+            input.portId = input.portId.trimmed().left(160);
+            if (input.routeIdentityKey.isEmpty() || inputRoutes.contains(input.routeIdentityKey)
+                || (!input.portId.isEmpty() && inputPorts.contains(input.portId))) continue;
+            const auto route = std::find_if(state.routes.cbegin(), state.routes.cend(),
+                [&input](const SignalFlowRoute &candidate) {
+                    return candidate.identityKey == input.routeIdentityKey;
+                });
+            if (route == state.routes.cend() || !routeIsMixerInput(*route, mixer)) continue;
+            inputRoutes.insert(input.routeIdentityKey);
+            if (!input.portId.isEmpty()) inputPorts.insert(input.portId);
+            repairedInputs.push_back(std::move(input));
+            if (repairedInputs.size() == kMaximumSignalFlowMixerInputs) break;
+        }
+        mixer.inputs = std::move(repairedInputs);
+        if (mixer.inputs.size() < 2) continue;
         const QString destination = routeScopeKey(mixer.profileId, mixer.controllerRecordId)
             + u":axis:"_qs + QString::number(mixer.destinationAxis);
         if (mixerDestinations.contains(destination)) continue;
@@ -679,22 +728,6 @@ void normalizeTopology(MapperConfiguration *configuration)
         return leftKey == rightKey ? left.identityKey < right.identityKey : leftKey < rightKey;
     });
     state.mixers = std::move(repairedMixers);
-    // A mixer represents an actual fan-in operation, not a decorative route
-    // annotation. Once a focused editor, disconnect, or import leaves one
-    // (or zero) active contributors, remove the redundant processor so every
-    // graph card continues to correspond to live canonical behavior.
-    state.mixers.erase(std::remove_if(state.mixers.begin(), state.mixers.end(),
-        [&state](const SignalFlowMixer &mixer) {
-            const int contributors = static_cast<int>(std::count_if(state.routes.cbegin(),
-                state.routes.cend(), [&mixer](const SignalFlowRoute &route) {
-                    return route.enabled && route.profileId == mixer.profileId
-                        && route.controllerRecordId == mixer.controllerRecordId
-                        && route.sourceKind == SignalFlowPortKind::Axis
-                        && route.destinationKind == SignalFlowPortKind::Axis
-                        && route.destinationIndex == mixer.destinationAxis;
-                }));
-            return contributors < 2;
-        }), state.mixers.end());
 }
 
 void normalizeSharedProcessors(MapperConfiguration *configuration)
@@ -853,7 +886,8 @@ bool activeMixerForDestination(const SignalFlowState &state, const SignalFlowRou
         return mixer.enabled && mixer.mode != SignalFlowMixerMode::Disabled
             && mixer.profileId == route.profileId
             && mixer.controllerRecordId == route.controllerRecordId
-            && mixer.destinationAxis == route.destinationIndex;
+            && mixer.destinationAxis == route.destinationIndex
+            && mixerOwnsRoute(mixer, route);
     });
 }
 
@@ -1140,10 +1174,33 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
 {
     if (!configuration) return;
     SignalFlowState &state = configuration->signalFlow;
+    // Resolve route IDs first: mixer input ports are durable lifecycle pairs
+    // of the mixer and the route, so they must never be seeded from a stale
+    // persisted route id.
+    for (SignalFlowRoute &route : state.routes) {
+        const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(state.routeIdentities,
+                                                                            route.identityKey);
+        route.id = identity && identity->active ? identity->id : QString{};
+    }
     for (SignalFlowMixer &mixer : state.mixers) {
         const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
             state.processorIdentities, mixer.identityKey);
         mixer.id = identity && identity->active ? identity->id : QString{};
+        if (mixer.id.isEmpty()) continue;
+        if (mixer.outputPortId.isEmpty()) {
+            mixer.outputPortId = QString(u"sf-port:%1:out"_qs).arg(mixer.id);
+        }
+        for (SignalFlowMixerInput &input : mixer.inputs) {
+            if (input.portId.isEmpty()) {
+                const auto route = std::find_if(state.routes.cbegin(), state.routes.cend(),
+                    [&input](const SignalFlowRoute &candidate) {
+                        return candidate.identityKey == input.routeIdentityKey;
+                    });
+                if (route != state.routes.cend() && !route->id.isEmpty()) {
+                    input.portId = QString(u"sf-port:%1:in:%2"_qs).arg(mixer.id, route->id);
+                }
+            }
+        }
     }
     for (SignalFlowSharedProcessor &processor : state.sharedProcessors) {
         const SignalFlowIdentityRecord *identity = findSignalFlowIdentity(
@@ -1194,7 +1251,8 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
                 if (!mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled
                     || mixer.profileId != route.profileId
                     || mixer.controllerRecordId != route.controllerRecordId
-                    || mixer.destinationAxis != route.destinationIndex) continue;
+                    || mixer.destinationAxis != route.destinationIndex
+                    || !mixerOwnsRoute(mixer, route)) continue;
                 const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
                     state.processorIdentities, mixer.identityKey);
                 if (processor && processor->active) route.processorPath.append(processor->id);
@@ -1204,18 +1262,44 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
         QString currentEndpoint = QString(u"sf-endpoint:%1:source"_qs).arg(route.id);
         int ordinal = 0;
         const auto appendSegment = [&route, &currentEndpoint, &ordinal](const QString &nextEndpoint) {
-            if (nextEndpoint.isEmpty()) return;
+            if (currentEndpoint.isEmpty() || nextEndpoint.isEmpty()) return;
             route.segments.push_back(SignalFlowRouteSegment{
                 QString(u"sfseg:%1:%2"_qs).arg(route.id).arg(ordinal++),
                 currentEndpoint,
                 nextEndpoint});
             currentEndpoint = nextEndpoint;
         };
+        const SignalFlowMixer *routeMixer = nullptr;
+        const SignalFlowMixerInput *routeMixerInput = nullptr;
+        bool mixerOutputCarrier = false;
+        for (const SignalFlowMixer &mixer : state.mixers) {
+            if (!mixer.enabled || mixer.id.isEmpty() || !mixerOwnsRoute(mixer, route)) continue;
+            routeMixer = &mixer;
+            const auto input = std::find_if(mixer.inputs.cbegin(), mixer.inputs.cend(), [&route](
+                const SignalFlowMixerInput &candidate) {
+                return candidate.routeIdentityKey == route.identityKey;
+            });
+            if (input != mixer.inputs.cend()) {
+                routeMixerInput = &*input;
+                mixerOutputCarrier = input == mixer.inputs.cbegin();
+            }
+            break;
+        }
         for (const QString &processorId : route.processorPath) {
             if (processorId.isEmpty()) continue;
-            const QString input = QString(u"sf-port:%1:%2:in"_qs).arg(processorId, route.id);
-            const QString output = QString(u"sf-port:%1:%2:out"_qs).arg(processorId, route.id);
+            const bool isMixer = routeMixer && processorId == routeMixer->id && routeMixerInput;
+            const QString input = isMixer ? routeMixerInput->portId
+                : QString(u"sf-port:%1:%2:in"_qs).arg(processorId, route.id);
+            const QString output = isMixer ? routeMixer->outputPortId
+                : QString(u"sf-port:%1:%2:out"_qs).arg(processorId, route.id);
             appendSegment(input);
+            // Exactly one canonical output edge leaves a mixer. Every other
+            // participant terminates at its own input port rather than drawing
+            // a duplicated, inferred output-to-destination wire.
+            if (isMixer && !mixerOutputCarrier) {
+                currentEndpoint.clear();
+                break;
+            }
             currentEndpoint = output;
         }
         appendSegment(QString(u"sf-endpoint:%1:destination"_qs).arg(route.id));
