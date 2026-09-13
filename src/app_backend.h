@@ -305,11 +305,16 @@ public:
     // production mapper, driver, or visibility transaction.
     bool configureActivationTransactionFixtureForTest();
     bool configureRigOwnedOutputFixtureForTest();
+    bool configureSidebarActivationFixtureForTest();
     bool configureSetupTruthReadyToActivateFixtureForTest();
     bool configureStartupSetupTruthFixtureForTest();
     bool finishStartupSetupTruthInspectionForTest();
     bool startupSetupTruthInspectionScheduledForTest() const;
     bool configureStartupSetupTruthInspectionFailureForTest();
+    bool configureReconnectLifecycleFixtureForTest();
+    bool completeReconnectInventoryRefreshForTest();
+    bool configureTargetedVJoyRepairFixtureForTest(const QString &rigId, int deviceId);
+    bool applyAutomaticProfileActivationForTest(const QString &profileId);
     void setActivationFaultInjectionsForTest(const QStringList &stages);
 #endif
     QVariantList buttons() const;
@@ -1075,6 +1080,7 @@ private:
     const SavedControllerRecord *savedControllerRecord(const QString &recordId) const;
     DeviceRig *activeDeviceRig();
     const DeviceRig *activeDeviceRig() const;
+    const DeviceRig *setupTruthTargetRig() const;
     const DeviceRig *setupAssistantDeviceRig(const QString &scopeType,
                                              const QString &scopeId) const;
     QVariantList setupAssistantIssuesForScope(const QString &scopeType,
@@ -1311,6 +1317,10 @@ private:
     bool m_setupTruthAutomaticRefreshInFlight = false;
     bool m_setupTruthAutomaticRefreshFollowUp = false;
     bool m_setupTruthSynchronousActivationRefresh = false;
+    // A reconnect has proved the exact runtime controller returned, but its
+    // old DeviceRigStatus must never be reused for the final decision.  This
+    // gate owns the one required inventory → rig-status → activation refresh.
+    bool m_setupReconnectInventoryRefreshPending = false;
     bool m_controllerSelectionInProgress = false;
     QPointer<QThread> m_controllerSelectionThread;
     // Discovery and process inspection are intentionally short-lived,

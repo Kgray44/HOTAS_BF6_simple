@@ -2970,6 +2970,92 @@ bool verifyFlightDeckPageNavigationPerformance(hotas::AppBackend &backend,
     return true;
 }
 
+bool verifyFlightDeckSidebarActivationOnly(hotas::AppBackend &backend,
+                                           hotas::ThemeManager &themeManager)
+{
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(QStringLiteral("Dark"));
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test could not load Flight Deck"));
+
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    QObject *readinessModel = surface
+        ? surface->findChild<QObject *>(QStringLiteral("flightDeckReadinessModel")) : nullptr;
+    if (!surface || !readinessModel || !backend.configureSidebarActivationFixtureForTest()) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test could not establish its native fixture"));
+    }
+    const auto sidebarProfileTitle = [&readinessModel]() {
+        return readinessModel->property("profile").toMap().value(QStringLiteral("title")).toString();
+    };
+    const QString helicopterProfileId = QStringLiteral("activation-transaction-helicopter");
+    settlePresentation();
+    const QString normalSidebar = backend.activeProfileDisplayName();
+    if (backend.activeProfileId() != hotas::normalProfileId()
+        || sidebarProfileTitle() != normalSidebar
+        || !backend.activateProfile(helicopterProfileId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test did not begin on General / Normal"));
+    }
+    settlePresentation();
+    const QString helicopterSidebar = backend.activeProfileDisplayName();
+    const QString helicopterActiveId = backend.activeProfileId();
+    const QString helicopterRail = sidebarProfileTitle();
+    if (helicopterActiveId != helicopterProfileId
+        || helicopterSidebar != QStringLiteral("Battlefield 6 / Helicopter")
+        || helicopterRail != helicopterSidebar) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Sidebar activation test did not follow Normal to Helicopter "
+            "(active=%1 expected=%2 sidebar=%3 backend=%4)")
+            .arg(helicopterActiveId, helicopterProfileId, helicopterRail, helicopterSidebar));
+    }
+    if (!backend.activateProfile(hotas::precisionProfileId())) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test could not activate Precision"));
+    }
+    settlePresentation();
+    const QString precisionSidebar = backend.activeProfileDisplayName();
+    if (backend.activeProfileId() != hotas::precisionProfileId()
+        || sidebarProfileTitle() != precisionSidebar) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test did not follow Helicopter to Precision"));
+    }
+    backend.setActivationFaultInjectionsForTest({QStringLiteral("persist")});
+    if (backend.activateProfile(hotas::normalProfileId())) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation failure fixture unexpectedly committed"));
+    }
+    settlePresentation();
+    if (backend.activeProfileId() != hotas::precisionProfileId()
+        || sidebarProfileTitle() != precisionSidebar) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test updated before failed activation could commit"));
+    }
+    backend.setActivationFaultInjectionsForTest({});
+    if (!backend.applyAutomaticProfileActivationForTest(hotas::normalProfileId())) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar automatic activation fixture could not commit"));
+    }
+    settlePresentation();
+    if (backend.activeProfileId() != hotas::normalProfileId()
+        || sidebarProfileTitle() != backend.activeProfileDisplayName()
+        || !selectPage(surface, 5)) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test did not follow automatic activation"));
+    }
+    QObject *profilesPage = pageItem(surface, 5);
+    if (!profilesPage || !evaluateEditorFunction(profilesPage,
+            QStringLiteral("openProfile('%1')").arg(helicopterProfileId))) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test could not view an inactive Profile"));
+    }
+    settlePresentation();
+    if (backend.activeProfileId() != hotas::normalProfileId()
+        || sidebarProfileTitle() != backend.activeProfileDisplayName()) {
+        return failPresentationLifecycleTest(QStringLiteral("Sidebar activation test confused viewed and active Profile state"));
+    }
+    return true;
+}
+
 bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &themeManager,
                            const QString &appearance)
 {
@@ -3078,7 +3164,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const QVariantMap multipleInput = readinessValue(
         QStringLiteral("inputFor({physicalConnected:true, connectedControllerCount:3, deviceName:'Long controller name'})")).toMap();
     const QVariantMap noProfile = readinessValue(
-        QStringLiteral("profileFor({effectiveProfileDisplayName:'', profileSourceLabel:''})")).toMap();
+        QStringLiteral("profileFor({activeProfileDisplayName:'', profileSourceLabel:''})")).toMap();
     const QVariantMap noGame = readinessValue(
         QStringLiteral("gameFor({automaticGameDetection:true, activeCategoryRules:['bf6.exe'], runningApplications:[]})")).toMap();
     const QVariantMap detectedGame = readinessValue(
@@ -3092,6 +3178,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
     }
+
     QObject *inputHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthInput"));
     QObject *gameHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame"));
     if (!inputHealth || !gameHealth
@@ -4577,7 +4664,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         {QStringLiteral("hidhideCloaked"), true},
         {QStringLiteral("hidhideMapperAllowed"), true},
         {QStringLiteral("checks"), readyChecks},
-        {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("BF6 Helicopter")},
+        {QStringLiteral("activeProfileDisplayName"), QStringLiteral("BF6 Helicopter")},
         {QStringLiteral("profileSourceLabel"), QStringLiteral("Automatic game profile")},
         {QStringLiteral("automaticGameDetection"), true},
         {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield 6")},
@@ -5196,7 +5283,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         {QStringLiteral("vjoyDeviceId"), 1}, {QStringLiteral("hidhideAvailable"), true},
         {QStringLiteral("hidhideCloakStateKnown"), true}, {QStringLiteral("hidhideCloaked"), true},
         {QStringLiteral("hidhideMapperAllowed"), true}, {QStringLiteral("controllerReadinessState"), QStringLiteral("READY")},
-        {QStringLiteral("effectiveProfileDisplayName"), QStringLiteral("Helicopter")}, {QStringLiteral("profileSourceLabel"), QStringLiteral("Manual selection")},
+        {QStringLiteral("activeProfileDisplayName"), QStringLiteral("Helicopter")}, {QStringLiteral("profileSourceLabel"), QStringLiteral("Manual selection")},
         {QStringLiteral("activeCategoryName"), QStringLiteral("Battlefield")}, {QStringLiteral("automaticGameDetection"), true},
         {QStringLiteral("activeCategoryRules"), QVariantList{QStringLiteral("bf6.exe")}},
         {QStringLiteral("runningApplications"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("Battlefield 6")}, {QStringLiteral("executable"), QStringLiteral("bf6.exe")}}}},
@@ -7391,6 +7478,11 @@ int main(int argc, char *argv[])
     // qualification. It does not substitute for a native interaction review.
     const bool flightDeckPerformanceOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_PERF_ONLY");
+    // The sidebar activation path is intentionally runnable on its own. It
+    // provides a short native-QML regression for committed activation truth,
+    // independent of the much broader visual-review matrix.
+    const bool sidebarActivationOnly = qEnvironmentVariableIsSet(
+        "HOTAS_QML_SIDEBAR_ACTIVATION_ONLY");
     const bool signalFlowOnly = qEnvironmentVariableIsSet("HOTAS_QML_SIGNAL_FLOW_ONLY");
     if (adaptiveChoiceGeometryOnly || containmentGeometryOnly) {
         const bool geometrySafe = (!containmentGeometryOnly
@@ -7439,6 +7531,12 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return performanceSafe ? 0 : 1;
+    }
+    if (sidebarActivationOnly) {
+        backend.setVirtualAxisAvailabilityForTest(true);
+        const bool sidebarSafe = verifyFlightDeckSidebarActivationOnly(backend, themeManager);
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return sidebarSafe ? 0 : 1;
     }
     if (signalFlowOnly) {
         const bool signalFlowSafe = verifySignalFlowQmlSurface(backend, themeManager);

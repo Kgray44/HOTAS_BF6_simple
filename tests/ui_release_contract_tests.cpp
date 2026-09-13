@@ -146,6 +146,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged")));

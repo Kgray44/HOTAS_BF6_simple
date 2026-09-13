@@ -328,6 +328,139 @@ bool verifyStartupSetupTruthPublication()
     return true;
 }
 
+QVariantMap setupTruthGroup(const QVariantMap &snapshot, const QString &id)
+{
+    for (const QVariant &entry : snapshot.value(QStringLiteral("groups")).toList()) {
+        const QVariantMap group = entry.toMap();
+        if (group.value(QStringLiteral("id")).toString() == id) return group;
+    }
+    return {};
+}
+
+bool hasSetupTruthIssue(const QVariantMap &snapshot, const QString &code)
+{
+    const QVariantList issues = snapshot.value(QStringLiteral("issues")).toList();
+    return std::any_of(issues.cbegin(), issues.cend(), [&code](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("code")).toString() == code;
+        });
+}
+
+bool verifyReconnectLifecycleTruth()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureReconnectLifecycleFixtureForTest()) {
+        std::fprintf(stderr, "reconnect lifecycle fixture could not be configured\n");
+        return false;
+    }
+    const QVariantMap waiting = backend->setupTruthSnapshot();
+    const QVariantMap verification = setupTruthGroup(waiting, QStringLiteral("verification"));
+    const QVariantMap mapping = setupTruthGroup(waiting, QStringLiteral("mapping"));
+    const QVariantList members = verification.value(QStringLiteral("evidence")).toMap()
+        .value(QStringLiteral("members")).toList();
+    const QVariantMap member = members.isEmpty() ? QVariantMap{} : members.front().toMap();
+    const QVariantMap rigStatus = waiting.value(QStringLiteral("rigStatus")).toMap();
+    const quint64 beforeInventory = waiting.value(QStringLiteral("inventoryGeneration")).toULongLong();
+    if (verification.value(QStringLiteral("status")).toString() != QStringLiteral("READY")
+        || mapping.value(QStringLiteral("status")).toString() != QStringLiteral("WAITING FOR USER")
+        || !member.value(QStringLiteral("identityVerified")).toBool()
+        || member.value(QStringLiteral("savedDirectInputId")).toString().isEmpty()
+        || !waiting.value(QStringLiteral("activationContext")).toMap().contains(
+            QStringLiteral("inventoryGeneration"))
+        || !waiting.value(QStringLiteral("activationDecision")).toMap().contains(
+            QStringLiteral("inventoryGeneration"))
+        || rigStatus.value(QStringLiteral("needsVerificationRequiredMemberIds")).toStringList().size() != 0
+        || hasSetupTruthIssue(waiting, QStringLiteral("RigActivationRouteInvalid"))) {
+        std::fprintf(stderr, "reconnect wait did not preserve verification while exposing runtime acquisition\n");
+        return false;
+    }
+    if (!backend->completeReconnectInventoryRefreshForTest()) {
+        std::fprintf(stderr, "matching reconnect did not wait for the inventory refresh gate\n");
+        return false;
+    }
+    const QVariantMap arrived = backend->setupTruthSnapshot();
+    const QVariantMap arrivedRigStatus = arrived.value(QStringLiteral("rigStatus")).toMap();
+    if (arrived.value(QStringLiteral("inventoryGeneration")).toULongLong() <= beforeInventory
+        || setupTruthGroup(arrived, QStringLiteral("verification")).value(QStringLiteral("status")).toString()
+            != QStringLiteral("READY")
+        || setupTruthGroup(arrived, QStringLiteral("mapping")).value(QStringLiteral("status")).toString()
+            != QStringLiteral("READY")
+        || !arrivedRigStatus.value(QStringLiteral("needsVerificationRequiredMemberIds")).toStringList().isEmpty()
+        || hasSetupTruthIssue(arrived, QStringLiteral("RigActivationRouteInvalid"))) {
+        std::fprintf(stderr, "reconnect arrival did not rebuild an eligible RigStatus and mapping decision\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyTargetedVJoyRepairPlan()
+{
+    const auto verify = [](const QString &rigId, int deviceId) {
+        auto backend = std::make_unique<hotas::AppBackend>();
+        if (!backend->configureTargetedVJoyRepairFixtureForTest(rigId, deviceId)) return false;
+        const QVariantMap snapshot = backend->setupTruthSnapshot();
+        const QVariantList issues = snapshot.value(QStringLiteral("issues")).toList();
+        const QVariantList plan = snapshot.value(QStringLiteral("repairPlan")).toList();
+        const auto issue = std::find_if(issues.cbegin(), issues.cend(), [](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("code")).toString()
+                == QStringLiteral("VJoyDescriptorMismatch");
+        });
+        if (issue == issues.cend()) return false;
+        const QVariantMap evidence = issue->toMap().value(QStringLiteral("evidence")).toMap();
+        return !plan.isEmpty()
+            && snapshot.value(QStringLiteral("setupTargetRigId")).toString() == rigId
+            && evidence.value(QStringLiteral("setupTargetRigId")).toString() == rigId
+            && evidence.value(QStringLiteral("deviceId")).toInt() == deviceId
+            && setupTruthGroup(snapshot, QStringLiteral("vjoy")).value(QStringLiteral("status")).toString()
+                == QStringLiteral("ACTION NEEDED");
+    };
+    if (!verify(QStringLiteral("activation-transaction-rig"), 1)
+        || !verify(QStringLiteral("activation-transaction-alternate-rig"), 2)) {
+        std::fprintf(stderr, "vJoy repair plan did not remain scoped to the selected Rig primary output\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifySidebarActivationLifecycle()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString helicopterProfileId = QStringLiteral("activation-transaction-helicopter");
+    if (!backend->configureSidebarActivationFixtureForTest()) {
+        std::fprintf(stderr, "sidebar activation fixture could not be configured\n");
+        return false;
+    }
+    const QString rigId = backend->activeDeviceRigId();
+    const int vjoyDeviceId = backend->vjoyDeviceId();
+    const auto retainsTopology = [&backend, &rigId, vjoyDeviceId]() {
+        return backend->activeDeviceRigId() == rigId && backend->vjoyDeviceId() == vjoyDeviceId;
+    };
+    if (backend->activeProfileId() != hotas::normalProfileId()
+        || !backend->activateProfile(helicopterProfileId)
+        || backend->activeProfileId() != helicopterProfileId
+        || !retainsTopology()
+        || !backend->activateProfile(hotas::precisionProfileId())
+        || backend->activeProfileId() != hotas::precisionProfileId()
+        || !retainsTopology()) {
+        std::fprintf(stderr, "manual sidebar activation did not retain the active Rig topology\n");
+        return false;
+    }
+    backend->setActivationFaultInjectionsForTest({QStringLiteral("persist")});
+    if (backend->activateProfile(hotas::normalProfileId())
+        || backend->activeProfileId() != hotas::precisionProfileId()
+        || !retainsTopology()) {
+        std::fprintf(stderr, "failed sidebar activation changed the committed route\n");
+        return false;
+    }
+    backend->setActivationFaultInjectionsForTest({});
+    if (!backend->applyAutomaticProfileActivationForTest(hotas::normalProfileId())
+        || backend->activeProfileId() != hotas::normalProfileId()
+        || !retainsTopology()) {
+        std::fprintf(stderr, "automatic sidebar activation did not retain the active Rig topology\n");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -357,6 +490,9 @@ int main(int argc, char *argv[])
     if (!verifyManualProfileUsesRigOwnedOutputTransaction()) return 1;
     if (!verifyViewedProfileUsesRigOwnedOutputForMappingEdits()) return 1;
     if (!verifySetupTruthReadyToActivateCompletion()) return 1;
+    if (!verifyReconnectLifecycleTruth()) return 1;
+    if (!verifyTargetedVJoyRepairPlan()) return 1;
+    if (!verifySidebarActivationLifecycle()) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real
     // presentation lifecycle and then taking the visible steady-state sample.

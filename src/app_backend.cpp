@@ -19,6 +19,7 @@
 #include "setup_truth.h"
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
@@ -1824,6 +1825,50 @@ bool AppBackend::configureRigOwnedOutputFixtureForTest()
     return true;
 }
 
+bool AppBackend::configureSidebarActivationFixtureForTest()
+{
+    // This fixture deliberately keeps the device topology invariant while it
+    // moves between the exact owner-visible profile/category routes. It gives
+    // the Flight Deck a committed activation change without a driver or
+    // HidHide transaction, so the rail test proves PROFILE != VIEWED rather
+    // than exercising output switching.
+    if (!configureRigOwnedOutputFixtureForTest()) return false;
+    const ControllerProfile *normal = findProfile(m_configuration, normalProfileId());
+    const DeviceRig *rig = findDeviceRig(m_configuration, u"activation-transaction-rig"_qs);
+    if (!normal || !rig) return false;
+    const QString normalProfileId = normal->id;
+
+    constexpr auto kBattlefieldCategoryId = "activation-transaction-battlefield";
+    constexpr auto kHelicopterProfileId = "activation-transaction-helicopter";
+    if (findProfile(m_configuration, QLatin1String(kHelicopterProfileId))
+        || findProfileCategory(m_configuration, QLatin1String(kBattlefieldCategoryId))) {
+        return false;
+    }
+    ControllerProfile helicopter = *normal;
+    helicopter.id = QLatin1String(kHelicopterProfileId);
+    helicopter.name = u"Helicopter"_qs;
+    helicopter.categoryId = QLatin1String(kBattlefieldCategoryId);
+    helicopter.automaticSelectionMode = ProfileAutomaticSelectionMode::Preferred;
+
+    ProfileCategory battlefield;
+    battlefield.id = QLatin1String(kBattlefieldCategoryId);
+    battlefield.name = u"Battlefield 6"_qs;
+    battlefield.profileIds = {helicopter.id};
+    battlefield.defaultProfileId = helicopter.id;
+    battlefield.lastActiveProfileId = helicopter.id;
+    m_configuration.profiles.push_back(std::move(helicopter));
+    m_configuration.profileCategories.push_back(std::move(battlefield));
+
+    if (!compileDeviceRigRuntime(m_configuration, rig->id, normalProfileId).valid
+        || !ConfigStore::save(m_configuration)) {
+        return false;
+    }
+    ++m_configurationGeneration;
+    m_worker.updateConfiguration(m_configuration);
+    emit stateChanged();
+    return true;
+}
+
 bool AppBackend::configureSetupTruthReadyToActivateFixtureForTest()
 {
     if (!configureRigOwnedOutputFixtureForTest()) return false;
@@ -1964,6 +2009,159 @@ bool AppBackend::configureStartupSetupTruthInspectionFailureForTest()
     setSetupConvergenceStage(SetupConvergenceStage::Idle);
     captureSetupTruthSnapshot();
     return true;
+}
+
+bool AppBackend::configureReconnectLifecycleFixtureForTest()
+{
+    if (!configureSetupTruthReadyToActivateFixtureForTest()) return false;
+    const QString rigId = u"activation-transaction-rig"_qs;
+    const SavedControllerRecord *record = savedControllerRecord(
+        u"activation-transaction-controller"_qs);
+    if (!record || !findDeviceRig(m_configuration, rigId)) return false;
+
+    m_configuration.activeDeviceRigId = rigId;
+    m_configuration.editingDeviceRigId = rigId;
+    m_configuration.autoSwitchVerifiedController = false;
+    m_setupAssistantScopeType = u"deviceRig"_qs;
+    m_setupAssistantScopeId = rigId;
+    m_worker.updateConfiguration(m_configuration);
+    reconcileDeviceRigInventory();
+
+    ControllerReadinessPlan waiting = m_readiness.plan();
+    waiting.physical.name = record->displayName;
+    waiting.physical.directInputId = record->lastDirectInputId;
+    waiting.physical.hidInstanceId = record->hidInstanceId;
+    waiting.physical.connected = false;
+    m_readiness.adoptPlan(std::move(waiting));
+    m_readiness.beginPhysicalReconnectVerification();
+    m_verificationInProgress = false;
+    m_setupReconnectInventoryRefreshPending = false;
+    setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
+    captureSetupTruthSnapshot();
+    return true;
+}
+
+bool AppBackend::completeReconnectInventoryRefreshForTest()
+{
+    if (!m_readiness.reconnectVerificationPending()
+        || m_setupConvergenceStage != SetupConvergenceStage::WaitingForUser) return false;
+
+    // This controlled arrival is only a startup-test fixture. Production
+    // reaches the exact same branch through DirectInput removal + arrival.
+    ControllerReadinessPlan ready = m_readiness.plan();
+    ready.state = ControllerReadinessState::Ready;
+    ready.isChecking = false;
+    ready.physicalStatus = VerificationSubsystemState::Ready;
+    ready.hidhideStatus = VerificationSubsystemState::Ready;
+    ready.lastChecked = QDateTime::currentDateTime();
+    ControllerReadinessService completed;
+    completed.adoptPlan(std::move(ready));
+    m_readiness = std::move(completed);
+    m_setupReconnectInventoryRefreshPending = true;
+    applyControllerInventory(m_discoveredControllers);
+    // The production branch correctly queues final verification. This unit
+    // fixture asserts the preceding inventory gate only, so prevent that
+    // queued driver-verifier work from escaping into the shared startup test
+    // event loop after the assertion has been made.
+    QCoreApplication::removePostedEvents(this, QEvent::MetaCall);
+    captureSetupTruthSnapshot();
+    return m_setupConvergenceStage == SetupConvergenceStage::FinalChecking;
+}
+
+bool AppBackend::configureTargetedVJoyRepairFixtureForTest(const QString &rigId, int deviceId)
+{
+    if (!configureActivationTransactionFixtureForTest()) return false;
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId);
+    if (!rig || deviceRigPrimaryOutputLayoutId(*rig).isEmpty()) return false;
+    const QString layoutId = deviceRigPrimaryOutputLayoutId(*rig);
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    const SavedControllerRecord *record = savedControllerRecord(
+        u"activation-transaction-controller"_qs);
+    if (!layout || !record || layout->requirements.deviceId != deviceId) return false;
+
+    // This is a completed synthetic inspection, not the constructor's
+    // pre-inspection startup placeholder. Keep its target plan observable.
+    m_setupTruthStartupInspectionTimer.stop();
+    m_setupTruthStartupInspectionPending = false;
+    m_setupTruthStartupInspectionInFlight = false;
+    m_setupTruthAutomaticRefreshTimer.stop();
+    m_setupTruthAutomaticRefreshPending = false;
+    m_setupTruthAutomaticRefreshInFlight = false;
+    m_configuration.activeDeviceRigId = rigId;
+    m_configuration.editingDeviceRigId = rigId;
+    m_configuration.autoSwitchVerifiedController = false;
+    m_setupAssistantScopeType = u"deviceRig"_qs;
+    m_setupAssistantScopeId = rigId;
+    DiscoveredController discovered;
+    discovered.name = record->displayName;
+    discovered.directInputId = record->lastDirectInputId;
+    discovered.productGuid = record->productGuid;
+    discovered.hidInstanceId = record->hidInstanceId;
+    discovered.axes = record->axes;
+    discovered.axisCount = record->axisCount;
+    discovered.buttonCount = record->buttonCount;
+    discovered.povCount = record->povCount;
+    discovered.connected = true;
+    m_discoveredControllers = {discovered};
+    m_controllerInventoryInitialized = true;
+    m_worker.updateConfiguration(m_configuration);
+    reconcileDeviceRigInventory();
+
+    ControllerReadinessPlan ready;
+    ready.state = ControllerReadinessState::Ready;
+    ready.lastChecked = QDateTime::currentDateTime();
+    ready.physicalStatus = VerificationSubsystemState::Ready;
+    ready.vjoyStatus = VerificationSubsystemState::Ready;
+    ready.hidhideStatus = VerificationSubsystemState::Ready;
+    ready.physical.name = record->displayName;
+    ready.physical.directInputId = record->lastDirectInputId;
+    ready.physical.hidInstanceId = record->hidInstanceId;
+    ready.physical.connected = true;
+    ready.hidhide.installed = true;
+    ready.hidhide.cliAvailable = true;
+    ready.hidhide.serviceReady = true;
+    ready.hidhide.cloakKnown = true;
+    ready.hidhide.inspectionComplete = true;
+    ready.hidhide.mapperAllowlisted = true;
+    m_readiness.adoptPlan(ready);
+
+    m_virtualOutputReadinessPlans.clear();
+    for (const VirtualOutputLayout &candidate : m_configuration.outputLayouts) {
+        ControllerReadinessPlan output = ready;
+        output.vjoy.deviceId = candidate.requirements.deviceId;
+        output.vjoy.installed = true;
+        output.vjoy.driverReady = true;
+        output.vjoy.devicePresent = true;
+        output.vjoy.inspectionComplete = true;
+        output.vjoy.configurationUtilityAvailable = true;
+        output.requirements = ControllerReadinessService::requirementsForOutputLayout(
+            m_configuration, candidate.id);
+        if (candidate.id == layoutId) {
+            output.vjoyNeedsChanges = true;
+            output.vjoyCanApply = true;
+            output.vjoySummary = QString(u"Fixture: vJoy Device %1 is missing this Rig's descriptor capabilities."_qs)
+                .arg(deviceId);
+        } else {
+            output.vjoySummary = QString(u"Fixture: vJoy Device %1 remains ready for its own Rig."_qs)
+                .arg(candidate.requirements.deviceId);
+        }
+        m_virtualOutputReadinessPlans.insert(candidate.id, output);
+    }
+    m_verificationInProgress = false;
+    m_setupConvergenceSessionId = u"targeted-vjoy-fixture"_qs;
+    setSetupConvergenceStage(SetupConvergenceStage::Results);
+    captureSetupTruthSnapshot();
+    return true;
+}
+
+bool AppBackend::applyAutomaticProfileActivationForTest(const QString &profileId)
+{
+    // The fixture supplies a pure, already-approved resolver candidate, then
+    // applies it through the production automatic-activation commit path.
+    // It never samples a real foreground process or controller.
+    const ActivationDecision decision = activationDecision({}, ActivationIntent::ManualProfile,
+        profileId.trimmed());
+    return decision.valid && applyActivationDecision(decision, ActivationIntent::Automatic);
 }
 
 void AppBackend::setActivationFaultInjectionsForTest(const QStringList &stages)
@@ -3492,6 +3690,31 @@ const DeviceRig *AppBackend::activeDeviceRig() const
     return findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
 }
 
+const DeviceRig *AppBackend::setupTruthTargetRig() const
+{
+    // An explicit Devices/setup scope is authoritative for one Check & Repair
+    // session. Never let an already active Rig (or a stale editor selection)
+    // redirect a scoped vJoy repair to a different descriptor.
+    if (m_setupAssistantScopeType != u"application"_qs) {
+        if (const DeviceRig *scoped = setupAssistantDeviceRig(m_setupAssistantScopeType,
+                                                               m_setupAssistantScopeId)) {
+            return scoped;
+        }
+    }
+    if (const DeviceRig *active = activeDeviceRig()) return active;
+    if (!m_configuration.editingDeviceRigId.isEmpty()) {
+        if (const DeviceRig *editing = findDeviceRig(m_configuration,
+                                                      m_configuration.editingDeviceRigId)) {
+            return editing;
+        }
+    }
+    const auto enabled = std::find_if(m_configuration.deviceRigs.cbegin(),
+        m_configuration.deviceRigs.cend(), [](const DeviceRig &candidate) {
+            return candidate.enabled;
+        });
+    return enabled == m_configuration.deviceRigs.cend() ? nullptr : &*enabled;
+}
+
 const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
                                                       const QString &scopeId) const
 {
@@ -3519,10 +3742,7 @@ const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
 
 QString AppBackend::setupTruthDirectInputId() const
 {
-    const DeviceRig *rig = activeDeviceRig();
-    if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
-        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
-    }
+    const DeviceRig *rig = setupTruthTargetRig();
     if (!rig) return {};
 
     // Setup Truth may inspect an editing Rig, but it never activates that Rig
@@ -3943,10 +4163,7 @@ void AppBackend::refreshVirtualOutputReadiness(const QString &layoutId)
 
 void AppBackend::refreshSelectedRigOutputReadiness()
 {
-    const DeviceRig *rig = activeDeviceRig();
-    if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
-        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
-    }
+    const DeviceRig *rig = setupTruthTargetRig();
     if (!rig) return;
 
     const QString primaryOutput = deviceRigPrimaryOutputLayoutId(*rig);
@@ -5922,6 +6139,11 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         || m_setupTruthStartupInspectionPending || m_setupTruthAutomaticRefreshPending;
     const bool inspected = plan.lastChecked.isValid()
         && plan.lastChecked.secsTo(now) <= 20;
+    // Persistent identity verification and current DirectInput acquisition
+    // are distinct facts. A successful visibility change can need a true
+    // Windows removal/arrival before the latter becomes usable.
+    const bool runtimeAcquisitionPending = m_readiness.reconnectVerificationPending()
+        || m_readiness.reconnectReconciliationPending();
     const auto statusValue = [](SetupTruthStatus status) {
         return setupTruthStatusLabel(status);
     };
@@ -5964,14 +6186,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
             {u"title"_qs, action}, {u"requiresElevation"_qs, elevated}, {u"status"_qs, u"WAITING"_qs}});
     };
 
-    const DeviceRig *rig = activeDeviceRig();
-    if (!rig && !m_configuration.editingDeviceRigId.isEmpty())
-        rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
-    if (!rig) {
-        const auto enabled = std::find_if(m_configuration.deviceRigs.cbegin(), m_configuration.deviceRigs.cend(),
-            [](const DeviceRig &candidate) { return candidate.enabled; });
-        if (enabled != m_configuration.deviceRigs.cend()) rig = &*enabled;
-    }
+    const DeviceRig *rig = setupTruthTargetRig();
 
     const DeviceRigStatus *rigStatus = nullptr;
     if (rig) {
@@ -5979,6 +6194,30 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
             [rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
         if (found != m_deviceRigStatuses.cend()) rigStatus = &*found;
     }
+    const ActivationContext diagnosticContext = activationContext(
+        {}, ActivationIntent::ManualRig, {}, rig ? rig->id : QString{});
+    const ActivationDecision diagnosticDecision = rig
+        ? activationDecision({}, ActivationIntent::ManualRig, {}, rig->id)
+        : ActivationDecision{};
+    const QVariantMap rigStatusEvidence{{u"rigId"_qs, rig ? rig->id : QString{}},
+        {u"complete"_qs, rigStatus && rigStatus->complete},
+        {u"health"_qs, rigStatus ? static_cast<int>(rigStatus->health) : -1},
+        {u"connectedMemberIds"_qs, rigStatus ? rigStatus->connectedMemberIds : QStringList{}},
+        {u"needsVerificationMemberIds"_qs, rigStatus ? rigStatus->needsVerificationMemberIds : QStringList{}},
+        {u"needsVerificationRequiredMemberIds"_qs,
+            rigStatus ? rigStatus->needsVerificationRequiredMemberIds : QStringList{}},
+        {u"missingRequiredMemberIds"_qs, rigStatus ? rigStatus->missingRequiredMemberIds : QStringList{}},
+        {u"ambiguousRequiredMemberIds"_qs,
+            rigStatus ? rigStatus->ambiguousRequiredMemberIds : QStringList{}}};
+    const QVariantMap activationContextEvidence{{u"activeRigId"_qs, diagnosticContext.activeDeviceRigId},
+        {u"activeProfileId"_qs, diagnosticContext.activeProfileId},
+        {u"activeCategoryId"_qs, diagnosticContext.activeCategoryId},
+        {u"activeOutputLayoutId"_qs, diagnosticContext.activeOutputLayoutId},
+        {u"requestedRigId"_qs, diagnosticContext.requestedRigId},
+        {u"configurationGeneration"_qs, QVariant::fromValue(diagnosticContext.configurationGeneration)},
+        {u"inventoryGeneration"_qs, QVariant::fromValue(diagnosticContext.inventoryGeneration)},
+        {u"gameContextGeneration"_qs, QVariant::fromValue(diagnosticContext.gameContextGeneration)},
+        {u"manualOverrideActive"_qs, diagnosticContext.manualOverrideActive}};
     QVariantList physicalMembers;
     bool requiredOffline = false;
     bool requiredAmbiguous = false;
@@ -6015,6 +6254,9 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                 {u"required"_qs, member.required}, {u"connected"_qs, connected}, {u"directInputAcquired"_qs, connected && discovered->directInputId == deviceId()},
                 {u"inputReportsReceived"_qs, reports}, {u"identityVerified"_qs, verified},
                 {u"lastVerified"_qs, record ? record->lastVerified : QString{}},
+                {u"savedDirectInputId"_qs, record ? record->lastDirectInputId : QString{}},
+                {u"discoveredDirectInputId"_qs, connected ? discovered->directInputId : QString{}},
+                {u"runtimeDirectInputId"_qs, deviceId()},
                 {u"savedHidIdentity"_qs, record ? record->hidInstanceId : QString{}},
                 {u"observedHidIdentity"_qs, identity},
                 {u"identityMatch"_qs, connected}, {u"ambiguous"_qs, ambiguous},
@@ -6048,24 +6290,29 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         if (checking) { physicalState = SetupTruthStatus::Checking; physicalDetail = u"Resolving exact DirectInput and HID identities."_qs; }
         else if (!m_controllerInventoryInitialized) { physicalState = SetupTruthStatus::Unknown; physicalDetail = u"Controller inventory has not completed a fresh inspection."_qs; }
         else if (requiredAmbiguous) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"More than one discovered controller matches a saved Device Rig member."_qs; }
-        else if (requiredOffline) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"Reconnect every required controller, then run Check & Repair Setup."_qs; }
+        else if (runtimeAcquisitionPending) {
+            physicalState = SetupTruthStatus::WaitingForUser;
+            physicalDetail = u"HidHide configuration is saved. Reconnect the verified controller so Windows can provide a fresh DirectInput instance."_qs;
+        } else if (requiredOffline) { physicalState = SetupTruthStatus::WaitingForUser; physicalDetail = u"Reconnect every required controller, then run Check & Repair Setup."_qs; }
         addGroup(u"physical"_qs, u"Physical input"_qs, physicalState, physicalDetail,
-            QVariantMap{{u"members"_qs, physicalMembers}});
+            QVariantMap{{u"members"_qs, physicalMembers}, {u"runtimeAcquisitionPending"_qs, runtimeAcquisitionPending},
+                        {u"rigStatus"_qs, rigStatusEvidence}});
         const bool recoveryProofPending = m_readiness.hasPendingRecovery();
         SetupTruthStatus verificationState = checking ? SetupTruthStatus::Checking
             : requiredUnverified ? SetupTruthStatus::Repairable
             : recoveryProofPending && !connectedRecoveryRecordId.isEmpty() ? SetupTruthStatus::Repairable
             : optionalUnverified ? SetupTruthStatus::Attention
-            : requiredOffline ? SetupTruthStatus::WaitingForUser : SetupTruthStatus::Ready;
+            : SetupTruthStatus::Ready;
         addGroup(u"verification"_qs, u"Controller verification"_qs, verificationState,
             checking ? u"Checking persisted identity against the live controller."_qs
             : requiredUnverified ? u"A required connected controller can be verified without changing vJoy or HidHide."_qs
             : recoveryProofPending && !connectedRecoveryRecordId.isEmpty()
                 ? u"A prior automatic repair needs one fresh exact-controller proof; HidHide and vJoy state are shown separately."_qs
             : optionalUnverified ? u"An optional connected controller has not yet been committed as verified."_qs
-            : requiredOffline ? u"Verification requires the selected controller to be connected."_qs
+            : runtimeAcquisitionPending ? u"The expected controller identity remains verified. Windows is waiting to reacquire its current DirectInput instance."_qs
             : u"Every required connected controller has a saved verification record."_qs,
-            QVariantMap{{u"members"_qs, physicalMembers}});
+            QVariantMap{{u"members"_qs, physicalMembers}, {u"runtimeAcquisitionPending"_qs, runtimeAcquisitionPending},
+                        {u"rigStatus"_qs, rigStatusEvidence}});
         if (recoveryProofPending && !requiredUnverified && !connectedRecoveryRecordId.isEmpty()) {
             addIssue(u"RecoveryVerificationPending"_qs, u"Controller verification"_qs,
                 SetupTruthStatus::Repairable, u"Finish post-repair controller verification"_qs,
@@ -6146,7 +6393,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
             addIssue(u"VJoyDescriptorMismatch"_qs, u"Virtual output"_qs, state,
                 QString(u"%1 needs a safe vJoy descriptor repair"_qs).arg(layout->name), detail, true, true,
                 u"Configure this vJoy descriptor and prove it by read-back"_qs,
-                QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId}});
+                QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId},
+                            {u"setupTargetRigId"_qs, rig ? rig->id : QString{}}});
         } else if (state == SetupTruthStatus::Unknown) {
             addIssue(u"VJoyInspectionFailed"_qs, u"Virtual output"_qs, state,
                 QString(u"%1 vJoy inspection is incomplete"_qs).arg(layout ? layout->name : u"Virtual output"_qs), detail,
@@ -6195,12 +6443,27 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
     QVariantMap mappingEvidence{{u"requested"_qs, m_worker.mappingRequested()},
                                 {u"active"_qs, m_worker.runtime().mappingActive.load()},
                                 {u"vjoyOwned"_qs, plan.vjoy.ownedByHotasBf6},
-                                {u"outputReports"_qs, plan.vjoy.outputReportsSucceeding}};
+                                {u"outputReports"_qs, plan.vjoy.outputReportsSucceeding},
+                                {u"runtimeAcquisitionPending"_qs, runtimeAcquisitionPending},
+                                {u"rigStatus"_qs, rigStatusEvidence},
+                                {u"activationContext"_qs, activationContextEvidence},
+                                {u"activationDecision"_qs, activationDecisionVariant(diagnosticDecision)}};
     if (rig) {
-        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
-        if (!checking && !compiled.valid) { mappingState = SetupTruthStatus::Attention; mappingDetail = compiled.issue; }
-        const ActivationDecision manualActivation = activationDecision({}, ActivationIntent::ManualRig, {}, rig->id);
-        if (!checking && !manualActivation.valid) {
+        if (!checking && runtimeAcquisitionPending) {
+            mappingState = SetupTruthStatus::WaitingForUser;
+            mappingDetail = QString(u"%1 is verified, but Windows must reacquire it after the device-visibility change. Unplug and reconnect the controller to continue."_qs)
+                .arg(m_readiness.plan().physical.name.isEmpty() ? u"The required controller"_qs
+                                                               : m_readiness.plan().physical.name);
+            addIssue(u"RuntimeAcquisitionReconnectRequired"_qs, u"Mapping"_qs, mappingState,
+                u"Reconnect verified controller"_qs, mappingDetail, false, false,
+                u"Reconnect the exact verified controller; setup will continue automatically"_qs,
+                QVariantMap{{u"rigId"_qs, rig->id}, {u"runtimeAcquisitionPending"_qs, true},
+                            {u"activationContext"_qs, activationContextEvidence}});
+        } else {
+            const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
+            if (!checking && !compiled.valid) { mappingState = SetupTruthStatus::Attention; mappingDetail = compiled.issue; }
+            const ActivationDecision &manualActivation = diagnosticDecision;
+            if (!checking && !manualActivation.valid) {
             mappingState = SetupTruthStatus::Attention;
             mappingDetail = manualActivation.explanation + u" "_qs + manualActivation.blockers.join(u"; "_qs);
             addIssue(u"RigActivationRouteInvalid"_qs, u"Mapping"_qs, mappingState,
@@ -6228,6 +6491,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                 {u"detail"_qs, mappingDetail}, {u"actionLabel"_qs, u"Activate "_qs + rig->name}};
             manualActions.append(manualAction);
             mappingEvidence.insert(u"manualAction"_qs, manualAction);
+            }
         }
     }
     addGroup(u"mapping"_qs, u"Mapping"_qs, mappingState, mappingDetail, mappingEvidence);
@@ -6253,6 +6517,25 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
              QCoreApplication::applicationFilePath(), rig ? rig->name : u"None"_qs,
              activeProfileName(), m_worker.mappingRequested() ? u"yes"_qs : u"no"_qs,
              m_worker.runtime().mappingActive.load() ? u"yes"_qs : u"no"_qs);
+    diagnostics += QString(u"RECONNECT / ACTIVATION EVIDENCE\nConfiguration generation: %1\nInventory generation: %2\nSetup target Rig: %3\nActive Rig: %4\nSelected Rig: %5\nRig complete: %6\nRig needs-verification required members: %7\nRig connected members: %8\nActivation requested Rig: %9\nActivation valid: %10\nActivation reason: %11\nRuntime acquisition pending: %12\n\n"_qs)
+        .arg(QString::number(m_configurationGeneration), QString::number(m_inventoryGeneration),
+             rig ? rig->id : QString{}, diagnosticContext.activeDeviceRigId,
+             m_configuration.editingDeviceRigId, rigStatus && rigStatus->complete ? u"yes"_qs : u"no"_qs,
+             rigStatus ? rigStatus->needsVerificationRequiredMemberIds.join(u", "_qs) : QString{},
+             rigStatus ? rigStatus->connectedMemberIds.join(u", "_qs) : QString{},
+             diagnosticDecision.requestedRigId, diagnosticDecision.valid ? u"yes"_qs : u"no"_qs,
+             activationDecisionReasonKey(diagnosticDecision.reason),
+             runtimeAcquisitionPending ? u"yes"_qs : u"no"_qs);
+    for (const QVariant &value : physicalMembers) {
+        const QVariantMap member = value.toMap();
+        diagnostics += QString(u"CONTROLLER %1\nRecord: %2\nSaved verification: %3\nSaved DirectInput: %4\nDiscovered DirectInput: %5\nRuntime DirectInput: %6\nSaved identity: %7\nObserved identity: %8\nConnected: %9\nAcquired: %10\n\n"_qs)
+            .arg(member.value(u"name"_qs).toString(), member.value(u"recordId"_qs).toString(),
+                 member.value(u"lastVerified"_qs).toString(), member.value(u"savedDirectInputId"_qs).toString(),
+                 member.value(u"discoveredDirectInputId"_qs).toString(), member.value(u"runtimeDirectInputId"_qs).toString(),
+                 member.value(u"savedHidIdentity"_qs).toString(), member.value(u"observedHidIdentity"_qs).toString(),
+                 member.value(u"connected"_qs).toBool() ? u"yes"_qs : u"no"_qs,
+                 member.value(u"directInputAcquired"_qs).toBool() ? u"yes"_qs : u"no"_qs);
+    }
     for (const QVariant &value : groups) {
         const QVariantMap group = value.toMap();
         diagnostics += QString(u"%1\n%2\n%3\n\n"_qs).arg(group.value(u"title"_qs).toString(),
@@ -6278,7 +6561,13 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         {u"timestamp"_qs, now.toString(Qt::ISODate)}, {u"version"_qs, QString::fromLatin1(HOTAS_BF6_VERSION)},
         {u"executable"_qs, QCoreApplication::applicationFilePath()},
         {u"rigId"_qs, rig ? rig->id : QString{}}, {u"rigName"_qs, rig ? rig->name : QString{}},
+        {u"setupTargetRigId"_qs, rig ? rig->id : QString{}},
         {u"profileId"_qs, m_configuration.activeProfileId}, {u"profileName"_qs, activeProfileName()},
+        {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
+        {u"inventoryGeneration"_qs, QVariant::fromValue(m_inventoryGeneration)},
+        {u"activationContext"_qs, activationContextEvidence},
+        {u"activationDecision"_qs, activationDecisionVariant(diagnosticDecision)},
+        {u"rigStatus"_qs, rigStatusEvidence},
         {u"overallStatus"_qs, statusValue(overall)}, {u"groups"_qs, groups}, {u"issues"_qs, issues},
         {u"repairPlan"_qs, repairPlan}, {u"manualActions"_qs, manualActions},
         {u"diagnostics"_qs, diagnostics}, {u"fresh"_qs, inspected}};
@@ -6644,19 +6933,25 @@ QVariantMap AppBackend::repairSetupHealth()
         const QVariantMap issue = value.toMap();
         if (issue.value(u"code"_qs).toString() != u"VJoyDescriptorMismatch"_qs
             || !issue.value(u"repairable"_qs).toBool() || !approved(issue.value(u"id"_qs).toString())) continue;
-        const QString layoutId = issue.value(u"evidence"_qs).toMap().value(u"layoutId"_qs).toString();
+        const QVariantMap evidence = issue.value(u"evidence"_qs).toMap();
+        const QString layoutId = evidence.value(u"layoutId"_qs).toString();
+        const QString targetRigId = evidence.value(u"setupTargetRigId"_qs,
+            m_setupTruthSnapshot.value(u"setupTargetRigId"_qs)).toString();
+        const DeviceRig *targetRig = findDeviceRig(m_configuration, targetRigId);
         const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
         const QString attemptKey = u"VJoyDescriptorMismatch:"_qs + layoutId;
-        if (!layout || m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
+        if (!layout || !targetRig || deviceRigPrimaryOutputLayoutId(*targetRig) != layoutId
+            || m_setupConvergenceAttemptedIssues.contains(attemptKey)) continue;
         m_setupConvergenceAttemptedIssues.insert(attemptKey);
         MapperConfiguration outputConfiguration = m_configuration;
         outputConfiguration.vjoyDeviceId = layout->requirements.deviceId;
         m_setupConvergenceCurrentIssueId = issue.value(u"id"_qs).toString();
         setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
         updateSetupRepairProgress(stepIdFor(m_setupConvergenceCurrentIssueId), u"WAITING FOR USER"_qs,
-            QString(u"Waiting for administrator approval to repair vJoy Device %1 for %2 only; Device 1 and HidHide are not part of this operation."_qs)
-                .arg(layout->requirements.deviceId).arg(layout->name), {},
-            QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId}}, true);
+            QString(u"Waiting for administrator approval to repair vJoy Device %1 for %2 in %3 only; other Rig outputs and HidHide are not part of this operation."_qs)
+                .arg(layout->requirements.deviceId).arg(layout->name, targetRig->name), {},
+            QVariantMap{{u"layoutId"_qs, layoutId}, {u"deviceId"_qs, layout->requirements.deviceId},
+                        {u"setupTargetRigId"_qs, targetRig->id}}, true);
         if (applyScopedVJoyRepair(layoutId, outputConfiguration,
                                   ControllerReadinessService::requirementsForOutputLayout(m_configuration, layout->id))) {
             return actionResult(true, u"Repairing virtual output"_qs,
@@ -6828,8 +7123,13 @@ void AppBackend::continueSetupConvergence()
     if (m_setupConvergenceStage == SetupConvergenceStage::Repairing) {
         if (m_readiness.reconnectVerificationPending()) {
             setSetupConvergenceStage(SetupConvergenceStage::WaitingForUser);
+            captureSetupTruthSnapshot();
+            const QString controllerName = m_readiness.plan().physical.name.isEmpty()
+                ? u"the exact verified controller"_qs : m_readiness.plan().physical.name;
             appendSetupRepairProgress(u"reconnect"_qs, u"Device isolation"_qs, u"Reconnect controller"_qs,
-                u"WAITING FOR USER"_qs, u"Unplug and reconnect the exact selected controller, then move a control."_qs,
+                u"WAITING FOR USER"_qs,
+                u"HidHide configuration was updated successfully. Unplug and reconnect "_qs + controllerName
+                    + u"; setup continues automatically when its matching DirectInput instance returns."_qs,
                 false, true);
             emit stateChanged();
             return;
@@ -6960,6 +7260,7 @@ bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configurati
         bool physicalReacquired = false;
         bool recoveryAttempted = false;
         bool recoverySucceeded = false;
+        bool visibilityTransition = false;
         bool restored = false;
         if (prepared) {
             repair->inspect(configuration, physical, VerificationMode::Full);
@@ -6968,18 +7269,40 @@ bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configurati
                 completed = repair->applyHidHideConfiguration();
                 cancelled = repair->plan().state == ControllerReadinessState::Cancelled;
                 if (completed) {
-                    physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
-                    if (!physicalReacquired) {
-                        recoveryAttempted = true;
-                        recoverySucceeded = repair->recoverFromPhysicalAccessFailure();
-                        if (recoverySucceeded) physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                    const auto changesControllerVisibility = [](const AutomaticRepairOperationResult &operation) {
+                        return operation.succeeded && !operation.rollback
+                            && (operation.operationName.startsWith(
+                                    QStringLiteral("Hide the selected physical controller"))
+                                || operation.operationName == QStringLiteral("Enable HidHide cloaking"));
+                    };
+                    visibilityTransition = std::any_of(
+                        repair->lastAutomaticRepairResult().operations.cbegin(),
+                        repair->lastAutomaticRepairResult().operations.cend(), changesControllerVisibility);
+                    if (visibilityTransition) {
+                        // A handle retained across a visibility transition is
+                        // not proof of Windows' new device instance. Preserve
+                        // the successful HidHide change and require the same
+                        // exact removal/arrival lifecycle we trust after a
+                        // physical reconnect.
+                        repair->beginPhysicalReconnectVerification();
+                    } else {
+                        physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                        if (!physicalReacquired) {
+                            recoveryAttempted = true;
+                            recoverySucceeded = repair->recoverFromPhysicalAccessFailure();
+                            if (recoverySucceeded) physicalReacquired = m_worker.reacquirePhysicalController(physical.hidInstanceId);
+                        }
                     }
                 }
             }
             restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
         }
         QMetaObject::invokeMethod(this, [this, repair, issueId, prepared, completed, cancelled, physicalReacquired,
-                                         recoveryAttempted, recoverySucceeded, restored] {
+                                         recoveryAttempted, recoverySucceeded, visibilityTransition, restored] {
+            // Keep the service's reconnect flags as well as the plan. The
+            // session must remain authoritative through removal, arrival,
+            // inventory refresh, and final inspection.
+            m_readiness = std::move(*repair);
             m_verificationInProgress = false;
             const QString stepId = u"repair:"_qs + issueId;
             if (cancelled) {
@@ -6987,12 +7310,19 @@ bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configurati
                 updateSetupRepairProgress(stepId, u"CANCELLED"_qs,
                     u"The administrator HidHide request was cancelled. Existing allowlist, cloak, and device rules were left unchanged."_qs,
                     u"CANCELLED"_qs);
-            } else if (completed && restored && physicalReacquired && !repair->plan().hidhideNeedsChanges) {
+            } else if (completed && restored && visibilityTransition) {
+                updateSetupRepairProgress(stepId, u"WAITING FOR USER"_qs,
+                    u"HidHide configuration was updated successfully. Reconnect the exact verified controller; setup will resume automatically when Windows reports its new instance."_qs,
+                    u"RECONNECT CONTROLLER"_qs,
+                    QVariantMap{{u"hiddenCollections"_qs, m_readiness.plan().hidhide.hiddenDeviceInstanceIds},
+                                {u"resolvedCollections"_qs, m_readiness.plan().hidhide.selectedControllerInstanceIds}},
+                    true);
+            } else if (completed && restored && physicalReacquired && !m_readiness.plan().hidhideNeedsChanges) {
                 updateSetupRepairProgress(stepId, u"SUCCEEDED"_qs,
                     u"The exact current physical-controller interfaces are hidden, the candidate remains allowlisted, and fresh HidHide read-back succeeded."_qs,
                     u"READ-BACK VERIFIED"_qs,
-                    QVariantMap{{u"hiddenCollections"_qs, repair->plan().hidhide.hiddenDeviceInstanceIds},
-                                {u"resolvedCollections"_qs, repair->plan().hidhide.selectedControllerInstanceIds}});
+                    QVariantMap{{u"hiddenCollections"_qs, m_readiness.plan().hidhide.hiddenDeviceInstanceIds},
+                                {u"resolvedCollections"_qs, m_readiness.plan().hidhide.selectedControllerInstanceIds}});
             } else {
                 m_setupConvergenceHidHideRepairFailed = true;
                 const QString detail = !prepared
@@ -7003,10 +7333,10 @@ bool AppBackend::applyScopedHidHideRepair(const MapperConfiguration &configurati
                             ? u"HidHide changes were rolled back after physical-controller reacquisition failed."_qs
                             : u"HidHide repair could not reacquire the physical controller and its rollback also needs attention."_qs)
                         : !physicalReacquired ? u"HidHide repair completed but HOTAS BF6 could not reacquire the exact physical controller."_qs
-                        : repair->plan().hidhideSummary;
+                        : m_readiness.plan().hidhideSummary;
                 updateSetupRepairProgress(stepId, u"FAILED"_qs, detail, u"READ-BACK FAILED"_qs,
-                    QVariantMap{{u"hiddenCollections"_qs, repair->plan().hidhide.hiddenDeviceInstanceIds},
-                                {u"resolvedCollections"_qs, repair->plan().hidhide.selectedControllerInstanceIds}});
+                    QVariantMap{{u"hiddenCollections"_qs, m_readiness.plan().hidhide.hiddenDeviceInstanceIds},
+                                {u"resolvedCollections"_qs, m_readiness.plan().hidhide.selectedControllerInstanceIds}});
             }
             if (m_setupConvergenceCancelled) {
                 setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
@@ -13698,9 +14028,16 @@ void AppBackend::reconcileControllerReconnect(const PhysicalControllerCapabiliti
                 rememberCurrentController();
             }
             emit stateChanged();
-            if (m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser) {
-                setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
-                QTimer::singleShot(0, this, &AppBackend::verifyHotasSetup);
+            if (m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
+                && restored && reacquired
+                && m_readiness.plan().state == ControllerReadinessState::Ready) {
+                // Arrival gives us a matching runtime device, but activation
+                // must not read the old RigStatus. Completion waits for the
+                // same fresh inventory → RigStatus pipeline as a real USB
+                // removal/arrival before beginning final verification.
+                m_setupReconnectInventoryRefreshPending = true;
+                appendEvent(u"Matching controller returned; refreshing controller inventory before final setup verification."_qs);
+                refreshControllerInventory();
             }
         }, Qt::QueuedConnection);
     });
@@ -14548,6 +14885,10 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
     m_configuration = std::move(candidate);
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
+    // Verification changes the durable identity fact used by DeviceRigStatus.
+    // Recompute it now from the current inventory; waiting for a USB reconnect
+    // previously left activation evaluating the pre-verification cache.
+    reconcileDeviceRigInventory();
     rebuildControllerUiModel();
     appendEvent(QString(u"Verified controller remembered: %1"_qs).arg(controller->name));
     scheduleAutomaticSetupTruthRefresh();
@@ -14604,6 +14945,9 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     m_configuration = std::move(candidate);
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
+    // The exact saved record is now verified. Rebuild the same RigStatus and
+    // ActivationContext path that a physical removal/arrival would refresh.
+    reconcileDeviceRigInventory();
     rebuildControllerUiModel();
     appendEvent(QString(u"Exact controller verification committed without changing the active rig: %1"_qs)
         .arg(recordId));
@@ -14958,6 +15302,19 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
     }
     m_controllerInventoryInitialized = true;
     reconcileDeviceRigInventory();
+    if (m_setupReconnectInventoryRefreshPending
+        && m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
+        && !m_readiness.reconnectVerificationPending()
+        && !m_readiness.reconnectReconciliationPending()) {
+        m_setupReconnectInventoryRefreshPending = false;
+        setSetupConvergenceStage(SetupConvergenceStage::FinalChecking);
+        updateSetupRepairProgress(u"reconnect"_qs, u"SUCCEEDED"_qs,
+            u"The exact controller returned, its inventory and Device Rig status were rebuilt, and final setup verification is starting."_qs,
+            u"RIG STATUS REBUILT"_qs);
+        updateSetupRepairProgress(u"final-inspect"_qs, u"RUNNING"_qs,
+            u"Reading final setup truth after the reconnect inventory refresh."_qs, {}, {}, true);
+        QTimer::singleShot(0, this, &AppBackend::verifyHotasSetup);
+    }
     if (m_setupTruthStartupInspectionPending) scheduleStartupSetupTruthInspection();
     else if (inventoryChanged) scheduleAutomaticSetupTruthRefresh();
     tryAutoSwitchVerifiedController();

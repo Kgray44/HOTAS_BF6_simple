@@ -16,6 +16,29 @@ Item {
     // it never reaches or substitutes mapper state.
     property var presentationStateOverride: null
 
+    // `backendObject` is intentionally a generic QML value so this reusable
+    // presentation model can be supplied a deterministic test backend. QML
+    // cannot reliably retain each QObject dependency reached through that
+    // value inside a JavaScript snapshot builder. Keep one complete snapshot
+    // and rebuild it only at the AppBackend's committed control-plane
+    // boundary. That boundary is shared by the active Profile, category, Rig,
+    // output, mapper route, and setup truth; this is not a label-only update.
+    property var backendState: ({})
+
+    Connections {
+        // FlightDeck.qml always supplies the application AppBackend as the
+        // context object. Target it directly so Qt can subscribe to its
+        // declared control-plane notifier instead of attempting dynamic
+        // signal discovery through the generic presentation value above.
+        target: backend
+        function onStateChanged() {
+            root.refreshBackendState()
+        }
+        function onProfilePresentationChanged() {
+            root.refreshBackendState()
+        }
+    }
+
     function readinessCheck(checks, name) {
         for (let index = 0; index < checks.length; ++index) {
             if (checks[index].name === name)
@@ -61,7 +84,7 @@ Item {
                 runningApplications: []
             };
 
-        const categories = backendObject.profileCategories;
+        const categories = backendObject.profileCategories || [];
         const category = activeCategory(categories, backendObject.activeCategoryId);
         return {
             physicalConnected: backendObject.physicalConnected,
@@ -91,7 +114,11 @@ Item {
             hidhideCloaked: backendObject.hidhideCloaked,
             hidhideMapperAllowed: backendObject.hidhideMapperAllowed,
             checks: backendObject.controllerReadinessChecks,
-            effectiveProfileDisplayName: backendObject.effectiveProfileDisplayName,
+            // The rail is an activation summary, not a transient mapper
+            // override indicator.  Its Profile/category must therefore come
+            // from the same committed active Profile used by Profiles,
+            // Overview, Rig activation, and the persisted mapper route.
+            activeProfileDisplayName: backendObject.activeProfileDisplayName,
             profileSourceLabel: backendObject.profileSourceLabel,
             automaticGameDetection: backendObject.automaticGameDetection,
             activeCategoryName: backendObject.activeCategoryName,
@@ -102,6 +129,10 @@ Item {
             setupTruth: backendObject.setupTruthSnapshot || ({}),
             runningApplications: runningApplications
         };
+    }
+
+    function refreshBackendState() {
+        backendState = stateForBackend();
     }
 
     // Kept as a pure function so the startup test can prove the important
@@ -274,7 +305,7 @@ Item {
     }
 
     function profileFor(state) {
-        const profile = String(state.effectiveProfileDisplayName || "").trim();
+        const profile = String(state.activeProfileDisplayName || "").trim();
         if (profile.length === 0)
             return {
                 title: "No active profile",
@@ -288,7 +319,7 @@ Item {
         };
     }
 
-    readonly property var currentState: presentationStateOverride || stateForBackend()
+    readonly property var currentState: presentationStateOverride || backendState
     readonly property var readiness: presentationFor(currentState)
     readonly property var input: inputFor(currentState)
     readonly property var output: outputFor(currentState)
@@ -297,6 +328,7 @@ Item {
     readonly property var profile: profileFor(currentState)
 
     Component.onCompleted: {
+        refreshBackendState();
         if (!backendObject)
             return;
         runningApplications = backendObject.runningApplications();
@@ -307,6 +339,7 @@ Item {
         target: root.backendObject
         function onRunningApplicationsChanged() {
             root.runningApplications = root.backendObject.runningApplications();
+            root.refreshBackendState();
         }
     }
 }
