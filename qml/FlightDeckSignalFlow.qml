@@ -103,9 +103,11 @@ Item {
     property int obstacleWireGeometryUpdateCount: 0
     property int incrementalWireBucketUpdateCount: 0
     property int layoutPersistenceAcknowledgementCount: 0
-    // Hover is presentation-only: a graph card stays compact until the
-    // pointer reaches it, then exposes every port section for direct work.
+    // Hover is presentation-only and deliberately scoped to one port group.
+    // A card-wide hover used to expand every section and force a graph-wide
+    // bounds refresh; that is both visually noisy and too expensive.
     property string hoveredNodeId: ""
+    property string hoveredGroupKey: ""
     property string hoveredPortId: ""
     // Native anchor qualification may explicitly render every port row. It
     // is test-only; ordinary graph presentation remains hover-driven.
@@ -589,7 +591,23 @@ Item {
             if (inspectedRoute && inspectedRoute.id && routesForPort(port, destination).some(function(route) {
                     return String(route.id || "") === String(inspectedRoute.id || "") })) return true
         }
-        return cardGroupRouteCount(nodeData, group, destination) > 0
+        return false
+    }
+    function cardGroupKey(nodeData, group) {
+        return nodeIdentity(nodeData) + "|" + String(group || "")
+    }
+    function cardGroupIsHovered(nodeData, group) {
+        return String(hoveredGroupKey || "") === cardGroupKey(nodeData, group)
+    }
+    function setGroupHovered(nodeData, group, hovered) {
+        if (liveDragNodeId || (dragWire && dragWire.active)) return false
+        const next = hovered ? cardGroupKey(nodeData, group)
+            : (String(hoveredGroupKey || "") === cardGroupKey(nodeData, group) ? "" : hoveredGroupKey)
+        if (String(hoveredGroupKey || "") === String(next || "")) return false
+        hoveredGroupKey = String(next || "")
+        // Group delegates own their height transition and anchor remeasurement.
+        // Do not recompute the whole scene bounds or settled wire cache here.
+        return true
     }
     function cardIsHovered(nodeData) {
         const id = nodeIdentity(nodeData)
@@ -601,12 +619,7 @@ Item {
         return ownerId.length > 0 && nodeMatchesId(nodeData, ownerId)
     }
     function cardIsExpanded(nodeData) {
-        // A live source DragHandler belongs to its original port item. Keep
-        // that one card expanded while the pointer moves across another card
-        // that is opening as a possible destination.
-        return diagnosticExpandAllNodeSections || (Boolean(graph.workspace && graph.workspace.autoExpandPorts !== false)
-            && cardIsHovered(nodeData))
-            || cardKeepsActiveWireSource(nodeData)
+        return diagnosticExpandAllNodeSections || cardKeepsActiveWireSource(nodeData)
     }
     function setNodeHovered(nodeData, hovered) {
         // Keep the card that owns a drag stable. Hover changes to cards under
@@ -617,42 +630,41 @@ Item {
         const next = hovered ? id : (String(hoveredNodeId || "") === id ? "" : hoveredNodeId)
         if (String(hoveredNodeId || "") === String(next || "")) return false
         hoveredNodeId = String(next || "")
-        refreshSceneBounds()
         return true
     }
     function cardGroupCollapsed(nodeData, group, destination) {
-        // Precedence is intentional: an explicit user choice survives hover;
-        // an active task may reveal the one relevant group; only then does the
-        // page policy decide the at-rest density.
+        // Explicit state is authoritative. Task/hover reveal is deliberately
+        // temporary and applies only where the operator has not chosen a
+        // persistent state for that exact group.
         const taskReveal = cardGroupNeedsAttention(nodeData, group, destination)
         if (cardGroupHasExplicitState(nodeData, group))
-            return taskReveal ? false : cardGroupStoredCollapsed(nodeData, group)
-        if (taskReveal || cardKeepsActiveWireSource(nodeData)) return false
+            return cardGroupStoredCollapsed(nodeData, group)
+        if (taskReveal || cardKeepsActiveWireSource(nodeData)
+                || (Boolean(graph.workspace && graph.workspace.autoExpandPorts !== false)
+                    && cardGroupIsHovered(nodeData, group))) return false
         const policy = String(graph.workspace && graph.workspace.portVisibility || "smart")
         if (policy === "expanded") return false
         if (policy === "compact") return true
-        if (policy === "connected") return cardGroupRouteCount(nodeData, group, destination) === 0
-        // Smart retains connected groups, while unused groups stay compact
-        // until a hover or task needs them.
-        return !cardIsExpanded(nodeData) && cardGroupRouteCount(nodeData, group, destination) === 0
+        // Smart and Connected Only render connected rows as a compact summary
+        // below the collapsed disclosure. They never hide useful topology.
+        return true
+    }
+    function cardGroupShowsConnectedPorts(nodeData, group, destination) {
+        if (!cardGroupCollapsed(nodeData, group, destination)
+                || cardGroupHasExplicitState(nodeData, group)) return false
+        const policy = String(graph.workspace && graph.workspace.portVisibility || "smart")
+        return (policy === "smart" || policy === "connected")
+            && cardGroupRouteCount(nodeData, group, destination) > 0
+    }
+    function cardGroupConnectedPorts(nodeData, group, destination) {
+        return cardGroupPorts(nodeData, group, destination).filter(function(port) {
+            return routesForPort(port, destination).length > 0
+        })
     }
     function cardGroupPorts(nodeData, group, destination) {
-        const storedCollapsed = cardGroupStoredCollapsed(nodeData, group)
-        const attention = cardGroupNeedsAttention(nodeData, group, destination)
         let result = portsForNode(nodeData).filter(function(port) {
             return String(port.group || "") === String(group || "") && matching(port, destination)
         })
-        // A collapsed group that is temporarily revealed by a live selection
-        // shows the related endpoints, not a surprise bank of 32 controls.
-        if (cardGroupCollapsed(nodeData, group, destination) && storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
-                && routeStateFilter === "all") {
-            result = result.filter(function(port) {
-                return Boolean(port.mapped) || (source && source.id && (!destination
-                    ? String(port.endpointId || port.id) === String(source.endpointId || source.id)
-                    : compatible(port))) || (inspectedRoute && routesForPort(port, destination).some(function(route) {
-                        return String(route.id || "") === String(inspectedRoute.id || "") }))
-            })
-        }
         const limit = semanticDensity === "overview" ? 3 : semanticDensity === "compact" ? 10 : 14
         return result.slice(0, limit)
     }
@@ -662,6 +674,18 @@ Item {
         const card = groupCard(nodeOrKind)
         announce(backendObject.signalFlowSetPortGroupCollapsed(String(card.objectId || card.id || ""), group, collapsed),
             "Port group state was not saved.")
+    }
+    function setAllGroups(nodeData, collapsed) {
+        const card = groupCard(nodeData)
+        const groups = cardGroups(card)
+        let changed = false
+        for (let index = 0; index < groups.length; ++index) {
+            const result = backendObject.signalFlowSetPortGroupCollapsed(
+                String(card.objectId || card.id || ""), String(groups[index].group || ""), collapsed)
+            changed = Boolean(result && result.success) || changed
+        }
+        if (changed) graph = backendObject.signalFlowGraph
+        return changed
     }
     function sourcePorts() {
         const all = []
@@ -685,6 +709,8 @@ Item {
             const group = String(state[index].group || "")
             if (!cardGroupCollapsed(nodeData, group, destination))
                 result = result.concat(cardGroupPorts(nodeData, group, destination))
+            else if (cardGroupShowsConnectedPorts(nodeData, group, destination))
+                result = result.concat(cardGroupConnectedPorts(nodeData, group, destination))
         }
         return result
     }
@@ -698,7 +724,11 @@ Item {
         let collapsed = 0
         for (let index = 0; index < state.length; ++index) {
             const group = String(state[index].group || "")
-            if (cardGroupCollapsed(nodeData, group, destination)) ++collapsed
+            if (cardGroupCollapsed(nodeData, group, destination)) {
+                ++collapsed
+                if (cardGroupShowsConnectedPorts(nodeData, group, destination))
+                    rows += cardGroupConnectedPorts(nodeData, group, destination).length
+            }
             else rows += cardGroupPorts(nodeData, group, destination).length
         }
         return 76 + state.length * 22 + rows * 28 + collapsed * 14
@@ -3773,9 +3803,15 @@ Item {
                     else root.inspectPort(graphPortRow.port, root.portOwner(graphPortRow.port))
                 }
             }
-            TapHandler {
+            // Keep the context action on a real mouse target rather than a
+            // competing gesture recognizer: the left-side DragHandler never
+            // receives this button, so a native right click is deterministic.
+            MouseArea {
+                anchors.fill: parent
                 acceptedButtons: Qt.RightButton
-                onTapped: {
+                preventStealing: true
+                onClicked: function(mouse) {
+                    if (mouse.button !== Qt.RightButton) return
                     deckPortContextMenu.targetPort = graphPortRow.port
                     deckPortContextMenu.targetOwner = root.portOwner(graphPortRow.port)
                     deckPortContextMenu.open()
@@ -3801,7 +3837,7 @@ Item {
                 color: "transparent"; border.width: 2; border.color: deck.focus
                 visible: parent.activeFocus
             }
-            ToolTip.visible: portHover.hovered
+            ToolTip.visible: portHover.hovered && !sourceDrag.active && !(root.dragWire && root.dragWire.active)
             ToolTip.text: root.portHoverSummary(graphPortRow.port, graphPortRow.destination)
             ToolTip.delay: 350
         }
@@ -3821,6 +3857,8 @@ Item {
                 readonly property string groupName: String(modelData.group || "Controls")
                 readonly property bool collapsed: root.cardGroupCollapsed(signalFlowPortGroups.nodeData,
                     groupName, signalFlowPortGroups.destination)
+                readonly property bool showConnectedPorts: root.cardGroupShowsConnectedPorts(
+                    signalFlowPortGroups.nodeData, groupName, signalFlowPortGroups.destination)
                 readonly property int routeCount: root.cardGroupRouteCount(signalFlowPortGroups.nodeData,
                     groupName, signalFlowPortGroups.destination)
                 width: signalFlowPortGroups.width
@@ -3831,11 +3869,11 @@ Item {
                     height: 20
                     spacing: 4
                     Text {
-                        width: groupHeader.width
+                        width: groupHeader.width - groupToggle.width - deck.space4
                         anchors.verticalCenter: parent.verticalCenter
                         text: groupColumn.groupName.toUpperCase() + " · " + groupColumn.routeCount
                             + (groupColumn.routeCount === 1 ? " ROUTE" : " ROUTES")
-                            + (groupColumn.collapsed ? " · HOVER TO OPEN" : "")
+                            + (groupColumn.collapsed && !groupColumn.showConnectedPorts ? " · UNUSED HIDDEN" : "")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 8
@@ -3844,8 +3882,10 @@ Item {
                     }
                     DeckButton {
                         id: groupToggle
-                        visible: false
-                        width: 0
+                        objectName: "signalFlowPortGroupToggle:" + root.nodeIdentity(signalFlowPortGroups.nodeData)
+                            + ":" + groupColumn.groupName
+                        visible: true
+                        width: 28
                         height: 20
                         padding: 0
                         text: groupColumn.collapsed ? "+" : "−"
@@ -3853,20 +3893,28 @@ Item {
                         onClicked: root.setGroup(signalFlowPortGroups.nodeData, groupColumn.groupName,
                             !groupColumn.collapsed)
                     }
+                    HoverHandler {
+                        onHoveredChanged: root.setGroupHovered(signalFlowPortGroups.nodeData,
+                            groupColumn.groupName, hovered)
+                    }
                 }
                 Text {
-                    visible: groupColumn.collapsed
+                    visible: groupColumn.collapsed && !groupColumn.showConnectedPorts
                     width: parent.width
                     text: groupColumn.routeCount > 0 ? groupColumn.routeCount + " routed endpoint"
-                        + (groupColumn.routeCount === 1 ? "" : "s") + " hidden" : "Collapsed"
+                        + (groupColumn.routeCount === 1 ? "" : "s") + " hidden by explicit compact state" : "Collapsed"
                     color: deck.textMuted
                     font.family: deck.bodyFont
                     font.pixelSize: 8
                     elide: Text.ElideRight
                 }
                 Repeater {
-                    model: groupColumn.collapsed ? [] : root.cardGroupPorts(signalFlowPortGroups.nodeData,
-                        groupColumn.groupName, signalFlowPortGroups.destination)
+                    model: groupColumn.collapsed
+                        ? (groupColumn.showConnectedPorts ? root.cardGroupConnectedPorts(
+                            signalFlowPortGroups.nodeData, groupColumn.groupName,
+                            signalFlowPortGroups.destination) : [])
+                        : root.cardGroupPorts(signalFlowPortGroups.nodeData, groupColumn.groupName,
+                            signalFlowPortGroups.destination)
                     delegate: GraphPortRow {
                         required property var modelData
                         width: parent.width
@@ -3880,20 +3928,30 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: deck.sectionGap
+        anchors.margins: deck.space16
+        spacing: deck.space12
 
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space8
-            Text { text: "SIGNAL FLOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+            Text { text: "SIGNAL FLOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.rightMargin: deck.space4 }
             DeckButton { Layout.preferredWidth: 138; text: "Device Rig"; helpText: root.graph.deviceRigName || "Choose the Device Rig context."; onClicked: deckRigContextMenu.open() }
             DeckButton { Layout.preferredWidth: 126; text: "Profile"; helpText: root.graph.profileName || "Choose the editing profile."; onClicked: deckProfileContextMenu.open() }
             DeckButton { text: "Configured"; emphasized: root.mode === "configured"; onClicked: root.mode = "configured" }
             DeckButton { text: "Effective"; emphasized: root.mode === "effective"; onClicked: root.mode = "effective" }
+            Item { Layout.fillWidth: true }
+            DeckButton { text: "Inspector"; helpText: "Open the selected-object Inspector, or a concise Signal Flow guide when nothing is selected."; onClicked: { root.inspectorOpen = true; root.ensureInspectorPosition() } }
+            DeckButton { text: "Block Library"; helpText: "Browse canonical blocks and workspace annotations."; onClicked: root.openBlockLibrary() }
+            DeckButton { text: "Graph Settings"; helpText: "Configure workspace-only Signal Flow presentation."; onClicked: graphSettings.open() }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: deck.space8
             TextField {
                 id: deckSearch
-                Layout.preferredWidth: 190
-                Layout.fillWidth: true
+                Layout.preferredWidth: 150
+                Layout.maximumWidth: 190
                 implicitHeight: deck.compactControlHeight
                 placeholderText: "Search ports"
                 color: deck.textPrimary
@@ -3904,6 +3962,11 @@ Item {
             }
             DeckButton { visible: root.query.length > 0; text: "Focus"; helpText: "Center the first matching route or source port."; onClicked: root.focusSearchResult() }
             DeckButton { text: root.routeStateFilter === "all" ? "Filter" : "Filter: " + root.routeStateFilter; helpText: "Filter routes by mapping state, problems, or current activity."; onClicked: deckStateFilterMenu.open() }
+            DeckButton { text: "Ports: " + String(root.graph.workspace && root.graph.workspace.portVisibility || "smart"); helpText: "Choose Smart, Connected Only, Compact, or Expanded port visibility."; onClicked: deckPortVisibilityMenu.open() }
+            DeckButton { text: "Fit"; helpText: "Fit the visible Signal Flow workspace."; onClicked: root.fitGraph() }
+            DeckButton { text: "Auto Layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onClicked: root.applyAutoLayout() }
+            DeckButton { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock" : "Lock"; onClicked: root.toggleLayoutLocked() }
+            Item { Layout.fillWidth: true }
             DeckButton { text: root.liveMode ? "Live: on" : "Live"; emphasized: root.liveMode; helpText: "Sample bounded latest telemetry without affecting MappingWorker."; onClicked: { root.liveMode = !root.liveMode; if (root.liveMode) root.liveTelemetry = backendObject.signalFlowLiveTelemetry() } }
             DeckButton { text: "Undo"; enabled: backendObject.signalFlowCanUndo; onClicked: root.announce(backendObject.signalFlowUndo(Number(root.graph.revision || 0)), "Undo was not applied.") }
             DeckButton { text: "Redo"; enabled: backendObject.signalFlowCanRedo; onClicked: root.announce(backendObject.signalFlowRedo(Number(root.graph.revision || 0)), "Redo was not applied.") }
@@ -4471,6 +4534,7 @@ Item {
                             z: 1
                             hoverEnabled: true
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            property bool contextMenuPress: false
                             onPositionChanged: function(mouse) { root.updateWireHover(mouse.x, mouse.y) }
                             onExited: root.updateWireHover(-10000, -10000)
                             // Flickable may take over a background gesture
@@ -4478,28 +4542,41 @@ Item {
                             // the initial empty-canvas press so selection is
                             // never stranded behind a pan gesture.
                             onPressed: function(mouse) {
-                                if (mouse.button !== Qt.LeftButton) return
+                                if (mouse.button === Qt.RightButton) {
+                                    contextMenuPress = true
+                                    return
+                                }
+                                contextMenuPress = false
                                 root.dismissEmptyGraphAt(mouse.x, mouse.y)
                             }
+                            onReleased: function(mouse) {
+                                if (!contextMenuPress || mouse.button !== Qt.RightButton) return
+                                const hit = root.hitWire(mouse.x, mouse.y)
+                                if (hit && hit.route) {
+                                    root.inspectedRoute = hit.route
+                                    root.selectedSegmentId = String(hit.routeSegmentId || "")
+                                    root.inspectedNode = ({})
+                                    root.source = ({})
+                                    deckRouteContextMenu.targetRoute = hit.route
+                                    deckRouteContextMenu.open()
+                                } else {
+                                    deckCanvasContextMenu.canvasX = mouse.x
+                                    deckCanvasContextMenu.canvasY = mouse.y
+                                    deckCanvasContextMenu.open()
+                                }
+                                contextMenuPress = false
+                            }
                             onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) return
                                 const hit = root.hitWire(mouse.x, mouse.y)
                                 if (!hit || !hit.route) {
-                                    if (mouse.button === Qt.LeftButton) root.clearGraphSelection()
-                                    else {
-                                        deckCanvasContextMenu.canvasX = mouse.x
-                                        deckCanvasContextMenu.canvasY = mouse.y
-                                        deckCanvasContextMenu.open()
-                                    }
+                                    root.clearGraphSelection()
                                     return
                                 }
                                 root.inspectedRoute = hit.route
                                 root.selectedSegmentId = String(hit.routeSegmentId || "")
                                 root.inspectedNode = ({})
                                 root.source = ({})
-                                if (mouse.button === Qt.RightButton) {
-                                    deckRouteContextMenu.targetRoute = hit.route
-                                    deckRouteContextMenu.open()
-                                }
                             }
                         }
                         // Processor chips target the same cached segment
@@ -4579,12 +4656,20 @@ Item {
                                 // A graph pan must never take ownership once a card body
                                 // press begins. Port hit targets remain above this body area.
                                 preventStealing: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 property real pointerStartSceneX: 0
                                 property real pointerStartSceneY: 0
                                 property real nodeStartX: 0
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
+                                property bool contextMenuPress: false
                                 onPressed: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        contextMenuPress = true
+                                        pointerMoved = false
+                                        return
+                                    }
+                                    contextMenuPress = false
                                     if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     pointerStartSceneX = point.x; pointerStartSceneY = point.y
@@ -4595,6 +4680,7 @@ Item {
                                         Boolean(mouse.modifiers & Qt.AltModifier))
                                 }
                                 onPositionChanged: function(mouse) {
+                                    if (contextMenuPress) return
                                     if (!pressed || !root.isLiveNodeDrag(inputNode.nodeData)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     const x = nodeStartX + point.x - pointerStartSceneX
@@ -4606,6 +4692,7 @@ Item {
                                     }
                                 }
                                 onReleased: function(mouse) {
+                                    if (contextMenuPress) return
                                     if (!root.isLiveNodeDrag(inputNode.nodeData)) return
                                     if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData,
                                         root.nodePosition(inputNode.nodeData, 80, 120).x,
@@ -4613,10 +4700,16 @@ Item {
                                         true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(inputNode.nodeData)
                                 }
-                                onClicked: function(mouse) { if (!pointerMoved) root.selectNode(inputNode.nodeData) }
+                                onClicked: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        deckNodeContextMenu.targetNode = inputNode.nodeData
+                                        deckNodeContextMenu.open()
+                                        return
+                                    }
+                                    if (!pointerMoved) root.selectNode(inputNode.nodeData)
+                                }
                                 onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(inputNode.nodeData) }
                             }
-                            TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = inputNode.nodeData; deckNodeContextMenu.open() } }
                         }
                         Repeater {
                             model: (root.graph.nodes || []).filter(function(item) {
@@ -4664,12 +4757,20 @@ Item {
                                     anchors.fill: parent
                                     z: 0
                                     preventStealing: true
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     property real pointerStartSceneX: 0
                                     property real pointerStartSceneY: 0
                                     property real nodeStartX: 0
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
+                                    property bool contextMenuPress: false
                                     onPressed: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            contextMenuPress = true
+                                            pointerMoved = false
+                                            return
+                                        }
+                                        contextMenuPress = false
                                         if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         pointerStartSceneX = point.x; pointerStartSceneY = point.y
@@ -4680,6 +4781,7 @@ Item {
                                             Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                     onPositionChanged: function(mouse) {
+                                        if (contextMenuPress) return
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         const x = nodeStartX + point.x - pointerStartSceneX
@@ -4691,6 +4793,7 @@ Item {
                                         }
                                     }
                                     onReleased: function(mouse) {
+                                        if (contextMenuPress) return
                                         if (!root.isLiveNodeDrag(modelData)) return
                                         if (pointerMoved) root.finishLiveNodeDrag(modelData,
                                             root.nodePosition(modelData, 80, 120).x,
@@ -4698,10 +4801,16 @@ Item {
                                             true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
-                                    onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
+                                    onClicked: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            deckNodeContextMenu.targetNode = modelData
+                                            deckNodeContextMenu.open()
+                                            return
+                                        }
+                                        if (!pointerMoved) root.selectNode(modelData)
+                                    }
                                     onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(modelData) }
                                 }
-                                TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = modelData; deckNodeContextMenu.open() } }
                             }
                         }
                         Repeater {
@@ -4807,12 +4916,20 @@ Item {
                                     anchors.fill: parent
                                     z: 0
                                     preventStealing: true
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     property real pointerStartSceneX: 0
                                     property real pointerStartSceneY: 0
                                     property real nodeStartX: 0
                                     property real nodeStartY: 0
                                     property bool pointerMoved: false
+                                    property bool contextMenuPress: false
                                     onPressed: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            contextMenuPress = true
+                                            pointerMoved = false
+                                            return
+                                        }
+                                        contextMenuPress = false
                                         if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         pointerStartSceneX = point.x; pointerStartSceneY = point.y
@@ -4823,6 +4940,7 @@ Item {
                                             Boolean(mouse.modifiers & Qt.AltModifier))
                                     }
                                     onPositionChanged: function(mouse) {
+                                        if (contextMenuPress) return
                                         if (!pressed || !root.isLiveNodeDrag(modelData)) return
                                         const point = mapToItem(scene, mouse.x, mouse.y)
                                         const x = nodeStartX + point.x - pointerStartSceneX
@@ -4834,6 +4952,7 @@ Item {
                                         }
                                     }
                                     onReleased: function(mouse) {
+                                        if (contextMenuPress) return
                                         if (!root.isLiveNodeDrag(modelData)) return
                                         if (pointerMoved) root.finishLiveNodeDrag(modelData,
                                             root.nodePosition(modelData, 680, 120).x,
@@ -4841,10 +4960,16 @@ Item {
                                             true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
-                                    onClicked: function(mouse) { if (!pointerMoved) root.selectNode(modelData) }
+                                    onClicked: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            deckNodeContextMenu.targetNode = modelData
+                                            deckNodeContextMenu.open()
+                                            return
+                                        }
+                                        if (!pointerMoved) root.selectNode(modelData)
+                                    }
                                     onDoubleClicked: function(mouse) { if (!pointerMoved) root.openNodeSettings(modelData) }
                                 }
-                                TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = modelData; deckNodeContextMenu.open() } }
                             }
                         }
                         FlightDeckCard {
@@ -4888,12 +5013,20 @@ Item {
                                 anchors.fill: parent
                                 z: 0
                                 preventStealing: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 property real pointerStartSceneX: 0
                                 property real pointerStartSceneY: 0
                                 property real nodeStartX: 0
                                 property real nodeStartY: 0
                                 property bool pointerMoved: false
+                                property bool contextMenuPress: false
                                 onPressed: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        contextMenuPress = true
+                                        pointerMoved = false
+                                        return
+                                    }
+                                    contextMenuPress = false
                                     if (root.autoLayoutMotionActive || root.mode !== "configured" || (root.graph.workspace && root.graph.workspace.layoutLocked)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     pointerStartSceneX = point.x; pointerStartSceneY = point.y
@@ -4904,6 +5037,7 @@ Item {
                                         Boolean(mouse.modifiers & Qt.AltModifier))
                                 }
                                 onPositionChanged: function(mouse) {
+                                    if (contextMenuPress) return
                                     if (!pressed || !root.isLiveNodeDrag(outputNode.nodeData)) return
                                     const point = mapToItem(scene, mouse.x, mouse.y)
                                     const x = nodeStartX + point.x - pointerStartSceneX
@@ -4915,6 +5049,7 @@ Item {
                                     }
                                 }
                                 onReleased: function(mouse) {
+                                    if (contextMenuPress) return
                                     if (!root.isLiveNodeDrag(outputNode.nodeData)) return
                                     if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData,
                                         root.nodePosition(outputNode.nodeData, 1320, 120).x,
@@ -4922,10 +5057,16 @@ Item {
                                         true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(outputNode.nodeData)
                                 }
-                                onClicked: function(mouse) { if (!pointerMoved) root.selectNode(outputNode.nodeData) }
+                                onClicked: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        deckNodeContextMenu.targetNode = outputNode.nodeData
+                                        deckNodeContextMenu.open()
+                                        return
+                                    }
+                                    if (!pointerMoved) root.selectNode(outputNode.nodeData)
+                                }
                                 onDoubleClicked: function(mouse) { if (!pointerMoved) root.openCardSettings(outputNode.nodeData) }
                             }
-                            TapHandler { acceptedButtons: Qt.RightButton; onTapped: function(eventPoint, button) { deckNodeContextMenu.targetNode = outputNode.nodeData; deckNodeContextMenu.open() } }
                         }
                         Column {
                             x: 470; y: 660; width: 620; spacing: 4
@@ -4976,6 +5117,7 @@ Item {
                                     }
                                     MouseArea {
                                         id: routeHit
+                                        objectName: "signalFlowRouteHit:" + String(modelData.id || "")
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -5122,14 +5264,22 @@ Item {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                 Column {
                     width: parent.availableWidth; spacing: deck.space10
-                    Text { visible: root.blockLibraryQuery.length === 0 || "inputs outputs".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; text: "INPUTS & OUTPUTS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { visible: root.blockLibraryQuery.length === 0 || "inputs outputs physical virtual".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; text: "INPUTS & OUTPUTS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                     DeckButton {
-                        visible: root.blockLibraryQuery.length === 0 || "configure device inputs outputs".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0
-                        width: parent.width; text: "Configure Devices & Outputs…"
-                        helpText: "Signal Flow only shows canonical Device Rig endpoints. Add hardware or virtual outputs in the authoritative Devices workflow."
-                        onClicked: root.openCardSettings({ "id": "library", "kind": "input" })
+                        visible: root.blockLibraryQuery.length === 0 || "physical input device".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0
+                        width: parent.width; text: "Configure Physical Inputs…"
+                        helpText: "Signal Flow only shows canonical Device Rig endpoints. Add or update physical inputs in the authoritative Devices workflow."
+                        onClicked: root.openCardSettings(root.node("input"))
                     }
-                    Text { text: "PROCESSORS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    DeckButton {
+                        visible: root.blockLibraryQuery.length === 0 || "virtual output device".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0
+                        width: parent.width; text: "Configure Virtual Outputs…"
+                        helpText: "Virtual outputs remain authoritative Device Rig endpoints; this opens their existing configuration rather than creating a presentation-only endpoint."
+                        onClicked: root.openCardSettings(root.node("output"))
+                    }
+                    Text { visible: root.blockLibraryQuery.length === 0 || "processors".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; text: "PROCESSORS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { visible: root.blockLibraryQuery.length === 0; width: parent.width; text: "Axis & Response · Curves, adaptive response, deadzone and scaling\nLogic & Merge · Mixers, gates and canonical merge stages\nButton & POV · Only when the selected canonical segment permits them"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                    Text { visible: root.pendingProcessorSegmentId.length > 0; width: parent.width; text: "INSERT PREVIEW · Drop on the highlighted wire to insert a canonical processor at that exact stage."; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; wrapMode: Text.WordWrap }
                     Text { visible: root.blockLibraryProcessors.length === 0; width: parent.width; text: "Select a visible wire, then open the library to list only canonical processors compatible with that segment."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
                     Repeater {
                         model: root.blockLibraryProcessors
@@ -5157,6 +5307,46 @@ Item {
                     DeckButton { visible: root.blockLibraryQuery.length === 0 || "group section".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; width: parent.width; text: "Group / Section"; helpText: "Add a presentation-only organization frame; it cannot change topology or processing."; onClicked: root.addAnnotation("group", graphViewport.contentX / root.zoom + 120, graphViewport.contentY / root.zoom + 120) }
                 }
             }
+        }
+    }
+
+    Popup {
+        id: graphSettings
+        parent: Overlay.overlay
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: Math.min(420, root.width - 32)
+        padding: deck.cardPaddingTechnical
+        x: Math.max(deck.space16, root.width - width - deck.space16)
+        y: Math.max(deck.space16, deck.space16 + deck.compactControlHeight * 2 + deck.space16)
+        background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        contentItem: ColumnLayout {
+            spacing: deck.space10
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "GRAPH SETTINGS"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+                DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close Graph Settings"; onClicked: graphSettings.close() }
+            }
+            Text { Layout.fillWidth: true; text: "Workspace presentation only. These controls never change Signal Flow topology or runtime mapping."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { text: "PORT VISIBILITY"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            ComboBox {
+                id: graphSettingsPortVisibility
+                Layout.fillWidth: true
+                model: ["smart", "connected", "compact", "expanded"]
+                currentIndex: Math.max(0, model.indexOf(String(root.graph.workspace && root.graph.workspace.portVisibility || "smart")))
+                onActivated: root.setPortVisibility(currentText)
+            }
+            CheckBox {
+                text: "Temporarily expand a hovered section"
+                checked: !root.graph.workspace || root.graph.workspace.autoExpandPorts !== false
+                onClicked: root.persistWorkspace({ "autoExpandPorts": checked }, "Hover expansion " + (checked ? "enabled." : "disabled."))
+            }
+            Text { Layout.fillWidth: true; text: "Smart and Connected Only retain linked endpoints in compact summaries. Explicit disclosure choices always take precedence."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.border; opacity: 0.7 }
+            DeckButton { Layout.fillWidth: true; text: "Wire style: " + String(root.graph.workspace && root.graph.workspace.wireStyle || "smooth"); onClicked: root.toggleWireStyle() }
+            DeckButton { Layout.fillWidth: true; text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onClicked: root.toggleLayoutLocked() }
+            CheckBox { text: "Reduced motion"; checked: root.reducedMotion; onClicked: root.reducedMotion = checked }
         }
     }
 
@@ -5200,17 +5390,24 @@ Item {
         // Selection enriches it; it is never a prerequisite for opening it.
         visible: root.inspectorOpen
         modal: false
-        focus: false
+        focus: true
         closePolicy: Popup.NoAutoClose
         width: Math.min(390, root.width - 32)
-        height: Math.min(500, root.height - 32)
+        // The Inspector is information-dense by default, but it sizes to the
+        // selected object's real content instead of reserving an empty pane.
+        height: Math.min(560, Math.min(root.height - 32,
+            Math.max(174, inspectorHeader.implicitHeight + deck.space8
+                + Math.min(inspectorColumn.implicitHeight, 460) + padding * 2)))
         x: Math.max(deck.space16, Math.min(root.width - width - deck.space16, root.inspectorPositionX))
         y: Math.max(deck.space16, Math.min(root.height - height - deck.space16, root.inspectorPositionY))
         padding: deck.cardPaddingTechnical
         background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        Keys.onEscapePressed: root.closeInspector()
         contentItem: ColumnLayout {
+            id: inspectorShell
             spacing: deck.space8
             RowLayout {
+                id: inspectorHeader
                 Layout.fillWidth: true
                 Item {
                     Layout.fillWidth: true; Layout.preferredHeight: 22
@@ -5231,13 +5428,57 @@ Item {
                 }
                 DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close inspector"; onClicked: root.closeInspector() }
             }
-            Text { Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId) ? root.inspectedPort.label || root.inspectedPort.technicalLabel || "Signal Flow port" : root.inspectedAnnotation && root.inspectedAnnotation.id ? root.inspectedAnnotation.title || "Workspace annotation" : root.inspectedNode.label || "Signal Flow object"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap }
+            ScrollView {
+                id: inspectorScroll
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Math.min(inspectorColumn.implicitHeight, 460)
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    id: inspectorColumn
+                    width: inspectorScroll.availableWidth
+                    spacing: deck.space8
+            Text { Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId) ? root.inspectedPort.label || root.inspectedPort.technicalLabel || "Signal Flow port" : root.inspectedAnnotation && root.inspectedAnnotation.id ? root.inspectedAnnotation.title || "Workspace annotation" : root.inspectedNode && root.inspectedNode.id ? root.inspectedNode.label || "Signal Flow object" : "Signal Flow Inspector"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap }
+            Text { visible: !Boolean(root.inspectedRoute && root.inspectedRoute.id) && !Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)) && !Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id) && !Boolean(root.inspectedNode && root.inspectedNode.id); Layout.fillWidth: true; text: "Select a port, wire, block, processor, or workspace annotation to inspect its canonical Signal Flow details. The graph remains fully interactive while this surface is open."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Text { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); Layout.fillWidth: true; text: String(root.inspectedAnnotation.kind || "note").toUpperCase() + " · PRESENTATION ONLY\nThis object has no ports, topology, processor state, or runtime meaning."; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
-            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: String(root.inspectedPort.technicalLabel || root.inspectedPort.id || "") + "\n" + String(root.inspectedPort.kind || "other").toUpperCase() + " · " + (root.portIsOutput(root.inspectedPort) ? "OUTPUT" : "INPUT") + " · " + String(root.inspectedPortOwner.label || "Signal Flow"); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WrapAnywhere }
-            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: root.portTopologySummary(root.inspectedPort) + "\n" + (root.inspectedPort.available ? "AVAILABLE · configuration valid" : "OFFLINE · configuration remains valid"); color: root.inspectedPort.available ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
-            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
-            Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); Layout.fillWidth: true; text: String(root.inspectedNode.detail || ""); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            Item { Layout.fillHeight: true }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); text: "IDENTITY"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: "Alias · " + String(root.inspectedPort.label || root.inspectedPort.technicalLabel || "Unnamed port") + "\nRaw ID · " + String(root.inspectedPort.endpointId || root.inspectedPort.id || "") + "\nOwner · " + String(root.inspectedPortOwner.label || "Signal Flow") + "\n" + String(root.inspectedPort.kind || "other").toUpperCase() + " · " + (root.portIsOutput(root.inspectedPort) ? "OUTPUT" : "INPUT"); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WrapAnywhere }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); text: "STATE & TOPOLOGY"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: root.portTopologySummary(root.inspectedPort) + " · " + (root.inspectedPort.available ? "AVAILABLE / CONFIGURATION VALID" : "OFFLINE / SAVED CONFIGURATION VALID") + "\n" + (root.portIsOutput(root.inspectedPort) ? "Sources feeding this output:" : "Destinations driven by this input:"); color: root.inspectedPort.available ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Repeater {
+                visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId))
+                model: root.inspectedPort ? root.routesForPort(root.inspectedPort, root.portIsOutput(root.inspectedPort)) : []
+                delegate: Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    implicitHeight: routePortDetail.implicitHeight + deck.space8
+                    radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border; border.width: 1
+                    Column {
+                        id: routePortDetail
+                        anchors.fill: parent; anchors.margins: deck.space4; spacing: 2
+                        Text { width: parent.width; text: String(modelData.sourceLabel || "Source") + " → " + String(modelData.destinationLabel || "Destination"); color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 9; elide: Text.ElideRight }
+                        Text { width: parent.width; text: (modelData.processors && modelData.processors.length ? "Processing · " + modelData.processors.join(" → ") : "Direct canonical route") + " · " + String(modelData.health || "ready").toUpperCase(); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight }
+                    }
+                }
+            }
+            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "SOURCE · PROCESSING · DESTINATION"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: "SOURCE\n" + String(root.inspectedRoute.sourceLabel || "Unknown source") + "\n\nPROCESSING\n" + (root.inspectedRoute.processors && root.inspectedRoute.processors.length ? root.inspectedRoute.processors.join(" → ") : "Direct signal — no canonical processor") + "\n\nDESTINATION\n" + String(root.inspectedRoute.destinationLabel || "Unknown destination"); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: String(root.inspectedRoute.sourceLabel || "The source") + " controls " + String(root.inspectedRoute.destinationLabel || "the destination") + "." + (root.inspectedRoute.processors && root.inspectedRoute.processors.length ? " The signal passes through " + root.inspectedRoute.processors.join(", ") + " before reaching the virtual output." : " The signal is routed directly."); color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: "STATUS · " + String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + (root.inspectedRoute.healthDetail ? "\n" + String(root.inspectedRoute.healthDetail) : ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: root.inspectedNode.kind === "processor" ? "PROCESSOR" : "DEVICE / OUTPUT"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); Layout.fillWidth: true; text: "Identity · " + String(root.inspectedNode.label || "Signal Flow block") + "\nState · " + (root.inspectedNode.connected ? "CONNECTED" : "SAVED / OFFLINE") + "\nPorts · " + Number((root.inspectedNode.ports || []).length) + " · Routes · " + Number(root.inspectedNode.routeCount || 0) + "\n" + String(root.inspectedNode.detail || ""); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"); Layout.fillWidth: true; text: "Type · " + String(root.inspectedNode.semantic || root.inspectedNode.label || "processor") + "\nChannels · " + Number(root.inspectedNode.channelCount || 1) + (root.inspectedNode.shared ? " · SHARED " + Number(root.inspectedNode.sharedChannelCount || 0) + " routes" : "") + "\nEndpoints · " + (root.inspectedNode.ports || []).map(function(port) { return String(port.label || port.id || "port") }).join(" · "); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; wrapMode: Text.WrapAnywhere }
+            CheckBox { id: inspectorTechnicalDetails; visible: Boolean((root.inspectedRoute && root.inspectedRoute.id) || (root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)) || (root.inspectedNode && root.inspectedNode.id)); text: "Technical Details"; checked: false }
+            Text { visible: inspectorTechnicalDetails.visible && inspectorTechnicalDetails.checked; Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? "routeId · " + String(root.inspectedRoute.id || "") + "\nsegments · " + (root.inspectedRoute.segments || []).map(function(segment) { return String(segment.id || "") }).join(", ") + "\nrevision · " + Number(root.graph.revision || 0) + "\nprofile / rig · " + String(root.graph.profileId || "") + " / " + String(root.graph.deviceRigId || "") : root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId) ? "endpointId · " + String(root.inspectedPort.endpointId || root.inspectedPort.id || "") + "\nownerId · " + String(root.inspectedPortOwner.objectId || root.inspectedPortOwner.id || "") + "\nrevision · " + Number(root.graph.revision || 0) : "objectId · " + String(root.inspectedNode.objectId || root.inspectedNode.id || "") + "\nrevision · " + Number(root.graph.revision || 0); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; wrapMode: Text.WrapAnywhere }
+            DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: "Open Devices & Setup"; Layout.fillWidth: true; onClicked: root.openCardSettings(root.inspectedNode) }
+            DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: "Expand all sections"; Layout.fillWidth: true; onClicked: root.setAllGroups(root.inspectedNode, false) }
+            DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: "Collapse all sections"; Layout.fillWidth: true; onClicked: root.setAllGroups(root.inspectedNode, true) }
+            DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && (root.inspectedNode.semantic === "curve" || root.inspectedNode.semantic === "adaptive-response")); text: root.inspectedNode.semantic === "curve" ? "Open Curve Editor" : "Open Adaptive Response"; Layout.fillWidth: true; onClicked: root.openNodeSettings(root.inspectedNode) }
+            DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && root.inspectedNode.semantic === "mixer"); text: "Configure Mixer"; Layout.fillWidth: true; onClicked: root.removeSelectedProcessor() }
+            DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Insert Processor"; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openBlockLibrary() }
+            DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Open Source"; Layout.fillWidth: true; onClicked: root.selectNode(root.nodeForId(String(root.inspectedRoute.sourceNodeId || ""))) }
+            DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Open Destination"; Layout.fillWidth: true; onClicked: root.selectNode(root.nodeForId(String(root.inspectedRoute.destinationNodeId || ""))) }
             DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id && root.inspectedAnnotation.kind === "group"); text: root.inspectedAnnotation.moveContents ? "Move contained annotations: on" : "Move contained annotations: off"; Layout.fillWidth: true; onClicked: root.updateAnnotation(root.inspectedAnnotation.id, { "moveContents": !root.inspectedAnnotation.moveContents }) }
             DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); text: "Detach annotation"; enabled: Boolean(root.inspectedAnnotation.attachedObjectId || root.inspectedAnnotation.attachedRouteId); Layout.fillWidth: true; onClicked: root.updateAnnotation(root.inspectedAnnotation.id, { "attachedObjectId": "", "attachedRouteId": "" }) }
             DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); text: "Delete annotation"; destructive: true; Layout.fillWidth: true; onClicked: root.removeAnnotation(root.inspectedAnnotation.id) }
@@ -5247,6 +5488,8 @@ Item {
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Explain route"; Layout.fillWidth: true; onClicked: root.explainRoute() }
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Disconnect"; destructive: true; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
         }
+        }
+    }
     }
 
     Timer {
@@ -5306,6 +5549,16 @@ Item {
     }
 
     Menu {
+        id: deckPortVisibilityMenu
+        title: "Port Visibility"
+        background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        MenuItem { text: "Smart — connected visible"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "smart"; onTriggered: root.setPortVisibility("smart") }
+        MenuItem { text: "Connected Only"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "connected"; onTriggered: root.setPortVisibility("connected") }
+        MenuItem { text: "Compact"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "compact"; onTriggered: root.setPortVisibility("compact") }
+        MenuItem { text: "Expanded"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "expanded"; onTriggered: root.setPortVisibility("expanded") }
+    }
+
+    Menu {
         id: deckMoreMenu
         title: "Signal Flow tools"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
@@ -5331,15 +5584,34 @@ Item {
 
     Menu {
         id: deckCanvasContextMenu
+        objectName: "flightDeckSignalFlowCanvasContextMenu"
         property real canvasX: 160
         property real canvasY: 160
         title: "Signal Flow workspace"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         MenuItem { text: "Show Inspector"; onTriggered: { root.inspectorOpen = true; root.ensureInspectorPosition() } }
         MenuItem { text: "Open Block Library"; onTriggered: root.openBlockLibrary() }
+        MenuItem { text: "Graph Settings"; onTriggered: graphSettings.open() }
         MenuSeparator {}
-        MenuItem { text: "Add Text Note"; onTriggered: root.addAnnotation("note", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
-        MenuItem { text: "Add Group / Section"; onTriggered: root.addAnnotation("group", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
+        Menu {
+            title: "Add"
+            MenuItem {
+                text: "Physical input…"
+                onTriggered: root.openCardSettings(root.node("input"))
+            }
+            MenuItem {
+                text: "Virtual output…"
+                onTriggered: root.openCardSettings(root.node("output"))
+            }
+            MenuItem {
+                text: "Processor on selected wire…"
+                enabled: Boolean(root.inspectedRoute && root.inspectedRoute.id)
+                onTriggered: root.openBlockLibrary()
+            }
+            MenuSeparator {}
+            MenuItem { text: "Text Note"; onTriggered: root.addAnnotation("note", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
+            MenuItem { text: "Group / Section"; onTriggered: root.addAnnotation("group", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
+        }
         MenuSeparator {}
         MenuItem { text: "Port visibility: Smart"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "smart"; onTriggered: root.setPortVisibility("smart") }
         MenuItem { text: "Port visibility: Connected Only"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "connected"; onTriggered: root.setPortVisibility("connected") }
@@ -5355,10 +5627,21 @@ Item {
 
     Menu {
         id: deckNodeContextMenu
+        objectName: "flightDeckSignalFlowNodeContextMenu"
         property var targetNode: ({})
         title: targetNode && targetNode.label ? targetNode.label : "Signal Flow node"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         MenuItem { text: "Inspect card"; enabled: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.id); onTriggered: root.selectNode(deckNodeContextMenu.targetNode) }
+        MenuItem {
+            text: "Expand all port sections"
+            enabled: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.id)
+            onTriggered: root.setAllGroups(deckNodeContextMenu.targetNode, false)
+        }
+        MenuItem {
+            text: "Collapse all port sections"
+            enabled: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.id)
+            onTriggered: root.setAllGroups(deckNodeContextMenu.targetNode, true)
+        }
         MenuItem {
             text: deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.semantic === "curve"
                 ? "Open Curve Editor" : "Open Adaptive Response"
@@ -5368,11 +5651,30 @@ Item {
             onTriggered: root.openNodeSettings(deckNodeContextMenu.targetNode)
         }
         MenuItem {
+            text: "Open processor configuration"
+            visible: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.kind === "processor"
+                && deckNodeContextMenu.targetNode.semantic !== "curve"
+                && deckNodeContextMenu.targetNode.semantic !== "adaptive-response")
+            onTriggered: {
+                root.selectNode(deckNodeContextMenu.targetNode)
+                root.openNodeSettings(deckNodeContextMenu.targetNode)
+            }
+        }
+        MenuItem {
             text: deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.kind === "input"
                 ? "Open input setup" : "Open output setup"
             visible: Boolean(deckNodeContextMenu.targetNode && (deckNodeContextMenu.targetNode.kind === "input"
                 || deckNodeContextMenu.targetNode.kind === "output"))
             onTriggered: root.openCardSettings(deckNodeContextMenu.targetNode)
+        }
+        MenuItem {
+            text: "Remove processor"
+            visible: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.kind === "processor")
+            enabled: root.mode === "configured"
+            onTriggered: {
+                root.selectNode(deckNodeContextMenu.targetNode)
+                root.removeSelectedProcessor()
+            }
         }
         MenuItem {
             text: deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.pinned ? "Unpin placement" : "Pin placement"
@@ -5395,6 +5697,7 @@ Item {
 
     Menu {
         id: deckPortContextMenu
+        objectName: "flightDeckSignalFlowPortContextMenu"
         property var targetPort: ({})
         property var targetOwner: ({})
         readonly property bool targetIsOutput: root.portIsOutput(targetPort)
@@ -5445,14 +5748,35 @@ Item {
             ? targetRoute.sourceLabel + " → " + targetRoute.destinationLabel : "Signal Flow route"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         MenuItem {
-            text: "Insert processing…"
+            text: "Inspect route"
+            enabled: Boolean(deckRouteContextMenu.targetRoute && deckRouteContextMenu.targetRoute.id)
+            onTriggered: {
+                root.inspectedRoute = deckRouteContextMenu.targetRoute
+                root.inspectedNode = ({})
+                root.inspectedPort = ({})
+                root.inspectorOpen = true
+                root.ensureInspectorPosition()
+            }
+        }
+        MenuItem {
+            text: "Insert processing from Block Library…"
             enabled: root.mode === "configured" && Boolean(deckRouteContextMenu.targetRoute && deckRouteContextMenu.targetRoute.id)
             onTriggered: {
                 root.inspectedRoute = deckRouteContextMenu.targetRoute
                 root.source = ({})
                 root.inspectedNode = ({})
-                processorDialog.open()
+                root.openBlockLibrary()
             }
+        }
+        MenuItem {
+            text: "Open source"
+            enabled: Boolean(deckRouteContextMenu.targetRoute && deckRouteContextMenu.targetRoute.sourceNodeId)
+            onTriggered: root.selectNode(root.nodeForId(deckRouteContextMenu.targetRoute.sourceNodeId))
+        }
+        MenuItem {
+            text: "Open destination"
+            enabled: Boolean(deckRouteContextMenu.targetRoute && deckRouteContextMenu.targetRoute.destinationNodeId)
+            onTriggered: root.selectNode(root.nodeForId(deckRouteContextMenu.targetRoute.destinationNodeId))
         }
         MenuItem {
             text: "Explain route"

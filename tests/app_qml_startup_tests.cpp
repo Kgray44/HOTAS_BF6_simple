@@ -7188,12 +7188,15 @@ bool verifySignalFlowNativeWirePointerDrag(QObject *page, QQuickWindow *window, 
     // The gesture has crossed DragHandler's threshold. Drain only the
     // activation frame, then qualify pointer-down work independently.
     settlePresentation();
-    // Graph cards now reveal every section on hover. Mirror the owner path
-    // before resolving the real destination hit target: visual compactness
-    // must not make a compatible canonical endpoint disappear from routing.
+    // The armed source temporarily reveals only destination sections that
+    // contain a compatible endpoint. This must work without card-wide hover
+    // expansion, which would make unrelated port banks churn during a drag.
     QQmlExpression revealOutput(qmlContext(page), page, QStringLiteral(
-        "(function() { const output = node('output'); return output && setNodeHovered(output, true); })()"));
-    const bool outputHovered = revealOutput.evaluate().toBool();
+        "(function() {"
+        " const output = node('output');"
+        " return output && visibleCardPorts(output, true).some(function(port) { return compatible(port); });"
+        "})()"));
+    const bool outputRevealed = revealOutput.evaluate().toBool();
     settlePresentation();
     QQmlExpression destinationExpression(qmlContext(page), page, QStringLiteral(
         "(function() {"
@@ -7208,7 +7211,7 @@ bool verifySignalFlowNativeWirePointerDrag(QObject *page, QQuickWindow *window, 
     const QString destinationEndpointId = destination.value(QStringLiteral("endpointId")).toString();
     auto *destinationPort = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
         QStringLiteral("signalFlowPortHitTarget:") + destinationEndpointId);
-    if (!outputHovered || revealOutput.hasError() || destinationExpression.hasError() || destinationId.isEmpty() || destinationEndpointId.isEmpty() || !destinationPort
+    if (!outputRevealed || revealOutput.hasError() || destinationExpression.hasError() || destinationId.isEmpty() || destinationEndpointId.isEmpty() || !destinationPort
         || destinationPort->width() < 12.0 || destinationPort->height() < 12.0) {
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, activation);
         settlePresentation();
@@ -7388,6 +7391,106 @@ bool verifySignalFlowNativeWirePointerDrag(QObject *page, QQuickWindow *window, 
             .arg(settledPaintDelta).arg(activePaintDelta).arg(liveWireFrameDelta)
             .arg(previewCallDelta).arg(sampleTrace.join(QStringLiteral("; "))));
     }
+    return true;
+}
+
+bool verifySignalFlowNativeContextMenus(QObject *page, QQuickWindow *window)
+{
+    if (!page || !window || !window->isVisible()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native context-menu fixture needs a visible native page and window"));
+    }
+    const auto findVisiblePrefix = [page, window](const QString &prefix) -> QQuickItem * {
+        const auto items = page->findChildren<QQuickItem *>();
+        for (QQuickItem *item : items) {
+            if (!item || !item->isVisible() || !item->objectName().startsWith(prefix)) continue;
+            const QPointF point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5));
+            if (item->width() >= 6.0 && item->height() >= 6.0
+                && point.x() >= 0.0 && point.y() >= 0.0
+                && point.x() < window->width() && point.y() < window->height()) return item;
+        }
+        return nullptr;
+    };
+    const auto dismiss = [](QObject *menu) {
+        if (menu) QMetaObject::invokeMethod(menu, "close", Qt::DirectConnection);
+        settlePresentation();
+    };
+    auto *pageItem = qobject_cast<QQuickItem *>(page);
+    auto *nodeMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowNodeContextMenu"));
+    auto *portMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowPortContextMenu"));
+    auto *routeMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowRouteContextMenu"));
+    auto *canvasMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowCanvasContextMenu"));
+    auto *node = findVisiblePrefix(QStringLiteral("signalFlowNodeDrag:"));
+    auto *port = findVisiblePrefix(QStringLiteral("signalFlowPortHitTarget:"));
+    auto *groupToggle = findVisiblePrefix(QStringLiteral("signalFlowPortGroupToggle:"));
+    auto *canvas = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowWireInteractionLayer")) : nullptr;
+    QQmlExpression fitGraphForContextClick(qmlContext(page), page,
+        QStringLiteral("(function() { fitGraph(); return (wireGeometry || []).length; })()"));
+    fitGraphForContextClick.evaluate();
+    settlePresentation();
+    QPointF routePoint;
+    bool routePointFound = false;
+    const QVariantList wireGeometry = page->property("wireGeometry").toList();
+    for (const QVariant &entryValue : wireGeometry) {
+        const QVariantList segments = entryValue.toMap().value(QStringLiteral("segments")).toList();
+        for (const QVariant &segmentValue : segments) {
+            const QVariantList points = segmentValue.toMap().value(QStringLiteral("points")).toList();
+            if (points.size() < 2) continue;
+            const QVariantMap middlePoint = points.at(points.size() / 2).toMap();
+            const QPointF candidate(middlePoint.value(QStringLiteral("x")).toDouble(),
+                middlePoint.value(QStringLiteral("y")).toDouble());
+            const QPointF scenePoint = canvas ? canvas->mapToScene(candidate) : QPointF{};
+            if (scenePoint.x() >= 0.0 && scenePoint.y() >= 0.0
+                && scenePoint.x() < window->width() && scenePoint.y() < window->height()) {
+                routePoint = candidate;
+                routePointFound = true;
+                break;
+            }
+        }
+        if (routePointFound) break;
+    }
+    if (fitGraphForContextClick.hasError() || !nodeMenu || !portMenu || !routeMenu || !canvasMenu
+        || !node || !port || !groupToggle || !canvas || !routePointFound) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native context-menu fixture could not find each rendered target"));
+    }
+    const auto rightClick = [window](QQuickItem *item, const QPointF &local) {
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier,
+            item->mapToScene(local).toPoint());
+        settlePresentation();
+    };
+    rightClick(node, QPointF(node->width() * 0.5, node->height() * 0.5));
+    const bool nodeOpened = nodeMenu->property("visible").toBool();
+    dismiss(nodeMenu);
+    rightClick(port, QPointF(port->width() * 0.5, port->height() * 0.5));
+    const bool portOpened = portMenu->property("visible").toBool();
+    dismiss(portMenu);
+    rightClick(canvas, routePoint);
+    const bool routeOpened = routeMenu->property("visible").toBool();
+    dismiss(routeMenu);
+    // The scene origin is deliberately clear of cards and cached route paths.
+    // This right click verifies the real empty-canvas menu path, rather than
+    // calling the QML helper that opens it.
+    rightClick(canvas, QPointF(8.0, 8.0));
+    const bool canvasOpened = canvasMenu->property("visible").toBool();
+    dismiss(canvasMenu);
+    const QString groupBefore = groupToggle->property("text").toString();
+    const QString groupToggleName = groupToggle->objectName();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        groupToggle->mapToScene(QPointF(groupToggle->width() * 0.5,
+            groupToggle->height() * 0.5)).toPoint());
+    settlePresentation();
+    auto *updatedGroupToggle = pageItem
+        ? findVisualItemByObjectName(pageItem, groupToggleName) : nullptr;
+    const bool sectionToggled = updatedGroupToggle
+        && updatedGroupToggle->property("text").toString() != groupBefore;
+    if (!nodeOpened || !portOpened || !routeOpened || !canvasOpened || !sectionToggled) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native pointer controls failed (node=%1 port=%2 route=%3 canvas=%4 section=%5)" )
+                .arg(nodeOpened).arg(portOpened).arg(routeOpened).arg(canvasOpened).arg(sectionToggled));
+    }
+    qInfo().noquote() << "signal_flow_native_context_menus node=1 port=1 route=1 canvas=1 section=1";
     return true;
 }
 
@@ -8460,11 +8563,16 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
         " const input = node('input');"
         " const compactAtRest = cardGroupCollapsed(input, 'Axes', false)"
         "   && cardGroupCollapsed(input, 'Buttons', false);"
-        " setNodeHovered(input, true);"
-        " const expandedOnHover = !cardGroupCollapsed(input, 'Axes', false)"
-        "   && !cardGroupCollapsed(input, 'Buttons', false);"
-        " setNodeHovered(input, false);"
-        " return semanticDensity === 'compact' && compactAtRest && expandedOnHover;"
+        " const rebuildsBeforeHover = geometryRebuildCount;"
+        " const boundsBeforeHover = sceneBoundsChangeCount;"
+        " setGroupHovered(input, 'Axes', true);"
+        " const onlyHoveredSectionExpanded = !cardGroupCollapsed(input, 'Axes', false)"
+        "   && cardGroupCollapsed(input, 'Buttons', false);"
+        " setGroupHovered(input, 'Axes', false);"
+        " const hoverStayedLocal = geometryRebuildCount === rebuildsBeforeHover"
+        "   && sceneBoundsChangeCount === boundsBeforeHover;"
+        " return semanticDensity === 'compact' && compactAtRest"
+        "   && onlyHoveredSectionExpanded && hoverStayedLocal;"
         "})()"));
     const double normalSceneWidth = page->property("sceneLogicalWidth").toDouble();
     const double normalSceneHeight = page->property("sceneLogicalHeight").toDouble();
@@ -9307,6 +9415,10 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     }
     if (!verifySignalFlowNativeWirePointerDrag(flightDeckPage,
             qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
+        return false;
+    }
+    if (!verifySignalFlowNativeContextMenus(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow))) {
         return false;
     }
     // A short native qualification target makes the real pointer path
