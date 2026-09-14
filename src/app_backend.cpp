@@ -7553,6 +7553,7 @@ QVariantMap AppBackend::signalFlowPreviewConnection(const QString &sourceEndpoin
                                                      const QString &collisionDecision,
                                                      qulonglong expectedRevision) const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_signalFlowPreviewCalls;
     const auto previewResult = [this](bool success, const QString &title, const QString &message,
                                       bool requiresDecision = false) {
         QVariantMap result = signalFlowActionResult(success, title, message);
@@ -9111,18 +9112,28 @@ QVariantMap AppBackend::signalFlowRedo(qulonglong expectedRevision)
     return signalFlowActionResult(true, u"Redo applied"_qs, m_signalFlowActionFeedback);
 }
 
-bool AppBackend::saveSignalFlowPresentation()
+bool AppBackend::saveSignalFlowPresentation(bool notifySignalFlow)
 {
     if (!ConfigStore::save(m_configuration)) {
         m_signalFlowActionFeedback = u"Signal Flow workspace could not be saved."_qs;
-        emit signalFlowChanged();
+        if (notifySignalFlow) emit signalFlowChanged();
         return false;
     }
-    emit signalFlowChanged();
+    if (notifySignalFlow) emit signalFlowChanged();
     return true;
 }
 
 bool AppBackend::signalFlowSaveWorkspace(const QVariantMap &workspace)
+{
+    return saveSignalFlowWorkspace(workspace, true);
+}
+
+bool AppBackend::signalFlowSaveWorkspaceSilently(const QVariantMap &workspace)
+{
+    return saveSignalFlowWorkspace(workspace, false);
+}
+
+bool AppBackend::saveSignalFlowWorkspace(const QVariantMap &workspace, bool notifySignalFlow)
 {
     SignalFlowWorkspaceState state;
     state.key = signalFlowWorkspaceKey();
@@ -9140,11 +9151,11 @@ bool AppBackend::signalFlowSaveWorkspace(const QVariantMap &workspace)
     for (SignalFlowWorkspaceState &existing : m_configuration.signalFlow.workspaces) {
         if (existing.key != state.key) continue;
         existing = std::move(state);
-        return saveSignalFlowPresentation();
+        return saveSignalFlowPresentation(notifySignalFlow);
     }
     if (m_configuration.signalFlow.workspaces.size() >= kMaximumSignalFlowWorkspaces) return false;
     m_configuration.signalFlow.workspaces.push_back(std::move(state));
-    return saveSignalFlowPresentation();
+    return saveSignalFlowPresentation(notifySignalFlow);
 }
 
 bool AppBackend::signalFlowSaveNodeLayout(const QString &objectId, double x, double y, bool pinned)
@@ -9161,11 +9172,11 @@ bool AppBackend::signalFlowSaveNodeLayout(const QString &objectId, double x, dou
     for (SignalFlowNodeLayout &existing : m_configuration.signalFlow.nodeLayouts) {
         if (existing.workspaceKey != workspaceKey || existing.objectId != normalizedId) continue;
         existing = std::move(state);
-        return saveSignalFlowPresentation();
+        return saveSignalFlowPresentation(false);
     }
     if (m_configuration.signalFlow.nodeLayouts.size() >= kMaximumSignalFlowNodeLayouts) return false;
     m_configuration.signalFlow.nodeLayouts.push_back(std::move(state));
-    return saveSignalFlowPresentation();
+    return saveSignalFlowPresentation(false);
 }
 
 QVariantMap AppBackend::signalFlowSetPortGroupCollapsed(const QString &cardId,
@@ -14738,6 +14749,7 @@ QVariantMap AppBackend::uiPerformanceCounters() const
             {u"uiSnapshotCount"_qs, QVariant::fromValue(m_uiSnapshotCount)},
             {u"uiSnapshotTotalDurationUs"_qs, QVariant::fromValue(m_uiSnapshotTotalDurationUs)},
             {u"uiSnapshotMaxDurationUs"_qs, m_uiSnapshotMaxDurationUs},
+            {u"signalFlowPreviewCalls"_qs, QVariant::fromValue(m_signalFlowPreviewCalls)},
             {u"uiEventLoopMaxDelayMs"_qs, m_uiEventLoopMaxDelayMs},
             {u"uiEventLoopDelayOver16Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver16Ms)},
             {u"uiEventLoopDelayOver50Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver50Ms)},
@@ -14764,6 +14776,7 @@ void AppBackend::resetUiPerformanceCounters()
     m_uiSnapshotCount = 0;
     m_uiSnapshotTotalDurationUs = 0;
     m_uiSnapshotMaxDurationUs = 0;
+    m_signalFlowPreviewCalls = 0;
     m_uiEventLoopMaxDelayMs = 0;
     m_uiEventLoopDelayOver16Ms = 0;
     m_uiEventLoopDelayOver50Ms = 0;

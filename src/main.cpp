@@ -14,6 +14,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include <QTimer>
@@ -25,6 +26,8 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #endif
 
 using namespace Qt::StringLiterals;
@@ -38,6 +41,48 @@ bool hasArgument(int argc, char *argv[], const char *argument)
     }
     return false;
 }
+
+QString graphicsApiName(QSGRendererInterface::GraphicsApi api)
+{
+    switch (api) {
+    case QSGRendererInterface::Software: return QStringLiteral("Software");
+    case QSGRendererInterface::OpenVG: return QStringLiteral("OpenVG");
+    case QSGRendererInterface::OpenGL: return QStringLiteral("OpenGL");
+    case QSGRendererInterface::Direct3D11: return QStringLiteral("Direct3D11");
+    case QSGRendererInterface::Vulkan: return QStringLiteral("Vulkan");
+    case QSGRendererInterface::Metal: return QStringLiteral("Metal");
+    case QSGRendererInterface::Null: return QStringLiteral("Null");
+    case QSGRendererInterface::Direct3D12: return QStringLiteral("Direct3D12");
+    case QSGRendererInterface::Unknown: return QStringLiteral("Unknown");
+    }
+    return QStringLiteral("Unknown");
+}
+
+#ifdef Q_OS_WIN
+QString direct3D11AdapterName(QQuickWindow *window)
+{
+    if (!window || !window->rendererInterface()
+        || window->rendererInterface()->graphicsApi() != QSGRendererInterface::Direct3D11) {
+        return QStringLiteral("not Direct3D11");
+    }
+    auto *device = static_cast<ID3D11Device *>(window->rendererInterface()->getResource(
+        window, QSGRendererInterface::DeviceResource));
+    if (!device) return QStringLiteral("unavailable");
+
+    IDXGIDevice *dxgiDevice = nullptr;
+    const HRESULT deviceResult = device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
+    if (FAILED(deviceResult) || !dxgiDevice) return QStringLiteral("unavailable");
+    IDXGIAdapter *adapter = nullptr;
+    const HRESULT adapterResult = dxgiDevice->GetAdapter(&adapter);
+    dxgiDevice->Release();
+    if (FAILED(adapterResult) || !adapter) return QStringLiteral("unavailable");
+    DXGI_ADAPTER_DESC description{};
+    const HRESULT descriptionResult = adapter->GetDesc(&description);
+    adapter->Release();
+    if (FAILED(descriptionResult)) return QStringLiteral("unavailable");
+    return QString::fromWCharArray(description.Description);
+}
+#endif
 
 void crashMessageHandler(QtMsgType type, const QMessageLogContext &, const QString &message)
 {
@@ -66,6 +111,10 @@ int main(int argc, char *argv[])
     // Development-only idle probe. It is intentionally a distinct argument
     // from interactive isolated presentation, which always remains open.
     const bool signalFlowIdleProbe = hasArgument(argc, argv, "--signal-flow-idle-probe");
+    // A short, explicit diagnostic launch records the actual Qt Quick backend
+    // selected on this machine. It never changes the interactive renderer or
+    // forces a backend; it only observes the initialized scene graph.
+    const bool signalFlowRendererProbe = hasArgument(argc, argv, "--signal-flow-renderer-probe");
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
     if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established
@@ -174,6 +223,23 @@ int main(int argc, char *argv[])
                          static_cast<long long>(snapshotMaxUs),
                          static_cast<long long>(eventLoopMaxDelayMs),
                          sceneWidth, sceneHeight, nodeCount, routeCount);
+            application.quit();
+        });
+    }
+    if (signalFlowRendererProbe) {
+        QTimer::singleShot(1500, &application, [&application, &engine] {
+            auto *window = engine.rootObjects().isEmpty()
+                ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+            const auto *renderer = window ? window->rendererInterface() : nullptr;
+            const auto api = renderer ? renderer->graphicsApi() : QSGRendererInterface::Unknown;
+#ifdef Q_OS_WIN
+            const QString adapter = direct3D11AdapterName(window);
+#else
+            const QString adapter = QStringLiteral("not queried on this platform");
+#endif
+            std::fprintf(stderr, "signal-flow-renderer-probe api=%s adapter=%s software=%d\n",
+                         qPrintable(graphicsApiName(api)), qPrintable(adapter),
+                         api == QSGRendererInterface::Software ? 1 : 0);
             application.quit();
         });
     }

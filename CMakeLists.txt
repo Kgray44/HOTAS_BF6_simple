@@ -192,7 +192,7 @@ set_target_properties(HOTASMapper PROPERTIES
 )
 
 if (WIN32)
-    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
+    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid d3d11 dxgi advapi32 shell32 cfgmgr32 dbghelp)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
     # The approved repair transaction restarts this executable elevated.  A

@@ -814,6 +814,9 @@ public:
     Q_INVOKABLE QVariantMap signalFlowUndo(qulonglong expectedRevision);
     Q_INVOKABLE QVariantMap signalFlowRedo(qulonglong expectedRevision);
     Q_INVOKABLE bool signalFlowSaveWorkspace(const QVariantMap &workspace);
+    // Viewport-only pan/zoom persistence must not invalidate the graph model.
+    // It can be debounced independently of topology-affecting workspace edits.
+    Q_INVOKABLE bool signalFlowSaveWorkspaceSilently(const QVariantMap &workspace);
     Q_INVOKABLE bool signalFlowSaveNodeLayout(const QString &objectId, double x, double y,
                                               bool pinned = false);
     Q_INVOKABLE QVariantMap signalFlowSetPortGroupCollapsed(const QString &cardId,
@@ -1017,7 +1020,11 @@ private:
                                           const QString &sourceControllerRecordId = {});
     bool commitSignalFlowCommand(MapperConfiguration before, const QString &description);
     QString signalFlowWorkspaceKey() const;
-    bool saveSignalFlowPresentation();
+    bool saveSignalFlowWorkspace(const QVariantMap &workspace, bool notifySignalFlow);
+    // Layout/workspace persistence is not necessarily a topology change. A
+    // card drop must be able to durably save its presentation metadata without
+    // invalidating the Signal Flow graph projection that QML renders.
+    bool saveSignalFlowPresentation(bool notifySignalFlow = true);
     void sampleAdaptiveResponseHistory();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
     void advanceAdaptiveResponseSimulator(float manualInput, const QString &scope,
@@ -1335,6 +1342,7 @@ private:
     quint64 m_uiSnapshotCount = 0;
     quint64 m_uiSnapshotTotalDurationUs = 0;
     qint64 m_uiSnapshotMaxDurationUs = 0;
+    mutable quint64 m_signalFlowPreviewCalls = 0;
     qint64 m_uiEventLoopMaxDelayMs = 0;
     quint64 m_uiEventLoopDelayOver16Ms = 0;
     quint64 m_uiEventLoopDelayOver50Ms = 0;
