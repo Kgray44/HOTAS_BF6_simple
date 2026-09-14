@@ -22,6 +22,10 @@ Item {
     property var graph: backendObject ? backendObject.signalFlowGraph : ({})
     property var source: ({})
     property var inspectedRoute: ({})
+    // Ports are selections in their own right.  This remains a view of the
+    // canonical projection, never a second endpoint/configuration model.
+    property var inspectedPort: ({})
+    property var inspectedPortOwner: ({})
     // Selection remembers the canonical edge under the pointer, not a
     // graph-local midpoint. It is restored with the route after a focused
     // editor round trip whenever that edge still exists.
@@ -29,6 +33,9 @@ Item {
     // Deck cards select into the same truthful inspector rather than acting
     // as decorative scenery around the routing controls.
     property var inspectedNode: ({})
+    property bool inspectorOpen: false
+    property real inspectorPositionX: -1
+    property real inspectorPositionY: -1
     property string query: ""
     property string mode: "configured"
     property string filter: "all"
@@ -37,6 +44,10 @@ Item {
     property bool noticeError: false
     property real zoom: 1.0
     property bool workspaceRestored: false
+    property var workspaceAnnotations: []
+    property var inspectedAnnotation: ({})
+    property string blockLibraryQuery: ""
+    property var blockLibraryProcessors: []
     property var liveTelemetry: ({})
     property bool liveMode: false
     property bool signalFocus: false
@@ -95,6 +106,7 @@ Item {
     // Hover is presentation-only: a graph card stays compact until the
     // pointer reaches it, then exposes every port section for direct work.
     property string hoveredNodeId: ""
+    property string hoveredPortId: ""
     // Native anchor qualification may explicitly render every port row. It
     // is test-only; ordinary graph presentation remains hover-driven.
     property bool diagnosticExpandAllNodeSections: false
@@ -321,8 +333,10 @@ Item {
         return ({
             "version": 1,
             "inspectedRouteId": String(inspectedRoute && inspectedRoute.id || ""),
+            "inspectedPortId": String(inspectedPort && (inspectedPort.endpointId || inspectedPort.id) || ""),
             "selectedSegmentId": selectedSegmentId,
             "inspectedNodeId": String(inspectedNode && inspectedNode.id || ""),
+            "inspectorOpen": inspectorOpen,
             "sourceId": String(source && source.id || ""),
             "mode": mode,
             "filter": filter,
@@ -364,6 +378,7 @@ Item {
             noticeError = false
             return true
         }
+        inspectorOpen = Boolean(presentationState.inspectorOpen)
         const nodes = graph.nodes || []
         for (let index = 0; index < nodes.length; ++index) {
             if (String(nodes[index].id || "") === String(presentationState.inspectedNodeId || "")) {
@@ -441,6 +456,54 @@ Item {
         }
         return matches
     }
+    function portOwner(port) {
+        if (!port) return ({})
+        const ownerId = String(port.ownerNodeId || "")
+        const candidates = graph.nodes || []
+        for (let index = 0; index < candidates.length; ++index) {
+            const candidate = candidates[index]
+            if (ownerId && nodeMatchesId(candidate, ownerId)) return candidate
+            const ports = candidate.ports || []
+            for (let portIndex = 0; portIndex < ports.length; ++portIndex) {
+                if (String(ports[portIndex].endpointId || ports[portIndex].id || "")
+                        === String(port.endpointId || port.id || "")) return candidate
+            }
+        }
+        return ({})
+    }
+    function portIsOutput(port) {
+        const owner = portOwner(port)
+        return Boolean(owner && owner.kind === "output") || String(port && port.direction || "") === "output"
+    }
+    function inspectPort(port, owner) {
+        if (!port || !(port.endpointId || port.id)) return false
+        if (routingActive) cancelRouting("", false)
+        inspectedPort = port
+        inspectedPortOwner = owner && owner.id ? owner : portOwner(port)
+        inspectedRoute = ({})
+        inspectedNode = ({})
+        source = ({})
+        inspectorOpen = true
+        ensureInspectorPosition()
+        notice = (port.label || "Signal Flow port") + " selected."
+        noticeError = false
+        return true
+    }
+    function portTopologySummary(port) {
+        if (!port) return "No port selected."
+        const routes = routesForPort(port, portIsOutput(port))
+        if (routes.length === 0) return "UNCONNECTED · no canonical route"
+        return routes.length + " canonical route" + (routes.length === 1 ? "" : "s")
+    }
+    function portHoverSummary(port, destination) {
+        if (!port) return "Signal Flow port"
+        const owner = portOwner(port)
+        const direction = destination ? "Output" : "Input"
+        const health = port.available ? "configuration valid" : "offline / unavailable"
+        return String(owner.label || "Signal Flow") + "\n" + String(port.label || port.technicalLabel || "Port")
+            + "\n" + String(port.kind || "other").toUpperCase() + " · " + direction
+            + "\n" + portTopologySummary(port) + " · " + health
+    }
     function routeHasProblem(route) { return String(route.health || "ready") !== "ready" }
     function portMatchesState(port, isOutput, state) {
         const normalizedState = String(state || routeStateFilter || "all")
@@ -494,6 +557,13 @@ Item {
             if (String(states[index].group || "") === String(group || "")) return Boolean(states[index].collapsed)
         return String(group || "") !== "Axes" && String(group || "") !== "Virtual Axes"
     }
+    function cardGroupHasExplicitState(nodeData, group) {
+        const states = cardGroups(nodeData)
+        for (let index = 0; index < states.length; ++index)
+            if (String(states[index].group || "") === String(group || ""))
+                return Boolean(states[index].explicit)
+        return false
+    }
     function cardGroupRouteCount(nodeData, group, destination) {
         const seen = ({})
         const cardPorts = portsForNode(nodeData)
@@ -534,7 +604,8 @@ Item {
         // A live source DragHandler belongs to its original port item. Keep
         // that one card expanded while the pointer moves across another card
         // that is opening as a possible destination.
-        return diagnosticExpandAllNodeSections || cardIsHovered(nodeData)
+        return diagnosticExpandAllNodeSections || (Boolean(graph.workspace && graph.workspace.autoExpandPorts !== false)
+            && cardIsHovered(nodeData))
             || cardKeepsActiveWireSource(nodeData)
     }
     function setNodeHovered(nodeData, hovered) {
@@ -550,10 +621,20 @@ Item {
         return true
     }
     function cardGroupCollapsed(nodeData, group, destination) {
-        // Graph cards deliberately minimize every section at rest. Hovering
-        // the card is the single, immediate expansion affordance; it never
-        // persists a workspace preference or mutates canonical configuration.
-        return !cardIsExpanded(nodeData)
+        // Precedence is intentional: an explicit user choice survives hover;
+        // an active task may reveal the one relevant group; only then does the
+        // page policy decide the at-rest density.
+        const taskReveal = cardGroupNeedsAttention(nodeData, group, destination)
+        if (cardGroupHasExplicitState(nodeData, group))
+            return taskReveal ? false : cardGroupStoredCollapsed(nodeData, group)
+        if (taskReveal || cardKeepsActiveWireSource(nodeData)) return false
+        const policy = String(graph.workspace && graph.workspace.portVisibility || "smart")
+        if (policy === "expanded") return false
+        if (policy === "compact") return true
+        if (policy === "connected") return cardGroupRouteCount(nodeData, group, destination) === 0
+        // Smart retains connected groups, while unused groups stay compact
+        // until a hover or task needs them.
+        return !cardIsExpanded(nodeData) && cardGroupRouteCount(nodeData, group, destination) === 0
     }
     function cardGroupPorts(nodeData, group, destination) {
         const storedCollapsed = cardGroupStoredCollapsed(nodeData, group)
@@ -563,7 +644,7 @@ Item {
         })
         // A collapsed group that is temporarily revealed by a live selection
         // shows the related endpoints, not a surprise bank of 32 controls.
-        if (!cardIsExpanded(nodeData) && storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
+        if (cardGroupCollapsed(nodeData, group, destination) && storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
                 && routeStateFilter === "all") {
             result = result.filter(function(port) {
                 return Boolean(port.mapped) || (source && source.id && (!destination
@@ -841,7 +922,12 @@ Item {
         if (routingActive) cancelRouting("", false)
         inspectedNode = nodeData
         inspectedRoute = ({})
+        inspectedPort = ({})
+        inspectedPortOwner = ({})
+        inspectedAnnotation = ({})
         source = ({})
+        inspectorOpen = true
+        ensureInspectorPosition()
         notice = (nodeData.label || "Signal Flow card") + " selected. Its saved identity, readiness, and endpoint summary are shown in the destination bus."
         noticeError = false
         return true
@@ -858,7 +944,11 @@ Item {
         inspectedRoute = ({})
         selectedSegmentId = ""
         inspectedNode = ({})
+        inspectedPort = ({})
+        inspectedPortOwner = ({})
+        inspectedAnnotation = ({})
         source = ({})
+        inspectorOpen = false
     }
     function dismissEmptyGraphAt(x, y) {
         const hit = hitWire(x, y)
@@ -2568,7 +2658,174 @@ Item {
         zoom = Number(graph.workspace.zoom || 1)
         graphViewport.contentX = Math.max(0, Number(graph.workspace.panX || 0))
         graphViewport.contentY = Math.max(0, Number(graph.workspace.panY || 0))
+        inspectorPositionX = Number(graph.workspace.inspectorX === undefined ? -1 : graph.workspace.inspectorX)
+        inspectorPositionY = Number(graph.workspace.inspectorY === undefined ? -1 : graph.workspace.inspectorY)
+        workspaceAnnotations = graph.workspace.annotations || []
         workspaceRestored = true
+    }
+    function ensureInspectorPosition() {
+        if (inspectorPositionX >= 0 && inspectorPositionY >= 0) return
+        const selectedNode = inspectedPortOwner && inspectedPortOwner.id ? inspectedPortOwner
+            : inspectedNode && inspectedNode.id ? inspectedNode : ({})
+        const selectedPosition = selectedNode && selectedNode.id
+            ? nodePosition(selectedNode, 0, 0) : ({ "x": root.width * 0.55, "y": root.height * 0.25 })
+        inspectorPositionX = Math.max(deck.space16, Math.min(root.width - 376,
+            Number(selectedPosition.x || 0) + 320))
+        inspectorPositionY = Math.max(deck.space16, Math.min(root.height - 320,
+            Number(selectedPosition.y || 0) + deck.space16))
+    }
+    function persistInspectorPosition() {
+        return backendObject.signalFlowSaveWorkspaceSilently(workspaceSnapshot({
+            "inspectorX": inspectorPositionX, "inspectorY": inspectorPositionY
+        }))
+    }
+    function persistAnnotations() {
+        const saved = backendObject.signalFlowSaveWorkspaceSilently(workspaceSnapshot({
+            "annotations": workspaceAnnotations
+        }))
+        if (!saved) {
+            notice = "Workspace annotation could not be saved."
+            noticeError = true
+        }
+        return saved
+    }
+    function annotationPosition(entry) {
+        if (!entry) return ({ "x": 0, "y": 0 })
+        const objectId = String(entry.attachedObjectId || "")
+        if (objectId.length > 0) {
+            const target = nodeForId(objectId)
+            if (target && target.id) {
+                const position = nodePosition(target, Number(target.x || 0), Number(target.y || 0))
+                return ({ "x": Number(position.x || 0) + Number(entry.x || 0),
+                    "y": Number(position.y || 0) + Number(entry.y || 0) })
+            }
+        }
+        const routeId = String(entry.attachedRouteId || "")
+        if (routeId.length > 0) {
+            const entryGeometry = (wireGeometry || []).filter(function(candidate) {
+                return String(candidate.routeId || "") === routeId
+            })[0]
+            const segment = entryGeometry && entryGeometry.segments && entryGeometry.segments[0]
+            if (segment) return ({ "x": (Number(segment.startX) + Number(segment.endX)) * 0.5 + Number(entry.x || 0),
+                "y": (Number(segment.startY) + Number(segment.endY)) * 0.5 + Number(entry.y || 0) })
+        }
+        return ({ "x": Number(entry.x || 0), "y": Number(entry.y || 0) })
+    }
+    function addAnnotation(kind, x, y) {
+        if (kind !== "note" && kind !== "group") return false
+        const id = kind + ":" + Date.now().toString(36) + ":" + Math.floor(Math.random() * 100000).toString(36)
+        const entry = ({ "id": id, "kind": kind, "title": kind === "note" ? "Text note" : "Group / Section",
+            "body": kind === "note" ? "Add a workspace note…" : "", "x": Number(x || 180), "y": Number(y || 180),
+            "width": kind === "note" ? 240 : 360, "height": kind === "note" ? 132 : 220,
+            "attachedObjectId": "", "attachedRouteId": "", "moveContents": false })
+        workspaceAnnotations = (workspaceAnnotations || []).concat([entry])
+        inspectedAnnotation = entry
+        inspectorOpen = true
+        ensureInspectorPosition()
+        persistAnnotations()
+        return true
+    }
+    function updateAnnotation(id, changes, persist) {
+        const next = []
+        let selected = ({})
+        const values = workspaceAnnotations || []
+        for (let index = 0; index < values.length; ++index) {
+            const current = values[index]
+            const updated = ({})
+            for (const key in current) updated[key] = current[key]
+            if (String(current.id || "") === String(id || "")) {
+                for (const key in changes) updated[key] = changes[key]
+                selected = updated
+            }
+            next.push(updated)
+        }
+        workspaceAnnotations = next
+        if (selected.id) inspectedAnnotation = selected
+        return persist === false ? true : persistAnnotations()
+    }
+    function annotationContentOrigins(group) {
+        const origins = ({})
+        if (!group || group.kind !== "group" || !group.moveContents) return origins
+        const left = Number(group.x || 0)
+        const top = Number(group.y || 0)
+        const right = left + Number(group.width || 0)
+        const bottom = top + Number(group.height || 0)
+        const values = workspaceAnnotations || []
+        for (let index = 0; index < values.length; ++index) {
+            const candidate = values[index]
+            if (String(candidate.id || "") === String(group.id || "")) continue
+            if (candidate.attachedObjectId || candidate.attachedRouteId) continue
+            const x = Number(candidate.x || 0)
+            const y = Number(candidate.y || 0)
+            if (x >= left && x <= right && y >= top && y <= bottom)
+                origins[String(candidate.id || "")] = ({ "x": x, "y": y })
+        }
+        return origins
+    }
+    function moveAnnotation(id, x, y, contentOrigins, persist, contentOriginX, contentOriginY) {
+        const next = []
+        let selected = ({})
+        const values = workspaceAnnotations || []
+        let originX = contentOriginX === undefined ? x : Number(contentOriginX)
+        let originY = contentOriginY === undefined ? y : Number(contentOriginY)
+        if (contentOriginX === undefined || contentOriginY === undefined) {
+            for (let index = 0; index < values.length; ++index) {
+                if (String(values[index].id || "") === String(id || "")) {
+                    originX = Number(values[index].x || 0)
+                    originY = Number(values[index].y || 0)
+                    break
+                }
+            }
+        }
+        for (let index = 0; index < values.length; ++index) {
+            const current = values[index]
+            const updated = ({})
+            for (const key in current) updated[key] = current[key]
+            if (String(current.id || "") === String(id || "")) {
+                updated.x = x
+                updated.y = y
+                selected = updated
+            } else if (contentOrigins && contentOrigins[String(current.id || "")]) {
+                const origin = contentOrigins[String(current.id || "")]
+                updated.x = Number(origin.x || 0) + x - originX
+                updated.y = Number(origin.y || 0) + y - originY
+            }
+            next.push(updated)
+        }
+        workspaceAnnotations = next
+        if (selected.id) inspectedAnnotation = selected
+        return persist === false ? true : persistAnnotations()
+    }
+    function removeAnnotation(id) {
+        workspaceAnnotations = (workspaceAnnotations || []).filter(function(entry) {
+            return String(entry.id || "") !== String(id || "")
+        })
+        if (String(inspectedAnnotation.id || "") === String(id || "")) inspectedAnnotation = ({})
+        return persistAnnotations()
+    }
+    function refreshBlockLibrary() {
+        const route = inspectedRoute && inspectedRoute.id ? inspectedRoute : ({})
+        const segments = route.segments || []
+        if (segments.length === 0) {
+            blockLibraryProcessors = []
+            return []
+        }
+        blockLibraryProcessors = backendObject.signalFlowAvailableProcessorsForSegment(
+            String(segments[0].id || ""), Number(graph.revision || 0)) || []
+        return blockLibraryProcessors
+    }
+    function openBlockLibrary() {
+        refreshBlockLibrary()
+        blockLibrary.open()
+    }
+    function closeInspector() {
+        inspectedRoute = ({})
+        inspectedNode = ({})
+        inspectedPort = ({})
+        inspectedPortOwner = ({})
+        inspectedAnnotation = ({})
+        selectedSegmentId = ""
+        inspectorOpen = false
     }
     function workspaceSnapshot(changes) {
         const saved = graph.workspace || ({})
@@ -2583,8 +2840,13 @@ Item {
             "wireStyle": savedValue("wireStyle", "smooth"),
             "densityMode": savedValue("densityMode", "detailed"),
             "inspectorWidth": savedValue("inspectorWidth", 360),
+            "inspectorX": savedValue("inspectorX", inspectorPositionX),
+            "inspectorY": savedValue("inspectorY", inspectorPositionY),
+            "portVisibility": savedValue("portVisibility", "smart"),
+            "autoExpandPorts": savedValue("autoExpandPorts", true),
             "layoutLocked": savedValue("layoutLocked", false),
-            "snapToGrid": savedValue("snapToGrid", true)
+            "snapToGrid": savedValue("snapToGrid", true),
+            "annotations": changes && changes.annotations !== undefined ? changes.annotations : workspaceAnnotations
         })
     }
     function persistWorkspace(changes, successMessage) {
@@ -2624,6 +2886,10 @@ Item {
     function cycleDensityMode() {
         const current = graph.workspace && graph.workspace.densityMode || "detailed"
         return setDensityMode(current === "detailed" ? "compact" : current === "compact" ? "overview" : "detailed")
+    }
+    function setPortVisibility(modeName) {
+        if (modeName !== "smart" && modeName !== "connected" && modeName !== "compact" && modeName !== "expanded") return false
+        return persistWorkspace({ "portVisibility": modeName }, "Port visibility set to " + modeName + ".")
     }
     function toggleLayoutLocked() {
         const locked = Boolean(graph.workspace && graph.workspace.layoutLocked)
@@ -2665,10 +2931,9 @@ Item {
         else if (aliasDialog.visible) aliasDialog.close()
         else if (defaultsDialog.visible) defaultsDialog.close()
         else if (explainDialog.visible) explainDialog.close()
-        else if (source && source.id || inspectedRoute && inspectedRoute.id || inspectedNode && inspectedNode.id) {
+        else if (source && source.id || inspectedRoute && inspectedRoute.id || inspectedNode && inspectedNode.id || inspectedPort && (inspectedPort.id || inspectedPort.endpointId)) {
             source = ({})
-            inspectedRoute = ({})
-            inspectedNode = ({})
+            closeInspector()
             notice = "Selection cleared."
             noticeError = false
         } else return false
@@ -2719,6 +2984,8 @@ Item {
 
     onGraphChanged: {
         graphRefreshCount += 1
+        if (graph.workspace && graph.workspace.annotations !== undefined)
+            workspaceAnnotations = graph.workspace.annotations || []
         refreshSceneBounds()
         const nextRouteIds = ({})
         const nextRoutes = graph.routes || []
@@ -2859,6 +3126,12 @@ Item {
     onInspectedRouteChanged: {
         if (routingActive && inspectedRoute && inspectedRoute.id)
             cancelRouting("Connection cancelled because a route was selected.", true)
+        if (inspectedRoute && inspectedRoute.id) {
+            inspectedPort = ({})
+            inspectedPortOwner = ({})
+            inspectorOpen = true
+            ensureInspectorPosition()
+        }
         restartInspectorMotion()
         refreshSceneBounds()
         requestWirePaint()
@@ -2871,9 +3144,21 @@ Item {
     onInspectedNodeChanged: {
         if (routingActive && inspectedNode && inspectedNode.id)
             cancelRouting("Connection cancelled because a card was selected.", true)
+        if (inspectedNode && inspectedNode.id) {
+            inspectedPort = ({})
+            inspectedPortOwner = ({})
+            inspectorOpen = true
+            ensureInspectorPosition()
+        }
         restartInspectorMotion()
         refreshSceneBounds()
         requestWirePaint()
+    }
+    onInspectedPortChanged: {
+        if (inspectedPort && (inspectedPort.id || inspectedPort.endpointId)) {
+            inspectorOpen = true
+            ensureInspectorPosition()
+        }
     }
     onModeChanged: {
         if (mode === "effective" && routingActive)
@@ -3484,21 +3769,30 @@ Item {
             TapHandler {
                 acceptedButtons: Qt.LeftButton
                 onTapped: {
-                    if (graphPortRow.destination) root.connect(graphPortRow.port, false)
-                    else root.selectSource(graphPortRow.port)
+                    if (graphPortRow.destination && root.routingActive) root.connect(graphPortRow.port, false)
+                    else root.inspectPort(graphPortRow.port, root.portOwner(graphPortRow.port))
+                }
+            }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: {
+                    deckPortContextMenu.targetPort = graphPortRow.port
+                    deckPortContextMenu.targetOwner = root.portOwner(graphPortRow.port)
+                    deckPortContextMenu.open()
                 }
             }
             HoverHandler {
                 id: portHover
                 onHoveredChanged: {
+                    root.hoveredPortId = hovered ? String(graphPortRow.port.endpointId || graphPortRow.port.id || "") : ""
                     if (hovered && graphPortRow.destination) root.previewDestination(graphPortRow.port)
                     else if (!hovered && graphPortRow.destination) root.clearDestinationPreview(graphPortRow.port)
                 }
             }
             Keys.onPressed: function(event) {
                 if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Space) return
-                if (graphPortRow.destination) root.connect(graphPortRow.port, false)
-                else root.selectSource(graphPortRow.port)
+                if (graphPortRow.destination && root.routingActive) root.connect(graphPortRow.port, false)
+                else root.inspectPort(graphPortRow.port, root.portOwner(graphPortRow.port))
                 event.accepted = true
             }
             Rectangle {
@@ -3508,7 +3802,7 @@ Item {
                 visible: parent.activeFocus
             }
             ToolTip.visible: portHover.hovered
-            ToolTip.text: root.portHint(graphPortRow.port, graphPortRow.destination)
+            ToolTip.text: root.portHoverSummary(graphPortRow.port, graphPortRow.destination)
             ToolTip.delay: 350
         }
     }
@@ -4046,6 +4340,96 @@ Item {
                                 }
                             }
                         }
+                        // Workspace annotations sit on the presentation plane.
+                        // They neither register ports nor participate in wire
+                        // geometry, hit testing, topology, or runtime state.
+                        Repeater {
+                            model: root.workspaceAnnotations || []
+                            delegate: Rectangle {
+                                id: annotationCard
+                                required property var modelData
+                                readonly property var displayPosition: root.annotationPosition(modelData)
+                                x: Number(displayPosition.x || 0)
+                                y: Number(displayPosition.y || 0)
+                                width: Number(modelData.width || (modelData.kind === "group" ? 360 : 240))
+                                height: Number(modelData.height || (modelData.kind === "group" ? 220 : 132))
+                                z: modelData.kind === "group" ? 1.2 : 3.5
+                                radius: modelData.kind === "group" ? deck.radiusPanel : deck.radiusControl
+                                color: modelData.kind === "group"
+                                    ? Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.20)
+                                    : Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.94)
+                                border.width: String(root.inspectedAnnotation.id || "") === String(modelData.id || "") ? 2 : 1
+                                border.color: modelData.kind === "group" ? deck.graphLabel : deck.border
+                                clip: true
+                                Column {
+                                    anchors.fill: parent; anchors.margins: deck.space8; spacing: deck.space4
+                                    Item {
+                                        width: parent.width; height: 18
+                                        Text {
+                                            id: annotationDragGrip
+                                            width: 16; anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                            text: "⋮⋮"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 11
+                                        }
+                                        TextInput {
+                                            id: annotationTitle
+                                            anchors.left: annotationDragGrip.right; anchors.leftMargin: deck.space4
+                                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                            text: modelData.title || (modelData.kind === "group" ? "Group / Section" : "Text note")
+                                            color: modelData.kind === "group" ? deck.textSecondary : deck.textPrimary
+                                            font.family: deck.bodyFont; font.pixelSize: modelData.kind === "group" ? 11 : 10; font.bold: true
+                                            selectByMouse: true
+                                            onEditingFinished: root.updateAnnotation(modelData.id, { "title": text })
+                                        }
+                                        MouseArea {
+                                            width: annotationDragGrip.width; height: parent.height; anchors.left: parent.left
+                                            cursorShape: Qt.SizeAllCursor
+                                            property real startX: 0; property real startY: 0
+                                            property real originX: 0; property real originY: 0
+                                            property var contentOrigins: ({})
+                                            onPressed: function(mouse) {
+                                                startX = mouse.x; startY = mouse.y
+                                                originX = Number(modelData.x || 0); originY = Number(modelData.y || 0)
+                                                contentOrigins = root.annotationContentOrigins(modelData)
+                                                root.inspectedAnnotation = modelData; root.inspectorOpen = true; root.ensureInspectorPosition()
+                                            }
+                                            onPositionChanged: function(mouse) {
+                                                if (!pressed) return
+                                                root.moveAnnotation(modelData.id, originX + mouse.x - startX,
+                                                    originY + mouse.y - startY, contentOrigins, false, originX, originY)
+                                            }
+                                            onReleased: root.persistAnnotations()
+                                        }
+                                    }
+                                    TextArea {
+                                        visible: modelData.kind === "note"
+                                        width: parent.width; height: parent.height - 28
+                                        text: modelData.body || ""
+                                        color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9
+                                        wrapMode: TextArea.Wrap; selectByMouse: true
+                                        background: Rectangle { color: "transparent"; border.color: "transparent" }
+                                        onFocusChanged: if (!focus) root.updateAnnotation(modelData.id, { "body": text })
+                                    }
+                                    Text {
+                                        visible: modelData.kind === "group"
+                                        width: parent.width; text: modelData.body || "Presentation-only workspace section"
+                                        color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.right: parent.right; anchors.bottom: parent.bottom; width: 18; height: 18
+                                    cursorShape: Qt.SizeFDiagCursor
+                                    property real startX: 0; property real startY: 0
+                                    property real originWidth: 0; property real originHeight: 0
+                                    onPressed: function(mouse) { startX = mouse.x; startY = mouse.y; originWidth = annotationCard.width; originHeight = annotationCard.height }
+                                    onPositionChanged: function(mouse) {
+                                        if (!pressed) return
+                                        root.updateAnnotation(modelData.id, { "width": Math.max(80, originWidth + mouse.x - startX),
+                                            "height": Math.max(40, originHeight + mouse.y - startY) }, false)
+                                    }
+                                    onReleased: root.persistAnnotations()
+                                }
+                            }
+                        }
                         // The ghost and guide stay under the freely moving card. They make a
                         // release-time proposal explicit without consuming pointer ownership.
                         Item {
@@ -4101,6 +4485,11 @@ Item {
                                 const hit = root.hitWire(mouse.x, mouse.y)
                                 if (!hit || !hit.route) {
                                     if (mouse.button === Qt.LeftButton) root.clearGraphSelection()
+                                    else {
+                                        deckCanvasContextMenu.canvasX = mouse.x
+                                        deckCanvasContextMenu.canvasY = mouse.y
+                                        deckCanvasContextMenu.open()
+                                    }
                                     return
                                 }
                                 root.inspectedRoute = hit.route
@@ -4397,10 +4786,15 @@ Item {
                                             anchors.centerIn: parent
                                             width: 30; height: 30
                                             hoverEnabled: true
+                                            acceptedButtons: Qt.LeftButton | Qt.RightButton
                                             onClicked: {
-                                                root.inspectedNode = processorNode.modelData
-                                                root.inspectedRoute = root.routeForId(modelData.routeId)
-                                                root.selectedSegmentId = String(modelData.routeSegmentId || "")
+                                                if (mouse.button === Qt.RightButton) {
+                                                    deckPortContextMenu.targetPort = modelData
+                                                    deckPortContextMenu.targetOwner = processorNode.modelData
+                                                    deckPortContextMenu.open()
+                                                    return
+                                                }
+                                                root.inspectPort(modelData, processorNode.modelData)
                                             }
                                         }
                                     }
@@ -4620,10 +5014,8 @@ Item {
                 // Contextual inspector: its reserved space is released when
                 // inactive, while its content crossfades rather than making a
                 // selected object appear to jump to a different panel.
-                readonly property bool inspectorActive: root.width >= 1600
-                    && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
-                        || Boolean(root.inspectedNode && root.inspectedNode.id))
-                visible: root.width >= 1600
+                readonly property bool inspectorActive: false
+                visible: false
                 enabled: inspectorActive
                 clip: true
                 opacity: inspectorActive ? 1 : 0
@@ -4700,6 +5092,74 @@ Item {
         }
     }
 
+    Popup {
+        id: blockLibrary
+        parent: Overlay.overlay
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: Math.min(420, root.width - 32)
+        height: Math.min(520, root.height - 32)
+        x: deck.space16
+        y: Math.max(deck.space16, root.height - height - deck.space16)
+        padding: deck.cardPaddingTechnical
+        background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        contentItem: ColumnLayout {
+            spacing: deck.space8
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "BLOCK LIBRARY"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+                DeckButton { text: "×"; width: 28; height: 22; padding: 0; onClicked: blockLibrary.close() }
+            }
+            TextField {
+                id: blockLibrarySearch
+                Layout.fillWidth: true
+                placeholderText: "Filter blocks"
+                text: root.blockLibraryQuery
+                onTextChanged: root.blockLibraryQuery = text
+            }
+            ScrollView {
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                Column {
+                    width: parent.availableWidth; spacing: deck.space10
+                    Text { visible: root.blockLibraryQuery.length === 0 || "inputs outputs".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; text: "INPUTS & OUTPUTS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    DeckButton {
+                        visible: root.blockLibraryQuery.length === 0 || "configure device inputs outputs".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0
+                        width: parent.width; text: "Configure Devices & Outputs…"
+                        helpText: "Signal Flow only shows canonical Device Rig endpoints. Add hardware or virtual outputs in the authoritative Devices workflow."
+                        onClicked: root.openCardSettings({ "id": "library", "kind": "input" })
+                    }
+                    Text { text: "PROCESSORS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { visible: root.blockLibraryProcessors.length === 0; width: parent.width; text: "Select a visible wire, then open the library to list only canonical processors compatible with that segment."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                    Repeater {
+                        model: root.blockLibraryProcessors
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property string processorKind: String(modelData.kind || modelData.id || "")
+                            width: parent.width; height: 44; radius: deck.radiusControl
+                            color: libraryProcessorHover.containsMouse ? deck.selected : deck.control
+                            border.color: deck.border
+                            Drag.active: libraryProcessorDrag.active
+                            Drag.source: this
+                            Drag.keys: ["signal-flow-processor"]
+                            Drag.hotSpot.x: width / 2; Drag.hotSpot.y: height / 2
+                            Row {
+                                anchors.fill: parent; anchors.margins: deck.space8; spacing: deck.space8
+                                Text { width: parent.width - 90; anchors.verticalCenter: parent.verticalCenter; text: modelData.label || processorKind; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; elide: Text.ElideRight }
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: "DRAG"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                            }
+                            HoverHandler { id: libraryProcessorHover }
+                            DragHandler { id: libraryProcessorDrag; enabled: root.mode === "configured" }
+                        }
+                    }
+                    Text { visible: root.blockLibraryQuery.length === 0 || "other note group section".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; text: "OTHER"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    DeckButton { visible: root.blockLibraryQuery.length === 0 || "text note".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; width: parent.width; text: "Text Note"; helpText: "Add a presentation-only note with no ports or runtime meaning."; onClicked: root.addAnnotation("note", graphViewport.contentX / root.zoom + 160, graphViewport.contentY / root.zoom + 160) }
+                    DeckButton { visible: root.blockLibraryQuery.length === 0 || "group section".indexOf(root.blockLibraryQuery.toLowerCase()) >= 0; width: parent.width; text: "Group / Section"; helpText: "Add a presentation-only organization frame; it cannot change topology or processing."; onClicked: root.addAnnotation("group", graphViewport.contentX / root.zoom + 120, graphViewport.contentY / root.zoom + 120) }
+                }
+            }
+        }
+    }
+
     // Notices float above the graph: feedback must never push the topology
     // down or turn an ordinary action into a permanent status strip.
     Popup {
@@ -4736,28 +5196,54 @@ Item {
     Popup {
         id: compactInspector
         parent: Overlay.overlay
-        visible: root.width < 1600 && (Boolean(root.inspectedRoute && root.inspectedRoute.id)
-            || Boolean(root.inspectedNode && root.inspectedNode.id))
+        // The Inspector is independently summonable from the workspace menu.
+        // Selection enriches it; it is never a prerequisite for opening it.
+        visible: root.inspectorOpen
         modal: false
         focus: false
         closePolicy: Popup.NoAutoClose
-        width: Math.min(360, root.width - 32)
-        height: Math.min(420, root.height - 32)
-        x: root.width - width - deck.space16
-        y: Math.max(deck.space16, (root.height - height) * 0.5)
+        width: Math.min(390, root.width - 32)
+        height: Math.min(500, root.height - 32)
+        x: Math.max(deck.space16, Math.min(root.width - width - deck.space16, root.inspectorPositionX))
+        y: Math.max(deck.space16, Math.min(root.height - height - deck.space16, root.inspectorPositionY))
         padding: deck.cardPaddingTechnical
         background: Rectangle { radius: deck.radiusPanel; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         contentItem: ColumnLayout {
             spacing: deck.space8
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "INSPECTOR"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
-                DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close inspector"; onClicked: { root.inspectedRoute = ({}); root.inspectedNode = ({}) } }
+                Item {
+                    Layout.fillWidth: true; Layout.preferredHeight: 22
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: "INSPECTOR"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.SizeAllCursor
+                        property real startX: 0; property real startY: 0
+                        onPressed: function(mouse) { startX = mouse.x; startY = mouse.y }
+                        onPositionChanged: function(mouse) {
+                            if (!pressed) return
+                            root.inspectorPositionX = Math.max(deck.space16, Math.min(root.width - compactInspector.width - deck.space16,
+                                root.inspectorPositionX + mouse.x - startX))
+                            root.inspectorPositionY = Math.max(deck.space16, Math.min(root.height - compactInspector.height - deck.space16,
+                                root.inspectorPositionY + mouse.y - startY))
+                        }
+                        onReleased: root.persistInspectorPosition()
+                    }
+                }
+                DeckButton { text: "×"; width: 28; height: 22; padding: 0; Accessible.name: "Close inspector"; onClicked: root.closeInspector() }
             }
-            Text { Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode.label || "Signal Flow object"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId) ? root.inspectedPort.label || root.inspectedPort.technicalLabel || "Signal Flow port" : root.inspectedAnnotation && root.inspectedAnnotation.id ? root.inspectedAnnotation.title || "Workspace annotation" : root.inspectedNode.label || "Signal Flow object"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); Layout.fillWidth: true; text: String(root.inspectedAnnotation.kind || "note").toUpperCase() + " · PRESENTATION ONLY\nThis object has no ports, topology, processor state, or runtime meaning."; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: String(root.inspectedPort.technicalLabel || root.inspectedPort.id || "") + "\n" + String(root.inspectedPort.kind || "other").toUpperCase() + " · " + (root.portIsOutput(root.inspectedPort) ? "OUTPUT" : "INPUT") + " · " + String(root.inspectedPortOwner.label || "Signal Flow"); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WrapAnywhere }
+            Text { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId)); Layout.fillWidth: true; text: root.portTopologySummary(root.inspectedPort) + "\n" + (root.inspectedPort.available ? "AVAILABLE · configuration valid" : "OFFLINE · configuration remains valid"); color: root.inspectedPort.available ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
             Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
             Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); Layout.fillWidth: true; text: String(root.inspectedNode.detail || ""); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
             Item { Layout.fillHeight: true }
+            DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id && root.inspectedAnnotation.kind === "group"); text: root.inspectedAnnotation.moveContents ? "Move contained annotations: on" : "Move contained annotations: off"; Layout.fillWidth: true; onClicked: root.updateAnnotation(root.inspectedAnnotation.id, { "moveContents": !root.inspectedAnnotation.moveContents }) }
+            DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); text: "Detach annotation"; enabled: Boolean(root.inspectedAnnotation.attachedObjectId || root.inspectedAnnotation.attachedRouteId); Layout.fillWidth: true; onClicked: root.updateAnnotation(root.inspectedAnnotation.id, { "attachedObjectId": "", "attachedRouteId": "" }) }
+            DeckButton { visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id); text: "Delete annotation"; destructive: true; Layout.fillWidth: true; onClicked: root.removeAnnotation(root.inspectedAnnotation.id) }
+            DeckButton { visible: Boolean(root.inspectedPort && (root.inspectedPort.id || root.inspectedPort.endpointId) && !root.portIsOutput(root.inspectedPort)); text: "Start connection"; enabled: root.mode === "configured" && root.inspectedPort.available; Layout.fillWidth: true; onClicked: root.armSource(root.inspectedPort, false) }
+            DeckButton { visible: Boolean(root.inspectedPort && root.routesForPort(root.inspectedPort, root.portIsOutput(root.inspectedPort)).length > 0); text: "Inspect route"; Layout.fillWidth: true; onClicked: { root.inspectedRoute = root.routesForPort(root.inspectedPort, root.portIsOutput(root.inspectedPort))[0]; root.selectedSegmentId = "" } }
+            DeckButton { visible: Boolean(root.inspectedPort && root.inspectedPortOwner && root.inspectedPortOwner.id); text: root.portIsOutput(root.inspectedPort) ? "Open output setup" : "Open full settings"; Layout.fillWidth: true; onClicked: { if (root.portIsOutput(root.inspectedPort)) root.openCardSettings(root.inspectedPortOwner); else root.openFullSettings("axis", root.routesForPort(root.inspectedPort, false)[0] || ({})) } }
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Explain route"; Layout.fillWidth: true; onClicked: root.explainRoute() }
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Disconnect"; destructive: true; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
         }
@@ -4824,6 +5310,8 @@ Item {
         title: "Signal Flow tools"
         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
         MenuItem { text: "Fit graph"; onTriggered: root.fitGraph() }
+        MenuItem { text: "Open Block Library"; onTriggered: root.openBlockLibrary() }
+        MenuItem { text: "Show Inspector"; onTriggered: { root.inspectorOpen = true; root.ensureInspectorPosition() } }
         MenuItem { text: "Auto-layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.applyAutoLayout() }
         MenuItem { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onTriggered: root.toggleLayoutLocked() }
         MenuItem { text: "Snap to Grid"; checkable: true; checked: root.snapToGridEnabled; onTriggered: root.toggleSnapToGrid() }
@@ -4839,6 +5327,30 @@ Item {
         MenuItem { text: "Default connections"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: root.preview("unassigned") }
         MenuItem { text: "Replace all…"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: root.preview("replace-all") }
         MenuItem { text: "Manage aliases"; enabled: root.mode === "configured" && root.graph.editable; onTriggered: aliasDialog.open() }
+    }
+
+    Menu {
+        id: deckCanvasContextMenu
+        property real canvasX: 160
+        property real canvasY: 160
+        title: "Signal Flow workspace"
+        background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        MenuItem { text: "Show Inspector"; onTriggered: { root.inspectorOpen = true; root.ensureInspectorPosition() } }
+        MenuItem { text: "Open Block Library"; onTriggered: root.openBlockLibrary() }
+        MenuSeparator {}
+        MenuItem { text: "Add Text Note"; onTriggered: root.addAnnotation("note", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
+        MenuItem { text: "Add Group / Section"; onTriggered: root.addAnnotation("group", deckCanvasContextMenu.canvasX, deckCanvasContextMenu.canvasY) }
+        MenuSeparator {}
+        MenuItem { text: "Port visibility: Smart"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "smart"; onTriggered: root.setPortVisibility("smart") }
+        MenuItem { text: "Port visibility: Connected Only"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "connected"; onTriggered: root.setPortVisibility("connected") }
+        MenuItem { text: "Port visibility: Compact"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "compact"; onTriggered: root.setPortVisibility("compact") }
+        MenuItem { text: "Port visibility: Expanded"; checkable: true; checked: String(root.graph.workspace && root.graph.workspace.portVisibility || "smart") === "expanded"; onTriggered: root.setPortVisibility("expanded") }
+        MenuItem { text: "Wire style: " + ((root.graph.workspace && root.graph.workspace.wireStyle) || "smooth"); onTriggered: root.toggleWireStyle() }
+        MenuItem { text: root.graph.workspace && root.graph.workspace.layoutLocked ? "Unlock layout" : "Lock layout"; onTriggered: root.toggleLayoutLocked() }
+        MenuItem { text: "Fit all"; onTriggered: root.fitGraph() }
+        MenuItem { text: "Auto layout"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.applyAutoLayout() }
+        MenuItem { text: "Undo"; enabled: backendObject.signalFlowCanUndo; onTriggered: root.keyboardAction("undo") }
+        MenuItem { text: "Redo"; enabled: backendObject.signalFlowCanRedo; onTriggered: root.keyboardAction("redo") }
     }
 
     Menu {
@@ -4867,9 +5379,62 @@ Item {
             enabled: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.objectId)
             onTriggered: root.toggleNodePinned(deckNodeContextMenu.targetNode)
         }
+        MenuItem {
+            text: "Attach selected annotation"
+            visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id)
+            enabled: Boolean(deckNodeContextMenu.targetNode && deckNodeContextMenu.targetNode.id)
+            onTriggered: root.updateAnnotation(root.inspectedAnnotation.id, {
+                "attachedObjectId": String(deckNodeContextMenu.targetNode.objectId || deckNodeContextMenu.targetNode.id),
+                "attachedRouteId": "", "x": 0, "y": -36
+            })
+        }
         MenuItem { text: "Center selection"; enabled: Boolean(root.inspectedRoute && root.inspectedRoute.id); onTriggered: root.focusCurrentSelection() }
         MenuSeparator {}
         MenuItem { text: "Auto-layout unpinned cards"; enabled: root.graph.editable && !(root.graph.workspace && root.graph.workspace.layoutLocked); onTriggered: root.applyAutoLayout() }
+    }
+
+    Menu {
+        id: deckPortContextMenu
+        property var targetPort: ({})
+        property var targetOwner: ({})
+        readonly property bool targetIsOutput: root.portIsOutput(targetPort)
+        readonly property var targetRoutes: root.routesForPort(targetPort, targetIsOutput)
+        title: targetPort && targetPort.label ? targetPort.label : "Signal Flow port"
+        background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: deck.border; border.width: 1 }
+        MenuItem { text: "Inspect port"; enabled: Boolean(deckPortContextMenu.targetPort && (deckPortContextMenu.targetPort.id || deckPortContextMenu.targetPort.endpointId)); onTriggered: root.inspectPort(deckPortContextMenu.targetPort, deckPortContextMenu.targetOwner) }
+        MenuItem {
+            text: "Start connection"
+            visible: !deckPortContextMenu.targetIsOutput
+            enabled: root.mode === "configured" && Boolean(deckPortContextMenu.targetPort && deckPortContextMenu.targetPort.available)
+            onTriggered: root.armSource(deckPortContextMenu.targetPort, false)
+        }
+        MenuItem {
+            text: deckPortContextMenu.targetRoutes.length === 1 ? "Inspect route" : "Inspect first route"
+            visible: deckPortContextMenu.targetRoutes.length > 0
+            onTriggered: {
+                root.inspectedRoute = deckPortContextMenu.targetRoutes[0]
+                root.selectedSegmentId = ""
+            }
+        }
+        MenuItem {
+            text: deckPortContextMenu.targetIsOutput ? "Open output setup" : "Open axis settings"
+            enabled: Boolean(deckPortContextMenu.targetOwner && deckPortContextMenu.targetOwner.id)
+            onTriggered: {
+                if (deckPortContextMenu.targetIsOutput) root.openCardSettings(deckPortContextMenu.targetOwner)
+                else root.openFullSettings("axis", deckPortContextMenu.targetRoutes.length > 0
+                    ? deckPortContextMenu.targetRoutes[0] : ({}))
+            }
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Disconnect route"
+            visible: deckPortContextMenu.targetRoutes.length > 0
+            enabled: root.mode === "configured"
+            onTriggered: {
+                root.inspectedRoute = deckPortContextMenu.targetRoutes[0]
+                root.disconnectSelected()
+            }
+        }
     }
 
     Menu {
@@ -4908,6 +5473,14 @@ Item {
                 root.source = ({})
                 root.disconnectSelected()
             }
+        }
+        MenuItem {
+            text: "Attach selected annotation"
+            visible: Boolean(root.inspectedAnnotation && root.inspectedAnnotation.id)
+            onTriggered: root.updateAnnotation(root.inspectedAnnotation.id, {
+                "attachedObjectId": "", "attachedRouteId": String(deckRouteContextMenu.targetRoute.id || ""),
+                "x": 18, "y": -34
+            })
         }
     }
 

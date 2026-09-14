@@ -336,8 +336,13 @@ Item {
         const node = nodeFor(kind)
         const groups = node.portGroups || []
         let collapsed = false
+        let explicit = false
         for (let index = 0; index < groups.length; ++index) {
-            if (groups[index].group === group) { collapsed = Boolean(groups[index].collapsed); break }
+            if (groups[index].group === group) {
+                collapsed = Boolean(groups[index].collapsed)
+                explicit = Boolean(groups[index].explicit)
+                break
+            }
         }
         // A persistent collapsed preference remains intact, but the group
         // temporarily opens while the active connection gesture can use it.
@@ -349,7 +354,20 @@ Item {
                     return false
             }
         }
-        return collapsed
+        if (explicit) return collapsed
+        const ports = node.ports || []
+        let routeCount = 0
+        for (let index = 0; index < ports.length; ++index) {
+            if (ports[index].group === group)
+                routeCount += routesForPort(ports[index], kind === "output").length
+        }
+        const policy = String(graph.workspace && graph.workspace.portVisibility || "smart")
+        if (policy === "expanded") return false
+        if (policy === "compact") return true
+        // Smart and Connected Only retain groups that describe canonical
+        // routes; unconnected banks stay compact until an active task needs
+        // them. This is presentation policy, not topology state.
+        return routeCount === 0
     }
     function portsForGroup(kind, group, limit) {
         const ports = (nodeFor(kind).ports || []).filter(function(port) {
@@ -1429,8 +1447,15 @@ Item {
             "wireStyle": savedValue("wireStyle", "smooth"),
             "densityMode": savedValue("densityMode", "detailed"),
             "inspectorWidth": savedValue("inspectorWidth", 360),
+            "inspectorX": savedValue("inspectorX", -1),
+            "inspectorY": savedValue("inspectorY", -1),
+            "portVisibility": savedValue("portVisibility", "smart"),
+            "autoExpandPorts": savedValue("autoExpandPorts", true),
             "layoutLocked": savedValue("layoutLocked", false),
-            "snapToGrid": savedValue("snapToGrid", true)
+            "snapToGrid": savedValue("snapToGrid", true),
+            // Preserve presentation-only annotations created in Flight Deck;
+            // the shared themes never reinterpret them as topology.
+            "annotations": savedValue("annotations", [])
         })
     }
     function persistWorkspace(changes, successMessage) {

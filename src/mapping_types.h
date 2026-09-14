@@ -856,6 +856,9 @@ constexpr int kMaximumSignalFlowProcessorPath = 16;
 constexpr int kMaximumSignalFlowWorkspaces = 128;
 constexpr int kMaximumSignalFlowNodeLayouts = 2048;
 constexpr int kMaximumSignalFlowPortGroupStates = 2048;
+// Notes and sections are workspace annotations only.  Bound them separately
+// from canonical topology so presentation never grows the runtime model.
+constexpr int kMaximumSignalFlowAnnotations = 512;
 
 enum class SignalFlowPortKind : int {
     Axis = 0,
@@ -971,11 +974,33 @@ struct SignalFlowWorkspaceState {
     QString wireStyle = u"smooth"_qs;
     QString densityMode = u"detailed"_qs;
     int inspectorWidth = 360;
+    float inspectorX = -1.0F;
+    float inspectorY = -1.0F;
+    QString portVisibility = u"smart"_qs;
+    bool autoExpandPorts = true;
     bool layoutLocked = false;
     // Workspace-only assistance. This has no bearing on routes, compilation,
     // or runtime mapping; it merely decides whether a released graph card may
     // settle onto a nearby visible grid or alignment candidate.
     bool snapToGrid = true;
+};
+
+// An annotation deliberately has no endpoint, route, processor, or runtime
+// identity.  An optional target key is a layout attachment only: it lets a
+// note follow a visible object without creating topology or configuration.
+struct SignalFlowAnnotation {
+    QString workspaceKey;
+    QString id;
+    QString kind;
+    QString title;
+    QString body;
+    float x = 0.0F;
+    float y = 0.0F;
+    float width = 220.0F;
+    float height = 120.0F;
+    QString attachedObjectId;
+    QString attachedRouteId;
+    bool moveContents = false;
 };
 
 struct SignalFlowNodeLayout {
@@ -1006,6 +1031,7 @@ struct SignalFlowState {
     std::vector<SignalFlowWorkspaceState> workspaces;
     std::vector<SignalFlowNodeLayout> nodeLayouts;
     std::vector<SignalFlowPortGroupState> portGroups;
+    std::vector<SignalFlowAnnotation> annotations;
 };
 
 struct MapperConfiguration {

@@ -3798,10 +3798,25 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
     workspace.zoom = 1.2F;
     workspace.wireStyle = QStringLiteral("orthogonal");
     workspace.densityMode = QStringLiteral("compact");
+    workspace.inspectorX = 612.0F;
+    workspace.inspectorY = 184.0F;
+    workspace.portVisibility = QStringLiteral("connected");
+    workspace.autoExpandPorts = false;
     workspace.layoutLocked = true;
     workspace.snapToGrid = false;
     configuration.signalFlow.workspaces.push_back(workspace);
     configuration.signalFlow.nodeLayouts.push_back({workspace.key, recreated->id, 420.0F, 180.0F, true});
+    SignalFlowAnnotation annotation;
+    annotation.workspaceKey = workspace.key;
+    annotation.id = QStringLiteral("note:handoff");
+    annotation.kind = QStringLiteral("note");
+    annotation.title = QStringLiteral("Owner review note");
+    annotation.body = QStringLiteral("Presentation-only evidence.");
+    annotation.x = 188.0F;
+    annotation.y = 244.0F;
+    annotation.width = 280.0F;
+    annotation.height = 128.0F;
+    configuration.signalFlow.annotations.push_back(annotation);
 
     bool valid = false;
     const QJsonObject serialized = ConfigStore::toJson(configuration);
@@ -3817,7 +3832,14 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
     QCOMPARE(persisted->id, recreated->id);
     QCOMPARE(restored.signalFlow.workspaces.size(), size_t{1});
     QCOMPARE(restored.signalFlow.nodeLayouts.size(), size_t{1});
+    QCOMPARE(restored.signalFlow.annotations.size(), size_t{1});
     QCOMPARE(restored.signalFlow.workspaces.front().wireStyle, QStringLiteral("orthogonal"));
+    QCOMPARE(restored.signalFlow.workspaces.front().inspectorX, 612.0F);
+    QCOMPARE(restored.signalFlow.workspaces.front().inspectorY, 184.0F);
+    QCOMPARE(restored.signalFlow.workspaces.front().portVisibility, QStringLiteral("connected"));
+    QVERIFY(!restored.signalFlow.workspaces.front().autoExpandPorts);
+    QCOMPARE(restored.signalFlow.annotations.front().title, QStringLiteral("Owner review note"));
+    QCOMPARE(restored.signalFlow.annotations.front().body, QStringLiteral("Presentation-only evidence."));
     QVERIFY(restored.signalFlow.workspaces.front().layoutLocked);
     QVERIFY(!restored.signalFlow.workspaces.front().snapToGrid);
 
@@ -3829,12 +3851,20 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
     QJsonArray legacyWorkspaces = legacySignalFlow.value(QStringLiteral("workspaces")).toArray();
     QJsonObject legacyWorkspace = legacyWorkspaces.at(0).toObject();
     legacyWorkspace.remove(QStringLiteral("snapToGrid"));
+    legacyWorkspace.remove(QStringLiteral("inspectorX"));
+    legacyWorkspace.remove(QStringLiteral("inspectorY"));
+    legacyWorkspace.remove(QStringLiteral("portVisibility"));
+    legacyWorkspace.remove(QStringLiteral("autoExpandPorts"));
     legacyWorkspaces.replace(0, legacyWorkspace);
     legacySignalFlow.insert(QStringLiteral("workspaces"), legacyWorkspaces);
     legacyWorkspaceJson.insert(QStringLiteral("signalFlow"), legacySignalFlow);
     const MapperConfiguration legacyWorkspaceRestored = ConfigStore::fromJson(legacyWorkspaceJson, &valid);
     QVERIFY(valid);
     QVERIFY(legacyWorkspaceRestored.signalFlow.workspaces.front().snapToGrid);
+    QCOMPARE(legacyWorkspaceRestored.signalFlow.workspaces.front().inspectorX, -1.0F);
+    QCOMPARE(legacyWorkspaceRestored.signalFlow.workspaces.front().inspectorY, -1.0F);
+    QCOMPARE(legacyWorkspaceRestored.signalFlow.workspaces.front().portVisibility, QStringLiteral("smart"));
+    QVERIFY(legacyWorkspaceRestored.signalFlow.workspaces.front().autoExpandPorts);
 
     // v2.5 configuration has no Signal Flow JSON.  Loading it is a pure,
     // deterministic migration: mapping semantics do not change and identity

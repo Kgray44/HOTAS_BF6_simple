@@ -6312,14 +6312,17 @@ QVariantMap AppBackend::signalFlowGraph() const
             // makes them relevant), which keeps a normal HOTAS card readable
             // without throwing the controls away.
             bool collapsed = group != u"Axes"_qs && group != u"Virtual Axes"_qs;
+            bool explicitState = false;
             for (const SignalFlowPortGroupState &state : m_configuration.signalFlow.portGroups) {
                 if (state.workspaceKey == workspaceKey && state.cardId == cardId
                     && state.group == group) {
                     collapsed = state.collapsed;
+                    explicitState = true;
                     break;
                 }
             }
-            result.append(QVariantMap{{u"group"_qs, group}, {u"collapsed"_qs, collapsed}});
+            result.append(QVariantMap{{u"group"_qs, group}, {u"collapsed"_qs, collapsed},
+                                      {u"explicit"_qs, explicitState}});
         }
         return result;
     };
@@ -7193,18 +7196,35 @@ QVariantMap AppBackend::signalFlowGraph() const
     applyLayout(&outputNode, layoutFor(outputNodeId, 1380.0F, 160.0F));
     nodes.append(outputNode);
 
+    QVariantList annotations;
+    for (const SignalFlowAnnotation &annotation : m_configuration.signalFlow.annotations) {
+        if (annotation.workspaceKey != workspaceKey) continue;
+        annotations.append(QVariantMap{{u"id"_qs, annotation.id}, {u"kind"_qs, annotation.kind},
+            {u"title"_qs, annotation.title}, {u"body"_qs, annotation.body},
+            {u"x"_qs, annotation.x}, {u"y"_qs, annotation.y},
+            {u"width"_qs, annotation.width}, {u"height"_qs, annotation.height},
+            {u"attachedObjectId"_qs, annotation.attachedObjectId},
+            {u"attachedRouteId"_qs, annotation.attachedRouteId},
+            {u"moveContents"_qs, annotation.moveContents}});
+    }
     QVariantMap workspace{{u"key"_qs, workspaceKey}, {u"panX"_qs, 0.0}, {u"panY"_qs, 0.0},
                           {u"zoom"_qs, 1.0}, {u"wireStyle"_qs, u"smooth"_qs},
                           {u"densityMode"_qs, u"compact"_qs}, {u"inspectorWidth"_qs, 360},
-                          {u"layoutLocked"_qs, false}, {u"snapToGrid"_qs, true}};
+                          {u"inspectorX"_qs, -1.0}, {u"inspectorY"_qs, -1.0},
+                          {u"portVisibility"_qs, u"smart"_qs}, {u"autoExpandPorts"_qs, true},
+                          {u"layoutLocked"_qs, false}, {u"snapToGrid"_qs, true},
+                          {u"annotations"_qs, annotations}};
     for (const SignalFlowWorkspaceState &savedWorkspace : m_configuration.signalFlow.workspaces) {
         if (savedWorkspace.key != workspaceKey) continue;
         workspace = {{u"key"_qs, savedWorkspace.key}, {u"panX"_qs, savedWorkspace.panX},
                      {u"panY"_qs, savedWorkspace.panY}, {u"zoom"_qs, savedWorkspace.zoom},
                      {u"wireStyle"_qs, savedWorkspace.wireStyle}, {u"densityMode"_qs, savedWorkspace.densityMode},
                      {u"inspectorWidth"_qs, savedWorkspace.inspectorWidth},
+                     {u"inspectorX"_qs, savedWorkspace.inspectorX}, {u"inspectorY"_qs, savedWorkspace.inspectorY},
+                     {u"portVisibility"_qs, savedWorkspace.portVisibility},
+                     {u"autoExpandPorts"_qs, savedWorkspace.autoExpandPorts},
                      {u"layoutLocked"_qs, savedWorkspace.layoutLocked},
-                     {u"snapToGrid"_qs, savedWorkspace.snapToGrid}};
+                     {u"snapToGrid"_qs, savedWorkspace.snapToGrid}, {u"annotations"_qs, annotations}};
         break;
     }
     return {{u"revision"_qs, QVariant::fromValue(m_configurationGeneration)},
@@ -9135,26 +9155,83 @@ bool AppBackend::signalFlowSaveWorkspaceSilently(const QVariantMap &workspace)
 
 bool AppBackend::saveSignalFlowWorkspace(const QVariantMap &workspace, bool notifySignalFlow)
 {
+    const double panX = workspace.value(u"panX"_qs, 0.0).toDouble();
+    const double panY = workspace.value(u"panY"_qs, 0.0).toDouble();
+    const double zoom = workspace.value(u"zoom"_qs, 1.0).toDouble();
+    const double inspectorX = workspace.value(u"inspectorX"_qs, -1.0).toDouble();
+    const double inspectorY = workspace.value(u"inspectorY"_qs, -1.0).toDouble();
+    if (!std::isfinite(panX) || !std::isfinite(panY) || !std::isfinite(zoom)
+        || !std::isfinite(inspectorX) || !std::isfinite(inspectorY)) return false;
     SignalFlowWorkspaceState state;
     state.key = signalFlowWorkspaceKey();
-    state.panX = std::clamp(static_cast<float>(workspace.value(u"panX"_qs, 0.0).toDouble()), -100000.0F, 100000.0F);
-    state.panY = std::clamp(static_cast<float>(workspace.value(u"panY"_qs, 0.0).toDouble()), -100000.0F, 100000.0F);
-    state.zoom = std::clamp(static_cast<float>(workspace.value(u"zoom"_qs, 1.0).toDouble()), 0.25F, 4.0F);
+    state.panX = std::clamp(static_cast<float>(panX), -100000.0F, 100000.0F);
+    state.panY = std::clamp(static_cast<float>(panY), -100000.0F, 100000.0F);
+    state.zoom = std::clamp(static_cast<float>(zoom), 0.25F, 4.0F);
     state.wireStyle = workspace.value(u"wireStyle"_qs, u"smooth"_qs).toString().trimmed();
     state.densityMode = workspace.value(u"densityMode"_qs, u"detailed"_qs).toString().trimmed();
     state.inspectorWidth = std::clamp(workspace.value(u"inspectorWidth"_qs, 360).toInt(), 240, 720);
+    state.inspectorX = std::clamp(static_cast<float>(inspectorX), -1.0F, 100000.0F);
+    state.inspectorY = std::clamp(static_cast<float>(inspectorY), -1.0F, 100000.0F);
+    state.portVisibility = workspace.value(u"portVisibility"_qs, u"smart"_qs).toString().trimmed().toLower();
+    state.autoExpandPorts = workspace.value(u"autoExpandPorts"_qs, true).toBool();
     state.layoutLocked = workspace.value(u"layoutLocked"_qs, false).toBool();
     state.snapToGrid = workspace.value(u"snapToGrid"_qs, true).toBool();
     if ((state.wireStyle != u"smooth"_qs && state.wireStyle != u"orthogonal"_qs)
         || (state.densityMode != u"detailed"_qs && state.densityMode != u"compact"_qs
-            && state.densityMode != u"overview"_qs)) return false;
+            && state.densityMode != u"overview"_qs)
+        || (state.portVisibility != u"smart"_qs && state.portVisibility != u"connected"_qs
+            && state.portVisibility != u"compact"_qs && state.portVisibility != u"expanded"_qs)) return false;
+    std::vector<SignalFlowAnnotation> requestedAnnotations;
+    const QVariantList annotationValues = workspace.value(u"annotations"_qs).toList();
+    if (annotationValues.size() > kMaximumSignalFlowAnnotations) return false;
+    QSet<QString> annotationIds;
+    for (const QVariant &value : annotationValues) {
+        const QVariantMap entry = value.toMap();
+        const double annotationX = entry.value(u"x"_qs).toDouble();
+        const double annotationY = entry.value(u"y"_qs).toDouble();
+        const double annotationWidth = entry.value(u"width"_qs, 220.0).toDouble();
+        const double annotationHeight = entry.value(u"height"_qs, 120.0).toDouble();
+        if (!std::isfinite(annotationX) || !std::isfinite(annotationY)
+            || !std::isfinite(annotationWidth) || !std::isfinite(annotationHeight)) return false;
+        SignalFlowAnnotation annotation;
+        annotation.workspaceKey = state.key;
+        annotation.id = entry.value(u"id"_qs).toString().trimmed().left(96);
+        annotation.kind = entry.value(u"kind"_qs).toString().trimmed().toLower().left(24);
+        annotation.title = entry.value(u"title"_qs).toString().left(160);
+        annotation.body = entry.value(u"body"_qs).toString().left(4096);
+        annotation.x = std::clamp(static_cast<float>(annotationX), -100000.0F, 100000.0F);
+        annotation.y = std::clamp(static_cast<float>(annotationY), -100000.0F, 100000.0F);
+        annotation.width = std::clamp(static_cast<float>(annotationWidth), 80.0F, 2000.0F);
+        annotation.height = std::clamp(static_cast<float>(annotationHeight), 40.0F, 2000.0F);
+        annotation.attachedObjectId = entry.value(u"attachedObjectId"_qs).toString().trimmed().left(96);
+        annotation.attachedRouteId = entry.value(u"attachedRouteId"_qs).toString().trimmed().left(96);
+        annotation.moveContents = entry.value(u"moveContents"_qs, false).toBool();
+        if (annotation.id.isEmpty() || (annotation.kind != u"note"_qs && annotation.kind != u"group"_qs)
+            || annotationIds.contains(annotation.id)) return false;
+        annotationIds.insert(annotation.id);
+        requestedAnnotations.push_back(std::move(annotation));
+    }
     for (SignalFlowWorkspaceState &existing : m_configuration.signalFlow.workspaces) {
         if (existing.key != state.key) continue;
         existing = std::move(state);
+        m_configuration.signalFlow.annotations.erase(std::remove_if(
+            m_configuration.signalFlow.annotations.begin(), m_configuration.signalFlow.annotations.end(),
+            [&existing](const SignalFlowAnnotation &annotation) { return annotation.workspaceKey == existing.key; }),
+            m_configuration.signalFlow.annotations.end());
+        m_configuration.signalFlow.annotations.insert(m_configuration.signalFlow.annotations.end(),
+            requestedAnnotations.cbegin(), requestedAnnotations.cend());
         return saveSignalFlowPresentation(notifySignalFlow);
     }
     if (m_configuration.signalFlow.workspaces.size() >= kMaximumSignalFlowWorkspaces) return false;
     m_configuration.signalFlow.workspaces.push_back(std::move(state));
+    const QString storedWorkspaceKey = m_configuration.signalFlow.workspaces.back().key;
+    m_configuration.signalFlow.annotations.erase(std::remove_if(
+        m_configuration.signalFlow.annotations.begin(), m_configuration.signalFlow.annotations.end(),
+        [&storedWorkspaceKey](const SignalFlowAnnotation &annotation) {
+            return annotation.workspaceKey == storedWorkspaceKey;
+        }), m_configuration.signalFlow.annotations.end());
+    m_configuration.signalFlow.annotations.insert(m_configuration.signalFlow.annotations.end(),
+        requestedAnnotations.cbegin(), requestedAnnotations.cend());
     return saveSignalFlowPresentation(notifySignalFlow);
 }
 

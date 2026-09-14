@@ -343,6 +343,10 @@ QJsonObject signalFlowWorkspaceToJson(const SignalFlowWorkspaceState &workspace)
             {u"wireStyle"_qs, workspace.wireStyle.trimmed().left(24)},
             {u"densityMode"_qs, workspace.densityMode.trimmed().left(24)},
             {u"inspectorWidth"_qs, std::clamp(workspace.inspectorWidth, 240, 720)},
+            {u"inspectorX"_qs, std::clamp(workspace.inspectorX, -1.0F, 100000.0F)},
+            {u"inspectorY"_qs, std::clamp(workspace.inspectorY, -1.0F, 100000.0F)},
+            {u"portVisibility"_qs, workspace.portVisibility.trimmed().left(24)},
+            {u"autoExpandPorts"_qs, workspace.autoExpandPorts},
             {u"layoutLocked"_qs, workspace.layoutLocked},
             {u"snapToGrid"_qs, workspace.snapToGrid}};
 }
@@ -354,22 +358,41 @@ bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceSta
     const QJsonValue panY = json.value(u"panY"_qs);
     const QJsonValue zoom = json.value(u"zoom"_qs);
     const QJsonValue width = json.value(u"inspectorWidth"_qs);
+    const QJsonValue inspectorX = json.value(u"inspectorX"_qs);
+    const QJsonValue inspectorY = json.value(u"inspectorY"_qs);
+    const QJsonValue autoExpandPorts = json.value(u"autoExpandPorts"_qs);
     const QJsonValue snapToGrid = json.value(u"snapToGrid"_qs);
     if (!panX.isDouble() || !panY.isDouble() || !zoom.isDouble() || !width.isDouble()
         || !json.value(u"layoutLocked"_qs).isBool()
+        || (!inspectorX.isUndefined() && !inspectorX.isDouble())
+        || (!inspectorY.isUndefined() && !inspectorY.isDouble())
+        || (!autoExpandPorts.isUndefined() && !autoExpandPorts.isBool())
         || (!snapToGrid.isUndefined() && !snapToGrid.isBool())) return false;
+    if (!std::isfinite(panX.toDouble()) || !std::isfinite(panY.toDouble())
+        || !std::isfinite(zoom.toDouble())
+        || (!inspectorX.isUndefined() && !std::isfinite(inspectorX.toDouble()))
+        || (!inspectorY.isUndefined() && !std::isfinite(inspectorY.toDouble()))) return false;
     SignalFlowWorkspaceState restored;
     restored.key = json.value(u"key"_qs).toString().trimmed().left(320);
     restored.wireStyle = json.value(u"wireStyle"_qs).toString().trimmed().left(24);
     restored.densityMode = json.value(u"densityMode"_qs).toString().trimmed().left(24);
+    restored.portVisibility = json.contains(u"portVisibility"_qs)
+        ? json.value(u"portVisibility"_qs).toString().trimmed().left(24) : u"smart"_qs;
     if (restored.key.isEmpty()
         || (restored.wireStyle != u"smooth"_qs && restored.wireStyle != u"orthogonal"_qs)
         || (restored.densityMode != u"detailed"_qs && restored.densityMode != u"compact"_qs
-            && restored.densityMode != u"overview"_qs)) return false;
+            && restored.densityMode != u"overview"_qs)
+        || (restored.portVisibility != u"smart"_qs && restored.portVisibility != u"connected"_qs
+            && restored.portVisibility != u"compact"_qs && restored.portVisibility != u"expanded"_qs)) return false;
     restored.panX = std::clamp(static_cast<float>(panX.toDouble()), -100000.0F, 100000.0F);
     restored.panY = std::clamp(static_cast<float>(panY.toDouble()), -100000.0F, 100000.0F);
     restored.zoom = std::clamp(static_cast<float>(zoom.toDouble()), 0.25F, 4.0F);
     restored.inspectorWidth = std::clamp(width.toInt(), 240, 720);
+    restored.inspectorX = inspectorX.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(inspectorX.toDouble()), -1.0F, 100000.0F);
+    restored.inspectorY = inspectorY.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(inspectorY.toDouble()), -1.0F, 100000.0F);
+    restored.autoExpandPorts = autoExpandPorts.isUndefined() ? true : autoExpandPorts.toBool();
     restored.layoutLocked = json.value(u"layoutLocked"_qs).toBool();
     // Schema-28 workspaces predate this optional presentation preference.
     // Preserve their established free-form layout while defaulting new and
@@ -426,6 +449,52 @@ bool signalFlowPortGroupFromJson(const QJsonObject &json, SignalFlowPortGroupSta
     return true;
 }
 
+QJsonObject signalFlowAnnotationToJson(const SignalFlowAnnotation &annotation)
+{
+    return {{u"workspaceKey"_qs, annotation.workspaceKey.trimmed().left(320)},
+            {u"id"_qs, annotation.id.trimmed().left(96)},
+            {u"kind"_qs, annotation.kind.trimmed().left(24)},
+            {u"title"_qs, annotation.title.left(160)},
+            {u"body"_qs, annotation.body.left(4096)},
+            {u"x"_qs, std::clamp(annotation.x, -100000.0F, 100000.0F)},
+            {u"y"_qs, std::clamp(annotation.y, -100000.0F, 100000.0F)},
+            {u"width"_qs, std::clamp(annotation.width, 80.0F, 2000.0F)},
+            {u"height"_qs, std::clamp(annotation.height, 40.0F, 2000.0F)},
+            {u"attachedObjectId"_qs, annotation.attachedObjectId.trimmed().left(96)},
+            {u"attachedRouteId"_qs, annotation.attachedRouteId.trimmed().left(96)},
+            {u"moveContents"_qs, annotation.moveContents}};
+}
+
+bool signalFlowAnnotationFromJson(const QJsonObject &json, SignalFlowAnnotation *annotation)
+{
+    if (!annotation || json.isEmpty()) return false;
+    const QJsonValue x = json.value(u"x"_qs);
+    const QJsonValue y = json.value(u"y"_qs);
+    const QJsonValue width = json.value(u"width"_qs);
+    const QJsonValue height = json.value(u"height"_qs);
+    if (!x.isDouble() || !y.isDouble() || !width.isDouble() || !height.isDouble()
+        || !json.value(u"moveContents"_qs).isBool()) return false;
+    if (!std::isfinite(x.toDouble()) || !std::isfinite(y.toDouble())
+        || !std::isfinite(width.toDouble()) || !std::isfinite(height.toDouble())) return false;
+    SignalFlowAnnotation restored;
+    restored.workspaceKey = json.value(u"workspaceKey"_qs).toString().trimmed().left(320);
+    restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
+    restored.kind = json.value(u"kind"_qs).toString().trimmed().toLower().left(24);
+    restored.title = json.value(u"title"_qs).toString().left(160);
+    restored.body = json.value(u"body"_qs).toString().left(4096);
+    restored.attachedObjectId = json.value(u"attachedObjectId"_qs).toString().trimmed().left(96);
+    restored.attachedRouteId = json.value(u"attachedRouteId"_qs).toString().trimmed().left(96);
+    if (restored.workspaceKey.isEmpty() || restored.id.isEmpty()
+        || (restored.kind != u"note"_qs && restored.kind != u"group"_qs)) return false;
+    restored.x = std::clamp(static_cast<float>(x.toDouble()), -100000.0F, 100000.0F);
+    restored.y = std::clamp(static_cast<float>(y.toDouble()), -100000.0F, 100000.0F);
+    restored.width = std::clamp(static_cast<float>(width.toDouble()), 80.0F, 2000.0F);
+    restored.height = std::clamp(static_cast<float>(height.toDouble()), 40.0F, 2000.0F);
+    restored.moveContents = json.value(u"moveContents"_qs).toBool();
+    *annotation = std::move(restored);
+    return true;
+}
+
 template <typename Item, typename Parse, typename Key>
 bool signalFlowArrayFromJson(const QJsonValue &value, int maximum, std::vector<Item> *items,
                              Parse parse, Key key)
@@ -477,6 +546,10 @@ QJsonObject signalFlowStateToJson(const SignalFlowState &state)
     for (const SignalFlowPortGroupState &group : state.portGroups) {
         portGroups.append(signalFlowPortGroupToJson(group));
     }
+    QJsonArray annotations;
+    for (const SignalFlowAnnotation &annotation : state.annotations) {
+        annotations.append(signalFlowAnnotationToJson(annotation));
+    }
     return {{u"topologyVersion"_qs, state.topologyVersion},
             {u"routes"_qs, routes},
             {u"mixers"_qs, mixers},
@@ -485,7 +558,8 @@ QJsonObject signalFlowStateToJson(const SignalFlowState &state)
             {u"processorIdentities"_qs, processorIdentities},
             {u"workspaces"_qs, workspaces},
             {u"nodeLayouts"_qs, nodeLayouts},
-            {u"portGroups"_qs, portGroups}};
+            {u"portGroups"_qs, portGroups},
+            {u"annotations"_qs, annotations}};
 }
 
 bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
@@ -537,7 +611,11 @@ bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
                                     [](const auto &group) {
                                         return group.workspaceKey + u":"_qs + group.cardId
                                             + u":"_qs + group.group;
-                                    })) {
+                                    })
+        || (json.contains(u"annotations"_qs)
+            && !signalFlowArrayFromJson(json.value(u"annotations"_qs),
+                kMaximumSignalFlowAnnotations, &restored.annotations, signalFlowAnnotationFromJson,
+                [](const auto &annotation) { return annotation.workspaceKey + u":"_qs + annotation.id; }))) {
         return false;
     }
     *state = std::move(restored);
