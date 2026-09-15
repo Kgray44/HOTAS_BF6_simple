@@ -46,6 +46,10 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(QVariantList evidenceRows READ evidenceRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap selectedEvidence READ selectedEvidence NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap currentOperationDetails READ currentOperationDetails NOTIFY sessionChanged)
+    Q_PROPERTY(bool repairPlanAvailable READ repairPlanAvailable NOTIFY sessionChanged)
+    Q_PROPERTY(QVariantMap repairPlanSummary READ repairPlanSummary NOTIFY sessionChanged)
+    Q_PROPERTY(QStringList repairPlanOperations READ repairPlanOperations NOTIFY sessionChanged)
+    Q_PROPERTY(QStringList repairPlanCollateral READ repairPlanCollateral NOTIFY sessionChanged)
     Q_PROPERTY(int healthyCheckCount READ healthyCheckCount NOTIFY sessionChanged)
     Q_PROPERTY(int informationalCheckCount READ informationalCheckCount NOTIFY sessionChanged)
     Q_PROPERTY(int warningCheckCount READ warningCheckCount NOTIFY sessionChanged)
@@ -86,6 +90,10 @@ public:
     QVariantList evidenceRows() const;
     QVariantMap selectedEvidence() const;
     QVariantMap currentOperationDetails() const;
+    bool repairPlanAvailable() const;
+    QVariantMap repairPlanSummary() const;
+    QStringList repairPlanOperations() const;
+    QStringList repairPlanCollateral() const;
     int healthyCheckCount() const;
     int informationalCheckCount() const;
     int warningCheckCount() const;

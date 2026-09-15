@@ -3,12 +3,15 @@
 #include "doctor_fixtures.h"
 #include "doctor_knowledge.h"
 #include "doctor_repair_contract.h"
+#include "doctor_repair_engine.h"
+#include "doctor_repair_helper_protocol.h"
 #include "doctor_session_view_model.h"
 
 #include <QtTest>
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <functional>
@@ -32,6 +35,8 @@ RepairPlan fieldQualifiedPlan()
     RepairPlan plan;
     plan.id = RepairPlanId(QStringLiteral("REPAIR-PLAN-001"));
     plan.sessionId = DoctorSessionId(QStringLiteral("SESSION-001"));
+    plan.recipeId = RepairRecipeId(QStringLiteral("HD-R1-ADD-HOTAS-WHITELIST"));
+    plan.recipeVersion = QStringLiteral("1.0");
     plan.riskClass = RepairRiskClass::R1Configuration;
     plan.qualification = RepairQualificationLevel::FieldQualified;
     plan.authorization = RepairAuthorization::UserAuthorized;
@@ -131,6 +136,10 @@ private slots:
     void phaseOneProductionProviderHasNoMutationSurface();
     void phaseTwoDiagnosisFixtureMatrixIsDeterministicAndReadOnly();
     void phaseTwoReportCarriesFindingsDiagnosesAndKnowledgeVersion();
+    void phaseThreePlannerPreservesCollateralAndDistinguishesLabQualification();
+    void phaseThreeHelperProtocolRejectsUntrustedAndOutOfScopeFrames();
+    void phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider();
+    void phaseThreeJournalDetectsCorruption();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -406,7 +415,7 @@ void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(report, &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 3);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 4);
     QCOMPARE(document.object().value(QStringLiteral("evidenceRecords")).toArray().size(), DoctorCatalog::v11DefinedCheckIds().size());
 }
 
@@ -550,12 +559,137 @@ void HidHideDoctorDomainTests::phaseTwoReportCarriesFindingsDiagnosesAndKnowledg
     DoctorDiagnosticEngine engine;
     const DiagnosticRunOutcome outcome = engine.run(provider);
     const QJsonDocument document = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 3);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 4);
     QVERIFY(!document.object().value(QStringLiteral("knowledgeEngine")).toObject().value(QStringLiteral("version")).toString().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("findings")).toArray().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("diagnoses")).toArray().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("activityTimeline")).toArray().isEmpty());
     QCOMPARE(label, QStringLiteral("GetWhitelist 0x57"));
+}
+
+void HidHideDoctorDomainTests::phaseThreePlannerPreservesCollateralAndDistinguishesLabQualification()
+{
+    QString label;
+    const ReadOnlyDiagnosticSnapshot snapshot = createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption"), &label);
+    FixtureDiagnosticProvider provider(snapshot);
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    RepairPlanner planner;
+    const RepairPlanProposal normal = planner.propose(outcome.session, outcome.snapshot, false);
+    QCOMPARE(normal.status, RepairProposalStatus::IdentifiedButNotFieldQualified);
+    QCOMPARE(normal.plan.recipeId.value(), QStringLiteral("HD-R1-ADD-HOTAS-WHITELIST"));
+    QCOMPARE(normal.plan.qualification, RepairQualificationLevel::LabQualified);
+    QCOMPARE(normal.whitelistDelta.additions.size(), 1);
+    QVERIFY(normal.plan.unchangedCollateral.contains(QStringLiteral("Cloak state unchanged")));
+    QVERIFY(normal.plan.unchangedCollateral.contains(QStringLiteral("Inverse mode unchanged")));
+
+    const RepairPlanProposal ownerLab = planner.propose(outcome.session, outcome.snapshot, true);
+    QCOMPARE(ownerLab.status, RepairProposalStatus::AvailableForOwnerLab);
+    QVERIFY(!ownerLab.plan.integrityDigest.isEmpty());
+    QCOMPARE(ownerLab.before.fingerprint(), ownerLab.plan.preconditionFingerprint);
+    QCOMPARE(ownerLab.after.fingerprint(), ownerLab.plan.expectedPostFingerprint);
+    QCOMPARE(label, QStringLiteral("Missing HOTAS Exemption"));
+}
+
+void HidHideDoctorDomainTests::phaseThreeHelperProtocolRejectsUntrustedAndOutOfScopeFrames()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    RepairPlan plan = RepairPlanner().propose(outcome.session, outcome.snapshot, true).plan;
+    plan.authorization = RepairAuthorization::OwnerLabAuthorized;
+    plan.integrityDigest = RepairHelperContract::seal(plan);
+    RepairHelperRequest request;
+    request.doctorBuildId = QStringLiteral("phase3-test-build");
+    request.helperBuildId = QStringLiteral("phase3-helper-build");
+    request.transactionId = RepairTransactionId(QStringLiteral("REPAIR-TX-HELPER-001"));
+    request.plan = plan;
+    request.nonce = QString(32, QLatin1Char('A'));
+    request.expiresAt = QDateTime::currentDateTimeUtc().addSecs(60);
+    request.requestDigest = RepairHelperProtocol::seal(request);
+    QString reason;
+    QVERIFY(RepairHelperProtocol::validate(request, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    const QByteArray wire = QJsonDocument(RepairHelperProtocol::serialize(request)).toJson(QJsonDocument::Compact);
+    const std::optional<RepairHelperRequest> parsed = RepairHelperProtocol::parse(wire, &reason);
+    QVERIFY2(parsed.has_value(), qPrintable(reason));
+    QVERIFY(RepairHelperProtocol::validate(*parsed, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest wrongNonce = request;
+    wrongNonce.nonce = QString(32, QLatin1Char('B'));
+    wrongNonce.requestDigest = RepairHelperProtocol::seal(wrongNonce);
+    QVERIFY(!RepairHelperProtocol::validate(wrongNonce, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest expired = request;
+    expired.expiresAt = QDateTime::currentDateTimeUtc().addSecs(-1);
+    expired.requestDigest = RepairHelperProtocol::seal(expired);
+    QVERIFY(!RepairHelperProtocol::validate(expired, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest r2 = request;
+    r2.plan.operations.front().kind = RepairOperationKind::RepairExactServiceConfiguration;
+    r2.plan.operations.front().targetKind = RepairTargetKind::HidHideActiveState;
+    r2.plan.integrityDigest = RepairHelperContract::seal(r2.plan);
+    r2.requestDigest = RepairHelperProtocol::seal(r2);
+    QVERIFY(!RepairHelperProtocol::validate(r2, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest arbitraryTarget = request;
+    arbitraryTarget.plan.operations.front().targetIdentity = QStringLiteral("C:\\Windows\\System32\\cmd.exe");
+    arbitraryTarget.plan.operations.front().requestedValue = arbitraryTarget.plan.operations.front().targetIdentity;
+    arbitraryTarget.plan.integrityDigest = RepairHelperContract::seal(arbitraryTarget.plan);
+    arbitraryTarget.requestDigest = RepairHelperProtocol::seal(arbitraryTarget);
+    QVERIFY(!RepairHelperProtocol::validate(arbitraryTarget, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    QVERIFY(!RepairHelperProtocol::parse(QByteArray(RepairHelperRequest::maximumMessageBytes + 1, 'x'), &reason).has_value());
+}
+
+void HidHideDoctorDomainTests::phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    RepairPlanner planner;
+    const RepairPlanProposal proposal = planner.propose(outcome.session, outcome.snapshot, true);
+    QCOMPARE(proposal.status, RepairProposalStatus::AvailableForOwnerLab);
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    RepairJournalStore journal(temporary.path());
+    RepairTransactionCoordinator coordinator;
+    const RepairExecutionResult dryRun = coordinator.dryRun(proposal, outcome.snapshot.environment, outcome.session.id(), journal);
+    QCOMPARE(dryRun.transaction.state, RepairTransactionState::Planned);
+    QVERIFY(!dryRun.mutated);
+    QVERIFY(journal.load(dryRun.transaction.id).has_value());
+
+    HidHideConfigurationSnapshot external = proposal.before;
+    external.whitelist.append(QStringLiteral("C:\\Unrelated\\Application.exe"));
+    MemoryRepairConfigurationMutator staleMutator(external);
+    const RepairExecutionResult stale = coordinator.executeOwnerLab(proposal, outcome.snapshot.environment, staleMutator, journal);
+    QCOMPARE(stale.transaction.state, RepairTransactionState::StalePlan);
+    QVERIFY(!stale.mutated);
+
+    MemoryRepairConfigurationMutator mutator(proposal.before);
+    const RepairExecutionResult executed = coordinator.executeOwnerLab(proposal, outcome.snapshot.environment, mutator, journal);
+    QCOMPARE(executed.transaction.state, RepairTransactionState::Completed);
+    QVERIFY(executed.mutated);
+    QCOMPARE(mutator.readConfiguration().fingerprint(), proposal.plan.expectedPostFingerprint);
+}
+
+void HidHideDoctorDomainTests::phaseThreeJournalDetectsCorruption()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    RepairJournalStore journal(temporary.path());
+    const RepairExecutionResult dryRun = RepairTransactionCoordinator().dryRun(proposal, outcome.snapshot.environment, outcome.session.id(), journal);
+    QFile file(journal.journalPath(dryRun.transaction.id));
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("{not a transaction");
+    file.close();
+    QString reason;
+    QVERIFY(!journal.load(dryRun.transaction.id, &reason).has_value());
+    QVERIFY(reason.contains(QStringLiteral("malformed")));
 }
 
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()

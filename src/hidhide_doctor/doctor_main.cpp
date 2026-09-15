@@ -1,5 +1,6 @@
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_repair_engine.h"
 #include "doctor_session.h"
 #include "doctor_session_view_model.h"
 #include "hotas_build_version.h"
@@ -113,6 +114,8 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
+    const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
+    const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
     const QString buildIdentity = QStringLiteral("Development build %1 · %2 · %3")
         .arg(QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID), QSysInfo::buildCpuArchitecture());
     const QString reportPath = argumentValue(argc, argv, "--report");
@@ -127,6 +130,18 @@ int main(int argc, char *argv[])
         hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
         hotas::doctor::DiagnosticRunOutcome outcome = diagnosticEngine.run(provider);
         outcome.session.setSessionLabel(fixtureLabel);
+        // Planning is always read-only.  The explicit switch exists for
+        // headless callers that want to assert this intent in an invocation;
+        // normal UI diagnosis also plans when evidence supports a candidate.
+        if (dryRunRequested && !repairPlanningRequested) return 2;
+        if (dryRunRequested) {
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+            if (proposal.status != hotas::doctor::RepairProposalStatus::AvailableForOwnerLab) return 2;
+            hotas::doctor::RepairJournalStore journal;
+            const hotas::doctor::RepairExecutionResult dryRun = hotas::doctor::RepairTransactionCoordinator().dryRun(
+                proposal, outcome.snapshot.environment, outcome.session.id(), journal);
+            if (dryRun.transaction.state != hotas::doctor::RepairTransactionState::Planned) return 3;
+        }
         stampBuildProvenance(outcome);
         if (!reportPath.isEmpty()) {
             QFile report(reportPath);
@@ -143,6 +158,7 @@ int main(int argc, char *argv[])
         return application.exec();
     }
     if (hasArgument(argc, argv, "--headless")) {
+        if (dryRunRequested) return 2; // Real-machine dry-runs require an explicit owner/lab fixture path.
         std::atomic_bool cancellationRequested{false};
         hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
         hotas::doctor::DoctorDiagnosticEngine engine;

@@ -190,6 +190,7 @@ void DoctorSession::setUserAction(UserAction action) { m_userAction = std::move(
 void DoctorSession::setCurrentOperation(DoctorOperation operation) { m_currentOperation = std::move(operation); }
 void DoctorSession::setEnvironment(DoctorEnvironment environment) { m_environment = std::move(environment); }
 void DoctorSession::setSessionLabel(QString label) { m_sessionLabel = std::move(label); }
+void DoctorSession::setRepairPlan(RepairPlan plan) { m_repairPlan = std::move(plan); }
 const QList<EvidenceRecord> &DoctorSession::evidence() const { return m_evidence; }
 const QList<DoctorCheckResult> &DoctorSession::checkResults() const { return m_checkResults; }
 const QList<Finding> &DoctorSession::findings() const { return m_findings; }
@@ -199,6 +200,7 @@ const UserAction &DoctorSession::userAction() const { return m_userAction; }
 const std::optional<DoctorOperation> &DoctorSession::currentOperation() const { return m_currentOperation; }
 const std::optional<DoctorEnvironment> &DoctorSession::environment() const { return m_environment; }
 const QString &DoctorSession::sessionLabel() const { return m_sessionLabel; }
+const std::optional<RepairPlan> &DoctorSession::repairPlan() const { return m_repairPlan; }
 QDateTime DoctorSession::createdAt() const { return m_createdAt; }
 
 DoctorSession createPhase0FixtureSession()

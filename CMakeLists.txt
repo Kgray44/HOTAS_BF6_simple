@@ -291,6 +291,10 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_session.cpp
     src/hidhide_doctor/doctor_repair_contract.h
     src/hidhide_doctor/doctor_repair_contract.cpp
+    src/hidhide_doctor/doctor_repair_helper_protocol.h
+    src/hidhide_doctor/doctor_repair_helper_protocol.cpp
+    src/hidhide_doctor/doctor_repair_engine.h
+    src/hidhide_doctor/doctor_repair_engine.cpp
     src/hidhide_doctor/doctor_session_view_model.h
     src/hidhide_doctor/doctor_session_view_model.cpp
     src/hidhide_doctor/doctor_diagnostics.h
@@ -316,7 +320,20 @@ qt_add_resources(hidhide_doctor_core hidhide_doctor_governance_resources
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/docs/hidhide-doctor"
     FILES
         docs/hidhide-doctor/HOTAS_BF6_HidHide_Doctor_Diagnostic_Catalog_v1.1.md
+        docs/hidhide-doctor/HidHide_Doctor_Phase3_Safe_Repair_Implementation_Record.md
 )
+
+# The only target that links the R1 mutator. It has no QML, no mapper
+# dependency, no shell execution facility, and exits after one IPC request.
+qt_add_executable(HidHideDoctorRepair WIN32
+    src/hidhide_doctor/doctor_repair_helper_main.cpp
+    src/hidhide_doctor/doctor_hidhide_configuration_mutator.h
+    src/hidhide_doctor/doctor_hidhide_configuration_mutator.cpp
+)
+target_link_libraries(HidHideDoctorRepair PRIVATE hidhide_doctor_core Qt6::Core advapi32)
+target_include_directories(HidHideDoctorRepair PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(HidHideDoctorRepair PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+set_target_properties(HidHideDoctorRepair PROPERTIES OUTPUT_NAME "HidHide Doctor Repair" WIN32_EXECUTABLE TRUE VERSION "${HOTAS_BF6_VERSION}")
 
 qt_add_executable(HidHideDoctor WIN32
     src/hidhide_doctor/doctor_main.cpp
