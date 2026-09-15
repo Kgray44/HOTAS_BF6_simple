@@ -174,11 +174,13 @@ bool DoctorSession::transitionTo(DoctorSessionState next, QString *reason)
 DiagnosticPlan &DoctorSession::plan() { return m_plan; }
 const DiagnosticPlan &DoctorSession::plan() const { return m_plan; }
 void DoctorSession::appendEvidence(EvidenceRecord evidence) { if (!evidence.id.isValid()) evidence.id = EvidenceId::create(); if (!evidence.recordedAt.isValid()) evidence.recordedAt = QDateTime::currentDateTimeUtc(); m_evidence.append(std::move(evidence)); }
+void DoctorSession::appendCheckResult(DoctorCheckResult result) { m_checkResults.append(std::move(result)); }
 void DoctorSession::appendFinding(Finding finding) { m_findings.append(std::move(finding)); }
 void DoctorSession::appendDiagnosis(Diagnosis diagnosis) { m_diagnoses.append(std::move(diagnosis)); }
 void DoctorSession::setUserAction(UserAction action) { m_userAction = std::move(action); }
 void DoctorSession::setCurrentOperation(DoctorOperation operation) { m_currentOperation = std::move(operation); }
 const QList<EvidenceRecord> &DoctorSession::evidence() const { return m_evidence; }
+const QList<DoctorCheckResult> &DoctorSession::checkResults() const { return m_checkResults; }
 const QList<Finding> &DoctorSession::findings() const { return m_findings; }
 const QList<Diagnosis> &DoctorSession::diagnoses() const { return m_diagnoses; }
 const UserAction &DoctorSession::userAction() const { return m_userAction; }

@@ -185,6 +185,21 @@ struct EvidenceRecord final {
     bool direct = true;
 };
 
+// A check result is deliberately not a finding or diagnosis.  It describes
+// exactly one executed (or explicitly not-applicable) catalogue check and
+// links it to raw evidence.  Later phases may reason over these records, but
+// Phase 1 never turns a failed probe into an automatic repair conclusion.
+struct DoctorCheckResult final {
+    DoctorCheckId checkId;
+    DoctorCheckStatus status = DoctorCheckStatus::Waiting;
+    QString summary;
+    QString technicalDetails;
+    QList<EvidenceId> evidenceIds;
+    std::optional<NativeError> nativeError;
+    qint64 durationMs = 0;
+    bool implementationConditional = false;
+};
+
 struct Finding final {
     FindingId id;
     FindingSeverity severity = FindingSeverity::Informational;

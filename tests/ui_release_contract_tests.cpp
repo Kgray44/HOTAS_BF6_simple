@@ -1116,8 +1116,12 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
 void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()
 {
     const QString cmake = sourceFile(QStringLiteral("CMakeLists.txt"));
+    const QString deployment = sourceFile(QStringLiteral("cmake/deploy_qt_runtime_serialized.cmake"));
     const QString staging = sourceFile(QStringLiteral("scripts/stage-package.ps1"));
-    QVERIFY(cmake.contains(QStringLiteral("--qmldir \"${CMAKE_CURRENT_SOURCE_DIR}/qml\"")));
+    QVERIFY(cmake.contains(QStringLiteral("deploy_qt_runtime_serialized.cmake")));
+    QVERIFY(cmake.contains(QStringLiteral("-DQMLDIR=${CMAKE_CURRENT_SOURCE_DIR}/qml")));
+    QVERIFY(deployment.contains(QStringLiteral("file(LOCK")));
+    QVERIFY(deployment.contains(QStringLiteral("--qmldir \"${QMLDIR}\"")));
     QVERIFY(staging.contains(QStringLiteral("--qmldir (Join-Path $repoRoot 'qml')")));
     QVERIFY(staging.contains(QStringLiteral("Find-MsvcRuntimeDirectory")));
     QVERIFY(staging.contains(QStringLiteral("msvcp140.dll")));

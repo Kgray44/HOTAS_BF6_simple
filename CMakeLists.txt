@@ -207,8 +207,12 @@ if (WIN32)
     set(HOTAS_WINDEPLOYQT "${HOTAS_QT_BIN_DIR}/windeployqt.exe")
     if (EXISTS "${HOTAS_WINDEPLOYQT}")
         add_custom_command(TARGET HOTASMapper POST_BUILD
-            COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime
-                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HOTASMapper>"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT=${HOTAS_WINDEPLOYQT}"
+                "-DDEPLOY_LOCK=${CMAKE_CURRENT_BINARY_DIR}/.windeployqt.lock"
+                "-DQMLDIR=${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                "-DTARGET_FILE=$<TARGET_FILE:HOTASMapper>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qt_runtime_serialized.cmake"
             COMMENT "Deploying the Qt runtime required by the elevated HOTAS BF6 repair transaction")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
@@ -289,10 +293,20 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_repair_contract.cpp
     src/hidhide_doctor/doctor_session_view_model.h
     src/hidhide_doctor/doctor_session_view_model.cpp
+    src/hidhide_doctor/doctor_diagnostics.h
+    src/hidhide_doctor/doctor_diagnostics.cpp
+    src/hidhide_doctor/doctor_windows_provider.cpp
 )
 target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)
 target_include_directories(hidhide_doctor_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor")
+if (WIN32)
+    # Every Phase 1 provider uses a documented read/query API only. Link the
+    # dedicated Windows libraries here rather than routing diagnostics through
+    # the mapper or a command shell.
+    target_link_libraries(hidhide_doctor_core PRIVATE setupapi cfgmgr32 advapi32 version wintrust crypt32 wevtapi shell32 hid ole32)
+    target_compile_definitions(hidhide_doctor_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+endif()
 qt_add_resources(hidhide_doctor_core hidhide_doctor_governance_resources
     PREFIX "/hidhide-doctor"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/docs/hidhide-doctor"
@@ -333,8 +347,12 @@ if (WIN32)
     set(HIDHIDE_DOCTOR_WINDEPLOYQT "${HIDHIDE_DOCTOR_QT_BIN_DIR}/windeployqt.exe")
     if (EXISTS "${HIDHIDE_DOCTOR_WINDEPLOYQT}")
         add_custom_command(TARGET HidHideDoctor POST_BUILD
-            COMMAND "${HIDHIDE_DOCTOR_WINDEPLOYQT}" --no-translations --no-compiler-runtime
-                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HidHideDoctor>"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT=${HIDHIDE_DOCTOR_WINDEPLOYQT}"
+                "-DDEPLOY_LOCK=${CMAKE_CURRENT_BINARY_DIR}/.windeployqt.lock"
+                "-DQMLDIR=${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                "-DTARGET_FILE=$<TARGET_FILE:HidHideDoctor>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qt_runtime_serialized.cmake"
             COMMENT "Deploying the standalone HidHide Doctor Qt runtime")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
@@ -348,6 +366,21 @@ if (BUILD_TESTING)
     )
     set_target_properties(hidhide_doctor_domain_tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(hidhide_doctor_domain_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
+    target_compile_definitions(hidhide_doctor_domain_tests PRIVATE HOTAS_DOCTOR_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    if (WIN32)
+        # The domain executable is also a useful standalone evidence probe for
+        # local review.  Make its build-tree copy runnable outside CTest, so a
+        # direct launch cannot fail before tests begin due to a missing Qt DLL.
+        # Do not invoke windeployqt here: full parallel builds already deploy
+        # QML for both GUI targets, and concurrent deployers race over the
+        # shared build/qml directory.
+        add_custom_command(TARGET hidhide_doctor_domain_tests POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Qt6::Core>"
+                "$<TARGET_FILE_DIR:hidhide_doctor_domain_tests>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Qt6::Test>"
+                "$<TARGET_FILE_DIR:hidhide_doctor_domain_tests>"
+            COMMENT "Copying the Qt runtime for HidHide Doctor domain tests")
+    endif()
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
     if (WIN32)

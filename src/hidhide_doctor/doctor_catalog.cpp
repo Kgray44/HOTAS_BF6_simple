@@ -44,6 +44,21 @@ QStringList DoctorCatalog::v11DefinedCheckIds()
     return ids;
 }
 
+QString DoctorCatalog::v11CheckTitle(const DoctorCheckId &id)
+{
+    Q_INIT_RESOURCE(hidhide_doctor_governance_resources);
+    QFile source(resourcePath());
+    if (!source.open(QIODevice::ReadOnly)) return id.value();
+    const QString escaped = QRegularExpression::escape(id.value());
+    // Catalog rows have an ID and the human-facing check title in the first
+    // two cells.  Keep the parser deliberately line-scoped so prose mentions
+    // cannot accidentally become a title.
+    const QRegularExpression row(QStringLiteral("^\\s*\\|\\s*`%1`\\s*\\|\\s*([^|]+?)\\s*\\|")
+        .arg(escaped), QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch match = row.match(QString::fromUtf8(source.readAll()));
+    return match.hasMatch() ? match.captured(1).trimmed() : id.value();
+}
+
 bool DoctorCatalog::registerCheck(DoctorCheckDefinition definition, QString *reason)
 {
     if (!definition.id.isValid()) {
@@ -94,6 +109,7 @@ CatalogCoverageReport DoctorCatalog::coverage() const
         ++report.registered;
         switch (iterator->implementation) {
         case CatalogImplementationState::Deferred: break;
+        case CatalogImplementationState::Conditional: ++report.conditional; break;
         case CatalogImplementationState::Implemented: ++report.implemented; break;
         case CatalogImplementationState::Qualified: ++report.implemented; ++report.qualified; break;
         case CatalogImplementationState::RepairLinked: ++report.implemented; ++report.repairLinked; break;

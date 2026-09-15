@@ -52,11 +52,13 @@ public:
     DiagnosticPlan &plan();
     const DiagnosticPlan &plan() const;
     void appendEvidence(EvidenceRecord evidence);
+    void appendCheckResult(DoctorCheckResult result);
     void appendFinding(Finding finding);
     void appendDiagnosis(Diagnosis diagnosis);
     void setUserAction(UserAction action);
     void setCurrentOperation(DoctorOperation operation);
     const QList<EvidenceRecord> &evidence() const;
+    const QList<DoctorCheckResult> &checkResults() const;
     const QList<Finding> &findings() const;
     const QList<Diagnosis> &diagnoses() const;
     const UserAction &userAction() const;
@@ -69,6 +71,7 @@ private:
     QDateTime m_createdAt;
     DiagnosticPlan m_plan;
     QList<EvidenceRecord> m_evidence;
+    QList<DoctorCheckResult> m_checkResults;
     QList<Finding> m_findings;
     QList<Diagnosis> m_diagnoses;
     UserAction m_userAction;
