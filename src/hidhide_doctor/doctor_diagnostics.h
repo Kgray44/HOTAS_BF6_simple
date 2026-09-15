@@ -77,6 +77,9 @@ struct DeviceObservation final {
     DeviceClassification classification = DeviceClassification::Unknown;
     QList<QString> propertyFailures;
     std::optional<NativeError> nativeError;
+    quint16 usagePage = 0;
+    quint16 usage = 0;
+    QStringList interfacePaths;
 };
 
 struct EventObservation final {

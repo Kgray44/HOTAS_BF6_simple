@@ -300,7 +300,7 @@ if (WIN32)
     # Every Phase 1 provider uses a documented read/query API only. Link the
     # dedicated Windows libraries here rather than routing diagnostics through
     # the mapper or a command shell.
-    target_link_libraries(hidhide_doctor_core PRIVATE setupapi cfgmgr32 advapi32 version wintrust crypt32 wevtapi shell32)
+    target_link_libraries(hidhide_doctor_core PRIVATE setupapi cfgmgr32 advapi32 version wintrust crypt32 wevtapi shell32 hid ole32)
     target_compile_definitions(hidhide_doctor_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 endif()
 qt_add_resources(hidhide_doctor_core hidhide_doctor_governance_resources
@@ -359,6 +359,15 @@ if (BUILD_TESTING)
     set_target_properties(hidhide_doctor_domain_tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(hidhide_doctor_domain_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
     target_compile_definitions(hidhide_doctor_domain_tests PRIVATE HOTAS_DOCTOR_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    if (WIN32)
+        # The domain executable is also a useful standalone evidence probe for
+        # local review.  Make its build-tree copy runnable outside CTest, so a
+        # direct launch cannot fail before tests begin due to a missing Qt DLL.
+        add_custom_command(TARGET hidhide_doctor_domain_tests POST_BUILD
+            COMMAND "${HIDHIDE_DOCTOR_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                "$<TARGET_FILE:hidhide_doctor_domain_tests>"
+            COMMENT "Deploying the Qt runtime for HidHide Doctor domain tests")
+    endif()
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
     if (WIN32)

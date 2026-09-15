@@ -17,6 +17,9 @@
 #include <windows.h>
 #include <cfgmgr32.h>
 #include <devguid.h>
+#include <devpkey.h>
+#include <hidsdi.h>
+#include <hidpi.h>
 #include <setupapi.h>
 #include <shlobj_core.h>
 #include <softpub.h>
@@ -41,6 +44,12 @@ constexpr DWORD kMaxSetupApiExcerptChars = 16000;
 // discover a readable control-device path; the protocol below still issues
 // just the documented GET IOCTLs.
 const GUID kHidHideInterfaceGuid = {0x0c320ff7, 0xbd9b, 0x42b6, {0xbd, 0xaf, 0x49, 0xfe, 0xb9, 0xc9, 0x16, 0x49}};
+
+// These are the Windows SDK values for GUID_DEVINTERFACE_HID and
+// DEVPKEY_Device_ContainerId. Keeping immutable local copies avoids the
+// SDK's process-wide INITGUID definition switch in this provider.
+const GUID kHidDeviceInterfaceGuid = {0x4d1e55b2, 0xf16f, 0x11cf, {0x88, 0xcb, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
+const DEVPROPKEY kDeviceContainerId = {{0x8c7ed206, 0x3f8a, 0x4827, {0xb3, 0xab, 0xae, 0x9e, 0x1f, 0xae, 0xfc, 0x6c}}, 2};
 
 constexpr DWORD hidHideIoctl(DWORD function)
 {
@@ -185,6 +194,25 @@ QStringList readStringProperty(HDEVINFO deviceInfo, PSP_DEVINFO_DATA device, DWO
     }
     const RegistryRead read{true, type, QByteArray(reinterpret_cast<const char *>(buffer.constData()), static_cast<int>(bytes)), std::nullopt};
     return type == REG_MULTI_SZ ? registryMultiString(read) : QStringList{registryString(read)};
+}
+
+QString readGuidProperty(HDEVINFO deviceInfo, PSP_DEVINFO_DATA device, const DEVPROPKEY &property, QList<QString> *failures)
+{
+    DEVPROPTYPE type = 0;
+    DWORD bytes = 0;
+    SetupDiGetDevicePropertyW(deviceInfo, device, &property, &type, nullptr, 0, &bytes, 0);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes != sizeof(GUID)) {
+        if (failures && GetLastError() != ERROR_NOT_FOUND && GetLastError() != ERROR_FILE_NOT_FOUND)
+            failures->append(QStringLiteral("DEVPKEY:%1").arg(GetLastError()));
+        return {};
+    }
+    GUID value{};
+    if (!SetupDiGetDevicePropertyW(deviceInfo, device, &property, &type, reinterpret_cast<PBYTE>(&value), sizeof(value), nullptr, 0)) {
+        if (failures) failures->append(QStringLiteral("DEVPKEY:%1").arg(GetLastError()));
+        return {};
+    }
+    wchar_t text[64]{};
+    return StringFromGUID2(value, text, static_cast<int>(std::size(text))) ? fromWide(text) : QString();
 }
 
 QString fileVersionString(const QString &path, const wchar_t *field)
@@ -747,7 +775,13 @@ QList<DeviceObservation> observeDevices(std::atomic_bool *cancelled)
         device.hardwareIds = readStringProperty(deviceInfo, &data, SPDRP_HARDWAREID, &device.propertyFailures);
         device.compatibleIds = readStringProperty(deviceInfo, &data, SPDRP_COMPATIBLEIDS, &device.propertyFailures);
         device.location = readStringProperty(deviceInfo, &data, SPDRP_LOCATION_INFORMATION, &device.propertyFailures).value(0);
-        device.driverProvider = readStringProperty(deviceInfo, &data, SPDRP_MFG, nullptr).value(0);
+        device.containerId = readGuidProperty(deviceInfo, &data, kDeviceContainerId, &device.propertyFailures);
+        const QString driverKey = readStringProperty(deviceInfo, &data, SPDRP_DRIVER, &device.propertyFailures).value(0);
+        if (!driverKey.isEmpty()) {
+            const QString classPath = QStringLiteral("SYSTEM\\CurrentControlSet\\Control\\Class\\") + driverKey;
+            device.driverProvider = registryString(readRegistryValue(HKEY_LOCAL_MACHINE, classPath, QStringLiteral("ProviderName")));
+            device.driverVersion = registryString(readRegistryValue(HKEY_LOCAL_MACHINE, classPath, QStringLiteral("DriverVersion")));
+        }
         ULONG status = 0;
         ULONG problem = 0;
         if (CM_Get_DevNode_Status(&status, &problem, data.DevInst, 0) == CR_SUCCESS) {
@@ -760,6 +794,67 @@ QList<DeviceObservation> observeDevices(std::atomic_bool *cancelled)
         devices.append(std::move(device));
     }
     return devices;
+}
+
+void observeHidInterfaces(QList<DeviceObservation> &devices, std::atomic_bool *cancelled)
+{
+    HDEVINFO interfaces = SetupDiGetClassDevsW(&kHidDeviceInterfaceGuid, nullptr, nullptr,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (interfaces == INVALID_HANDLE_VALUE) return;
+    const auto destroy = qScopeGuard([&] { SetupDiDestroyDeviceInfoList(interfaces); });
+    for (DWORD index = 0; index < kMaximumDevices; ++index) {
+        if (cancelled && cancelled->load()) break;
+        SP_DEVICE_INTERFACE_DATA interfaceData{};
+        interfaceData.cbSize = sizeof(interfaceData);
+        if (!SetupDiEnumDeviceInterfaces(interfaces, nullptr, &kHidDeviceInterfaceGuid, index, &interfaceData)) {
+            if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+            continue;
+        }
+        DWORD bytes = 0;
+        SetupDiGetDeviceInterfaceDetailW(interfaces, &interfaceData, nullptr, 0, &bytes, nullptr);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)) continue;
+        QVector<BYTE> buffer(static_cast<qsizetype>(bytes));
+        auto *detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W *>(buffer.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+        SP_DEVINFO_DATA deviceData{};
+        deviceData.cbSize = sizeof(deviceData);
+        if (!SetupDiGetDeviceInterfaceDetailW(interfaces, &interfaceData, detail, bytes, nullptr, &deviceData)) continue;
+        wchar_t instance[1024]{};
+        if (!SetupDiGetDeviceInstanceIdW(interfaces, &deviceData, instance, static_cast<DWORD>(std::size(instance)), nullptr)) continue;
+        const QString instanceId = fromWide(instance);
+        auto target = std::find_if(devices.begin(), devices.end(), [&](const DeviceObservation &device) {
+            return device.instanceId.compare(instanceId, Qt::CaseInsensitive) == 0;
+        });
+        if (target == devices.end()) continue;
+        const QString path = fromWide(detail->DevicePath);
+        target->interfacePaths.append(path);
+        HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            const NativeError error = win32Error(GetLastError(), QStringLiteral("CreateFileW(HID interface, GENERIC_READ)"));
+            target->propertyFailures.append(QStringLiteral("HID_INTERFACE_OPEN:%1").arg(error.code));
+            if (!target->nativeError) target->nativeError = error;
+            continue;
+        }
+        const auto close = qScopeGuard([&] { CloseHandle(handle); });
+        PHIDP_PREPARSED_DATA preparsed = nullptr;
+        if (!HidD_GetPreparsedData(handle, &preparsed)) {
+            const NativeError error = win32Error(GetLastError(), QStringLiteral("HidD_GetPreparsedData"));
+            target->propertyFailures.append(QStringLiteral("HID_PREPARSED:%1").arg(error.code));
+            if (!target->nativeError) target->nativeError = error;
+            continue;
+        }
+        const auto freePreparsed = qScopeGuard([&] { HidD_FreePreparsedData(preparsed); });
+        HIDP_CAPS caps{};
+        const NTSTATUS result = HidP_GetCaps(preparsed, &caps);
+        if (result != HIDP_STATUS_SUCCESS) {
+            target->propertyFailures.append(QStringLiteral("HidP_GetCaps:0x%1").arg(static_cast<quint32>(result), 0, 16));
+            continue;
+        }
+        target->usagePage = caps.UsagePage;
+        target->usage = caps.Usage;
+    }
+    for (DeviceObservation &device : devices) device.interfacePaths.removeDuplicates();
 }
 
 QList<ProcessObservation> observeRelevantProcesses()
@@ -1339,13 +1434,27 @@ void populateCatalogObservations(ReadOnlyDiagnosticSnapshot &snapshot, const QSt
     add(QStringLiteral("HD-DEV-005"), snapshot.devices.isEmpty() ? DoctorCheckStatus::NotApplicable : DoctorCheckStatus::Informational, QStringLiteral("Friendly/product labels captured where exposed by SetupAPI."));
     const int withoutVidPid = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(), [](const DeviceObservation &device) { return !device.hardwareIds.join(QChar(' ')).contains(QStringLiteral("VID_"), Qt::CaseInsensitive); });
     add(QStringLiteral("HD-DEV-006"), snapshot.devices.isEmpty() ? DoctorCheckStatus::NotApplicable : (withoutVidPid ? DoctorCheckStatus::Informational : DoctorCheckStatus::Healthy), QStringLiteral("VID/PID unavailable for candidates=%1.").arg(withoutVidPid));
-    add(QStringLiteral("HD-DEV-007"), DoctorCheckStatus::Unknown, QStringLiteral("HID usage page/usage descriptor reads are not inferred from PnP instance IDs."));
+    const int hidInterfaceCount = std::accumulate(snapshot.devices.cbegin(), snapshot.devices.cend(), 0,
+        [](int total, const DeviceObservation &device) { return total + device.interfacePaths.size(); });
+    const int usageCount = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(),
+        [](const DeviceObservation &device) { return device.usagePage != 0 || device.usage != 0; });
+    add(QStringLiteral("HD-DEV-007"), hidInterfaceCount == 0 ? DoctorCheckStatus::NotApplicable
+        : (usageCount ? DoctorCheckStatus::Healthy : DoctorCheckStatus::Warning),
+        QStringLiteral("HID interface paths=%1; usage page/usage captured=%2.").arg(hidInterfaceCount).arg(usageCount));
     add(QStringLiteral("HD-DEV-008"), DoctorCheckStatus::Healthy, QStringLiteral("All enumerated device nodes were DIGCF_PRESENT."));
     const int problemCount = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(), [](const DeviceObservation &device) { return device.problemCode != 0; });
     add(QStringLiteral("HD-DEV-009"), problemCount ? DoctorCheckStatus::Warning : DoctorCheckStatus::Healthy, QStringLiteral("PnP problem devices=%1.").arg(problemCount));
-    add(QStringLiteral("HD-DEV-010"), snapshot.devices.isEmpty() ? DoctorCheckStatus::NotApplicable : DoctorCheckStatus::Informational, QStringLiteral("Per-device manufacturer/driver-context property captured where exposed."));
+    const int driverContextCount = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(),
+        [](const DeviceObservation &device) { return !device.driverProvider.isEmpty() || !device.driverVersion.isEmpty(); });
+    add(QStringLiteral("HD-DEV-010"), snapshot.devices.isEmpty() ? DoctorCheckStatus::NotApplicable
+        : (driverContextCount ? DoctorCheckStatus::Healthy : DoctorCheckStatus::Informational),
+        QStringLiteral("Per-device provider/version context captured=%1.").arg(driverContextCount));
     add(QStringLiteral("HD-DEV-011"), DoctorCheckStatus::Unknown, QStringLiteral("Composite parent/child topology was not inferred without a device-tree traversal."));
-    add(QStringLiteral("HD-DEV-012"), DoctorCheckStatus::Unknown, QStringLiteral("Container IDs were unavailable through the legacy SetupAPI property path."));
+    const int containerCount = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(),
+        [](const DeviceObservation &device) { return !device.containerId.isEmpty(); });
+    add(QStringLiteral("HD-DEV-012"), snapshot.devices.isEmpty() ? DoctorCheckStatus::NotApplicable
+        : (containerCount ? DoctorCheckStatus::Healthy : DoctorCheckStatus::Informational),
+        QStringLiteral("Container IDs captured=%1.").arg(containerCount));
     add(QStringLiteral("HD-DEV-013"), DoctorCheckStatus::Informational, QStringLiteral("Duplicate logical exposure requires interface-level topology correlation."));
     add(QStringLiteral("HD-DEV-014"), DoctorCheckStatus::NotApplicable, QStringLiteral("Present-only bounded scan intentionally does not label historical nodes as phantom."));
     add(QStringLiteral("HD-DEV-015"), devicePropertyFailures ? DoctorCheckStatus::Warning : DoctorCheckStatus::Informational, QStringLiteral("Per-device access/property failures are retained individually."));
@@ -1476,6 +1585,7 @@ ReadOnlyDiagnosticSnapshot ReadOnlyWindowsDiagnosticProvider::observe(std::atomi
     stage("HD-API-001", 100);
     stage("HD-DEV-001", 0);
     if (!cancelled || !cancelled->load()) snapshot.devices = observeDevices(cancelled);
+    if (!cancelled || !cancelled->load()) observeHidInterfaces(snapshot.devices, cancelled);
     stage("HD-DEV-001", 100);
     stage("HD-SYS-018", 0);
     if (!cancelled || !cancelled->load()) snapshot.processes = observeRelevantProcesses();

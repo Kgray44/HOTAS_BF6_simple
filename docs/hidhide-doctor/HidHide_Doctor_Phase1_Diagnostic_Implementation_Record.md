@@ -34,7 +34,7 @@ bounded, native, observational sources:
 | Platform, token, reboot | Registry reads, `GetNativeSystemInfo`, token query, uptime, storage, standard-path queries. |
 | Install/files | ARP/uninstall registry reads, dynamic Program Files roots, file metadata, SHA-256, PE architecture, version resource, Authenticode trust. |
 | Service/driver | SCM connect/query only; service config/status; Driver Store `FileRepository` and INF metadata read. |
-| Devices | Bounded SetupAPI/CM enumeration; individual property errors retain device/property/error evidence. |
+| Devices | Bounded SetupAPI/CM enumeration plus read-only HID-interface capability reads; individual property errors retain device/property/error evidence. |
 | Process/privilege | Toolhelp snapshot limited to HidHide/HOTAS names; no launch or injection. |
 | Windows evidence | Bounded Application/System Event Log, WER archive, and `setupapi.dev.log` tail. |
 | Configuration | HidHide parameter registry reads plus direct protocol GET results; disagreements become contradiction evidence. |
@@ -94,10 +94,12 @@ read completeness. They distinguish configured state from proof of live game
 visibility.
 
 Device data includes canonical ID, label, manufacturer, hardware/compatible
-IDs, location, status, problem code, and evidence-based physical/virtual/
-vJoy/ambiguous classification. A malformed property is isolated and cannot
-abort the rest of enumeration. The scanner never opens a controller merely to
-claim game visibility.
+IDs, location, status, problem code, Container ID, actual device-class driver
+provider/version, HID interface paths, and HID parser usage page/usage when
+the device exposes it. Interface handles are opened `GENERIC_READ` with shared
+read/write/delete access only to obtain `HidP_GetCaps`; no report is sent or
+received and no game visibility is claimed. A malformed property is isolated
+and cannot abort the rest of enumeration.
 
 Event Log queries are provider/channel/time bounded. WER is limited to 32
 reports and 32 KiB each. SetupAPI uses a bounded tail and 32 matching lines.
@@ -139,19 +141,26 @@ duplicate IDs, missing values, unknown errors, unusual paths, and missing
 event fields), requires bounded valid JSON, validates redaction, verifies
 progress/cancellation/rerun semantics, and statically guards against registry
 writes, service changes, process launch, device class-installer calls, and
-`IOCTL_SET` exposure.
+`IOCTL_SET` exposure. A focused metadata fixture proves that observed HID
+usage, device-class driver context, and Container ID set `HD-DEV-007`,
+`HD-DEV-010`, and `HD-DEV-012` independently. The domain-test target deploys
+its `Qt6Core` and `Qt6Test` runtime beside the executable so its direct launch
+is a valid test entry point, not only a CTest-only configuration.
 
 ## Local candidate results
 
-The local headless run completed the same engine with 238 results and evidence
-records, 25 relevant device candidates, three observed class-filter
-registrations, 15 individual protocol observations, and a 215,622-byte
-redacted schema-2 report in 243 ms engine time (396 ms process wall time;
-neither is a cross-machine SLA). `OPEN_CONTROL`,
-active/inverse, whitelist/blacklist size and payload, and their repeat checks
-were healthy.
-The raw report also retained a failed published-interface attempt before a
-successful interface open, rather than silently discarding it.
+The 2026-09-15 local headless run completed the same engine with 238 results
+and evidence records, 39 relevant device candidates, 37 HID interface paths,
+26 captured usage page/usage pairs, 38 device-class provider/version contexts,
+three observed class-filter registrations, 14 individual protocol
+observations, and a 225,784-byte redacted schema-2 report in 1,168 ms engine
+time (1,725 ms process wall time; neither is a cross-machine SLA). The
+Container-ID evidence check was healthy; sensitive Container IDs and interface
+paths are redacted in the exported report. `OPEN_INTERFACE_GUID`,
+`OPEN_CONTROL`, active/inverse, whitelist/blacklist size and payload, and their
+repeat checks were healthy.
+The raw report also retains published-interface evidence separately from the
+stable control-name GET endpoint, rather than silently discarding either path.
 
 Focused domain and standalone startup tests passed after the final candidate
 build. No UAC prompt, helper, HidHide GUI/CLI launch, registry write, service,
@@ -163,7 +172,7 @@ game isolation.
 
 Phase 2 may consume the stable Phase 1 evidence records for audited
 correlation, knowledge-base signatures, and user-authorized repair planning.
-It must not infer a package-layout manifest, filter-order rule, raw HID usage
+It must not infer a package-layout manifest, filter-order rule, raw HID report
 descriptor, topology, session SET capability, or live game-process visibility
 from Phase 1's evidence alone. New authority is required for every mutation,
 release, merge, and owner acceptance.

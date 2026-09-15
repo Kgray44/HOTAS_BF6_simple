@@ -369,7 +369,10 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
     for (const DeviceObservation &device : outcome.snapshot.devices) devices.append(QJsonObject{
         {QStringLiteral("instanceId"), redact(device.instanceId, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
         {QStringLiteral("classification"), displayName(device.classification)}, {QStringLiteral("problemCode"), static_cast<int>(device.problemCode)},
-        {QStringLiteral("propertyFailureCount"), device.propertyFailures.size()}});
+        {QStringLiteral("usagePage"), static_cast<int>(device.usagePage)}, {QStringLiteral("usage"), static_cast<int>(device.usage)},
+        {QStringLiteral("containerId"), redact(device.containerId, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+        {QStringLiteral("driverProvider"), device.driverProvider}, {QStringLiteral("driverVersion"), device.driverVersion},
+        {QStringLiteral("interfaceCount"), device.interfacePaths.size()}, {QStringLiteral("propertyFailureCount"), device.propertyFailures.size()}});
     root.insert(QStringLiteral("devices"), devices);
     QJsonArray restart;
     for (const PendingRestartObservation &observation : outcome.snapshot.pendingRestart) restart.append(QJsonObject{

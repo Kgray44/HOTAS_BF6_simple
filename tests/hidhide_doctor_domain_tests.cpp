@@ -118,6 +118,7 @@ private slots:
     void repairContractRejectsUnknownAndArbitraryTargets();
     void presentationToggleKeepsOneCanonicalSession();
     void phaseOneEngineKeepsProtocolFailuresIndependentAndExact();
+    void phaseOneDeviceMetadataMapsToCatalogChecks();
     void phaseOneReportRedactsSensitiveObservationValues();
     void phaseOneFixtureMatrixUsesOneEngine();
     void phaseOneEvidenceFuzzRemainsBoundedAndSerializable();
@@ -323,6 +324,31 @@ void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAnd
     const DoctorCheckResult *devices = resultFor(outcome.session, QStringLiteral("HD-DEV-003"));
     QVERIFY(devices);
     QCOMPARE(devices->status, DoctorCheckStatus::Warning);
+}
+
+void HidHideDoctorDomainTests::phaseOneDeviceMetadataMapsToCatalogChecks()
+{
+    ReadOnlyDiagnosticSnapshot snapshot = healthyFixtureSnapshot();
+    DeviceObservation &device = snapshot.devices.front();
+    device.interfacePaths = {QStringLiteral("\\\\?\\hid#fixture")};
+    device.usagePage = 0x01;
+    device.usage = 0x04;
+    device.containerId = QStringLiteral("{11111111-2222-3333-4444-555555555555}");
+    device.driverProvider = QStringLiteral("Fixture Driver Provider");
+    device.driverVersion = QStringLiteral("1.2.3.4");
+
+    SnapshotProvider provider(snapshot);
+    DoctorDiagnosticEngine engine;
+    const DoctorSession session = engine.run(provider).session;
+    const DoctorCheckResult *usage = resultFor(session, QStringLiteral("HD-DEV-007"));
+    const DoctorCheckResult *driver = resultFor(session, QStringLiteral("HD-DEV-010"));
+    const DoctorCheckResult *container = resultFor(session, QStringLiteral("HD-DEV-012"));
+    QVERIFY(usage);
+    QVERIFY(driver);
+    QVERIFY(container);
+    QCOMPARE(usage->status, DoctorCheckStatus::Healthy);
+    QCOMPARE(driver->status, DoctorCheckStatus::Healthy);
+    QCOMPARE(container->status, DoctorCheckStatus::Healthy);
 }
 
 void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
