@@ -9,7 +9,7 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 420
     visible: true
-    title: "HidHide Doctor — Phase 0"
+    title: "HidHide Doctor — Phase 1 Read-Only Diagnostics"
     color: "#10151d"
 
     component Surface: Rectangle {
@@ -39,7 +39,7 @@ ApplicationWindow {
             anchors.rightMargin: 16
             spacing: 12
             Label { text: "HIDHIDE DOCTOR"; color: "#edf7ff"; font.bold: true; font.pixelSize: 17 }
-            Label { text: "Standalone Phase 0 architecture shell"; color: "#a9bfce"; Layout.fillWidth: true }
+            Label { text: "Standalone Phase 1 · real read-only Windows evidence"; color: "#a9bfce"; Layout.fillWidth: true }
             Button {
                 text: doctorSession.commandCenter ? "Focus View" : "Command Center"
                 onClicked: doctorSession.togglePresentation()
@@ -56,8 +56,13 @@ ApplicationWindow {
             Layout.fillWidth: true
             Label { text: doctorSession.currentPhase + " · " + doctorSession.currentStep; color: "#ffffff"; font.pixelSize: 18; Layout.fillWidth: true; elide: Text.ElideRight }
             Label { text: doctorSession.overallProgress + "% overall"; color: "#75d6a1"; font.bold: true }
+            Button {
+                text: doctorSession.scanRunning ? "Cancel Scan" : "Run New Scan"
+                onClicked: doctorSession.scanRunning ? doctorSession.requestCancellation() : doctorSession.requestRerun()
+            }
         }
         ProgressBar { Layout.fillWidth: true; from: 0; to: 100; value: doctorSession.overallProgress }
+        Label { text: "Completed " + doctorSession.completedChecks + " · Remaining " + doctorSession.remainingChecks + " · Warnings/failures " + doctorSession.warningOrFailureCount + " · Elapsed " + doctorSession.elapsed; color: "#91aabd"; font.pixelSize: 11; Layout.fillWidth: true }
         Label { text: doctorSession.buildIdentity + "\nSession " + doctorSession.sessionId; color: "#91aabd"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
         Loader {
@@ -79,7 +84,7 @@ ApplicationWindow {
                 spacing: 12
                 Surface { heading: "Diagnostic Plan"; detail: doctorSession.planItems.join("\n") }
                 Surface { heading: "Current Step"; detail: doctorSession.currentStepId + "\n" + doctorSession.currentStep + "\n" + doctorSession.currentStepProgress + "% complete" }
-                Surface { heading: "Findings"; detail: doctorSession.findingItems.join("\n") }
+                Surface { heading: "Results / Observations"; detail: doctorSession.resultItems.join("\n") }
                 Surface { heading: "User Action"; detail: doctorSession.userActionTitle + "\n" + doctorSession.userActionDetail }
             }
         }
@@ -93,7 +98,7 @@ ApplicationWindow {
             rowSpacing: 12
             Surface { Layout.fillHeight: true; heading: "Diagnostic Plan"; detail: doctorSession.planItems.join("\n") }
             Surface { Layout.fillHeight: true; heading: "Current Step"; detail: doctorSession.currentStepId + "\n" + doctorSession.currentStep + "\n" + doctorSession.currentStepProgress + "% complete" }
-            Surface { Layout.fillHeight: true; heading: "Findings"; detail: doctorSession.findingItems.join("\n") }
+            Surface { Layout.fillHeight: true; heading: "Results / Observations"; detail: doctorSession.resultItems.join("\n") }
             Surface { Layout.fillHeight: true; heading: "User Action"; detail: doctorSession.userActionTitle + "\n" + doctorSession.userActionDetail }
         }
     }

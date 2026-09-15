@@ -7,7 +7,7 @@
 
 namespace hotas::doctor {
 
-enum class CatalogImplementationState { Deferred, Implemented, Qualified, RepairLinked, Unsupported };
+enum class CatalogImplementationState { Deferred, Conditional, Implemented, Qualified, RepairLinked, Unsupported };
 
 struct DoctorCheckDefinition final {
     DoctorCheckId id;
@@ -24,6 +24,7 @@ struct CatalogCoverageReport final {
     int defined = 0;
     int registered = 0;
     int implemented = 0;
+    int conditional = 0;
     int qualified = 0;
     int repairLinked = 0;
     int unsupported = 0;
@@ -33,6 +34,10 @@ struct CatalogCoverageReport final {
 class DoctorCatalog final {
 public:
     static QStringList v11DefinedCheckIds();
+    // The governing markdown remains the one authority for stable check
+    // labels.  Consumers use this lookup rather than carrying a second,
+    // hand-maintained title table.
+    static QString v11CheckTitle(const DoctorCheckId &id);
     bool registerCheck(DoctorCheckDefinition definition, QString *reason = nullptr);
     bool contains(const DoctorCheckId &id) const;
     const DoctorCheckDefinition *find(const DoctorCheckId &id) const;

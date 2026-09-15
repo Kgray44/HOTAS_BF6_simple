@@ -289,10 +289,20 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_repair_contract.cpp
     src/hidhide_doctor/doctor_session_view_model.h
     src/hidhide_doctor/doctor_session_view_model.cpp
+    src/hidhide_doctor/doctor_diagnostics.h
+    src/hidhide_doctor/doctor_diagnostics.cpp
+    src/hidhide_doctor/doctor_windows_provider.cpp
 )
 target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)
 target_include_directories(hidhide_doctor_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor")
+if (WIN32)
+    # Every Phase 1 provider uses a documented read/query API only. Link the
+    # dedicated Windows libraries here rather than routing diagnostics through
+    # the mapper or a command shell.
+    target_link_libraries(hidhide_doctor_core PRIVATE setupapi cfgmgr32 advapi32 version wintrust crypt32 wevtapi shell32)
+    target_compile_definitions(hidhide_doctor_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+endif()
 qt_add_resources(hidhide_doctor_core hidhide_doctor_governance_resources
     PREFIX "/hidhide-doctor"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/docs/hidhide-doctor"
@@ -348,6 +358,7 @@ if (BUILD_TESTING)
     )
     set_target_properties(hidhide_doctor_domain_tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(hidhide_doctor_domain_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
+    target_compile_definitions(hidhide_doctor_domain_tests PRIVATE HOTAS_DOCTOR_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
     if (WIN32)
