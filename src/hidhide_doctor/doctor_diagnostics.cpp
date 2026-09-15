@@ -1,4 +1,5 @@
 #include "doctor_diagnostics.h"
+#include "doctor_knowledge.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -80,9 +81,8 @@ DoctorCatalog DoctorDiagnosticEngine::registeredCatalog()
         definition.phase = phaseFor(definition.id);
         definition.weight = {definition.phase == DoctorPhase::ProtocolApiHealth ? 3 : 1};
         definition.timeoutMs = definition.phase == DoctorPhase::ProtocolApiHealth ? 2500 : 10000;
-        definition.implementation = isPhaseTwoKnowledgeCheck(definition.id) ? CatalogImplementationState::Deferred
-            : (hasDirectPhaseOneSource(definition.id) ? CatalogImplementationState::Implemented
-                                                      : CatalogImplementationState::Conditional);
+        definition.implementation = (isPhaseTwoKnowledgeCheck(definition.id) || hasDirectPhaseOneSource(definition.id))
+            ? CatalogImplementationState::Implemented : CatalogImplementationState::Conditional;
         catalog.registerCheck(std::move(definition));
     }
     return catalog;
@@ -248,7 +248,9 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         outcome.session.plan().setCurrentStepProgress(stepId, percent);
         if (onProgress) onProgress(outcome.session);
     });
+    outcome.session.setEnvironment(outcome.snapshot.environment);
     for (const DiagnosticPlanItem &item : outcome.session.plan().items()) {
+        if (isPhaseTwoKnowledgeCheck(item.check.id) && !(cancelled && cancelled->load())) continue;
         if (cancelled && cancelled->load()) {
             DoctorCheckResult result;
             result.checkId = item.check.id;
@@ -265,10 +267,14 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
             result.evidenceIds.append(outcome.session.evidence().back().id);
             outcome.session.appendCheckResult(result);
             outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Cancelled, QStringLiteral("Scan cancellation requested."));
+            outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
+                item.check.title, result.summary, result.evidenceIds.value(0)});
             if (onProgress) onProgress(outcome.session);
             continue;
         }
         outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Running, QStringLiteral("Evaluating observed evidence."));
+        outcome.session.setCurrentOperation({DoctorOperationId(QStringLiteral("OP-") + item.check.id.value()),
+            DoctorOperationState::Running, item.check.title, 0, item.check.timeoutMs});
         if (onProgress) onProgress(outcome.session);
         DoctorCheckResult result = evaluate(item.check, outcome.snapshot);
         EvidenceRecord evidence;
@@ -285,15 +291,55 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         result.evidenceIds.append(outcome.session.evidence().back().id);
         outcome.session.appendCheckResult(result);
         outcome.session.plan().setStatus(item.stepId, result.status, result.summary);
+        outcome.session.setCurrentOperation({DoctorOperationId(QStringLiteral("OP-") + item.check.id.value()),
+            DoctorOperationState::Completed, item.check.title, 100, item.check.timeoutMs});
+        outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
+            item.check.title, result.summary, result.evidenceIds.value(0)});
         if (onProgress) onProgress(outcome.session);
     }
     outcome.cancelled = cancelled && cancelled->load();
     outcome.session.transitionTo(outcome.cancelled ? DoctorSessionState::Cancelled : DoctorSessionState::Analyzing);
-    if (!outcome.cancelled) outcome.session.transitionTo(DoctorSessionState::DiagnosisComplete);
-    outcome.session.setUserAction({UserActionState::NothingRequired, FindingSeverity::Informational,
-        outcome.cancelled ? QStringLiteral("Scan cancelled safely") : QStringLiteral("No repair action in Phase 1"),
+    if (!outcome.cancelled) {
+        const DoctorKnowledgeEngine knowledge;
+        const KnowledgeAnalysis analysis = knowledge.analyze(outcome.session, outcome.snapshot);
+        outcome.knowledgeEngineVersion = analysis.engineVersion;
+        outcome.findingRuleCount = analysis.findingRuleCount;
+        outcome.diagnosisRuleCount = analysis.diagnosisRuleCount;
+        for (const DiagnosticPlanItem &item : outcome.session.plan().items()) {
+            if (!isPhaseTwoKnowledgeCheck(item.check.id)) continue;
+            outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Running,
+                QStringLiteral("Evaluating deterministic Phase 2 knowledge rules."));
+            DoctorCheckResult result = analysis.catalogResults.value(item.check.id.value());
+            if (!result.checkId.isValid()) {
+                result.checkId = item.check.id;
+                result.status = DoctorCheckStatus::NotApplicable;
+                result.summary = QStringLiteral("No specialized correlation rule was applicable to this evidence set.");
+                result.technicalDetails = QStringLiteral("%1 deterministic knowledge engine.").arg(analysis.engineVersion);
+            }
+            EvidenceRecord evidence;
+            evidence.checkId = result.checkId;
+            evidence.kind = EvidenceKind::DerivedCorrelation;
+            evidence.provenance = EvidenceProvenance::Derived;
+            evidence.sensitivity = EvidenceSensitivity::RequiresRedaction;
+            evidence.source = QStringLiteral("phase2-deterministic-knowledge-engine");
+            evidence.humanSummary = result.summary;
+            evidence.technicalDetails = result.technicalDetails;
+            outcome.session.appendEvidence(evidence);
+            result.evidenceIds.append(outcome.session.evidence().back().id);
+            outcome.session.appendCheckResult(result);
+            outcome.session.plan().setStatus(item.stepId, result.status, result.summary);
+            outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
+                item.check.title, result.summary, result.evidenceIds.value(0)});
+        }
+        outcome.session.transitionTo(DoctorSessionState::DiagnosisComplete);
+    }
+    const bool hasDiagnoses = !outcome.session.diagnoses().isEmpty();
+    outcome.session.setUserAction({UserActionState::NothingRequired, hasDiagnoses ? FindingSeverity::Warning : FindingSeverity::Informational,
+        outcome.cancelled ? QStringLiteral("Scan cancelled safely")
+                          : (hasDiagnoses ? QStringLiteral("Diagnosis complete — repairs disabled") : QStringLiteral("Nothing required")),
         outcome.cancelled ? QStringLiteral("Collected read-only evidence is retained; no Windows or HidHide state changed.")
-                          : QStringLiteral("The scan is read-only and did not request elevation or change HidHide."), {}, {}, {}});
+                          : (hasDiagnoses ? QStringLiteral("The Doctor classified the evidence. Repairs are intentionally disabled in this Phase 2 build.")
+                                           : QStringLiteral("No material HidHide issue was diagnosed. The scan remained read only.")), {}, {}, {}});
     outcome.completedAt = QDateTime::currentDateTimeUtc();
     outcome.durationMs = timer.elapsed();
     return outcome;
@@ -314,12 +360,15 @@ DoctorSession DoctorDiagnosticEngine::createPreparedSession() const
 QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &outcome, bool redactSensitive)
 {
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 2);
+    root.insert(QStringLiteral("schemaVersion"), 3);
     root.insert(QStringLiteral("sessionId"), outcome.session.id().value());
+    root.insert(QStringLiteral("sessionLabel"), outcome.session.sessionLabel());
     root.insert(QStringLiteral("startedAt"), outcome.startedAt.toString(Qt::ISODateWithMs));
     root.insert(QStringLiteral("completedAt"), outcome.completedAt.toString(Qt::ISODateWithMs));
     root.insert(QStringLiteral("scanDurationMs"), outcome.durationMs);
     root.insert(QStringLiteral("cancelled"), outcome.cancelled);
+    root.insert(QStringLiteral("knowledgeEngine"), QJsonObject{{QStringLiteral("version"), outcome.knowledgeEngineVersion},
+        {QStringLiteral("findingRuleCount"), outcome.findingRuleCount}, {QStringLiteral("diagnosisRuleCount"), outcome.diagnosisRuleCount}});
     root.insert(QStringLiteral("catalogCoverage"), QJsonObject{{QStringLiteral("defined"), outcome.catalogCoverage.defined},
         {QStringLiteral("registered"), outcome.catalogCoverage.registered}, {QStringLiteral("implemented"), outcome.catalogCoverage.implemented},
         {QStringLiteral("conditional"), outcome.catalogCoverage.conditional},
@@ -410,8 +459,58 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
         {QStringLiteral("durationMs"), static_cast<qint64>(record.durationMs)}, {QStringLiteral("direct"), record.direct},
         {QStringLiteral("error"), nativeErrorJson(record.nativeError)}});
     root.insert(QStringLiteral("evidenceRecords"), evidence);
-    root.insert(QStringLiteral("findings"), QJsonArray());
-    root.insert(QStringLiteral("diagnoses"), QJsonArray());
+    QJsonArray findings;
+    for (const Finding &finding : outcome.session.findings()) {
+        QStringList evidenceIds;
+        QStringList relatedIds;
+        for (const EvidenceId &id : finding.evidenceIds) evidenceIds.append(id.value());
+        for (const FindingId &id : finding.relatedFindings) relatedIds.append(id.value());
+        findings.append(QJsonObject{{QStringLiteral("findingId"), finding.id.value()},
+            {QStringLiteral("severity"), displayName(finding.severity)}, {QStringLiteral("title"), finding.title},
+            {QStringLiteral("humanExplanation"), finding.explanation},
+            {QStringLiteral("technicalExplanation"), redact(finding.technicalExplanation, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+            {QStringLiteral("affectedObject"), redact(finding.affectedObject, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+            {QStringLiteral("environmentalScope"), finding.environmentalScope},
+            {QStringLiteral("confidence"), displayName(finding.confidence)}, {QStringLiteral("status"), displayName(finding.status)},
+            {QStringLiteral("repairability"), displayName(finding.repairability)},
+            {QStringLiteral("evidenceIds"), QJsonArray::fromStringList(evidenceIds)},
+            {QStringLiteral("relatedFindingIds"), QJsonArray::fromStringList(relatedIds)},
+            {QStringLiteral("observedAt"), finding.observedAt.toString(Qt::ISODateWithMs)}});
+    }
+    root.insert(QStringLiteral("findings"), findings);
+    QJsonArray diagnoses;
+    for (const Diagnosis &diagnosis : outcome.session.diagnoses()) {
+        QStringList supportingIds;
+        QStringList contradictingIds;
+        for (const EvidenceId &id : diagnosis.supportingEvidence) supportingIds.append(id.value());
+        for (const EvidenceId &id : diagnosis.contradictingEvidence) contradictingIds.append(id.value());
+        diagnoses.append(QJsonObject{{QStringLiteral("diagnosisId"), diagnosis.id.value()},
+            {QStringLiteral("signatureId"), diagnosis.signatureId.value()}, {QStringLiteral("knowledgeVersion"), diagnosis.knowledgeVersion},
+            {QStringLiteral("role"), displayName(diagnosis.role)}, {QStringLiteral("problemFamily"), diagnosis.problemFamily},
+            {QStringLiteral("severity"), displayName(diagnosis.severity)}, {QStringLiteral("title"), diagnosis.title},
+            {QStringLiteral("humanExplanation"), diagnosis.humanExplanation},
+            {QStringLiteral("technicalExplanation"), redact(diagnosis.technicalExplanation, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+            {QStringLiteral("userImpact"), diagnosis.userImpact}, {QStringLiteral("usualResolution"), diagnosis.usualResolution},
+            {QStringLiteral("repairability"), displayName(diagnosis.repairability)},
+            {QStringLiteral("confidence"), QJsonObject{{QStringLiteral("band"), displayName(diagnosis.confidence)},
+                {QStringLiteral("score"), diagnosis.confidenceExplanation.score}, {QStringLiteral("reason"), diagnosis.confidenceExplanation.bandReason},
+                {QStringLiteral("requiredEvidence"), QJsonArray::fromStringList(diagnosis.confidenceExplanation.requiredEvidence)},
+                {QStringLiteral("supportingEvidence"), QJsonArray::fromStringList(diagnosis.confidenceExplanation.supportingEvidence)},
+                {QStringLiteral("contradictingEvidence"), QJsonArray::fromStringList(diagnosis.confidenceExplanation.contradictingEvidence)},
+                {QStringLiteral("missingExpectedEvidence"), QJsonArray::fromStringList(diagnosis.confidenceExplanation.missingExpectedEvidence)}}},
+            {QStringLiteral("supportingEvidenceIds"), QJsonArray::fromStringList(supportingIds)},
+            {QStringLiteral("contradictingEvidenceIds"), QJsonArray::fromStringList(contradictingIds)},
+            {QStringLiteral("candidateRepairIds"), QJsonArray::fromStringList(diagnosis.candidateRepairIds)},
+            {QStringLiteral("provenance"), diagnosis.provenance}});
+    }
+    root.insert(QStringLiteral("diagnoses"), diagnoses);
+    QJsonArray activity;
+    for (const DoctorActivityEvent &event : outcome.session.activity()) activity.append(QJsonObject{
+        {QStringLiteral("timestamp"), event.timestamp.toString(Qt::ISODateWithMs)}, {QStringLiteral("checkId"), event.checkId.value()},
+        {QStringLiteral("status"), displayName(event.status)}, {QStringLiteral("title"), event.title},
+        {QStringLiteral("detail"), redact(event.detail, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+        {QStringLiteral("evidenceId"), event.evidenceId.value()}});
+    root.insert(QStringLiteral("activityTimeline"), activity);
     root.insert(QStringLiteral("contradictions"), QJsonArray::fromStringList(outcome.snapshot.contradictions));
     root.insert(QStringLiteral("operationalLimits"), QJsonArray::fromStringList(outcome.snapshot.operationalLimits));
     return QJsonDocument(root).toJson(QJsonDocument::Indented);

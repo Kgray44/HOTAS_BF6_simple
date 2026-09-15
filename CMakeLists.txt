@@ -295,6 +295,10 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_session_view_model.cpp
     src/hidhide_doctor/doctor_diagnostics.h
     src/hidhide_doctor/doctor_diagnostics.cpp
+    src/hidhide_doctor/doctor_knowledge.h
+    src/hidhide_doctor/doctor_knowledge.cpp
+    src/hidhide_doctor/doctor_fixtures.h
+    src/hidhide_doctor/doctor_fixtures.cpp
     src/hidhide_doctor/doctor_windows_provider.cpp
 )
 target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)
@@ -322,6 +326,17 @@ qt_add_qml_module(HidHideDoctor
     VERSION 1.0
     QML_FILES
         qml/HidHideDoctorMain.qml
+        qml/doctor/DoctorButton.qml
+        qml/doctor/DoctorDivider.qml
+        qml/doctor/DoctorPaneHeader.qml
+        qml/doctor/DoctorProgressBar.qml
+        qml/doctor/DoctorScrollBar.qml
+        qml/doctor/DoctorSegmentedControl.qml
+        qml/doctor/DoctorStatusPill.qml
+        qml/doctor/DoctorTextArea.qml
+        qml/doctor/DoctorTimelineRow.qml
+    RESOURCES
+        qml/doctor/DoctorTheme.js
 )
 target_link_libraries(HidHideDoctor PRIVATE
     hidhide_doctor_core
@@ -383,10 +398,28 @@ if (BUILD_TESTING)
     endif()
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
+    qt_add_executable(hidhide_doctor_layout_tests
+        tests/hidhide_doctor_layout_tests.cpp
+    )
+    set_target_properties(hidhide_doctor_layout_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(hidhide_doctor_layout_tests PRIVATE
+        hidhide_doctor_core
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Test
+    )
+    target_compile_definitions(hidhide_doctor_layout_tests PRIVATE HOTAS_DOCTOR_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME hidhide_doctor_layout_tests COMMAND hidhide_doctor_layout_tests)
     if (WIN32)
         set_tests_properties(hidhide_doctor_domain_tests PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
         set_tests_properties(hidhide_doctor_standalone_startup_smoke PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(hidhide_doctor_layout_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

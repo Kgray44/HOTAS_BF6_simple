@@ -152,9 +152,27 @@ enum class NativeErrorDomain { None, Win32, NtStatus, HResult, Protocol, Process
 enum class FindingSeverity { Informational, Warning, Error, Critical };
 enum class DiagnosisConfidence { Uncertain, Moderate, High, VeryHigh, Confirmed };
 enum class UserActionState { NothingRequired, Required, Optional, Blocked };
-enum class Repairability { NotEvaluated, NoQualifiedRepair, ConfigurationOnly, Repairable };
+// Phase 2 deliberately describes what could be repaired without gaining any
+// ability to perform that repair.  Keep this vocabulary distinct from the
+// diagnosis itself and from the future RepairPlan risk/qualification model.
+enum class Repairability {
+    NotEvaluated,
+    NoRepairRequired,
+    AutomaticallyRepairable,
+    AutomaticallyRepairableAfterRestart,
+    PotentialRepairAvailableButUnqualified,
+    ManualInterventionRequired,
+    UpstreamOrComponentDefect,
+    UnsupportedEnvironment,
+    InsufficientEvidence,
+    // Retained for report compatibility with Phase 0/1 records.
+    NoQualifiedRepair,
+    ConfigurationOnly,
+    Repairable,
+};
 enum class RepairRiskClass { R0Observe, R1Configuration, R2Component, R3Package, R4ApprovedUpgrade, R5Recovery };
 enum class RepairQualificationLevel { Experimental, LabQualified, FieldQualified, Retired };
+enum class DiagnosisRole { Primary, Secondary, Contributing };
 
 struct WorkWeight final {
     int units = 0;
@@ -206,6 +224,23 @@ struct Finding final {
     QString title;
     QString explanation;
     QList<EvidenceId> evidenceIds;
+    QString technicalExplanation;
+    QString affectedObject;
+    QString environmentalScope;
+    DiagnosisConfidence confidence = DiagnosisConfidence::Uncertain;
+    DoctorCheckStatus status = DoctorCheckStatus::Unknown;
+    Repairability repairability = Repairability::NotEvaluated;
+    QList<FindingId> relatedFindings;
+    QDateTime observedAt;
+};
+
+struct ConfidenceExplanation final {
+    int score = 0;
+    QString bandReason;
+    QStringList requiredEvidence;
+    QStringList supportingEvidence;
+    QStringList contradictingEvidence;
+    QStringList missingExpectedEvidence;
 };
 
 struct Diagnosis final {
@@ -217,6 +252,25 @@ struct Diagnosis final {
     QList<EvidenceId> supportingEvidence;
     QList<EvidenceId> contradictingEvidence;
     QString title;
+    QString problemFamily;
+    QString humanExplanation;
+    QString technicalExplanation;
+    QString userImpact;
+    QString usualResolution;
+    QString provenance;
+    QString knowledgeVersion;
+    QStringList candidateRepairIds;
+    DiagnosisRole role = DiagnosisRole::Secondary;
+    ConfidenceExplanation confidenceExplanation;
+};
+
+struct DoctorActivityEvent final {
+    QDateTime timestamp;
+    DoctorCheckId checkId;
+    DoctorCheckStatus status = DoctorCheckStatus::Waiting;
+    QString title;
+    QString detail;
+    EvidenceId evidenceId;
 };
 
 struct UserAction final {
@@ -239,6 +293,10 @@ struct DoctorOperation final {
 
 QString displayName(DoctorPhase phase);
 QString displayName(DoctorCheckStatus status);
+QString displayName(FindingSeverity severity);
+QString displayName(DiagnosisConfidence confidence);
+QString displayName(Repairability repairability);
+QString displayName(DiagnosisRole role);
 bool isTerminal(DoctorCheckStatus status);
 bool isExecutionFailure(DoctorCheckStatus status);
 bool isTransitionAllowed(DoctorSessionState from, DoctorSessionState to);

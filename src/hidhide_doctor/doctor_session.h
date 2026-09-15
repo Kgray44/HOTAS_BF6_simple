@@ -1,6 +1,7 @@
 #pragma once
 
 #include "doctor_catalog.h"
+#include "doctor_environment.h"
 
 namespace hotas::doctor {
 
@@ -55,14 +56,20 @@ public:
     void appendCheckResult(DoctorCheckResult result);
     void appendFinding(Finding finding);
     void appendDiagnosis(Diagnosis diagnosis);
+    void appendActivity(DoctorActivityEvent event);
     void setUserAction(UserAction action);
     void setCurrentOperation(DoctorOperation operation);
+    void setEnvironment(DoctorEnvironment environment);
+    void setSessionLabel(QString label);
     const QList<EvidenceRecord> &evidence() const;
     const QList<DoctorCheckResult> &checkResults() const;
     const QList<Finding> &findings() const;
     const QList<Diagnosis> &diagnoses() const;
+    const QList<DoctorActivityEvent> &activity() const;
     const UserAction &userAction() const;
     const std::optional<DoctorOperation> &currentOperation() const;
+    const std::optional<DoctorEnvironment> &environment() const;
+    const QString &sessionLabel() const;
     QDateTime createdAt() const;
 
 private:
@@ -74,8 +81,11 @@ private:
     QList<DoctorCheckResult> m_checkResults;
     QList<Finding> m_findings;
     QList<Diagnosis> m_diagnoses;
+    QList<DoctorActivityEvent> m_activity;
     UserAction m_userAction;
     std::optional<DoctorOperation> m_currentOperation;
+    std::optional<DoctorEnvironment> m_environment;
+    QString m_sessionLabel;
 };
 
 DoctorSession createPhase0FixtureSession();

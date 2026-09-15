@@ -1,5 +1,7 @@
 #include "doctor_catalog.h"
 #include "doctor_diagnostics.h"
+#include "doctor_fixtures.h"
+#include "doctor_knowledge.h"
 #include "doctor_repair_contract.h"
 #include "doctor_session_view_model.h"
 
@@ -8,6 +10,7 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include <algorithm>
 #include <functional>
 
 using namespace hotas::doctor;
@@ -117,6 +120,8 @@ private slots:
     void fixtureProtocolFailuresAreIsolated();
     void repairContractRejectsUnknownAndArbitraryTargets();
     void presentationToggleKeepsOneCanonicalSession();
+    void presentationFractionsRejectInvalidPixelGeometry();
+    void healthRailUnknownMeansNoVerdict();
     void phaseOneEngineKeepsProtocolFailuresIndependentAndExact();
     void phaseOneDeviceMetadataMapsToCatalogChecks();
     void phaseOneReportRedactsSensitiveObservationValues();
@@ -124,6 +129,8 @@ private slots:
     void phaseOneEvidenceFuzzRemainsBoundedAndSerializable();
     void phaseOneProgressCancellationAndRerunAreCoherent();
     void phaseOneProductionProviderHasNoMutationSurface();
+    void phaseTwoDiagnosisFixtureMatrixIsDeterministicAndReadOnly();
+    void phaseTwoReportCarriesFindingsDiagnosesAndKnowledgeVersion();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -285,12 +292,45 @@ void HidHideDoctorDomainTests::presentationToggleKeepsOneCanonicalSession()
     const QString id = session.id().value();
     const int planCount = session.plan().items().size();
     DoctorSessionViewModel model(session, QStringLiteral("unit-test"));
-    QVERIFY(!model.commandCenter());
+    const bool originalPresentation = model.commandCenter();
     model.togglePresentation();
-    QVERIFY(model.commandCenter());
+    QCOMPARE(model.commandCenter(), !originalPresentation);
     QCOMPARE(model.sessionId(), id);
     QCOMPARE(session.plan().items().size(), planCount);
     QCOMPARE(model.currentStepId(), QStringLiteral("HD-API-001"));
+}
+
+void HidHideDoctorDomainTests::presentationFractionsRejectInvalidPixelGeometry()
+{
+    const QVariantList defaults = DoctorSessionViewModel::defaultPaneFractions();
+    const QVariantList canonical{0.49, 0.145, 0.22, 0.145};
+    const QVariantList legacyValid{0.22, 0.265, 0.36, 0.155};
+    QCOMPARE(defaults.size(), 4);
+    QCOMPARE(defaults, canonical);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{22, 27, 36, 15}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(legacyValid), legacyValid);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.02, 0.265, 0.36, 0.355}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.22, 0.265, 0.36}), defaults);
+}
+
+void HidHideDoctorDomainTests::healthRailUnknownMeansNoVerdict()
+{
+    DoctorSession session;
+    DoctorCheckResult unknownResult;
+    unknownResult.checkId = DoctorCheckId(QStringLiteral("HD-SYS-001"));
+    unknownResult.status = DoctorCheckStatus::Unknown;
+    unknownResult.summary = QStringLiteral("No direct read-only observation was available.");
+    unknownResult.implementationConditional = true;
+    session.appendCheckResult(unknownResult);
+    DoctorSessionViewModel model(session, QStringLiteral("unit-test"));
+    const QVariantList domains = model.healthDomains();
+    const auto windows = std::find_if(domains.cbegin(), domains.cend(), [](const QVariant &value) {
+        return value.toMap().value(QStringLiteral("label")).toString() == QStringLiteral("WINDOWS");
+    });
+    QVERIFY(windows != domains.cend());
+    const QVariantMap domain = windows->toMap();
+    QCOMPARE(domain.value(QStringLiteral("status")).toString(), QStringLiteral("NO VERDICT"));
+    QVERIFY(domain.value(QStringLiteral("detail")).toString().contains(QStringLiteral("not determinate")));
 }
 
 void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAndExact()
@@ -366,7 +406,7 @@ void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(report, &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 2);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 3);
     QCOMPARE(document.object().value(QStringLiteral("evidenceRecords")).toArray().size(), DoctorCatalog::v11DefinedCheckIds().size());
 }
 
@@ -412,8 +452,8 @@ void HidHideDoctorDomainTests::phaseOneFixtureMatrixUsesOneEngine()
         SnapshotProvider provider(snapshot);
         const DiagnosticRunOutcome outcome = engine.run(provider);
         QCOMPARE(outcome.session.checkResults().size(), DoctorCatalog::v11DefinedCheckIds().size());
-        QCOMPARE(outcome.session.diagnoses().size(), 0);
-        QVERIFY2(outcome.session.currentOperation() == std::nullopt, qPrintable(fixture.first));
+        QVERIFY2(outcome.knowledgeEngineVersion == DoctorKnowledgeEngine::version(), qPrintable(fixture.first));
+        QVERIFY2(outcome.session.currentOperation().has_value(), qPrintable(fixture.first));
     }
 }
 
@@ -452,6 +492,70 @@ void HidHideDoctorDomainTests::phaseOneProgressCancellationAndRerunAreCoherent()
     QCOMPARE(cancelled.session.checkResults().size(), DoctorCatalog::v11DefinedCheckIds().size());
     QCOMPARE(cancelled.session.state(), DoctorSessionState::Cancelled);
     QVERIFY(cancelled.session.id().value() != first.session.id().value());
+}
+
+void HidHideDoctorDomainTests::phaseTwoDiagnosisFixtureMatrixIsDeterministicAndReadOnly()
+{
+    using Mutator = std::function<void(ReadOnlyDiagnosticSnapshot &)>;
+    struct Case { QString name; Mutator mutate; QString expectedDiagnosis; };
+    const QList<Case> cases = {
+        {QStringLiteral("healthy"), {}, {}},
+        {QStringLiteral("HidHide absent"), [](auto &s) { s.environment.hidhide.present = false; s.artifacts.clear(); s.service = {}; s.protocol.clear(); }, QStringLiteral("HD-DIAG-ABSENT")},
+        {QStringLiteral("client only"), [](auto &s) { s.service = {}; s.artifacts.removeLast(); }, QStringLiteral("HD-DIAG-PARTIAL-INSTALL")},
+        {QStringLiteral("driver only"), [](auto &s) { s.artifacts.removeFirst(); }, QStringLiteral("HD-DIAG-PARTIAL-INSTALL")},
+        {QStringLiteral("client driver mismatch"), [](auto &s) { s.artifacts[1].fileVersion = QStringLiteral("1.4.181.0"); }, QStringLiteral("HD-DIAG-VERSION-MISMATCH")},
+        {QStringLiteral("newer package pending replacement"), [](auto &s) { s.artifacts[1].fileVersion = QStringLiteral("1.4.181.0"); s.driverPackages.append({QStringLiteral("hidhide.inf"), {}, QStringLiteral("1.5.230.0"), {}, CpuArchitecture::X64, true, false, std::nullopt}); s.pendingRestart.append({QStringLiteral("PendingRename"), {}, EvidenceSensitivity::SafeToExport, std::nullopt}); }, QStringLiteral("HD-DIAG-INCOMPLETE-REPLACEMENT")},
+        {QStringLiteral("pending restart"), [](auto &s) { s.artifacts[1].fileVersion = QStringLiteral("1.4.181.0"); s.environment.hidhide.driverVersion = QStringLiteral("1.4.181.0"); s.pendingRestart.append({QStringLiteral("PendingRename"), {}, EvidenceSensitivity::SafeToExport, std::nullopt}); }, QStringLiteral("HD-DIAG-INCOMPLETE-REPLACEMENT")},
+        {QStringLiteral("control endpoint missing"), [](auto &s) { s.protocol[0] = {QStringLiteral("OPEN_CONTROL"), DoctorCheckStatus::Failed, {}, {}, NativeError{NativeErrorDomain::Win32, 2, QStringLiteral("ERROR_FILE_NOT_FOUND"), {}}, 1, false}; }, QStringLiteral("HD-DIAG-CONTROL-MISSING")},
+        {QStringLiteral("access denied"), [](auto &s) { s.protocol[0] = {QStringLiteral("OPEN_CONTROL"), DoctorCheckStatus::PermissionLimited, {}, {}, NativeError{NativeErrorDomain::Win32, 5, QStringLiteral("ERROR_ACCESS_DENIED"), {}}, 1, false}; }, QStringLiteral("HD-DIAG-PERMISSION-LIMITED")},
+        {QStringLiteral("whitelist invalid parameter"), [](auto &s) { s.protocol[3] = {QStringLiteral("GET_WHITELIST_SIZE"), DoctorCheckStatus::Failed, {}, {}, NativeError{NativeErrorDomain::Win32, 0x57, QStringLiteral("ERROR_INVALID_PARAMETER"), {}}, 1, true}; }, QStringLiteral("HD-DIAG-WHITELIST-API")},
+        {QStringLiteral("all protocol fails"), [](auto &s) { for (auto &p : s.protocol) p = {p.operation, DoctorCheckStatus::Failed, {}, {}, NativeError{NativeErrorDomain::Win32, 31, QStringLiteral("ERROR_GEN_FAILURE"), {}}, 1, p.sizeNegotiation}; }, QStringLiteral("HD-DIAG-PROTOCOL-BROAD-FAILURE")},
+        {QStringLiteral("GUI crash only"), [](auto &s) { s.events.append({QStringLiteral("Application"), {}, 1000, {}, {}, QStringLiteral("HidHideClient crash exception"), EvidenceSensitivity::RequiresRedaction, std::nullopt}); }, QStringLiteral("HD-DIAG-CLIENT-FAILURE")},
+        {QStringLiteral("one malformed HID"), [](auto &s) { s.devices.append({QStringLiteral("HID\\bad"), {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, true, DeviceClassification::ProblemDevice, {QStringLiteral("property failure")}, std::nullopt}); }, QStringLiteral("HD-DIAG-DEVICE-ENUMERATION")},
+        {QStringLiteral("multiple malformed HID"), [](auto &s) { for (int i = 0; i < 3; ++i) s.devices.append({QStringLiteral("HID\\bad%1").arg(i), {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, true, DeviceClassification::ProblemDevice, {QStringLiteral("property failure")}, std::nullopt}); }, QStringLiteral("HD-DIAG-DEVICE-ENUMERATION")},
+        {QStringLiteral("stale hidden device"), [](auto &s) { s.protocol[6].multiStringValues.append(QStringLiteral("HID\\stale")); }, QStringLiteral("HD-DIAG-STALE-CONFIG")},
+        {QStringLiteral("missing application path"), [](auto &s) { s.protocol[4].multiStringValues = {QStringLiteral("C:\\missing.exe")}; }, QStringLiteral("HD-DIAG-STALE-CONFIG")},
+        {QStringLiteral("virtual output hidden"), [](auto &s) { s.devices[0].classification = DeviceClassification::VJoyVirtualOutput; }, QStringLiteral("HD-DIAG-VIRTUAL-HIDDEN")},
+        {QStringLiteral("architecture mismatch"), [](auto &s) { s.environment.platform.nativeArchitecture = CpuArchitecture::Arm64; s.environment.hidhide.packageArchitecture = CpuArchitecture::X64; }, QStringLiteral("HD-DIAG-ARCH-MISMATCH")},
+        {QStringLiteral("future Windows"), [](auto &s) { s.environment.platform.build = 99999; }, QStringLiteral("HD-DIAG-FUTURE-WINDOWS")},
+        {QStringLiteral("permission-limited event source"), [](auto &s) { s.events.append({QStringLiteral("Application"), {}, 0, {}, {}, {}, EvidenceSensitivity::RequiresRedaction, NativeError{NativeErrorDomain::Win32, 5, QStringLiteral("ERROR_ACCESS_DENIED"), {}}}); }, QStringLiteral("HD-DIAG-PERMISSION-LIMITED")},
+        {QStringLiteral("contradiction"), [](auto &s) { s.registryActive = false; s.contradictions.append(QStringLiteral("registry active false, direct GET_ACTIVE true")); }, QStringLiteral("HD-DIAG-INCONSISTENT-EVIDENCE")},
+        {QStringLiteral("insufficient evidence"), [](auto &s) { s.artifacts.clear(); s.service = {}; s.protocol.clear(); s.devices.clear(); s.events.clear(); s.environment.hidhide.present = true; }, QStringLiteral("HD-DIAG-INCONCLUSIVE")},
+    };
+    QCOMPARE(cases.size(), 22);
+    DoctorDiagnosticEngine engine;
+    for (const Case &fixture : cases) {
+        ReadOnlyDiagnosticSnapshot snapshot = healthyFixtureSnapshot();
+        if (fixture.mutate) fixture.mutate(snapshot);
+        SnapshotProvider provider(snapshot);
+        const DiagnosticRunOutcome outcome = engine.run(provider);
+        bool matched = fixture.expectedDiagnosis.isEmpty();
+        for (const Diagnosis &diagnosis : outcome.session.diagnoses()) {
+            if (diagnosis.id.value() == fixture.expectedDiagnosis) {
+                matched = true;
+                QVERIFY2(diagnosis.confidenceExplanation.score >= 0 && diagnosis.confidenceExplanation.score <= 100, qPrintable(fixture.name));
+                QVERIFY2(!diagnosis.knowledgeVersion.isEmpty(), qPrintable(fixture.name));
+            }
+        }
+        QVERIFY2(matched, qPrintable(fixture.name));
+        QCOMPARE(outcome.session.userAction().state, UserActionState::NothingRequired);
+        QVERIFY(!outcome.knowledgeEngineVersion.isEmpty());
+    }
+}
+
+void HidHideDoctorDomainTests::phaseTwoReportCarriesFindingsDiagnosesAndKnowledgeVersion()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    const QJsonDocument document = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 3);
+    QVERIFY(!document.object().value(QStringLiteral("knowledgeEngine")).toObject().value(QStringLiteral("version")).toString().isEmpty());
+    QVERIFY(!document.object().value(QStringLiteral("findings")).toArray().isEmpty());
+    QVERIFY(!document.object().value(QStringLiteral("diagnoses")).toArray().isEmpty());
+    QVERIFY(!document.object().value(QStringLiteral("activityTimeline")).toArray().isEmpty());
+    QCOMPARE(label, QStringLiteral("GetWhitelist 0x57"));
 }
 
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()

@@ -1,4 +1,5 @@
 #include "doctor_diagnostics.h"
+#include "doctor_fixtures.h"
 #include "doctor_session.h"
 #include "doctor_session_view_model.h"
 #include "hotas_build_version.h"
@@ -116,14 +117,16 @@ int main(int argc, char *argv[])
         .arg(QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID), QSysInfo::buildCpuArchitecture());
     const QString reportPath = argumentValue(argc, argv, "--report");
     if (fixtureMode) {
-        // The old fixture shell remains available only for clearly-labelled
-        // development review. Normal and headless launches use one real,
-        // read-only engine and never fall back to a mutating setup path.
-        hotas::doctor::DiagnosticRunOutcome outcome;
-        outcome.startedAt = QDateTime::currentDateTimeUtc();
-        outcome.session = hotas::doctor::createPhase0FixtureSession();
-        outcome.completedAt = QDateTime::currentDateTimeUtc();
-        outcome.durationMs = outcome.startedAt.msecsTo(outcome.completedAt);
+        // Fixture mode runs the same deterministic diagnosis engine as GUI,
+        // headless, and tests.  It is visibly labelled so no simulated
+        // observation can be mistaken for this machine's condition.
+        QString fixtureLabel;
+        const QString fixtureName = argumentValue(argc, argv, "--development-fixture");
+        hotas::doctor::FixtureDiagnosticProvider provider(hotas::doctor::createDevelopmentFixture(
+            fixtureName.isEmpty() ? QStringLiteral("Healthy System") : fixtureName, &fixtureLabel));
+        hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
+        hotas::doctor::DiagnosticRunOutcome outcome = diagnosticEngine.run(provider);
+        outcome.session.setSessionLabel(fixtureLabel);
         stampBuildProvenance(outcome);
         if (!reportPath.isEmpty()) {
             QFile report(reportPath);
