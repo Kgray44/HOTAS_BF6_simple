@@ -207,8 +207,12 @@ if (WIN32)
     set(HOTAS_WINDEPLOYQT "${HOTAS_QT_BIN_DIR}/windeployqt.exe")
     if (EXISTS "${HOTAS_WINDEPLOYQT}")
         add_custom_command(TARGET HOTASMapper POST_BUILD
-            COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime
-                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HOTASMapper>"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT=${HOTAS_WINDEPLOYQT}"
+                "-DDEPLOY_LOCK=${CMAKE_CURRENT_BINARY_DIR}/.windeployqt.lock"
+                "-DQMLDIR=${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                "-DTARGET_FILE=$<TARGET_FILE:HOTASMapper>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qt_runtime_serialized.cmake"
             COMMENT "Deploying the Qt runtime required by the elevated HOTAS BF6 repair transaction")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
@@ -343,8 +347,12 @@ if (WIN32)
     set(HIDHIDE_DOCTOR_WINDEPLOYQT "${HIDHIDE_DOCTOR_QT_BIN_DIR}/windeployqt.exe")
     if (EXISTS "${HIDHIDE_DOCTOR_WINDEPLOYQT}")
         add_custom_command(TARGET HidHideDoctor POST_BUILD
-            COMMAND "${HIDHIDE_DOCTOR_WINDEPLOYQT}" --no-translations --no-compiler-runtime
-                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HidHideDoctor>"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT=${HIDHIDE_DOCTOR_WINDEPLOYQT}"
+                "-DDEPLOY_LOCK=${CMAKE_CURRENT_BINARY_DIR}/.windeployqt.lock"
+                "-DQMLDIR=${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                "-DTARGET_FILE=$<TARGET_FILE:HidHideDoctor>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qt_runtime_serialized.cmake"
             COMMENT "Deploying the standalone HidHide Doctor Qt runtime")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")

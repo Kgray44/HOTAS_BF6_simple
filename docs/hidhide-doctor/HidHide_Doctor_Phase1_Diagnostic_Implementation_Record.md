@@ -146,7 +146,10 @@ usage, device-class driver context, and Container ID set `HD-DEV-007`,
 `HD-DEV-010`, and `HD-DEV-012` independently. The domain-test target copies
 its `Qt6Core` and `Qt6Test` runtime beside the executable so its direct launch
 is a valid test entry point, not only a CTest-only configuration; it does not
-invoke a competing QML deployment during a parallel full build.
+invoke a competing QML deployment during a parallel full build. The two GUI
+runtime deployments are serialized by a build-tree lock because `windeployqt`
+owns shared output paths; this does not introduce a Mapper/Doctor runtime
+dependency.
 
 ## Local candidate results
 
