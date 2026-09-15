@@ -1,156 +1,94 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "doctor" as Doctor
+import "doctor/DoctorTheme.js" as Theme
 
 ApplicationWindow {
     id: root
     width: 1440
-    height: 880
-    minimumWidth: 720
-    minimumHeight: 560
+    height: 900
+    minimumWidth: 820
+    minimumHeight: 620
     visible: true
     title: "HidHide Doctor — Deep System Diagnostics"
-    color: "#111315"
+    color: Theme.workspace
 
     readonly property int densityGap: doctorSession.density === "Comfortable" ? 14 : doctorSession.density === "Dense" ? 6 : 10
     readonly property int densityPad: doctorSession.density === "Comfortable" ? 18 : doctorSession.density === "Dense" ? 8 : 12
-    readonly property bool compactCommandCenter: width < 1040
+    readonly property bool commandCenterFits: width >= 1310
+    readonly property bool usingFocusFallback: doctorSession.commandCenter && !commandCenterFits
 
-    function toneColor(tone) {
-        if (tone === "healthy") return "#75ba92"
-        if (tone === "warning") return "#d5a352"
-        if (tone === "fault") return "#d87878"
-        if (tone === "limited") return "#8ea7bd"
-        if (tone === "running") return "#6eadd6"
-        return "#a8afb7"
-    }
-    function toneSurface(tone) {
-        if (tone === "fault") return "#2b1c1e"
-        if (tone === "warning") return "#292216"
-        if (tone === "healthy") return "#18251e"
-        return "#191c1f"
-    }
+    function toneColor(tone) { return Theme.tone(tone) }
     function openEvidence(evidenceId) {
         if (!evidenceId || evidenceId.length === 0) return
         doctorSession.selectEvidence(evidenceId)
         inspector.open()
     }
 
-    component SectionLabel: Label {
-        color: "#a8b0b8"
-        font.family: "Segoe UI"
-        font.pixelSize: 10
+    component Eyebrow: Label {
+        color: Theme.textMuted
+        font.family: Theme.ui
+        font.pixelSize: 9
         font.weight: Font.DemiBold
-        font.letterSpacing: 1.5
+        font.letterSpacing: 1.2
     }
 
-    component ThinRule: Rectangle { color: "#30353a"; height: 1; Layout.fillWidth: true }
-
-    component Metric: Item {
-        id: metricRoot
-        required property string title
-        required property var value
-        required property string tone
-        implicitWidth: 76
-        implicitHeight: 47
-        Column {
-            anchors.fill: parent
-            spacing: 2
-            SectionLabel { text: metricRoot.title; font.pixelSize: 8; color: "#929aa2" }
-            Label { text: metricRoot.value; color: root.toneColor(metricRoot.tone); font.pixelSize: 20; font.weight: Font.DemiBold }
-        }
-    }
-
-    component PaneFrame: Rectangle {
-        id: paneFrame
+    component PaneSurface: Rectangle {
+        id: pane
         required property string paneId
         required property string heading
-        property alias bodyContent: paneLoader.sourceComponent
-        color: "#181b1f"
-        border.color: "#353a40"
+        property string countText: ""
+        property string statusText: ""
+        property Component bodyContent
+        property bool maximizable: true
+        color: Theme.surface
+        border.color: Theme.separator
         border.width: 1
-        radius: 3
+        radius: 2
         clip: true
-        Layout.fillHeight: true
-        Layout.minimumWidth: 160
         ColumnLayout {
             anchors.fill: parent
             spacing: 0
-            RowLayout {
+            Doctor.DoctorPaneHeader {
                 Layout.fillWidth: true
-                Layout.leftMargin: root.densityPad
-                Layout.rightMargin: root.densityPad
-                Layout.topMargin: 10
-                Layout.bottomMargin: 8
-                SectionLabel { text: paneFrame.heading; color: "#d9dee3"; Layout.fillWidth: true }
-                ToolButton {
-                    text: doctorSession.maximizedPane === paneFrame.paneId ? "↙" : "↗"
-                    Accessible.name: doctorSession.maximizedPane === paneFrame.paneId ? "Restore pane" : "Maximize pane"
-                    onClicked: doctorSession.setMaximizedPane(doctorSession.maximizedPane === paneFrame.paneId ? "" : paneFrame.paneId)
-                }
+                title: pane.heading
+                countText: pane.countText
+                statusText: pane.statusText
+                maximized: doctorSession.maximizedPane === pane.paneId
+                visible: pane.maximizable
+                onMaximizeRequested: doctorSession.setMaximizedPane(doctorSession.maximizedPane === pane.paneId ? "" : pane.paneId)
             }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#30353a" }
-            Loader { id: paneLoader; Layout.fillWidth: true; Layout.fillHeight: true }
+            Rectangle { visible: !pane.maximizable; Layout.fillWidth: true; implicitHeight: 35; color: Theme.surface
+                Eyebrow { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 12; text: pane.heading }
+            }
+            Loader { Layout.fillWidth: true; Layout.fillHeight: true; sourceComponent: pane.bodyContent }
         }
     }
 
     header: ToolBar {
-        height: 58
-        background: Rectangle { color: "#171a1e"; border.color: "#30353a"; border.width: 1 }
+        height: 62
+        background: Rectangle { color: Theme.surface; border.color: Theme.separator; border.width: 1 }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 20
+            anchors.leftMargin: 22
             anchors.rightMargin: 18
-            spacing: 16
+            spacing: 15
             ColumnLayout {
                 spacing: 0
-                Label { text: "HIDHIDE DOCTOR"; color: "#f0f2f4"; font.pixelSize: 17; font.weight: Font.DemiBold; font.letterSpacing: 1.2 }
-                Label { text: "Deep System Diagnostics"; color: "#9da6ae"; font.pixelSize: 10 }
+                Label { text: "HIDHIDE DOCTOR"; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 17; font.weight: Font.DemiBold; font.letterSpacing: 1.3 }
+                Label { text: "Deep System Diagnostics"; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11 }
             }
-            Rectangle { width: 1; height: 28; color: "#3a3f44" }
-            Row {
-                spacing: 6
-                Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: "#6fb58e" }
-                Label { text: "READ-ONLY DIAGNOSTICS"; color: "#b7dfc4"; font.pixelSize: 10; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter }
-            }
+            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 28; color: Theme.separator }
+            Doctor.DoctorStatusPill { text: "READ-ONLY DIAGNOSTICS"; tone: "information" }
             Item { Layout.fillWidth: true }
-            SectionLabel { text: "VIEW" }
-            Button {
-                text: "Focus"
-                checkable: true
-                checked: !doctorSession.commandCenter
-                onClicked: doctorSession.setCommandCenter(false)
-                Accessible.name: "Focus view"
+            Eyebrow { text: "VIEW" }
+            Doctor.DoctorSegmentedControl {
+                values: ["Focus", "Command Center"]
+                currentValue: doctorSession.commandCenter ? "Command Center" : "Focus"
+                accessibleName: "Diagnostic workspace view"
+                onActivated: function(value) { doctorSession.setCommandCenter(value === "Command Center") }
             }
-            Button {
-                text: "Command Center"
-                checkable: true
-                checked: doctorSession.commandCenter
-                onClicked: doctorSession.setCommandCenter(true)
-                Accessible.name: "Command Center view"
-            }
-        }
-    }
-
-    footer: Rectangle {
-        height: 29
-        color: "#171a1e"
-        border.color: "#30353a"
-        border.width: 1
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            spacing: 18
-            SectionLabel { text: "CHECKS " + doctorSession.completedChecks + "/" + (doctorSession.completedChecks + doctorSession.remainingChecks) }
-            SectionLabel { text: "HEALTHY " + doctorSession.healthyCheckCount; color: "#8bc6a4" }
-            SectionLabel { text: "INFO " + doctorSession.informationalCheckCount }
-            SectionLabel { text: "WARNING " + doctorSession.warningCheckCount; color: doctorSession.warningCheckCount ? "#d5a352" : "#a8b0b8" }
-            SectionLabel { text: "FAILED " + doctorSession.failedCheckCount; color: doctorSession.failedCheckCount ? "#d87878" : "#a8b0b8" }
-            Item { Layout.fillWidth: true }
-            SectionLabel { text: "ELAPSED " + doctorSession.elapsed }
-            SectionLabel { text: "SESSION " + doctorSession.sessionId.slice(-8) }
-            SectionLabel { text: "READ ONLY"; color: "#b7dfc4" }
         }
     }
 
@@ -162,52 +100,67 @@ ApplicationWindow {
         Rectangle {
             visible: doctorSession.simulationLabel.length > 0
             Layout.fillWidth: true
-            implicitHeight: 32
-            color: "#24344a"
-            border.color: "#55799c"
+            implicitHeight: 34
+            color: "#192831"
+            border.color: "#39708a"
             radius: 2
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                Label { text: "SIMULATED / DEVELOPMENT FIXTURE"; color: "#c6e2fb"; font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 1 }
-                Label { text: doctorSession.simulationLabel; color: "#dcecff"; Layout.fillWidth: true; elide: Text.ElideRight }
-                Label { text: "Not this machine"; color: "#9eb9d2"; font.pixelSize: 10 }
+            RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                Eyebrow { text: "DEVELOPMENT FIXTURE"; color: Theme.information }
+                Label { text: doctorSession.simulationLabel; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 31
-            color: "#191c20"
-            border.color: "#30353a"
+            implicitHeight: 54
+            color: Theme.inset
+            border.color: Theme.separator
             radius: 2
-            Label { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; verticalAlignment: Text.AlignVCenter; text: doctorSession.environmentStrip; color: "#bac2ca"; font.pixelSize: 11; elide: Text.ElideRight }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 0
+                Repeater {
+                    model: doctorSession.environmentGroups
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 8
+                        ColumnLayout { spacing: 1; Layout.fillWidth: true
+                            Eyebrow { text: modelData.label }
+                            Label { text: modelData.value; color: Theme.textSecondary; font.family: modelData.label === "SESSION" ? Theme.mono : Theme.ui; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
+                        }
+                        Rectangle { visible: index < doctorSession.environmentGroups.length - 1; Layout.preferredWidth: 1; Layout.preferredHeight: 28; color: Theme.separator }
+                    }
+                }
+            }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 71
-            color: "#181b1f"
-            border.color: "#353a40"
-            radius: 3
-            RowLayout {
+            implicitHeight: 68
+            color: Theme.surface
+            border.color: Theme.separator
+            radius: 2
+            GridLayout {
                 anchors.fill: parent
-                anchors.leftMargin: root.densityPad
-                anchors.rightMargin: root.densityPad
-                spacing: 0
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                columns: 7
+                columnSpacing: 8
                 Repeater {
                     model: doctorSession.healthDomains
                     delegate: Item {
                         required property var modelData
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Label { text: modelData.label; color: "#a7afb7"; font.pixelSize: 9; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; width: parent.width }
-                            Label { text: modelData.symbol; color: root.toneColor(modelData.tone); font.pixelSize: 21; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; width: parent.width }
-                            Label { text: modelData.status; color: root.toneColor(modelData.tone); font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; width: parent.width; elide: Text.ElideRight }
+                        ColumnLayout { anchors.centerIn: parent; spacing: 2
+                            RowLayout { Layout.alignment: Qt.AlignHCenter; spacing: 5
+                                Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 7; radius: 3.5; color: root.toneColor(modelData.tone) }
+                                Eyebrow { text: modelData.label; color: Theme.textSecondary }
+                            }
+                            Label { text: modelData.status; color: root.toneColor(modelData.tone); font.family: Theme.ui; font.pixelSize: 10; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
                         }
                     }
                 }
@@ -216,79 +169,90 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 105
-            color: "#1a1d21"
-            border.color: "#353a40"
-            radius: 3
+            implicitHeight: 88
+            color: Theme.elevated
+            border.color: Theme.separatorStrong
+            radius: 2
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: root.densityPad
-                anchors.rightMargin: root.densityPad
+                anchors.leftMargin: 15
+                anchors.rightMargin: 13
                 spacing: 14
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    RowLayout {
-                        SectionLabel { text: "DIAGNOSTIC SESSION"; color: "#d6dce1"; Layout.fillWidth: true }
-                        Label { text: doctorSession.sessionState; color: doctorSession.scanRunning ? "#7db9df" : "#b9c2ca"; font.pixelSize: 10; font.weight: Font.DemiBold }
-                    }
-                    RowLayout {
-                        Label { text: doctorSession.currentPhase.toUpperCase(); color: "#dce1e5"; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Label { text: doctorSession.overallProgress + "%"; color: "#78b990"; font.pixelSize: 22; font.weight: Font.DemiBold }
-                    }
-                    ProgressBar { Layout.fillWidth: true; from: 0; to: 100; value: doctorSession.overallProgress; Accessible.name: "Overall diagnostic progress" }
-                    RowLayout {
-                        Label { text: doctorSession.currentStepId.length ? doctorSession.currentStepId + "  " + doctorSession.currentStep : doctorSession.currentStep; color: "#acb5bd"; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Label { text: doctorSession.currentStepProgress + "% step"; color: "#9ea8b1"; font.pixelSize: 10 }
+                ColumnLayout { Layout.fillWidth: true; spacing: 2
+                    Eyebrow { text: doctorSession.sessionState }
+                    Label { text: doctorSession.currentPhase; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 17; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                    RowLayout { Layout.fillWidth: true; spacing: 8
+                        Doctor.DoctorProgressBar { Layout.fillWidth: true; value: doctorSession.overallProgress; tone: doctorSession.scanRunning ? "running" : "healthy" }
+                        Label { text: doctorSession.overallProgress + "%"; color: Theme.textPrimary; font.family: Theme.mono; font.pixelSize: 12; font.weight: Font.DemiBold }
                     }
                 }
-                Rectangle { width: 1; Layout.fillHeight: true; color: "#363b40" }
-                Metric { title: "CHECKS"; value: doctorSession.completedChecks + "/" + (doctorSession.completedChecks + doctorSession.remainingChecks); tone: "neutral" }
-                Metric { title: "HEALTHY"; value: doctorSession.healthyCheckCount; tone: "healthy" }
-                Metric { title: "WARNINGS"; value: doctorSession.warningCheckCount; tone: "warning" }
-                Metric { title: "FAILED"; value: doctorSession.failedCheckCount; tone: "fault" }
-                Metric { title: "DIAGNOSES"; value: doctorSession.diagnosisCards.length; tone: doctorSession.diagnosisCards.length ? "warning" : "healthy" }
-                ColumnLayout {
-                    spacing: 5
-                    Button { text: doctorSession.scanRunning ? "Cancel scan" : "Run new scan"; onClicked: doctorSession.scanRunning ? doctorSession.requestCancellation() : doctorSession.requestRerun(); Accessible.name: text }
-                    Label { text: "No elevation · no repair"; color: "#9ca5ae"; font.pixelSize: 9; Layout.alignment: Qt.AlignHCenter }
+                Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 52; color: Theme.separator }
+                Repeater {
+                    model: [
+                        { label: "CHECKS", value: doctorSession.completedChecks + "/" + (doctorSession.completedChecks + doctorSession.remainingChecks), tone: "information" },
+                        { label: "HEALTHY", value: doctorSession.healthyCheckCount, tone: "healthy" },
+                        { label: "WARNINGS", value: doctorSession.warningCheckCount, tone: "warning" },
+                        { label: "FAILED", value: doctorSession.failedCheckCount, tone: "fault" },
+                        { label: "DIAGNOSES", value: doctorSession.diagnosisCards.length, tone: doctorSession.diagnosisCards.length ? "warning" : "healthy" }
+                    ]
+                    delegate: ColumnLayout { required property var modelData; spacing: 1
+                        Eyebrow { text: modelData.label }
+                        Label { text: modelData.value; color: root.toneColor(modelData.tone); font.family: Theme.mono; font.pixelSize: 16; font.weight: Font.DemiBold }
+                    }
                 }
+                Doctor.DoctorButton { text: doctorSession.scanRunning ? "Cancel scan" : "Run new scan"; tone: "primary"; onClicked: doctorSession.scanRunning ? doctorSession.requestCancellation() : doctorSession.requestRerun(); accessibleName: text }
             }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            visible: !root.compactCommandCenter || !doctorSession.commandCenter
-            SectionLabel { text: "WORKSPACE"; Layout.fillWidth: true }
-            SectionLabel { text: "DENSITY" }
-            ComboBox {
-                model: ["Comfortable", "Compact", "Dense"]
-                currentIndex: model.indexOf(doctorSession.density)
-                onActivated: doctorSession.setDensity(currentText)
-                Accessible.name: "Information density"
-            }
-            CheckBox { text: "Live Evidence"; checked: doctorSession.liveEvidenceVisible; onToggled: doctorSession.setLiveEvidenceVisible(checked); Accessible.name: "Show live evidence" }
-            Button { text: "Evidence Inspector"; onClicked: inspector.open(); Accessible.name: "Open Evidence Inspector" }
         }
 
         Rectangle {
-            visible: root.compactCommandCenter && doctorSession.commandCenter
             Layout.fillWidth: true
-            implicitHeight: 42
-            color: "#25231c"
-            border.color: "#66512f"
+            implicitHeight: 45
+            color: Theme.surface
+            border.color: Theme.separator
             radius: 2
             RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
-                Label { text: "Command Center needs more width. Focus View is shown without changing this diagnostic session."; color: "#e3c98e"; Layout.fillWidth: true; font.pixelSize: 11 }
-                Button { text: "Use Focus"; onClicked: doctorSession.setCommandCenter(false) }
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 10
+                spacing: 10
+                Eyebrow { text: "WORKSPACE"; Layout.fillWidth: true }
+                Eyebrow { text: "DENSITY" }
+                Doctor.DoctorSegmentedControl {
+                    values: ["Comfortable", "Compact", "Dense"]
+                    currentValue: doctorSession.density
+                    accessibleName: "Information density"
+                    onActivated: function(value) { doctorSession.setDensity(value) }
+                }
+                Eyebrow { text: "ACTIVITY"; visible: doctorSession.commandCenter && root.commandCenterFits }
+                Doctor.DoctorSegmentedControl {
+                    visible: doctorSession.commandCenter && root.commandCenterFits
+                    values: ["Off", "On"]
+                    currentValue: doctorSession.liveEvidenceVisible ? "On" : "Off"
+                    accessibleName: "Activity timeline"
+                    onActivated: function(value) { doctorSession.setLiveEvidenceVisible(value === "On") }
+                }
+                Doctor.DoctorButton { text: inspector.visible ? "Inspector open" : "Evidence inspector"; compact: true; selected: inspector.visible; onClicked: inspector.visible ? inspector.close() : inspector.open() }
+                Doctor.DoctorButton { text: "Reset layout"; compact: true; tooltipText: "Restore the Phase 2 workspace presentation defaults"; onClicked: doctorSession.resetWorkspaceLayout() }
+            }
+        }
+
+        Rectangle {
+            visible: root.usingFocusFallback
+            Layout.fillWidth: true
+            implicitHeight: 38
+            color: "#292216"
+            border.color: "#715b35"
+            radius: 2
+            RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 8
+                Label { text: "Command Center needs more width for its four forensic panes. Focus View is being shown without altering this session."; color: "#e1c586"; font.family: Theme.ui; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Doctor.DoctorButton { text: "Use Focus"; compact: true; tone: "primary"; onClicked: doctorSession.setCommandCenter(false) }
             }
         }
 
         Loader {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            sourceComponent: doctorSession.commandCenter && !root.compactCommandCenter ? commandCenter : focusView
+            sourceComponent: doctorSession.commandCenter && root.commandCenterFits ? commandCenterView : focusView
         }
     }
 
@@ -296,24 +260,26 @@ ApplicationWindow {
         id: planBody
         ScrollView {
             clip: true
+            background: Rectangle { color: "transparent" }
+            ScrollBar.vertical: Doctor.DoctorScrollBar {}
+            ScrollBar.horizontal: Doctor.DoctorScrollBar {}
             ListView {
                 model: doctorSession.planPhases
                 spacing: 1
                 delegate: Rectangle {
                     required property var modelData
                     width: ListView.view.width
-                    height: doctorSession.density === "Comfortable" ? 62 : doctorSession.density === "Dense" ? 42 : 52
+                    height: doctorSession.density === "Comfortable" ? 62 : doctorSession.density === "Dense" ? 43 : 52
                     color: "transparent"
-                    RowLayout {
-                        anchors.fill: parent; anchors.leftMargin: root.densityPad; anchors.rightMargin: root.densityPad
-                        Label { text: modelData.symbol; color: root.toneColor(modelData.tone); font.pixelSize: 15; Layout.preferredWidth: 18 }
-                        ColumnLayout { Layout.fillWidth: true; spacing: 1
-                            Label { text: modelData.title; color: "#d4dade"; font.pixelSize: 10; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                            Label { text: modelData.complete + " / " + modelData.total + " · " + modelData.status; color: "#9ba5ae"; font.pixelSize: 9; Layout.fillWidth: true }
-                            ProgressBar { visible: modelData.status === "RUNNING"; Layout.fillWidth: true; from: 0; to: 100; value: modelData.progress }
+                    RowLayout { anchors.fill: parent; anchors.leftMargin: root.densityPad; anchors.rightMargin: root.densityPad; spacing: 8
+                        Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 7; radius: 3.5; color: root.toneColor(modelData.tone) }
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Label { text: modelData.title; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 10; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Label { text: modelData.complete + " / " + modelData.total + " · " + modelData.status; color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Doctor.DoctorProgressBar { visible: modelData.status === "RUNNING"; Layout.fillWidth: true; value: modelData.progress; tone: "running" }
                         }
                     }
-                    Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: "#292e33" }
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#283039" }
                 }
             }
         }
@@ -322,29 +288,36 @@ ApplicationWindow {
     Component {
         id: currentBody
         Flickable {
-            contentWidth: width; contentHeight: details.implicitHeight + root.densityPad * 2; clip: true
+            contentWidth: width
+            contentHeight: details.implicitHeight + root.densityPad * 2
+            clip: true
+            ScrollBar.vertical: Doctor.DoctorScrollBar {}
             ColumnLayout {
-                id: details; width: parent.width - root.densityPad * 2; x: root.densityPad; y: root.densityPad; spacing: root.densityGap
+                id: details
+                width: parent.width - root.densityPad * 2
+                x: root.densityPad
+                y: root.densityPad
+                spacing: root.densityGap
                 property var operation: doctorSession.currentOperationDetails
-                SectionLabel { text: details.operation.phase.toUpperCase() }
-                Label { text: details.operation.title; color: "#e1e5e8"; font.pixelSize: 16; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Label { text: details.operation.checkId.length ? details.operation.checkId : "NO ACTIVE CHECK"; color: "#8fb3cf"; font.family: "Consolas"; font.pixelSize: 11 }
+                Eyebrow { text: doctorSession.scanRunning ? "CURRENT OPERATION" : "READ-ONLY ANALYSIS COMPLETE" }
+                Label { text: doctorSession.scanRunning ? details.operation.title : "All applicable read-only checks completed."; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 16; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: doctorSession.scanRunning ? details.operation.checkId : "ACTIVE CHECK  None"; color: Theme.information; font.family: Theme.mono; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 RowLayout { Layout.fillWidth: true
-                    Label { text: "● " + details.operation.status; color: doctorSession.scanRunning ? "#75b5dc" : "#9fadba"; font.pixelSize: 10; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                    Label { text: details.operation.progress + "%"; color: "#d0d6dc"; font.pixelSize: 12 }
+                    Doctor.DoctorStatusPill { text: details.operation.status; tone: doctorSession.scanRunning ? "running" : "healthy" }
+                    Item { Layout.fillWidth: true }
+                    Label { visible: doctorSession.scanRunning; text: details.operation.progress + "%"; color: Theme.textPrimary; font.family: Theme.mono; font.pixelSize: 12 }
                 }
-                ProgressBar { Layout.fillWidth: true; from: 0; to: 100; value: details.operation.progress }
-                ThinRule {}
-                SectionLabel { text: "OPERATION TRANSPARENCY" }
+                Doctor.DoctorProgressBar { visible: doctorSession.scanRunning; Layout.fillWidth: true; value: details.operation.progress; tone: "running" }
+                Doctor.DoctorDivider {}
                 GridLayout { columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
-                    SectionLabel { text: "ELAPSED" }
-                    Label { text: details.operation.elapsed; color: "#d4dade"; font.family: "Consolas"; font.pixelSize: 11 }
-                    SectionLabel { text: "TIMEOUT" }
-                    Label { text: details.operation.timeout; color: "#d4dade"; font.family: "Consolas"; font.pixelSize: 11 }
-                    SectionLabel { text: "ACTION" }
-                    Label { text: "None required"; color: "#9acaaa"; font.pixelSize: 11 }
+                    Eyebrow { text: "ELAPSED" }
+                    Label { text: details.operation.elapsed; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
+                    Eyebrow { text: "TIMEOUT" }
+                    Label { text: details.operation.timeout; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
+                    Eyebrow { text: "SESSION HEALTH" }
+                    Label { text: doctorSession.failedCheckCount ? "Degraded" : doctorSession.warningCheckCount ? "Attention required" : "Healthy"; color: doctorSession.failedCheckCount ? Theme.critical : doctorSession.warningCheckCount ? Theme.warning : Theme.healthy; font.family: Theme.ui; font.pixelSize: 11 }
                 }
-                Label { text: details.operation.detail; color: "#aeb6be"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: details.operation.detail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
     }
@@ -353,66 +326,63 @@ ApplicationWindow {
         id: findingsBody
         ScrollView {
             clip: true
+            background: Rectangle { color: "transparent" }
+            ScrollBar.vertical: Doctor.DoctorScrollBar {}
+            ScrollBar.horizontal: Doctor.DoctorScrollBar {}
             ColumnLayout {
-                width: parent.width; spacing: root.densityGap
+                width: parent.width
+                spacing: root.densityGap
                 Repeater {
                     model: doctorSession.diagnosisCards
-                    delegate: Rectangle {
+                    delegate: Doctor.DoctorButton {
                         required property var modelData
-                        Layout.fillWidth: true; implicitHeight: diagnosisColumn.implicitHeight + root.densityPad * 2
-                        color: root.toneSurface(modelData.tone); border.color: root.toneColor(modelData.tone); border.width: 1; radius: 2
-                        MouseArea { anchors.fill: parent; onClicked: root.openEvidence(modelData.evidenceId) }
-                        ColumnLayout { id: diagnosisColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 5
+                        Layout.fillWidth: true
+                        implicitHeight: diagnosisColumn.implicitHeight + root.densityPad * 2
+                        text: ""
+                        accessibleName: modelData.role + " " + modelData.title
+                        onClicked: root.openEvidence(modelData.evidenceId)
+                        background: Rectangle { radius: 2; color: modelData.role.indexOf("PRIMARY") >= 0 ? "#20272c" : Theme.elevated; border.width: 1; border.color: root.toneColor(modelData.tone); Rectangle { width: 3; height: parent.height; color: root.toneColor(modelData.tone) } }
+                        contentItem: ColumnLayout { id: diagnosisColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 5
                             RowLayout { Layout.fillWidth: true
-                                SectionLabel { text: modelData.role; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
-                                Label { text: modelData.confidence.toUpperCase() + " · " + modelData.score + "%"; color: root.toneColor(modelData.tone); font.pixelSize: 10; font.weight: Font.DemiBold }
+                                Eyebrow { text: modelData.role; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
+                                Doctor.DoctorStatusPill { text: modelData.confidence.toUpperCase() + " · " + modelData.score + "%"; tone: modelData.tone }
                             }
-                            Label { text: modelData.title; color: "#f0f2f4"; font.pixelSize: 15; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: modelData.summary; color: "#c4cbd1"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: "IMPACT  " + modelData.impact; color: "#aeb6be"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: "REPAIRABILITY  " + modelData.repairability; color: "#aeb6be"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: modelData.role.indexOf("PRIMARY") >= 0 ? 16 : 14; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: "IMPACT  " + modelData.impact; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                     }
                 }
                 Repeater {
                     model: doctorSession.findingCards
-                    delegate: Rectangle {
+                    delegate: Doctor.DoctorButton {
                         required property var modelData
-                        Layout.fillWidth: true; implicitHeight: findingColumn.implicitHeight + root.densityPad * 2
-                        color: "#1b1e22"; border.color: "#343a40"; border.width: 1; radius: 2
-                        MouseArea { anchors.fill: parent; onClicked: root.openEvidence(modelData.evidenceId) }
-                        ColumnLayout { id: findingColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 4
+                        Layout.fillWidth: true
+                        implicitHeight: findingColumn.implicitHeight + root.densityPad * 2
+                        text: ""
+                        accessibleName: modelData.severity + " " + modelData.title
+                        onClicked: root.openEvidence(modelData.evidenceId)
+                        background: Rectangle { radius: 2; color: Theme.surface; border.width: 1; border.color: modelData.tone === "fault" ? Theme.critical : modelData.tone === "warning" ? Theme.warning : Theme.separator }
+                        contentItem: ColumnLayout { id: findingColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 4
                             RowLayout { Layout.fillWidth: true
-                                SectionLabel { text: modelData.severity; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
-                                Label { text: modelData.confidence; color: root.toneColor(modelData.tone); font.pixelSize: 10 }
+                                Eyebrow { text: modelData.severity; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
+                                Label { text: modelData.confidence; color: root.toneColor(modelData.tone); font.family: Theme.ui; font.pixelSize: 10 }
                             }
-                            Label { text: modelData.title; color: "#dfe4e8"; font.pixelSize: 13; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: modelData.summary; color: "#b7c0c8"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 13; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                     }
                 }
                 Rectangle {
                     visible: doctorSession.diagnosisCards.length === 0 && doctorSession.findingCards.length === 0
-                    Layout.fillWidth: true; implicitHeight: 98; color: "#18221d"; border.color: "#355342"; radius: 2
-                    Column { anchors.centerIn: parent; spacing: 5
-                        Label { text: "✓ HIDHIDE HEALTHY"; color: "#8fc6a4"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                        Label { text: "No diagnosis or user action required."; color: "#b6c4ba"; font.pixelSize: 11 }
-                    }
-                }
-                Rectangle {
-                    visible: doctorSession.liveEvidenceVisible
-                    Layout.fillWidth: true; implicitHeight: 1; color: "#3a4046"
-                }
-                Repeater {
-                    model: doctorSession.liveEvidenceVisible ? doctorSession.activityRows : []
-                    delegate: RowLayout {
-                        required property var modelData
-                        Layout.fillWidth: true; Layout.leftMargin: root.densityPad; Layout.rightMargin: root.densityPad
-                        Label { text: modelData.time; color: "#87919a"; font.pixelSize: 9; font.family: "Consolas" }
-                        Label { text: modelData.checkId; color: "#8fb3cf"; font.pixelSize: 9; font.family: "Consolas" }
-                        Label { text: modelData.symbol; color: root.toneColor(modelData.tone); font.pixelSize: 10 }
-                        Label { text: modelData.title; color: "#b8c0c7"; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
-                        MouseArea { Layout.preferredWidth: 18; Layout.preferredHeight: 18; onClicked: root.openEvidence(modelData.evidenceId) }
+                    Layout.fillWidth: true
+                    implicitHeight: 98
+                    color: "#17231d"
+                    border.color: Theme.healthy
+                    radius: 2
+                    ColumnLayout { anchors.centerIn: parent; spacing: 5
+                        Label { text: "HIDHIDE HEALTHY"; color: Theme.healthy; font.family: Theme.ui; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
+                        Label { text: "No diagnosis or user action required."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; Layout.alignment: Qt.AlignHCenter }
                     }
                 }
             }
@@ -422,59 +392,136 @@ ApplicationWindow {
     Component {
         id: actionBody
         Flickable {
-            contentWidth: width; contentHeight: actionColumn.implicitHeight + root.densityPad * 2; clip: true
+            contentWidth: width
+            contentHeight: actionColumn.implicitHeight + root.densityPad * 2
+            clip: true
+            ScrollBar.vertical: Doctor.DoctorScrollBar {}
             ColumnLayout {
-                id: actionColumn; width: parent.width - root.densityPad * 2; x: root.densityPad; y: root.densityPad; spacing: root.densityGap
-                Label { text: doctorSession.userActionTitle.toUpperCase(); color: "#d6dce1"; font.pixelSize: 14; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Label { text: doctorSession.userActionDetail; color: "#b8c1c9"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                ThinRule {}
-                SectionLabel { text: "PHASE 2 BOUNDARY" }
-                Label { text: "Diagnosis and repairability are shown here. Repairs are unavailable by design and no HidHide or Windows configuration has been changed."; color: "#9fa9b1"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Button { text: "REPAIRS DISABLED IN PHASE 2"; enabled: false; Layout.fillWidth: true; Accessible.name: "Repairs disabled in Phase 2" }
+                id: actionColumn
+                width: parent.width - root.densityPad * 2
+                x: root.densityPad
+                y: root.densityPad
+                spacing: root.densityGap
+                Doctor.DoctorStatusPill { text: doctorSession.diagnosisCards.length ? "DIAGNOSIS COMPLETE" : "NOTHING REQUIRED"; tone: doctorSession.diagnosisCards.length ? "warning" : "healthy" }
+                Label { text: doctorSession.userActionTitle; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 15; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Label { text: doctorSession.userActionDetail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Doctor.DoctorDivider {}
+                Eyebrow { text: "PHASE 2 SAFETY BOUNDARY" }
+                Rectangle { Layout.fillWidth: true; implicitHeight: safetyText.implicitHeight + 20; color: "#17222a"; border.color: Theme.readOnly; radius: 2
+                    Label { id: safetyText; anchors.fill: parent; anchors.margins: 10; text: "REPAIRS DISABLED\nThis build does not modify HidHide, Windows, devices, services, or configuration."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                }
                 Item { Layout.fillHeight: true }
-                Label { text: "Session " + doctorSession.sessionId.slice(-8); color: "#77828b"; font.family: "Consolas"; font.pixelSize: 9 }
+                Label { text: "SESSION  " + doctorSession.sessionId.slice(-8); color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: 10 }
             }
         }
     }
 
     Component {
-        id: commandCenter
-        Item {
-            SplitView {
-                id: split
+        id: timelinePanel
+        Rectangle {
+            color: Theme.surface
+            border.color: Theme.separatorStrong
+            border.width: 1
+            radius: 2
+            ColumnLayout {
                 anchors.fill: parent
-                orientation: Qt.Horizontal
-                onWidthChanged: widthTimer.restart()
-                PaneFrame {
-                    visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "plan"
-                    paneId: "plan"; heading: "DIAGNOSTIC PLAN"; bodyContent: planBody
-                    SplitView.preferredWidth: doctorSession.maximizedPane === "plan" ? split.width : Number(doctorSession.paneWidths[0]) * split.width / 100
-                    SplitView.minimumWidth: 175
+                anchors.margins: 8
+                spacing: 5
+                RowLayout { Layout.fillWidth: true
+                    Eyebrow { text: "ACTIVITY TIMELINE"; color: Theme.textSecondary; Layout.fillWidth: true }
+                    Label { text: doctorSession.activityRows.length + " EVENTS"; color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: 10 }
                 }
-                PaneFrame {
-                    visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "current"
-                    paneId: "current"; heading: "CURRENT STEP"; bodyContent: currentBody
-                    SplitView.preferredWidth: doctorSession.maximizedPane === "current" ? split.width : Number(doctorSession.paneWidths[1]) * split.width / 100
-                    SplitView.minimumWidth: 205
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: doctorSession.activityRows
+                    spacing: 1
+                    ScrollBar.vertical: Doctor.DoctorScrollBar {}
+                    delegate: Doctor.DoctorTimelineRow {
+                        required property var modelData
+                        width: ListView.view.width
+                        time: modelData.time
+                        checkId: modelData.checkId
+                        title: modelData.title
+                        symbol: modelData.symbol
+                        tone: modelData.tone
+                        evidenceId: modelData.evidenceId
+                        onClicked: root.openEvidence(evidenceId)
+                    }
                 }
-                PaneFrame {
-                    visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "findings"
-                    paneId: "findings"; heading: "FINDINGS & DIAGNOSES"; bodyContent: findingsBody
-                    SplitView.preferredWidth: doctorSession.maximizedPane === "findings" ? split.width : Number(doctorSession.paneWidths[2]) * split.width / 100
-                    SplitView.minimumWidth: 260
+            }
+        }
+    }
+
+    Component {
+        id: commandCenterView
+        Item {
+            objectName: "commandWorkspace"
+            SplitView {
+                id: verticalSplit
+                objectName: "commandVerticalSplit"
+                anchors.fill: parent
+                orientation: Qt.Vertical
+                handle: Rectangle { implicitHeight: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 32; height: 2; color: Theme.textMuted; radius: 1 } }
+                SplitView {
+                    id: workspaceSplit
+                    objectName: "commandPaneSplit"
+                    orientation: Qt.Horizontal
+                    SplitView.fillHeight: true
+                    handle: Rectangle { implicitWidth: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 2; height: 28; color: Theme.textMuted; radius: 1 } }
+                    PaneSurface {
+                        objectName: "commandPlanPane"
+                        visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "plan"
+                        paneId: "plan"; heading: "DIAGNOSTIC PLAN"; countText: doctorSession.planPhases.length + " phases"; bodyContent: planBody
+                        SplitView.minimumWidth: 300
+                        SplitView.preferredWidth: doctorSession.maximizedPane === "plan" ? workspaceSplit.width : Number(doctorSession.paneFractions[0]) * workspaceSplit.width
+                        onWidthChanged: paneSaveTimer.restart()
+                    }
+                    PaneSurface {
+                        objectName: "commandCurrentPane"
+                        visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "current"
+                        paneId: "current"; heading: "CURRENT STEP"; bodyContent: currentBody
+                        SplitView.minimumWidth: 280
+                        SplitView.preferredWidth: doctorSession.maximizedPane === "current" ? workspaceSplit.width : Number(doctorSession.paneFractions[1]) * workspaceSplit.width
+                        onWidthChanged: paneSaveTimer.restart()
+                    }
+                    PaneSurface {
+                        objectName: "commandFindingsPane"
+                        visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "findings"
+                        paneId: "findings"; heading: "FINDINGS & DIAGNOSES"; countText: (doctorSession.diagnosisCards.length + doctorSession.findingCards.length) + " items"; bodyContent: findingsBody
+                        SplitView.minimumWidth: 340
+                        SplitView.preferredWidth: doctorSession.maximizedPane === "findings" ? workspaceSplit.width : Number(doctorSession.paneFractions[2]) * workspaceSplit.width
+                        onWidthChanged: paneSaveTimer.restart()
+                    }
+                    PaneSurface {
+                        objectName: "commandActionPane"
+                        visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "action"
+                        paneId: "action"; heading: "USER ACTION"; bodyContent: actionBody
+                        SplitView.minimumWidth: 260
+                        SplitView.preferredWidth: doctorSession.maximizedPane === "action" ? workspaceSplit.width : Number(doctorSession.paneFractions[3]) * workspaceSplit.width
+                        onWidthChanged: paneSaveTimer.restart()
+                    }
                 }
-                PaneFrame {
-                    visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "action"
-                    paneId: "action"; heading: "USER ACTION"; bodyContent: actionBody
-                    SplitView.preferredWidth: doctorSession.maximizedPane === "action" ? split.width : Number(doctorSession.paneWidths[3]) * split.width / 100
-                    SplitView.minimumWidth: 175
+                Loader {
+                    objectName: "commandActivityTimeline"
+                    visible: doctorSession.liveEvidenceVisible
+                    sourceComponent: timelinePanel
+                    SplitView.minimumHeight: 128
+                    SplitView.preferredHeight: 220
+                    SplitView.maximumHeight: 360
                 }
             }
             Timer {
-                id: widthTimer; interval: 450; repeat: false
+                id: paneSaveTimer
+                interval: 350
+                repeat: false
                 onTriggered: {
-                    if (doctorSession.maximizedPane.length === 0)
-                        doctorSession.savePaneWidths([split.itemAt(0).width, split.itemAt(1).width, split.itemAt(2).width, split.itemAt(3).width])
+                    if (doctorSession.maximizedPane.length === 0 && workspaceSplit.width > 0 && workspaceSplit.itemAt(3)) {
+                        const totalPaneWidth = workspaceSplit.itemAt(0).width + workspaceSplit.itemAt(1).width + workspaceSplit.itemAt(2).width + workspaceSplit.itemAt(3).width
+                        if (totalPaneWidth > 0)
+                            doctorSession.savePaneFractions([workspaceSplit.itemAt(0).width / totalPaneWidth, workspaceSplit.itemAt(1).width / totalPaneWidth, workspaceSplit.itemAt(2).width / totalPaneWidth, workspaceSplit.itemAt(3).width / totalPaneWidth])
+                    }
                 }
             }
             Shortcut { sequence: "Escape"; onActivated: doctorSession.setMaximizedPane("") }
@@ -484,25 +531,35 @@ ApplicationWindow {
     Component {
         id: focusView
         Flickable {
-            contentWidth: width; contentHeight: focusColumn.implicitHeight; clip: true
+            objectName: "focusWorkspace"
+            contentWidth: width
+            contentHeight: focusColumn.implicitHeight
+            clip: true
+            ScrollBar.vertical: Doctor.DoctorScrollBar {}
             ColumnLayout {
-                id: focusColumn; width: parent.width; spacing: root.densityGap
-                PaneFrame { paneId: "current"; heading: "CURRENT STEP"; bodyContent: currentBody; Layout.fillHeight: false; implicitHeight: 255 }
-                PaneFrame { paneId: "findings"; heading: "FINDINGS & DIAGNOSES"; bodyContent: findingsBody; Layout.fillHeight: false; implicitHeight: 420 }
-                PaneFrame { paneId: "plan"; heading: "DIAGNOSTIC PLAN"; bodyContent: planBody; Layout.fillHeight: false; implicitHeight: 330 }
-                PaneFrame { paneId: "action"; heading: "USER ACTION"; bodyContent: actionBody; Layout.fillHeight: false; implicitHeight: 230 }
-                Rectangle {
-                    Layout.fillWidth: true; implicitHeight: activityColumn.implicitHeight + root.densityPad * 2; color: "#181b1f"; border.color: "#353a40"; radius: 3
-                    ColumnLayout { id: activityColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 5
-                        SectionLabel { text: "ACTIVITY TIMELINE"; color: "#d6dce1" }
-                        Repeater { model: doctorSession.activityRows
-                            delegate: RowLayout { required property var modelData; Layout.fillWidth: true
-                                Label { text: modelData.time; color: "#87919a"; font.family: "Consolas"; font.pixelSize: 9 }
-                                Label { text: modelData.checkId; color: "#8fb3cf"; font.family: "Consolas"; font.pixelSize: 9 }
-                                Label { text: modelData.title; color: "#bbc3ca"; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Button { text: "Evidence"; onClicked: root.openEvidence(modelData.evidenceId); visible: modelData.evidenceId.length > 0 }
-                            }
+                id: focusColumn
+                width: parent.width
+                spacing: root.densityGap
+                Rectangle { Layout.fillWidth: true; implicitHeight: 47; color: Theme.inset; border.color: Theme.separator; radius: 2
+                    RowLayout { anchors.fill: parent; anchors.leftMargin: 13; anchors.rightMargin: 13
+                        ColumnLayout { spacing: 1; Layout.fillWidth: true
+                            Eyebrow { text: "DIAGNOSTIC SESSION" }
+                            Label { text: "Readable diagnostic narrative"; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 12 }
                         }
+                        Doctor.DoctorStatusPill { text: doctorSession.sessionState; tone: doctorSession.failedCheckCount ? "fault" : doctorSession.warningCheckCount ? "warning" : "healthy" }
+                    }
+                }
+                PaneSurface { Layout.fillWidth: true; implicitHeight: 280; paneId: "current"; heading: "CURRENT STEP / OPERATION"; bodyContent: currentBody; maximizable: false }
+                PaneSurface { Layout.fillWidth: true; implicitHeight: 460; paneId: "findings"; heading: "PRIMARY DIAGNOSIS & CONTRIBUTING FINDINGS"; bodyContent: findingsBody; maximizable: false }
+                PaneSurface { Layout.fillWidth: true; implicitHeight: 340; paneId: "plan"; heading: "DIAGNOSTIC PLAN"; bodyContent: planBody; maximizable: false }
+                PaneSurface { Layout.fillWidth: true; implicitHeight: 250; paneId: "action"; heading: "USER ACTION"; bodyContent: actionBody; maximizable: false }
+                Rectangle { Layout.fillWidth: true; implicitHeight: 66; color: Theme.inset; border.color: Theme.separator; radius: 2
+                    RowLayout { anchors.fill: parent; anchors.leftMargin: 13; anchors.rightMargin: 10
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Eyebrow { text: "TECHNICAL / EVIDENCE INSPECTOR" }
+                            Label { text: "Select a diagnosis or finding to inspect linked evidence."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11 }
+                        }
+                        Doctor.DoctorButton { text: "Open inspector"; tone: "primary"; onClicked: inspector.open() }
                     }
                 }
             }
@@ -513,40 +570,39 @@ ApplicationWindow {
         id: inspector
         edge: Qt.BottomEdge
         width: parent.width
-        height: Math.min(parent.height * 0.54, 440)
+        height: Math.min(parent.height * 0.56, 470)
         modal: false
         interactive: true
-        background: Rectangle { color: "#15181c"; border.color: "#48515a"; border.width: 1 }
+        background: Rectangle { color: Theme.surface; border.color: Theme.separatorStrong; border.width: 1 }
         property var selected: doctorSession.selectedEvidence
         ColumnLayout {
-            anchors.fill: parent; anchors.margins: 18; spacing: 9
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 8
             RowLayout { Layout.fillWidth: true
-                ColumnLayout { spacing: 1
-                    SectionLabel { text: "EVIDENCE INSPECTOR"; color: "#dce2e7" }
-                    Label { text: inspector.selected.checkId || "Select a finding, diagnosis, or activity item"; color: "#8fb3cf"; font.family: "Consolas"; font.pixelSize: 12 }
+                ColumnLayout { Layout.fillWidth: true; spacing: 1
+                    Eyebrow { text: "EVIDENCE INSPECTOR"; color: Theme.textSecondary }
+                    Label { text: inspector.selected.checkId || "Select a finding, diagnosis, or timeline row"; color: Theme.information; font.family: Theme.mono; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                Item { Layout.fillWidth: true }
-                Button { text: "Close"; onClicked: inspector.close() }
+                Doctor.DoctorButton { text: "Close"; compact: true; onClicked: inspector.close() }
             }
-            ThinRule {}
-            GridLayout { columns: root.width > 920 ? 3 : 2; columnSpacing: 20; rowSpacing: 8; Layout.fillWidth: true
-                SectionLabel { text: "SOURCE" }
-                Label { text: inspector.selected.source || "Unknown"; color: "#d1d7dc"; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                SectionLabel { text: "TIMESTAMP" }
-                Label { text: inspector.selected.timestamp || "Unknown"; color: "#d1d7dc"; font.family: "Consolas"; font.pixelSize: 10 }
-                SectionLabel { text: "DURATION" }
-                Label { text: inspector.selected.duration || "Unknown"; color: "#d1d7dc"; font.family: "Consolas"; font.pixelSize: 10 }
-                SectionLabel { text: "PROVENANCE" }
-                Label { text: inspector.selected.provenance || "Unknown"; color: "#d1d7dc"; font.pixelSize: 11 }
-                SectionLabel { text: "NATIVE ERROR" }
-                Label { text: inspector.selected.error || "None"; color: inspector.selected.error && inspector.selected.error !== "None" ? "#dc8585" : "#b8c2ca"; font.family: "Consolas"; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
+            Doctor.DoctorDivider {}
+            GridLayout { columns: root.width > 980 ? 4 : 2; columnSpacing: 18; rowSpacing: 8; Layout.fillWidth: true
+                Eyebrow { text: "SOURCE" }
+                Label { text: inspector.selected.source || "Unknown"; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Eyebrow { text: "TIMESTAMP" }
+                Label { text: inspector.selected.timestamp || "Unknown"; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 10 }
+                Eyebrow { text: "DURATION" }
+                Label { text: inspector.selected.duration || "Unknown"; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 10 }
+                Eyebrow { text: "PROVENANCE" }
+                Label { text: inspector.selected.provenance || "Unknown"; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11 }
+                Eyebrow { text: "NATIVE ERROR" }
+                Label { text: inspector.selected.error || "None"; color: inspector.selected.error && inspector.selected.error !== "None" ? Theme.critical : Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
             }
-            Label { text: "SUMMARY"; color: "#9da7af"; font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 1.2 }
-            TextArea { text: inspector.selected.summary || "No evidence is selected."; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: "#d6dce1"; background: Rectangle { color: "#1d2126"; border.color: "#343a40" }
-                Layout.fillWidth: true; Layout.preferredHeight: 58 }
-            Label { text: "TECHNICAL DETAILS"; color: "#9da7af"; font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 1.2 }
-            TextArea { text: inspector.selected.technical || inspector.selected.structured || "No additional raw detail was captured."; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: "#c0c8cf"; font.family: "Consolas"; background: Rectangle { color: "#1d2126"; border.color: "#343a40" }
-                Layout.fillWidth: true; Layout.fillHeight: true }
+            Eyebrow { text: "SUMMARY" }
+            Doctor.DoctorTextArea { text: inspector.selected.summary || "No evidence is selected."; Layout.fillWidth: true; Layout.preferredHeight: 62 }
+            Eyebrow { text: "TECHNICAL DETAILS" }
+            Doctor.DoctorTextArea { text: inspector.selected.technical || inspector.selected.structured || "No additional raw detail was captured."; font.family: Theme.mono; Layout.fillWidth: true; Layout.fillHeight: true }
         }
     }
 }

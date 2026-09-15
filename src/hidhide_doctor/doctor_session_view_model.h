@@ -35,6 +35,7 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(bool commandCenter READ commandCenter NOTIFY presentationChanged)
     Q_PROPERTY(QString density READ density NOTIFY presentationChanged)
     Q_PROPERTY(QString environmentStrip READ environmentStrip NOTIFY sessionChanged)
+    Q_PROPERTY(QVariantList environmentGroups READ environmentGroups NOTIFY sessionChanged)
     Q_PROPERTY(QString sessionState READ sessionState NOTIFY sessionChanged)
     Q_PROPERTY(QString simulationLabel READ simulationLabel NOTIFY sessionChanged)
     Q_PROPERTY(QVariantList healthDomains READ healthDomains NOTIFY sessionChanged)
@@ -51,7 +52,7 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(int failedCheckCount READ failedCheckCount NOTIFY sessionChanged)
     Q_PROPERTY(bool liveEvidenceVisible READ liveEvidenceVisible NOTIFY presentationChanged)
     Q_PROPERTY(QString maximizedPane READ maximizedPane NOTIFY presentationChanged)
-    Q_PROPERTY(QVariantList paneWidths READ paneWidths NOTIFY presentationChanged)
+    Q_PROPERTY(QVariantList paneFractions READ paneFractions NOTIFY presentationChanged)
 public:
     explicit DoctorSessionViewModel(DoctorSession &session, QString buildIdentity, QObject *parent = nullptr);
     QString buildIdentity() const;
@@ -74,6 +75,7 @@ public:
     bool commandCenter() const;
     QString density() const;
     QString environmentStrip() const;
+    QVariantList environmentGroups() const;
     QString sessionState() const;
     QString simulationLabel() const;
     QVariantList healthDomains() const;
@@ -90,14 +92,16 @@ public:
     int failedCheckCount() const;
     bool liveEvidenceVisible() const;
     QString maximizedPane() const;
-    QVariantList paneWidths() const;
+    QVariantList paneFractions() const;
+    static QVariantList defaultPaneFractions();
+    static QVariantList normalizedPaneFractions(const QVariantList &candidate);
     Q_INVOKABLE void togglePresentation();
     Q_INVOKABLE void setCommandCenter(bool commandCenter);
     Q_INVOKABLE void setDensity(const QString &density);
     Q_INVOKABLE void setLiveEvidenceVisible(bool visible);
     Q_INVOKABLE void setMaximizedPane(const QString &pane);
-    Q_INVOKABLE void savePaneWidths(const QVariantList &widths);
-    Q_INVOKABLE void resetPaneWidths();
+    Q_INVOKABLE void savePaneFractions(const QVariantList &fractions);
+    Q_INVOKABLE void resetWorkspaceLayout();
     Q_INVOKABLE void selectEvidence(const QString &evidenceId);
     Q_INVOKABLE void requestCancellation();
     Q_INVOKABLE void requestRerun();
@@ -114,7 +118,7 @@ private:
     QString m_density = QStringLiteral("Compact");
     bool m_liveEvidenceVisible = false;
     QString m_maximizedPane;
-    QVariantList m_paneWidths;
+    QVariantList m_paneFractions;
     QString m_selectedEvidenceId;
     std::function<void()> m_cancellation;
     std::function<void()> m_rerun;

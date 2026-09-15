@@ -3,9 +3,21 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace hotas::doctor {
 namespace {
+
+constexpr int kPresentationLayoutVersion = 2;
+constexpr std::array<double, 4> kDefaultPaneFractions{0.22, 0.265, 0.36, 0.155};
+constexpr double kMinimumPersistedPaneFraction = 0.08;
+constexpr double kFractionSumTolerance = 0.015;
+
+QString presentationKey(const QString &suffix)
+{
+    return QStringLiteral("hidhideDoctorPhase2/") + suffix;
+}
 
 QString iconFor(DoctorCheckStatus status)
 {
@@ -89,12 +101,19 @@ DoctorSessionViewModel::DoctorSessionViewModel(DoctorSession &session, QString b
     : QObject(parent), m_session(session), m_buildIdentity(std::move(buildIdentity))
 {
     QSettings settings;
-    m_commandCenter = settings.value(QStringLiteral("hidhideDoctorPhase2/commandCenter"), true).toBool();
-    const QString storedDensity = settings.value(QStringLiteral("hidhideDoctorPhase2/density"), QStringLiteral("Compact")).toString();
+    m_commandCenter = settings.value(presentationKey(QStringLiteral("commandCenter")), true).toBool();
+    const QString storedDensity = settings.value(presentationKey(QStringLiteral("density")), QStringLiteral("Compact")).toString();
     m_density = (storedDensity == QStringLiteral("Comfortable") || storedDensity == QStringLiteral("Dense")) ? storedDensity : QStringLiteral("Compact");
-    m_liveEvidenceVisible = settings.value(QStringLiteral("hidhideDoctorPhase2/liveEvidence"), false).toBool();
-    m_paneWidths = settings.value(QStringLiteral("hidhideDoctorPhase2/paneWidths"), QVariantList{22, 27, 36, 15}).toList();
-    if (m_paneWidths.size() != 4) m_paneWidths = {22, 27, 36, 15};
+    m_liveEvidenceVisible = settings.value(presentationKey(QStringLiteral("liveEvidence")), false).toBool();
+    const bool currentSchema = settings.value(presentationKey(QStringLiteral("layoutSchemaVersion")), 0).toInt() == kPresentationLayoutVersion;
+    m_paneFractions = currentSchema
+        ? normalizedPaneFractions(settings.value(presentationKey(QStringLiteral("paneFractions"))).toList())
+        : defaultPaneFractions();
+    if (!currentSchema || m_paneFractions != settings.value(presentationKey(QStringLiteral("paneFractions"))).toList()) {
+        settings.setValue(presentationKey(QStringLiteral("layoutSchemaVersion")), kPresentationLayoutVersion);
+        settings.setValue(presentationKey(QStringLiteral("paneFractions")), m_paneFractions);
+        settings.remove(presentationKey(QStringLiteral("paneWidths")));
+    }
 }
 
 QString DoctorSessionViewModel::buildIdentity() const { return m_buildIdentity; }
@@ -167,6 +186,28 @@ QString DoctorSessionViewModel::environmentStrip() const
             environment.hidhide.driverVersion.isEmpty() ? QStringLiteral("Unknown") : environment.hidhide.driverVersion)
         : QStringLiteral("HidHide Absent");
     return QStringLiteral("%1   |   %2   |   Session %3   |   READ ONLY").arg(platform, component, sessionId().right(8));
+}
+
+QVariantList DoctorSessionViewModel::environmentGroups() const
+{
+    const QString session = sessionId().right(8);
+    if (!m_session.environment()) return {QVariantMap{{QStringLiteral("label"), QStringLiteral("WINDOWS")}, {QStringLiteral("value"), QStringLiteral("Unknown")}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("HIDHIDE")}, {QStringLiteral("value"), QStringLiteral("Unknown")}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("SESSION")}, {QStringLiteral("value"), session}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("MODE")}, {QStringLiteral("value"), QStringLiteral("READ ONLY")}}};
+    const DoctorEnvironment &environment = *m_session.environment();
+    const QString platform = QStringLiteral("%1 %2 · Build %3.%4 · %5")
+        .arg(environment.platform.windowsEdition.isEmpty() ? QStringLiteral("Windows Unknown") : environment.platform.windowsEdition,
+            environment.platform.windowsVersion.isEmpty() ? QStringLiteral("Unknown") : environment.platform.windowsVersion)
+        .arg(environment.platform.build).arg(environment.platform.revision).arg(displayName(environment.platform.nativeArchitecture));
+    const QString hidhide = environment.hidhide.present
+        ? QStringLiteral("Client %1 · Driver %2").arg(environment.hidhide.clientVersion.isEmpty() ? QStringLiteral("Unknown") : environment.hidhide.clientVersion,
+            environment.hidhide.driverVersion.isEmpty() ? QStringLiteral("Unknown") : environment.hidhide.driverVersion)
+        : QStringLiteral("Absent");
+    return {QVariantMap{{QStringLiteral("label"), QStringLiteral("WINDOWS")}, {QStringLiteral("value"), platform}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("HIDHIDE")}, {QStringLiteral("value"), hidhide}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("SESSION")}, {QStringLiteral("value"), session}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("MODE")}, {QStringLiteral("value"), QStringLiteral("READ ONLY")}}};
 }
 
 QVariantList DoctorSessionViewModel::healthDomains() const
@@ -279,14 +320,37 @@ int DoctorSessionViewModel::warningCheckCount() const { return std::count_if(m_s
 int DoctorSessionViewModel::failedCheckCount() const { return std::count_if(m_session.checkResults().cbegin(), m_session.checkResults().cend(), [](const DoctorCheckResult &result) { return result.status == DoctorCheckStatus::Failed || result.status == DoctorCheckStatus::TimedOut || result.status == DoctorCheckStatus::Blocked; }); }
 bool DoctorSessionViewModel::liveEvidenceVisible() const { return m_liveEvidenceVisible; }
 QString DoctorSessionViewModel::maximizedPane() const { return m_maximizedPane; }
-QVariantList DoctorSessionViewModel::paneWidths() const { return m_paneWidths; }
+QVariantList DoctorSessionViewModel::paneFractions() const { return m_paneFractions; }
+
+QVariantList DoctorSessionViewModel::defaultPaneFractions()
+{
+    QVariantList values;
+    for (const double fraction : kDefaultPaneFractions) values.append(fraction);
+    return values;
+}
+
+QVariantList DoctorSessionViewModel::normalizedPaneFractions(const QVariantList &candidate)
+{
+    if (candidate.size() != static_cast<qsizetype>(kDefaultPaneFractions.size())) return defaultPaneFractions();
+    double sum = 0.0;
+    QVariantList normalized;
+    for (const QVariant &value : candidate) {
+        bool valid = false;
+        const double fraction = value.toDouble(&valid);
+        if (!valid || !std::isfinite(fraction) || fraction < kMinimumPersistedPaneFraction || fraction > 0.70) return defaultPaneFractions();
+        sum += fraction;
+        normalized.append(fraction);
+    }
+    return std::abs(sum - 1.0) <= kFractionSumTolerance ? normalized : defaultPaneFractions();
+}
 
 void DoctorSessionViewModel::togglePresentation() { setCommandCenter(!m_commandCenter); }
 void DoctorSessionViewModel::setCommandCenter(bool commandCenter)
 {
     if (m_commandCenter == commandCenter) return;
     m_commandCenter = commandCenter;
-    QSettings().setValue(QStringLiteral("hidhideDoctorPhase2/commandCenter"), m_commandCenter);
+    if (!m_commandCenter) m_maximizedPane.clear();
+    QSettings().setValue(presentationKey(QStringLiteral("commandCenter")), m_commandCenter);
     emit presentationChanged();
 }
 void DoctorSessionViewModel::setDensity(const QString &density)
@@ -295,14 +359,14 @@ void DoctorSessionViewModel::setDensity(const QString &density)
     if (normalized != QStringLiteral("Comfortable") && normalized != QStringLiteral("Compact") && normalized != QStringLiteral("Dense")) return;
     if (m_density == normalized) return;
     m_density = normalized;
-    QSettings().setValue(QStringLiteral("hidhideDoctorPhase2/density"), m_density);
+    QSettings().setValue(presentationKey(QStringLiteral("density")), m_density);
     emit presentationChanged();
 }
 void DoctorSessionViewModel::setLiveEvidenceVisible(bool visible)
 {
     if (m_liveEvidenceVisible == visible) return;
     m_liveEvidenceVisible = visible;
-    QSettings().setValue(QStringLiteral("hidhideDoctorPhase2/liveEvidence"), visible);
+    QSettings().setValue(presentationKey(QStringLiteral("liveEvidence")), visible);
     emit presentationChanged();
 }
 void DoctorSessionViewModel::setMaximizedPane(const QString &pane)
@@ -313,18 +377,31 @@ void DoctorSessionViewModel::setMaximizedPane(const QString &pane)
     m_maximizedPane = next;
     emit presentationChanged();
 }
-void DoctorSessionViewModel::savePaneWidths(const QVariantList &widths)
+void DoctorSessionViewModel::savePaneFractions(const QVariantList &fractions)
 {
-    if (widths.size() != 4) return;
-    for (const QVariant &width : widths) if (width.toReal() < 80.0) return;
-    m_paneWidths = widths;
-    QSettings().setValue(QStringLiteral("hidhideDoctorPhase2/paneWidths"), m_paneWidths);
+    const QVariantList normalized = normalizedPaneFractions(fractions);
+    if (normalized == defaultPaneFractions() && fractions != defaultPaneFractions()) return;
+    if (m_paneFractions == normalized) return;
+    m_paneFractions = normalized;
+    QSettings settings;
+    settings.setValue(presentationKey(QStringLiteral("layoutSchemaVersion")), kPresentationLayoutVersion);
+    settings.setValue(presentationKey(QStringLiteral("paneFractions")), m_paneFractions);
     emit presentationChanged();
 }
-void DoctorSessionViewModel::resetPaneWidths()
+void DoctorSessionViewModel::resetWorkspaceLayout()
 {
-    m_paneWidths = {22, 27, 36, 15};
-    QSettings().setValue(QStringLiteral("hidhideDoctorPhase2/paneWidths"), m_paneWidths);
+    m_commandCenter = true;
+    m_density = QStringLiteral("Compact");
+    m_liveEvidenceVisible = false;
+    m_maximizedPane.clear();
+    m_paneFractions = defaultPaneFractions();
+    QSettings settings;
+    settings.setValue(presentationKey(QStringLiteral("commandCenter")), m_commandCenter);
+    settings.setValue(presentationKey(QStringLiteral("density")), m_density);
+    settings.setValue(presentationKey(QStringLiteral("liveEvidence")), m_liveEvidenceVisible);
+    settings.setValue(presentationKey(QStringLiteral("layoutSchemaVersion")), kPresentationLayoutVersion);
+    settings.setValue(presentationKey(QStringLiteral("paneFractions")), m_paneFractions);
+    settings.remove(presentationKey(QStringLiteral("paneWidths")));
     emit presentationChanged();
 }
 void DoctorSessionViewModel::selectEvidence(const QString &evidenceId)

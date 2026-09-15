@@ -119,6 +119,7 @@ private slots:
     void fixtureProtocolFailuresAreIsolated();
     void repairContractRejectsUnknownAndArbitraryTargets();
     void presentationToggleKeepsOneCanonicalSession();
+    void presentationFractionsRejectInvalidPixelGeometry();
     void phaseOneEngineKeepsProtocolFailuresIndependentAndExact();
     void phaseOneDeviceMetadataMapsToCatalogChecks();
     void phaseOneReportRedactsSensitiveObservationValues();
@@ -295,6 +296,16 @@ void HidHideDoctorDomainTests::presentationToggleKeepsOneCanonicalSession()
     QCOMPARE(model.sessionId(), id);
     QCOMPARE(session.plan().items().size(), planCount);
     QCOMPARE(model.currentStepId(), QStringLiteral("HD-API-001"));
+}
+
+void HidHideDoctorDomainTests::presentationFractionsRejectInvalidPixelGeometry()
+{
+    const QVariantList defaults = DoctorSessionViewModel::defaultPaneFractions();
+    QCOMPARE(defaults.size(), 4);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{22, 27, 36, 15}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.22, 0.265, 0.36, 0.155}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.02, 0.265, 0.36, 0.355}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.22, 0.265, 0.36}), defaults);
 }
 
 void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAndExact()
