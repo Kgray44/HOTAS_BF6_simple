@@ -7,6 +7,11 @@ ReadOnlyDiagnosticSnapshot healthySnapshot()
 {
     ReadOnlyDiagnosticSnapshot snapshot;
     snapshot.environment = fixtures::windows11X64Healthy();
+    snapshot.environment.hotasBf6Present = true;
+    snapshot.environment.repairIntent.suppliedByHotas = true;
+    snapshot.environment.repairIntent.expectedExecutable = QStringLiteral("C:\\Program Files\\HOTAS BF6\\HOTAS BF6.exe");
+    snapshot.environment.repairIntent.expectedPhysicalDeviceIds = {QStringLiteral("HID\\VID_1234&PID_0001")};
+    snapshot.environment.repairIntent.expectedVirtualOutputIds = {QStringLiteral("ROOT\\VJOY\\0000")};
     snapshot.service = {true, QStringLiteral("HidHide"), QStringLiteral("HidHide"), QStringLiteral("system32\\drivers\\HidHide.sys"), QStringLiteral("system"), QStringLiteral("running"), {}, std::nullopt};
     snapshot.artifacts = {
         {DoctorArtifactKind::ClientExecutable, QStringLiteral("client"), QStringLiteral("C:\\Program Files\\HidHide\\HidHideClient.exe"), true, 1, {}, QStringLiteral("1.5.230.0"), {}, CpuArchitecture::X64, QStringLiteral("fixture-client"), SignatureTrustState::Trusted, {}, std::nullopt},
@@ -34,7 +39,8 @@ QStringList developmentFixtureNames()
 {
     return {QStringLiteral("Healthy System"), QStringLiteral("GetWhitelist 0x57"), QStringLiteral("Broken HID Device"),
         QStringLiteral("Client Driver Mismatch"), QStringLiteral("Pending Restart"), QStringLiteral("Partial Install"),
-        QStringLiteral("Contradictory Evidence")};
+        QStringLiteral("Contradictory Evidence"), QStringLiteral("Missing HOTAS Exemption"),
+        QStringLiteral("Stale HOTAS Exemption"), QStringLiteral("Hidden Virtual Output")};
 }
 
 ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString *displayLabel)
@@ -70,6 +76,21 @@ ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString
         label = QStringLiteral("Contradictory Evidence");
         snapshot.registryActive = false;
         snapshot.contradictions.append(QStringLiteral("Persistent registry active state is false while GET_ACTIVE returned true."));
+    } else if (key.contains(QStringLiteral("missing hotas"))) {
+        label = QStringLiteral("Missing HOTAS Exemption");
+        snapshot.protocol[4].multiStringValues.clear();
+        snapshot.protocol[4].value = QStringLiteral("0 entries");
+        snapshot.registryWhitelist.clear();
+    } else if (key.contains(QStringLiteral("stale hotas"))) {
+        label = QStringLiteral("Stale HOTAS Exemption");
+        snapshot.protocol[4].multiStringValues = {QStringLiteral("C:\\Stale\\HOTAS BF6.exe"), QStringLiteral("C:\\Program Files\\Steam\\Steam.exe")};
+        snapshot.protocol[4].value = QStringLiteral("2 entries");
+        snapshot.registryWhitelist = snapshot.protocol[4].multiStringValues;
+    } else if (key.contains(QStringLiteral("hidden virtual"))) {
+        label = QStringLiteral("Hidden Virtual Output");
+        snapshot.protocol[6].multiStringValues.append(QStringLiteral("ROOT\\VJOY\\0000"));
+        snapshot.protocol[6].value = QStringLiteral("2 entries");
+        snapshot.registryBlacklist = snapshot.protocol[6].multiStringValues;
     }
     if (displayLabel) *displayLabel = label;
     return snapshot;

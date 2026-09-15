@@ -11,8 +11,8 @@
 namespace hotas::doctor {
 
 // This is a presentation adapter over one session. It owns no diagnostics,
-// environment provider, or repair capability; a layout toggle cannot restart
-// or mutate the work it renders.
+// environment provider, or repair capability; the optional lab callbacks are
+// supplied by the executable and remain unavailable in normal Doctor mode.
 class DoctorSessionViewModel final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString buildIdentity READ buildIdentity CONSTANT)
@@ -46,6 +46,15 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(QVariantList evidenceRows READ evidenceRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap selectedEvidence READ selectedEvidence NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap currentOperationDetails READ currentOperationDetails NOTIFY sessionChanged)
+    Q_PROPERTY(bool repairPlanAvailable READ repairPlanAvailable NOTIFY sessionChanged)
+    Q_PROPERTY(QVariantMap repairPlanSummary READ repairPlanSummary NOTIFY sessionChanged)
+    Q_PROPERTY(QStringList repairPlanOperations READ repairPlanOperations NOTIFY sessionChanged)
+    Q_PROPERTY(QStringList repairPlanCollateral READ repairPlanCollateral NOTIFY sessionChanged)
+    Q_PROPERTY(bool labRepairMode READ labRepairMode NOTIFY repairRuntimeChanged)
+    Q_PROPERTY(QString repairRuntimeState READ repairRuntimeState NOTIFY repairRuntimeChanged)
+    Q_PROPERTY(QString repairRuntimeDetail READ repairRuntimeDetail NOTIFY repairRuntimeChanged)
+    Q_PROPERTY(bool repairOperationInFlight READ repairOperationInFlight NOTIFY repairRuntimeChanged)
+    Q_PROPERTY(QString recoveryNotice READ recoveryNotice NOTIFY repairRuntimeChanged)
     Q_PROPERTY(int healthyCheckCount READ healthyCheckCount NOTIFY sessionChanged)
     Q_PROPERTY(int informationalCheckCount READ informationalCheckCount NOTIFY sessionChanged)
     Q_PROPERTY(int warningCheckCount READ warningCheckCount NOTIFY sessionChanged)
@@ -86,6 +95,15 @@ public:
     QVariantList evidenceRows() const;
     QVariantMap selectedEvidence() const;
     QVariantMap currentOperationDetails() const;
+    bool repairPlanAvailable() const;
+    QVariantMap repairPlanSummary() const;
+    QStringList repairPlanOperations() const;
+    QStringList repairPlanCollateral() const;
+    bool labRepairMode() const;
+    QString repairRuntimeState() const;
+    QString repairRuntimeDetail() const;
+    bool repairOperationInFlight() const;
+    QString recoveryNotice() const;
     int healthyCheckCount() const;
     int informationalCheckCount() const;
     int warningCheckCount() const;
@@ -105,12 +123,18 @@ public:
     Q_INVOKABLE void selectEvidence(const QString &evidenceId);
     Q_INVOKABLE void requestCancellation();
     Q_INVOKABLE void requestRerun();
+    Q_INVOKABLE void requestHelperConnectivityTest();
+    Q_INVOKABLE void requestLabRepairAuthorization();
     void notifySessionChanged();
     void replaceSession(DoctorSession session);
     void setScanActions(std::function<void()> cancellation, std::function<void()> rerun);
+    void setLabRepairActions(bool enabled, std::function<void(bool)> action);
+    void setRepairRuntime(QString state, QString detail, bool inFlight);
+    void setRecoveryNotice(QString notice);
 signals:
     void sessionChanged();
     void presentationChanged();
+    void repairRuntimeChanged();
 private:
     DoctorSession m_session;
     QString m_buildIdentity;
@@ -122,6 +146,12 @@ private:
     QString m_selectedEvidenceId;
     std::function<void()> m_cancellation;
     std::function<void()> m_rerun;
+    bool m_labRepairMode = false;
+    bool m_repairOperationInFlight = false;
+    QString m_repairRuntimeState = QStringLiteral("READ ONLY");
+    QString m_repairRuntimeDetail = QStringLiteral("No repair request is active.");
+    QString m_recoveryNotice;
+    std::function<void(bool)> m_labRepairAction;
 };
 
 } // namespace hotas::doctor

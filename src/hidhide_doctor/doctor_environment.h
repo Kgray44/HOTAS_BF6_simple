@@ -48,6 +48,19 @@ struct DeviceEcosystemFixture final {
     QStringList vendorLabels;
 };
 
+// Context from a HOTAS BF6 launch is a hint, not a configuration command.
+// Phase 3 uses it only after the executable/device identity was independently
+// observed.  Standalone Doctor sessions leave this empty and therefore never
+// invent an expected HOTAS configuration.
+struct HotasRepairIntent final {
+    bool suppliedByHotas = false;
+    QString expectedExecutable;
+    QStringList expectedPhysicalDeviceIds;
+    QStringList expectedVirtualOutputIds;
+    std::optional<bool> expectedCloakState;
+    std::optional<bool> expectedInverseState;
+};
+
 struct DoctorEnvironment final {
     PlatformFingerprint platform;
     HidHideComponentEvidence hidhide;
@@ -56,6 +69,7 @@ struct DoctorEnvironment final {
     bool hotasBf6Present = false;
     bool freshUser = true;
     DeviceEcosystemFixture devices;
+    HotasRepairIntent repairIntent;
 };
 
 struct PlatformQualification final {

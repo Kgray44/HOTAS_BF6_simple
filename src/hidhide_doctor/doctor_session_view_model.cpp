@@ -133,12 +133,14 @@ QString DoctorSessionViewModel::sessionId() const { return m_session.id().value(
 QString DoctorSessionViewModel::currentPhase() const
 {
     for (const DiagnosticPlanItem &item : m_session.plan().items()) if (item.status == DoctorCheckStatus::Running) return displayName(item.check.phase);
+    if (m_session.repairPlan()) return QStringLiteral("Repair plan review");
     return m_session.state() == DoctorSessionState::DiagnosisComplete ? QStringLiteral("Read-only analysis complete")
         : (m_session.state() == DoctorSessionState::Cancelled ? QStringLiteral("Diagnostic scan cancelled") : QStringLiteral("Preparing diagnostic scan"));
 }
 QString DoctorSessionViewModel::currentStep() const
 {
     for (const DiagnosticPlanItem &item : m_session.plan().items()) if (item.status == DoctorCheckStatus::Running) return item.check.title;
+    if (m_session.repairPlan()) return QStringLiteral("R1 plan generated; no live repair was requested");
     return m_session.state() == DoctorSessionState::DiagnosisComplete ? QStringLiteral("All applicable read-only checks completed") : QStringLiteral("No native operation is currently running");
 }
 QString DoctorSessionViewModel::currentStepId() const
@@ -182,7 +184,10 @@ int DoctorSessionViewModel::warningOrFailureCount() const { return warningCheckC
 QString DoctorSessionViewModel::elapsed() const { return elapsedText(m_session.createdAt().msecsTo(QDateTime::currentDateTimeUtc())); }
 bool DoctorSessionViewModel::commandCenter() const { return m_commandCenter; }
 QString DoctorSessionViewModel::density() const { return m_density; }
-QString DoctorSessionViewModel::sessionState() const { return sessionStateName(m_session.state()); }
+QString DoctorSessionViewModel::sessionState() const
+{
+    return m_session.repairPlan() ? QStringLiteral("REPAIR REVIEW") : sessionStateName(m_session.state());
+}
 QString DoctorSessionViewModel::simulationLabel() const { return m_session.sessionLabel(); }
 
 QString DoctorSessionViewModel::environmentStrip() const
@@ -329,6 +334,54 @@ QVariantMap DoctorSessionViewModel::currentOperationDetails() const
         {QStringLiteral("elapsed"), elapsed()}, {QStringLiteral("detail"), scanRunning() ? QStringLiteral("No user action required. The Doctor is using bounded read-only operations.") : QStringLiteral("The last operation has completed; select evidence for its recorded details.")}};
 }
 
+bool DoctorSessionViewModel::repairPlanAvailable() const { return m_session.repairPlan().has_value(); }
+
+QVariantMap DoctorSessionViewModel::repairPlanSummary() const
+{
+    if (!m_session.repairPlan()) return {};
+    const RepairPlan &plan = *m_session.repairPlan();
+    const QString qualification = plan.qualification == RepairQualificationLevel::LabQualified
+        ? QStringLiteral("LAB QUALIFIED — OWNER TEST ONLY")
+        : (plan.qualification == RepairQualificationLevel::FieldQualified ? QStringLiteral("FIELD QUALIFIED") : QStringLiteral("EXPERIMENTAL"));
+    return {{QStringLiteral("planId"), plan.id.value()}, {QStringLiteral("title"), plan.title},
+        {QStringLiteral("description"), plan.description}, {QStringLiteral("recipe"), plan.recipeId.value() + QStringLiteral(" v") + plan.recipeVersion},
+        {QStringLiteral("risk"), QStringLiteral("R1 · CONFIGURATION REPAIR")}, {QStringLiteral("qualification"), qualification},
+        {QStringLiteral("before"), plan.expectedPreState}, {QStringLiteral("after"), plan.expectedPostState},
+        {QStringLiteral("elevation"), plan.elevationRequired ? QStringLiteral("Required for live helper execution") : QStringLiteral("Not required")},
+        {QStringLiteral("restart"), plan.restartRequired ? QStringLiteral("Required") : QStringLiteral("No")},
+        {QStringLiteral("backup"), QStringLiteral("Captured before any mutation")}, {QStringLiteral("rollback"), QStringLiteral("Exact pre-state; blocked on external change")},
+        {QStringLiteral("expectedTime"), QStringLiteral("~%1 seconds").arg(plan.estimatedSeconds)},
+        {QStringLiteral("userAction"), m_labRepairMode
+            ? QStringLiteral("Lab fixture only: deliberate authorization is required; the helper revalidates before any SET.")
+            : QStringLiteral("Review only. Normal mode cannot execute LabQualified repairs.")}};
+}
+
+QStringList DoctorSessionViewModel::repairPlanOperations() const
+{
+    QStringList rows;
+    if (!m_session.repairPlan()) return rows;
+    for (const RepairOperation &operation : m_session.repairPlan()->operations) {
+        const QString verb = operation.kind == RepairOperationKind::AddWhitelistEntry ? QStringLiteral("ADD APPLICATION EXEMPTION")
+            : operation.kind == RepairOperationKind::RemoveWhitelistEntry ? QStringLiteral("REMOVE APPLICATION EXEMPTION")
+            : operation.kind == RepairOperationKind::AddBlacklistEntry ? QStringLiteral("ADD HIDDEN DEVICE")
+            : operation.kind == RepairOperationKind::RemoveBlacklistEntry ? QStringLiteral("REMOVE HIDDEN DEVICE")
+            : operation.kind == RepairOperationKind::SetHidHideActive ? QStringLiteral("SET HIDHIDE CLOAK")
+            : QStringLiteral("SET HIDHIDE INVERSE");
+        rows.append(verb + QStringLiteral("  ·  ") + operation.targetIdentity);
+    }
+    return rows;
+}
+
+QStringList DoctorSessionViewModel::repairPlanCollateral() const
+{
+    return m_session.repairPlan() ? m_session.repairPlan()->unchangedCollateral : QStringList{};
+}
+bool DoctorSessionViewModel::labRepairMode() const { return m_labRepairMode; }
+QString DoctorSessionViewModel::repairRuntimeState() const { return m_repairRuntimeState; }
+QString DoctorSessionViewModel::repairRuntimeDetail() const { return m_repairRuntimeDetail; }
+bool DoctorSessionViewModel::repairOperationInFlight() const { return m_repairOperationInFlight; }
+QString DoctorSessionViewModel::recoveryNotice() const { return m_recoveryNotice; }
+
 int DoctorSessionViewModel::healthyCheckCount() const { return std::count_if(m_session.checkResults().cbegin(), m_session.checkResults().cend(), [](const DoctorCheckResult &result) { return result.status == DoctorCheckStatus::Healthy; }); }
 int DoctorSessionViewModel::informationalCheckCount() const { return std::count_if(m_session.checkResults().cbegin(), m_session.checkResults().cend(), [](const DoctorCheckResult &result) { return result.status == DoctorCheckStatus::Informational; }); }
 int DoctorSessionViewModel::warningCheckCount() const { return std::count_if(m_session.checkResults().cbegin(), m_session.checkResults().cend(), [](const DoctorCheckResult &result) { return result.status == DoctorCheckStatus::Warning || result.status == DoctorCheckStatus::PermissionLimited || result.status == DoctorCheckStatus::Unknown || result.status == DoctorCheckStatus::Inconclusive; }); }
@@ -428,6 +481,18 @@ void DoctorSessionViewModel::selectEvidence(const QString &evidenceId)
 void DoctorSessionViewModel::notifySessionChanged() { emit sessionChanged(); }
 void DoctorSessionViewModel::requestCancellation() { if (m_cancellation) m_cancellation(); }
 void DoctorSessionViewModel::requestRerun() { if (m_rerun) m_rerun(); }
+void DoctorSessionViewModel::requestHelperConnectivityTest()
+{
+    if (!m_labRepairMode || !m_labRepairAction || m_repairOperationInFlight) return;
+    setRepairRuntime(QStringLiteral("AWAITING ELEVATION"), QStringLiteral("Starting the Lab-only helper connectivity test. No configuration mutation is requested."), true);
+    m_labRepairAction(false);
+}
+void DoctorSessionViewModel::requestLabRepairAuthorization()
+{
+    if (!m_labRepairMode || !m_labRepairAction || m_repairOperationInFlight) return;
+    setRepairRuntime(QStringLiteral("AWAITING AUTHORIZATION"), QStringLiteral("Owner/lab authorization is binding this exact plan before UAC. Cancelling UAC makes no changes."), true);
+    m_labRepairAction(true);
+}
 void DoctorSessionViewModel::replaceSession(DoctorSession session)
 {
     m_session = std::move(session);
@@ -438,6 +503,29 @@ void DoctorSessionViewModel::setScanActions(std::function<void()> cancellation, 
 {
     m_cancellation = std::move(cancellation);
     m_rerun = std::move(rerun);
+}
+void DoctorSessionViewModel::setLabRepairActions(bool enabled, std::function<void(bool)> action)
+{
+    m_labRepairMode = enabled;
+    m_labRepairAction = std::move(action);
+    m_repairRuntimeState = enabled ? QStringLiteral("LAB REPAIR MODE") : QStringLiteral("READ ONLY");
+    m_repairRuntimeDetail = enabled
+        ? QStringLiteral("Development fixture only. Review the exact R1 plan before a connectivity test or final authorization.")
+        : QStringLiteral("Normal Doctor mode is read-only. Lab-qualified repair plans cannot execute here.");
+    emit repairRuntimeChanged();
+}
+void DoctorSessionViewModel::setRepairRuntime(QString state, QString detail, bool inFlight)
+{
+    m_repairRuntimeState = std::move(state);
+    m_repairRuntimeDetail = std::move(detail);
+    m_repairOperationInFlight = inFlight;
+    emit repairRuntimeChanged();
+}
+void DoctorSessionViewModel::setRecoveryNotice(QString notice)
+{
+    if (m_recoveryNotice == notice) return;
+    m_recoveryNotice = std::move(notice);
+    emit repairRuntimeChanged();
 }
 
 } // namespace hotas::doctor

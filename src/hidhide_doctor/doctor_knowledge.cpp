@@ -2,6 +2,7 @@
 
 #include "doctor_diagnostics.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QVersionNumber>
 
@@ -28,6 +29,7 @@ struct Facts final {
     bool guiCrash = false;
     int malformedDevices = 0;
     bool staleConfiguration = false;
+    bool hotasExemptionMissing = false;
     bool virtualOutputHidden = false;
     bool architectureMismatch = false;
     bool futureWindows = false;
@@ -163,6 +165,12 @@ Facts collectFacts(const DoctorSession &session, const ReadOnlyDiagnosticSnapsho
         ? probe(snapshot, QStringLiteral("GET_WHITELIST"))->multiStringValues : snapshot.registryWhitelist;
     const QStringList blacklist = probe(snapshot, QStringLiteral("GET_BLACKLIST"))
         ? probe(snapshot, QStringLiteral("GET_BLACKLIST"))->multiStringValues : snapshot.registryBlacklist;
+    if (snapshot.environment.repairIntent.suppliedByHotas && !snapshot.environment.repairIntent.expectedExecutable.isEmpty()) {
+        const QString expected = snapshot.environment.repairIntent.expectedExecutable;
+        facts.hotasExemptionMissing = std::none_of(whitelist.cbegin(), whitelist.cend(), [&expected](const QString &entry) {
+            return QDir::fromNativeSeparators(entry).compare(QDir::fromNativeSeparators(expected), Qt::CaseInsensitive) == 0;
+        });
+    }
     for (const QString &entry : whitelist) {
         if (containsInsensitive(entry, QStringLiteral("missing")) || containsInsensitive(entry, QStringLiteral("stale")))
             facts.staleConfiguration = true;
@@ -434,6 +442,12 @@ KnowledgeAnalysis DoctorKnowledgeEngine::analyze(DoctorSession &session,
         QStringLiteral("One or more configured paths or device references no longer resolve."), QStringLiteral("Entries were read but not changed by Phase 2."),
         QStringLiteral("Isolation configuration may include obsolete references."), Repairability::PotentialRepairAvailableButUnqualified,
         {QStringLiteral("unresolved configuration reference")}, {}, facts.contradictions, staleConfigEvidence));
+    if (facts.hotasExemptionMissing) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-MISSING-HOTAS-EXEMPTION"), QStringLiteral("HD-KSIG-MISSING-HOTAS-EXEMPTION-V1"),
+        FindingSeverity::Error, 96, QStringLiteral("Missing HOTAS BF6 HidHide exemption"), QStringLiteral("Configuration integrity"),
+        QStringLiteral("The verified HOTAS BF6 executable is not present in HidHide's application exemption list."),
+        QStringLiteral("A HOTAS-launched expected executable was compared against the independently read whitelist."),
+        QStringLiteral("HOTAS BF6 may be unable to access controllers hidden from ordinary applications."), Repairability::PotentialRepairAvailableButUnqualified,
+        {QStringLiteral("verified HOTAS executable"), QStringLiteral("independent whitelist read")}, {}, facts.contradictions, staleConfigEvidence));
     if (facts.virtualOutputHidden) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-VIRTUAL-HIDDEN"), QStringLiteral("HD-KSIG-VIRTUAL-HIDDEN-V1"),
         FindingSeverity::Error, 94, QStringLiteral("Virtual output is hidden by HidHide"), QStringLiteral("Isolation configuration"),
         QStringLiteral("A virtual output is selected for hiding, which can remove game input."), QStringLiteral("Observed virtual-device identity matches a blacklist entry."),

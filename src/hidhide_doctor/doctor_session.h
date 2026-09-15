@@ -2,6 +2,7 @@
 
 #include "doctor_catalog.h"
 #include "doctor_environment.h"
+#include "doctor_repair_contract.h"
 
 namespace hotas::doctor {
 
@@ -61,6 +62,7 @@ public:
     void setCurrentOperation(DoctorOperation operation);
     void setEnvironment(DoctorEnvironment environment);
     void setSessionLabel(QString label);
+    void setRepairPlan(RepairPlan plan);
     const QList<EvidenceRecord> &evidence() const;
     const QList<DoctorCheckResult> &checkResults() const;
     const QList<Finding> &findings() const;
@@ -70,6 +72,7 @@ public:
     const std::optional<DoctorOperation> &currentOperation() const;
     const std::optional<DoctorEnvironment> &environment() const;
     const QString &sessionLabel() const;
+    const std::optional<RepairPlan> &repairPlan() const;
     QDateTime createdAt() const;
 
 private:
@@ -86,6 +89,7 @@ private:
     std::optional<DoctorOperation> m_currentOperation;
     std::optional<DoctorEnvironment> m_environment;
     QString m_sessionLabel;
+    std::optional<RepairPlan> m_repairPlan;
 };
 
 DoctorSession createPhase0FixtureSession();

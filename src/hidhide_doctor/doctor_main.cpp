@@ -1,5 +1,7 @@
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_repair_helper_client.h"
+#include "doctor_repair_engine.h"
 #include "doctor_session.h"
 #include "doctor_session_view_model.h"
 #include "hotas_build_version.h"
@@ -13,9 +15,11 @@
 #include <QQuickStyle>
 #include <QSysInfo>
 #include <QTimer>
+#include <QUuid>
 
 #include <atomic>
 #include <cstring>
+#include <optional>
 #include <thread>
 
 namespace {
@@ -40,6 +44,39 @@ void stampBuildProvenance(hotas::doctor::DiagnosticRunOutcome &outcome)
     outcome.snapshot.build.version = QString::fromLatin1(HOTAS_BF6_VERSION);
     outcome.snapshot.build.sourceRevision = QStringLiteral(HOTAS_BF6_BUILD_ID);
     outcome.snapshot.build.processArchitecture = QSysInfo::buildCpuArchitecture();
+}
+
+class ReadOnlyConfigurationObserver final : public hotas::doctor::IRepairConfigurationMutator {
+public:
+    explicit ReadOnlyConfigurationObserver(hotas::doctor::HidHideConfigurationSnapshot snapshot) : m_snapshot(std::move(snapshot)) {}
+    hotas::doctor::HidHideConfigurationSnapshot readConfiguration() override { return m_snapshot; }
+    bool apply(const hotas::doctor::RepairOperation &, hotas::doctor::NativeError *error) override
+    {
+        if (error) *error = {hotas::doctor::NativeErrorDomain::Protocol, 50,
+            QStringLiteral("ERROR_NOT_SUPPORTED"), QStringLiteral("Restart reconciliation has no mutation surface.")};
+        return false;
+    }
+private:
+    hotas::doctor::HidHideConfigurationSnapshot m_snapshot;
+};
+
+QString reconcileIncompleteJournals(const hotas::doctor::ReadOnlyDiagnosticSnapshot &snapshot)
+{
+    // This runs only after the normal Doctor scan has independently obtained
+    // complete GET evidence. It cannot launch the helper or call a SET.
+    const std::optional<hotas::doctor::HidHideConfigurationSnapshot> configuration = hotas::doctor::RepairPlanner::configurationFrom(snapshot);
+    if (!configuration) return {};
+    hotas::doctor::RepairJournalStore journal;
+    QString ignoredReason;
+    const QList<hotas::doctor::RepairTransaction> records = journal.history(&ignoredReason);
+    QStringList notices;
+    for (const hotas::doctor::RepairTransaction &record : records) {
+        ReadOnlyConfigurationObserver observer(*configuration);
+        const hotas::doctor::RepairRecoveryResult result = hotas::doctor::RepairTransactionCoordinator().reconcileIncomplete(record, observer, journal);
+        if (result.requiresOwnerReview)
+            notices.append(QStringLiteral("%1 — %2").arg(result.transaction.id.value(), result.detail));
+    }
+    return notices.join(QLatin1Char('\n'));
 }
 
 // The controller owns a single bounded worker for a scan.  It never exposes a
@@ -70,6 +107,7 @@ public:
                         if (generation == m_generation.load()) m_model.replaceSession(copy);
                     }, Qt::QueuedConnection);
                 });
+            const QString recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
             stampBuildProvenance(outcome);
             if (!m_reportPath.isEmpty()) {
                 QFile report(m_reportPath);
@@ -78,8 +116,11 @@ public:
             }
             const hotas::doctor::DoctorSession finished = outcome.session;
             m_running.store(false);
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished] {
-                if (generation == m_generation.load()) m_model.replaceSession(finished);
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished, recoveryNotice] {
+                if (generation == m_generation.load()) {
+                    m_model.replaceSession(finished);
+                    m_model.setRecoveryNotice(recoveryNotice);
+                }
             }, Qt::QueuedConnection);
         });
     }
@@ -100,6 +141,96 @@ private:
     std::atomic<quint64> m_generation{0};
     std::thread m_worker;
 };
+
+// This controller is constructed only for the explicit development-fixture
+// Lab Mode.  It has no normal-mode instance, joins its one worker before the
+// view model is destroyed, and never provides a generic command surface.
+class LabRepairController final {
+public:
+    LabRepairController(hotas::doctor::DoctorSessionViewModel &model,
+        hotas::doctor::RepairPlanProposal proposal, hotas::doctor::DoctorEnvironment environment,
+        QString buildId)
+        : m_model(model), m_proposal(std::move(proposal)), m_environment(std::move(environment)), m_buildId(std::move(buildId)) {}
+    ~LabRepairController() { if (m_worker.joinable()) m_worker.join(); }
+
+    void start(bool executeMutation)
+    {
+        if (m_running.exchange(true)) return;
+        if (m_worker.joinable()) m_worker.join();
+        hotas::doctor::RepairPlan plan = m_proposal.plan;
+        plan.authorization = hotas::doctor::RepairAuthorization::OwnerLabAuthorized;
+        plan.integrityDigest = hotas::doctor::RepairHelperContract::seal(plan);
+        hotas::doctor::RepairPlanProposal bound = m_proposal;
+        bound.plan = plan;
+        const hotas::doctor::RepairTransactionId transactionId(QStringLiteral("REPAIR-TX-")
+            + QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper());
+        hotas::doctor::RepairJournalStore journal;
+        const hotas::doctor::RepairExecutionResult staged = hotas::doctor::RepairTransactionCoordinator()
+            .dryRun(bound, m_environment, plan.sessionId, journal, transactionId);
+        hotas::doctor::RepairTransaction transaction = staged.transaction;
+        if (transaction.state == hotas::doctor::RepairTransactionState::FailedSafely || !transaction.id.isValid()) {
+            m_model.setRepairRuntime(QStringLiteral("REPAIR FAILED SAFELY"), staged.detail.isEmpty()
+                ? QStringLiteral("The authorization journal could not be created; no helper was launched.") : staged.detail, false);
+            m_running.store(false);
+            return;
+        }
+        const auto persistBoundary = [&](const QString &failureDetail) {
+            QString reason;
+            if (journal.persist(transaction, &reason)) return true;
+            m_model.setRepairRuntime(QStringLiteral("REPAIR FAILED SAFELY"), failureDetail + QStringLiteral(" ") + reason, false);
+            m_running.store(false);
+            return false;
+        };
+        transaction.state = hotas::doctor::RepairTransactionState::AwaitingAuthorization;
+        transaction.finalStatus = QStringLiteral("Owner/lab action bound exact plan, recipe version, targets, fingerprints, qualification, and digest.");
+        if (!persistBoundary(QStringLiteral("The authorization boundary was not durable; no helper was launched."))) return;
+        transaction.state = hotas::doctor::RepairTransactionState::Authorized;
+        if (!persistBoundary(QStringLiteral("The authorization record was not durable; no helper was launched."))) return;
+        transaction.state = hotas::doctor::RepairTransactionState::AwaitingElevation;
+        transaction.finalStatus = executeMutation
+            ? QStringLiteral("Final authorization recorded; awaiting UAC for the bounded helper.")
+            : QStringLiteral("Connectivity-only helper test recorded; no configuration mutation is authorized.");
+        if (!persistBoundary(QStringLiteral("The elevation boundary was not durable; no helper was launched."))) return;
+        m_worker = std::thread([this, plan, transactionId, executeMutation] {
+            const hotas::doctor::RepairHelperClientResult helper = hotas::doctor::RepairHelperClient::invoke(plan,
+                m_environment, m_buildId, m_buildId, !executeMutation, transactionId);
+            hotas::doctor::RepairJournalStore resultJournal;
+            if (const std::optional<hotas::doctor::RepairTransaction> persisted = resultJournal.load(transactionId)) {
+                hotas::doctor::RepairTransaction reconciled = *persisted;
+                if (!executeMutation && helper.outcome == hotas::doctor::RepairHelperOutcome::Accepted) {
+                    reconciled.state = hotas::doctor::RepairTransactionState::Completed;
+                    reconciled.finalStatus = QStringLiteral("Elevated helper connectivity and sealed-plan validation completed; no HidHide SET was requested.");
+                } else if (helper.outcome == hotas::doctor::RepairHelperOutcome::AuthorizationCancelled) {
+                    reconciled.state = hotas::doctor::RepairTransactionState::Cancelled;
+                    reconciled.finalStatus = QStringLiteral("Authorization cancelled — no changes made.");
+                } else if (helper.outcome == hotas::doctor::RepairHelperOutcome::Disconnected
+                    || helper.outcome == hotas::doctor::RepairHelperOutcome::ConnectTimedOut) {
+                    reconciled.state = hotas::doctor::RepairTransactionState::RecoveryRequired;
+                    reconciled.finalStatus = QStringLiteral("Helper outcome is uncertain; no retry was attempted and read-only reconciliation is required.");
+                } else if (helper.outcome != hotas::doctor::RepairHelperOutcome::Accepted) {
+                    reconciled.state = hotas::doctor::RepairTransactionState::FailedSafely;
+                    reconciled.finalStatus = helper.detail.isEmpty() ? QStringLiteral("Helper rejected the request before mutation.") : helper.detail;
+                }
+                resultJournal.persist(reconciled, nullptr);
+            }
+            const QString state = helper.outcome == hotas::doctor::RepairHelperOutcome::Accepted
+                ? (executeMutation ? hotas::doctor::displayName(helper.state) : QStringLiteral("CONNECTIVITY TEST COMPLETE"))
+                : hotas::doctor::displayName(helper.outcome);
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, state, detail = helper.detail] {
+                m_model.setRepairRuntime(state, detail.isEmpty() ? QStringLiteral("The helper returned no additional detail.") : detail, false);
+            }, Qt::QueuedConnection);
+            m_running.store(false);
+        });
+    }
+
+private:
+    hotas::doctor::DoctorSessionViewModel &m_model;
+    hotas::doctor::RepairPlanProposal m_proposal;
+    hotas::doctor::DoctorEnvironment m_environment;
+    QString m_buildId;
+    std::atomic_bool m_running{false};
+    std::thread m_worker;
+};
 } // namespace
 
 int main(int argc, char *argv[])
@@ -113,6 +244,9 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
+    const bool labRepairMode = fixtureMode && hasArgument(argc, argv, "--lab-repair-mode");
+    const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
+    const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
     const QString buildIdentity = QStringLiteral("Development build %1 · %2 · %3")
         .arg(QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID), QSysInfo::buildCpuArchitecture());
     const QString reportPath = argumentValue(argc, argv, "--report");
@@ -127,6 +261,18 @@ int main(int argc, char *argv[])
         hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
         hotas::doctor::DiagnosticRunOutcome outcome = diagnosticEngine.run(provider);
         outcome.session.setSessionLabel(fixtureLabel);
+        // Planning is always read-only.  The explicit switch exists for
+        // headless callers that want to assert this intent in an invocation;
+        // normal UI diagnosis also plans when evidence supports a candidate.
+        if (dryRunRequested && !repairPlanningRequested) return 2;
+        if (dryRunRequested) {
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+            if (proposal.status != hotas::doctor::RepairProposalStatus::AvailableForOwnerLab) return 2;
+            hotas::doctor::RepairJournalStore journal;
+            const hotas::doctor::RepairExecutionResult dryRun = hotas::doctor::RepairTransactionCoordinator().dryRun(
+                proposal, outcome.snapshot.environment, outcome.session.id(), journal);
+            if (dryRun.transaction.state != hotas::doctor::RepairTransactionState::Planned) return 3;
+        }
         stampBuildProvenance(outcome);
         if (!reportPath.isEmpty()) {
             QFile report(reportPath);
@@ -135,6 +281,13 @@ int main(int argc, char *argv[])
         }
         if (hasArgument(argc, argv, "--headless")) return 0;
         hotas::doctor::DoctorSessionViewModel viewModel(outcome.session, buildIdentity);
+        std::optional<LabRepairController> labController;
+        if (labRepairMode) {
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+            if (proposal.status != hotas::doctor::RepairProposalStatus::AvailableForOwnerLab) return 2;
+            labController.emplace(viewModel, proposal, outcome.snapshot.environment, QString::fromLatin1(HOTAS_BF6_BUILD_ID));
+            viewModel.setLabRepairActions(true, [&labController](bool executeMutation) { labController->start(executeMutation); });
+        }
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("doctorSession"), &viewModel);
         engine.loadFromModule(u"HidHideDoctor"_qs, u"HidHideDoctorMain"_qs);
@@ -143,10 +296,12 @@ int main(int argc, char *argv[])
         return application.exec();
     }
     if (hasArgument(argc, argv, "--headless")) {
+        if (dryRunRequested) return 2; // Real-machine dry-runs require an explicit owner/lab fixture path.
         std::atomic_bool cancellationRequested{false};
         hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
         hotas::doctor::DoctorDiagnosticEngine engine;
         hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &cancellationRequested);
+        reconcileIncompleteJournals(outcome.snapshot);
         stampBuildProvenance(outcome);
         if (!reportPath.isEmpty()) {
             QFile report(reportPath);
