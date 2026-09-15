@@ -33,7 +33,7 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void axisConflictsRequireExplicitSignalFlowDecisions();
-    void installerUpgradeAcceptanceTracksSchema29();
+    void installerUpgradeAcceptanceTracksSchema32();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void multiControllerVerificationAndSelectionStayScoped();
@@ -1062,23 +1062,23 @@ void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
     QVERIFY(flightDeckAxes.contains(QStringLiteral("LARGER VALUE")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema29()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema32()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 29")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v29")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v29")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 32")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v32")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v32")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v29")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v29")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v32")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v32")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v29")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v32")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 
