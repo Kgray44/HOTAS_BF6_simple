@@ -61,6 +61,7 @@ Flickable {
     readonly property bool hidhideCloakStateKnown: boolValue("hidhideCloakStateKnown", readinessState.hidhideCloakStateKnown === undefined ? backend.hidhideCloakStateKnown : readinessState.hidhideCloakStateKnown)
     readonly property bool hidhideCloaked: boolValue("hidhideCloaked", readinessState.hidhideCloaked === undefined ? backend.hidhideCloaked : readinessState.hidhideCloaked)
     readonly property bool hidhideMapperAllowed: boolValue("hidhideMapperAllowed", readinessState.hidhideMapperAllowed === undefined ? backend.hidhideMapperAllowed : readinessState.hidhideMapperAllowed)
+    readonly property var hidhideHealth: backend.hidhideHealth || ({})
     readonly property int automationRuleCount: numberValue("automationRuleCount", backend.automationRuleCount)
     readonly property int automationActiveRuleCount: numberValue("automationActiveRuleCount", backend.automationActiveRuleCount)
     readonly property bool automationEngineEnabled: boolValue("automationEngineEnabled", backend.automationEngineEnabled)
@@ -976,8 +977,8 @@ Flickable {
                                 font.bold: true
                             }
                             Text {
-                                text: isolationHealth.tone === "healthy" ? "Protected" : readableTone(isolationHealth.tone || "informational")
-                                color: deck.statusColor(isolationHealth.tone || "informational")
+                                text: String(root.hidhideHealth.overallState || (isolationHealth.tone === "healthy" ? "READY" : readableTone(isolationHealth.tone || "informational")))
+                                color: deck.statusColor(String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? "healthy" : isolationHealth.tone || "informational")
                                 font.family: deck.displayFont
                                 font.pixelSize: 18
                                 font.bold: true
@@ -986,13 +987,13 @@ Flickable {
                         FlightDeckStatusChip {
                             tokens: deck
                             label: "HIDHIDE"
-                            value: String(checkFor(["HIDHIDE", "ISOLATION"]).state || "CHECKING").toUpperCase()
+                            value: String(root.hidhideHealth.overallState || checkFor(["HIDHIDE", "ISOLATION"]).state || "CHECKING").toUpperCase()
                             tone: isolationHealth.tone || "informational"
                             visible: root.medium
                         }
                     }
                     Text {
-                        text: isolationHealth.detail || "HidHide status has not been checked yet."
+                        text: root.hidhideHealth.currentStage || isolationHealth.detail || "HidHide status has not been checked yet."
                         color: deck.textSecondary
                         font.pixelSize: 10
                         Layout.fillWidth: true
@@ -1012,6 +1013,12 @@ Flickable {
                             text: "OPEN SETUP"
                             tone: isolationHealth.tone || "informational"
                             onClicked: root.navigateToDevices("isolation")
+                        }
+                        OutlineButton {
+                            text: root.hidhideHealth.inProgress ? "CHECKING…" : "RUN FULL CHECK"
+                            enabled: !root.hidhideHealth.inProgress
+                            tone: "informational"
+                            onClicked: backend.runHidHideFullCheck()
                         }
                         Item {
                             Layout.fillWidth: true
@@ -1044,6 +1051,29 @@ Flickable {
                             label: "App allow list"
                             value: root.hidhideMapperAllowed ? "HOTAS BF6 authorized" : "HOTAS BF6 not authorized"
                             valueTone: root.hidhideMapperAllowed ? "healthy" : "attention"
+                        }
+                        Repeater {
+                            model: root.hidhideHealth.dimensions || []
+                            delegate: TechnicalRow {
+                                required property var modelData
+                                label: String(modelData.title || "HidHide")
+                                value: String(modelData.state || "UNKNOWN") + " · " + String(modelData.shortSummary || "")
+                                valueTone: String(modelData.state || "").indexOf("READY") >= 0 ? "healthy" : "attention"
+                            }
+                        }
+                        Repeater {
+                            model: root.hidhideHealth.checks || []
+                            delegate: TechnicalRow {
+                                required property var modelData
+                                label: String(modelData.operation || "GET")
+                                value: String(modelData.state || "UNKNOWN") + (modelData.nativeError ? " · " + String(modelData.nativeError.message || "") : "")
+                                valueTone: String(modelData.state || "").indexOf("PASS") >= 0 ? "healthy" : "attention"
+                            }
+                        }
+                        OutlineButton {
+                            text: "COPY EVIDENCE"
+                            tone: "informational"
+                            onClicked: backend.copyHidHideHealthEvidence()
                         }
                     }
                 }

@@ -2184,6 +2184,34 @@ Page {
  spacing: 14
                 PageTitle { heading: "Diagnostics"
                 detail: "Worker-side DirectInput telemetry; presentation samples the latest snapshot at 30 Hz" }
+                Panel {
+                    id: standardHidHideHealthDiagnostics
+                    width: parent.width
+                    height: 138
+                    property var health: backend.hidhideHealth
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 13
+                        spacing: 5
+                        Text { text: "HIDHIDE HEALTH · " + String(standardHidHideHealthDiagnostics.health.overallState || "CHECKING")
+                            color: String(standardHidHideHealthDiagnostics.health.overallState || "").indexOf("READY") >= 0 ? theme.ready : theme.warning
+                            font.pixelSize: 11; font.bold: true }
+                        Text { width: parent.width; text: standardHidHideHealthDiagnostics.health.currentStage || "Read-only control-plane inspection; mapping remains independent."
+                            color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                        Row {
+                            spacing: 8
+                            Button { text: standardHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
+                                enabled: !standardHidHideHealthDiagnostics.health.inProgress
+                                onClicked: backend.runHidHideFullCheck() }
+                            Button { text: "REVIEW REPAIR"; onClicked: backend.reviewHidHideHealthRepair() }
+                            Button { text: "COPY EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
+                        }
+                        Text { width: parent.width; text: ((standardHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
+                                return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")
+                            }).join("    "))
+                            color: theme.textFaint; font.pixelSize: 9; elide: Text.ElideRight }
+                    }
+                }
                 GridLayout { width: parent.width
  columns: width >= 1100 ? 5 : (width >= 760 ? 3 : 2)
  columnSpacing: 10

@@ -77,6 +77,10 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_discovery.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/hidhide_core/hidhide_read_only_protocol.h
+    src/hidhide_core/hidhide_read_only_protocol.cpp
+    src/hidhide_health_service.h
+    src/hidhide_health_service.cpp
     src/vjoy_ownership.h
     src/vjoy_ownership.cpp
     src/setup_truth.cpp
@@ -429,6 +433,24 @@ if (BUILD_TESTING)
         # into separate CTest properties and can prevent this GUI-linked test
         # from starting before QTest reports any result.
         set_property(TEST controller_readiness_tests APPEND PROPERTY
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    qt_add_executable(hidhide_health_tests
+        tests/hidhide_health_tests.cpp
+        src/hidhide_core/hidhide_read_only_protocol.h
+        src/hidhide_core/hidhide_read_only_protocol.cpp
+        src/hidhide_health_service.h
+        src/hidhide_health_service.cpp
+        src/app_issue.h
+        src/app_issue.cpp
+    )
+    target_link_libraries(hidhide_health_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(hidhide_health_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(hidhide_health_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    add_test(NAME hidhide_health_tests COMMAND hidhide_health_tests)
+    if (WIN32)
+        set_tests_properties(hidhide_health_tests PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 

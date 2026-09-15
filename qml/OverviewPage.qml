@@ -26,6 +26,7 @@ Flickable {
     // The overview's setup card must render the same frozen truth as the
     // modal, rather than re-deriving a potentially different legacy summary.
     readonly property var setupTruth: backend.setupTruthSnapshot || ({})
+    readonly property var hidhideHealth: backend.hidhideHealth || ({})
     signal setupRequested()
 
     function checkState(check) { return String((check || {}).status || (check || {}).state || "CHECKING") }
@@ -249,6 +250,15 @@ Flickable {
             RowLayout { Layout.fillWidth: true
                 Text { Layout.fillWidth: true; text: backend.physicalConnected || backend.activeDeviceRigId !== "" ? "One guided Setup Assistant can check your physical controller, virtual controller, visibility, and controls." : "Connect a physical controller or create a Device Rig to start setup."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
                 DashboardButton { objectName: "systemReadinessVerifyButton"; label: "CHECK SETUP"; enabledAction: backend.physicalConnected || backend.activeDeviceRigId !== ""; onTriggered: root.setupRequested() }
+            }
+        }
+
+        Panel { Layout.fillWidth: true; eyebrow: "HIDHIDE HEALTH"; title: root.hidhideHealth.overallState || "CHECKING"; accent: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor
+            Text { Layout.fillWidth: true; text: root.hidhideHealth.currentStage || "HidHide Health is a separate control-plane observation. Mapping does not depend on it."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            RowLayout { Layout.fillWidth: true
+                DashboardButton { label: root.hidhideHealth.inProgress ? "CHECKING" : "RUN FULL CHECK"; enabledAction: !root.hidhideHealth.inProgress; onTriggered: backend.runHidHideFullCheck() }
+                Item { Layout.fillWidth: true }
+                DashboardButton { label: "OPEN DIAGNOSTICS"; onTriggered: root.setupRequested() }
             }
         }
 

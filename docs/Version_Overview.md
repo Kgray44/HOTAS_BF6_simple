@@ -2,20 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.4**
+**Current version: v2.6.5**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
 
-## v2.6.4 — Adaptive Response activation hotfix (candidate)
+## v2.6.5 — HidHide Health, diagnostics, and safe in-app repair (candidate)
 
-Separates Adaptive Response selection from activation so an explicit enabled state is the only authority that starts or stops prediction.
+Adds a contextual, low-frequency HidHide Health control-plane model that explains readiness, preserves independent diagnostic evidence, and routes only already-qualified repair authority without altering the mapping hot path.
 
-- The selectable response set is Light, Balanced, Fast, Aggressive, and Extreme. A response remains visibly selected while prediction is disabled; there is no selectable OFF response.
-- Global, Category, Profile, and Device layers retain their enabled ownership while a response is chosen. Custom presets and Automation response selections remain parameter templates rather than activation commands.
-- Schema 33 materializes existing V2.6.3 preset activation at its owning layer, then legacy `off` identifiers migrate safely to a Balanced selection with explicit disabled activation across saved configuration, portable records, custom preset payloads, and old Automation actions.
-- Focused core, automation, QML contract, and isolated Flight Deck lifecycle coverage protects the separation and inherited-selection presentation. This candidate is not a protected-main merge, tag, package, public release, or physical controller-to-vJoy acceptance claim.
+- HidHide Health evaluates installation evidence, package and driver availability, control API access, mapper exemption, physical-device isolation, managed virtual-output visibility, exact identity resolution, and recovery state as typed dimensions with explicit Ready, Repair Available, User Action Required, Doctor Recommended, Restart Required, or Unknown states.
+- Full Check uses only bounded read-only HidHide control access and documented GET_ACTIVE, GET_INVERSE, GET_WHITELIST, and GET_BLACKLIST IOCTLs. Individual failures retain native error evidence and never justify an inferred repair or a new direct driver mutation.
+- The Overview, Devices, Diagnostics, and Flight Deck surfaces share the same status vocabulary, detailed per-check evidence, Full Check, repair-plan preview, existing scoped repair entry points, copyable evidence, and an optional sanitized HidHide Doctor handoff.
+- App Health receives stable HIDHIDE_ findings with affected context, concrete consequences, and a repairability classification. Missing or incomplete evidence remains visibly unknown rather than becoming a health claim.
+- This candidate deliberately excludes Signal Flow and graphical-editor work, which belongs to V2.6.6. It preserves Controller Readiness, Setup Truth, existing repair transactions, persistent configuration schema 32, and the allocation-free DirectInput-to-vJoy mapping path.
 
 ## v2.6.3 — Verified multi-controller Profiles & readiness
 

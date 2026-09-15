@@ -26,14 +26,18 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QQuickWindow>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QSet>
 #include <QSystemTrayIcon>
 #include <QSysInfo>
@@ -536,6 +540,10 @@ AppBackend::AppBackend(QObject *parent)
     m_setupTruthAutomaticRefreshTimer.setSingleShot(true);
     connect(&m_setupTruthAutomaticRefreshTimer, &QTimer::timeout, this,
             &AppBackend::startAutomaticSetupTruthRefresh);
+    m_hidhideHealthEssentialTimer.setSingleShot(true);
+    connect(&m_hidhideHealthEssentialTimer, &QTimer::timeout, this, [this] {
+        startHidHideHealthCheck(HidHideHealthScanDepth::Essential);
+    });
     connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
     connect(&m_foregroundGameTimer, &QTimer::timeout, this, &AppBackend::sampleForegroundGameContext);
     m_requiredDisconnectGraceTimer.setSingleShot(true);
@@ -678,6 +686,9 @@ AppBackend::AppBackend(QObject *parent)
     if (!startupSmoke) {
         m_setupTruthStartupInspectionPending = true;
         captureSetupTruthSnapshot();
+        // HidHide Health starts as a separate passive control-plane check. It
+        // deliberately does not wait for, gate, or alter MappingWorker.
+        scheduleEssentialHidHideHealthCheck();
         // This is a fallback for a delayed DirectInput inventory. In the
         // usual case applyControllerInventory shortens the delay once the
         // first enumeration has settled.
@@ -705,6 +716,13 @@ AppBackend::~AppBackend()
     delete m_trayMenu;
     if (m_verificationThread) {
         QThread *thread = m_verificationThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_hidhideHealthThread) {
+        QThread *thread = m_hidhideHealthThread;
+        if (m_hidhideHealthCancellation) m_hidhideHealthCancellation->store(true);
         thread->disconnect(this);
         thread->wait(5000);
         delete thread;
@@ -7093,6 +7111,147 @@ bool AppBackend::hidhideMapperAllowed() const
     return m_readiness.plan().hidhide.mapperAllowlisted;
 }
 
+QVariantMap AppBackend::hidhideHealth() const
+{
+    return m_hidhideHealthSnapshot.toVariantMap();
+}
+
+bool AppBackend::hidhideHealthCheckActive() const
+{
+    return m_hidhideHealthSnapshot.inProgress;
+}
+
+HidHideHealthContext AppBackend::buildHidHideHealthContext(quint64 sessionId) const
+{
+    const ControllerReadinessPlan &plan = m_readiness.plan();
+    const HidHideCapabilities &hidhide = plan.hidhide;
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    HidHideHealthContext context;
+    context.sessionId = sessionId;
+    context.deviceRigId = activeDeviceRigId();
+    context.selectedControllerId = physical.directInputId;
+    context.mapperExecutable = hidhide.mapperExecutable.isEmpty()
+        ? QCoreApplication::applicationFilePath() : hidhide.mapperExecutable;
+    context.installed = hidhide.installed;
+    context.cliAvailable = hidhide.cliAvailable;
+    context.serviceReady = hidhide.serviceReady;
+    context.cloakKnown = hidhide.cloakKnown;
+    context.cloaked = hidhide.cloaked;
+    context.mapperAllowlistKnown = hidhide.mapperAllowlistKnown;
+    context.mapperAllowlisted = hidhide.mapperAllowlisted;
+    context.hiddenDeviceListKnown = hidhide.hiddenDeviceListKnown;
+    context.selectedControllerResolved = hidhide.selectedControllerResolved;
+    context.selectedControllerHidden = hidhide.selectedControllerHidden;
+    context.inspectionComplete = hidhide.inspectionComplete;
+    context.inspectionTimedOut = hidhide.inspectionTimedOut;
+    context.pendingReadinessRecovery = m_readiness.hasPendingRecovery();
+    context.expectedPhysicalInstances = physical.hidHideDeviceInstanceIds;
+    if (context.expectedPhysicalInstances.isEmpty()) context.expectedPhysicalInstances = hidhide.selectedControllerInstanceIds;
+    context.hiddenDeviceInstances = hidhide.hiddenDeviceInstanceIds;
+    if (const VirtualOutputLayout *layout = activeOutputLayout(); layout && layout->hidhideManaged
+        && !layout->hidHideDeviceInstanceId.trimmed().isEmpty()) {
+        context.managedVirtualOutputInstances = {layout->hidHideDeviceInstanceId};
+        context.managedVirtualOutputInspectionKnown = hidhide.hiddenDeviceListKnown && hidhide.cloakKnown;
+        const QString expected = ControllerReadinessService::normalizeDeviceInstanceId(layout->hidHideDeviceInstanceId);
+        context.managedVirtualOutputHidden = std::any_of(hidhide.hiddenDeviceInstanceIds.cbegin(),
+            hidhide.hiddenDeviceInstanceIds.cend(), [&expected](const QString &candidate) {
+                return !expected.isEmpty()
+                    && ControllerReadinessService::normalizeDeviceInstanceId(candidate) == expected;
+            });
+    }
+    const QString outputId = activeOutputLayout() ? activeOutputLayout()->id : QString{};
+    context.contextKey = QStringList{context.deviceRigId, context.selectedControllerId,
+        physical.hidInstanceId, outputId, context.mapperExecutable}.join(QLatin1Char('|'));
+    return context;
+}
+
+void AppBackend::appendHidHideHealthActivity(const QString &event, const QString &detail)
+{
+    m_hidhideHealthActivity.append({QDateTime::currentDateTime(), event, detail});
+    constexpr qsizetype kMaximumActivityEntries = 32;
+    while (m_hidhideHealthActivity.size() > kMaximumActivityEntries) m_hidhideHealthActivity.removeFirst();
+}
+
+void AppBackend::scheduleEssentialHidHideHealthCheck()
+{
+    if (m_hidhideHealthThread) {
+        m_hidhideHealthEssentialCheckPending = true;
+        return;
+    }
+    if (m_hidhideHealthEssentialTimer.isActive()) return;
+    // Coalesce meaningful control-plane transitions. This timer is never
+    // started from telemetry/report callbacks and does not create polling.
+    m_hidhideHealthEssentialTimer.start(250);
+}
+
+void AppBackend::startHidHideHealthCheck(HidHideHealthScanDepth depth)
+{
+    if (m_hidhideHealthThread) {
+        if (depth == HidHideHealthScanDepth::Full) m_hidhideHealthFullCheckPending = true;
+        return;
+    }
+    const HidHideHealthContext context = buildHidHideHealthContext(m_hidhideHealthNextSessionId++);
+    m_hidhideHealthSnapshot = HidHideHealthService::checkingSnapshot(context, depth);
+    appendHidHideHealthActivity(depth == HidHideHealthScanDepth::Full
+        ? u"Full HidHide Health check started"_qs : u"Essential HidHide Health check started"_qs);
+    m_hidhideHealthSnapshot.activity = m_hidhideHealthActivity;
+    emit stateChanged();
+
+    const auto cancellation = std::make_shared<std::atomic_bool>(false);
+    m_hidhideHealthCancellation = cancellation;
+    auto *thread = QThread::create([this, context, depth, cancellation] {
+        HidHideHealthSnapshot snapshot = m_hidhideHealthService.inspect(context, depth, cancellation.get());
+        QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
+            completeHidHideHealthCheck(std::move(snapshot));
+        }, Qt::QueuedConnection);
+    });
+    m_hidhideHealthThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        HidHideHealthScanDepth followUp = HidHideHealthScanDepth::Essential;
+        bool hasFollowUp = false;
+        if (m_hidhideHealthThread == thread) {
+            m_hidhideHealthThread = nullptr;
+            m_hidhideHealthCancellation.reset();
+            // A second explicit full check wins over an automatic essential
+            // recheck.  Start it only after this worker has fully exited so
+            // probes never overlap and no pending request is lost.
+            if (m_hidhideHealthFullCheckPending) {
+                m_hidhideHealthFullCheckPending = false;
+                m_hidhideHealthEssentialCheckPending = false;
+                followUp = HidHideHealthScanDepth::Full;
+                hasFollowUp = true;
+            } else if (m_hidhideHealthEssentialCheckPending) {
+                m_hidhideHealthEssentialCheckPending = false;
+                hasFollowUp = true;
+            }
+        }
+        thread->deleteLater();
+        if (hasFollowUp) {
+            QTimer::singleShot(0, this, [this, followUp] { startHidHideHealthCheck(followUp); });
+        }
+    });
+    thread->start(QThread::LowPriority);
+}
+
+void AppBackend::completeHidHideHealthCheck(HidHideHealthSnapshot snapshot)
+{
+    // A background observation is only evidence for the Device Rig/context
+    // that created it. Never let an old controller, output, or executable
+    // context overwrite the current presentation.
+    if (buildHidHideHealthContext(snapshot.sessionId).contextKey != snapshot.contextKey) {
+        appendHidHideHealthActivity(u"HidHide Health result superseded"_qs,
+            u"The selected Device Rig, controller, output, or executable changed while the check ran."_qs);
+        m_hidhideHealthEssentialCheckPending = true;
+        return;
+    }
+    appendHidHideHealthActivity(snapshot.scanDepth == HidHideHealthScanDepth::Full
+        ? u"Full HidHide Health check completed"_qs : u"Essential HidHide Health check completed"_qs,
+        hidHideHealthStateLabel(snapshot.overallState));
+    snapshot.activity = m_hidhideHealthActivity;
+    m_hidhideHealthSnapshot = std::move(snapshot);
+    emit stateChanged();
+}
+
 QVariantList AppBackend::controllerReadinessChecks() const
 {
     // The existing readiness panel is the shared setup surface.  A one-input
@@ -9451,6 +9610,9 @@ QVariantList AppBackend::appIssues() const
         const QString code = issue.value(u"code"_qs).toString();
         if (code == u"LiveInputNotTested"_qs || code == u"LiveOutputNotTested"_qs) continue;
         issues.append(issue);
+    }
+    for (const QVariant &entry : HidHideHealthService::appIssues(m_hidhideHealthSnapshot)) {
+        issues.append(entry);
     }
 
     const auto append = [&issues](const QString &code, const QString &category,
@@ -16412,6 +16574,7 @@ bool AppBackend::openVjoyConfiguration()
 void AppBackend::refreshHidHideStatus()
 {
     startQuickVerification();
+    scheduleEssentialHidHideHealthCheck();
     appendEvent(hidhideAvailable()
         ? u"HidHide status refreshed"_qs
         : u"HidHide is not installed or its service is unavailable"_qs);
@@ -16425,6 +16588,7 @@ bool AppBackend::repairHidHideAccess()
     if (repaired) {
         m_worker.requestPhysicalControllerSelection();
         QTimer::singleShot(250, this, &AppBackend::refreshControllerInventory);
+        scheduleEssentialHidHideHealthCheck();
     }
     emit stateChanged();
     return repaired;
@@ -16447,6 +16611,126 @@ bool AppBackend::openHidHideConfiguration()
     }
     appendEvent(u"HidHide Configuration Client was not found"_qs);
     return false;
+}
+
+QVariantMap AppBackend::runHidHideFullCheck()
+{
+    if (m_hidhideHealthThread) {
+        startHidHideHealthCheck(HidHideHealthScanDepth::Full);
+        return actionResult(true, u"Full HidHide Health check queued"_qs,
+            u"HOTAS BF6 will run the requested full check after the current read-only check completes."_qs,
+            u"hidhide"_qs, {}, u"wait"_qs, {}, {}, true);
+    }
+    startHidHideHealthCheck(HidHideHealthScanDepth::Full);
+    return actionResult(true, u"Checking HidHide"_qs,
+        u"HOTAS BF6 is running bounded, read-only HidHide checks in the background. Mapping remains independent."_qs,
+        u"hidhide"_qs, {}, u"wait"_qs, {}, {}, true);
+}
+
+QVariantMap AppBackend::reviewHidHideHealthRepair()
+{
+    const auto actionable = std::find_if(m_hidhideHealthSnapshot.dimensions.cbegin(),
+        m_hidhideHealthSnapshot.dimensions.cend(), [](const HidHideHealthDimension &dimension) {
+            return dimension.repairability == HidHideRepairability::FixNow
+                || dimension.repairability == HidHideRepairability::GuidedRepair;
+        });
+    if (actionable == m_hidhideHealthSnapshot.dimensions.cend()) {
+        return actionResult(false, u"No qualified in-app HidHide repair is available"_qs,
+            u"HOTAS BF6 has not changed anything. Run a Full Check or open HidHide Doctor for deeper diagnosis."_qs,
+            u"hidhide"_qs, {}, u"open-hidhide-doctor"_qs, u"OPEN HIDHIDE DOCTOR"_qs);
+    }
+    QVariantList changes;
+    QString nextAction;
+    if (actionable->id == u"application-access"_qs) {
+        changes.append(u"Add exactly the current HOTAS BF6 executable to HidHide's allowed application list."_qs);
+        changes.append(u"Physical-device hide list: unchanged."_qs);
+        changes.append(u"Virtual-output visibility: unchanged."_qs);
+        nextAction = u"repair-hidhide-access"_qs;
+    } else {
+        changes.append(u"Revalidate the current exact Device Rig/controller/output identities before any change."_qs);
+        changes.append(u"Use the existing Controller Readiness transaction with read-back, rollback, and physical-access proof."_qs);
+        nextAction = u"repair-setup-health"_qs;
+    }
+    QVariantMap result = actionResult(true, u"HidHide repair plan ready"_qs,
+        u"Review the exact bounded plan before authorizing an existing production repair path. No change has been made."_qs,
+        u"hidhide"_qs, actionable->id, nextAction,
+        nextAction == u"repair-hidhide-access"_qs ? u"REPAIR"_qs : u"OPEN SETUP REPAIR"_qs);
+    result.insert(u"plan"_qs, QVariantMap{{u"problem"_qs, actionable->shortSummary},
+        {u"whyItMatters"_qs, actionable->explanation}, {u"changes"_qs, changes},
+        {u"rollback"_qs, u"Existing Controller Readiness rollback applies where the selected production transaction supports it."_qs},
+        {u"restart"_qs, u"Not assumed; the existing transaction reports reconnect or restart requirements from fresh evidence."_qs}});
+    return result;
+}
+
+bool AppBackend::copyHidHideHealthEvidence()
+{
+    const QJsonDocument document = QJsonDocument::fromVariant(m_hidhideHealthSnapshot.toVariantMap());
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(QString::fromUtf8(document.toJson(QJsonDocument::Indented)));
+        appendEvent(u"Copied HidHide Health evidence to the clipboard"_qs);
+        return true;
+    }
+    return false;
+}
+
+QVariantMap AppBackend::openHidHideDoctor()
+{
+    const QString appDirectory = QCoreApplication::applicationDirPath();
+    const QStringList candidates{
+        QDir(appDirectory).filePath(u"HidHide Doctor.exe"_qs),
+        QDir(appDirectory).filePath(u"HidHideDoctor.exe"_qs),
+    };
+    const auto found = std::find_if(candidates.cbegin(), candidates.cend(), [](const QString &path) {
+        return QFileInfo(path).isExecutable();
+    });
+    if (found == candidates.cend()) {
+        return actionResult(false, u"HidHide Doctor is not installed with this HOTAS BF6 build"_qs,
+            u"The standalone Doctor is optional. HOTAS BF6 continues to operate without it."_qs,
+            u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
+    }
+
+    QJsonArray findingIds;
+    for (const HidHideHealthFinding &finding : m_hidhideHealthSnapshot.findings) findingIds.append(finding.code);
+    QJsonArray dimensionStates;
+    for (const HidHideHealthDimension &dimension : m_hidhideHealthSnapshot.dimensions) {
+        dimensionStates.append(QJsonObject{{u"id"_qs, dimension.id},
+            {u"state"_qs, hidHideHealthStateLabel(dimension.state)},
+            {u"checkIds"_qs, QJsonArray::fromStringList(dimension.checkIds)}});
+    }
+    const QJsonObject handoff{{u"schemaVersion"_qs, 1}, {u"source"_qs, u"hotas-bf6"_qs},
+        {u"hotasVersion"_qs, QString::fromLatin1(HOTAS_BF6_VERSION)},
+        {u"buildId"_qs, QString::fromLatin1(HOTAS_BF6_BUILD_ID)},
+        {u"timestamp"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+        {u"requestedFocus"_qs, u"hidhide-health"_qs},
+        {u"deviceRigId"_qs, activeDeviceRigId()}, {u"findingIds"_qs, findingIds},
+        {u"redactedEvidence"_qs, QJsonObject{{u"overallState"_qs, hidHideHealthStateLabel(m_hidhideHealthSnapshot.overallState)},
+            {u"dimensionStates"_qs, dimensionStates}}}};
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+        + u"/hidhide-health-handoff"_qs;
+    if (!QDir().mkpath(directory)) {
+        return actionResult(false, u"Could not prepare HidHide Doctor handoff"_qs,
+            u"HOTAS BF6 did not launch Doctor because its local handoff folder could not be prepared."_qs,
+            u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
+    }
+    const QString path = QDir(directory).filePath(QString(u"hidhide-health-%1.json"_qs)
+        .arg(m_hidhideHealthSnapshot.sessionId));
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(handoff).toJson(QJsonDocument::Compact)) < 0
+        || !file.commit()) {
+        return actionResult(false, u"Could not write HidHide Doctor handoff"_qs,
+            u"HOTAS BF6 has not launched Doctor. You can copy the local evidence instead."_qs,
+            u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
+    }
+    if (!QProcess::startDetached(*found, {u"--hotas-handoff"_qs, path})) {
+        return actionResult(false, u"HidHide Doctor did not start"_qs,
+            u"The Doctor handoff was prepared, but Windows could not start the independent process."_qs,
+            u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
+    }
+    appendHidHideHealthActivity(u"Opened HidHide Doctor"_qs, u"A sanitized context handoff was prepared."_qs);
+    appendEvent(u"Opened HidHide Doctor with sanitized HidHide Health context"_qs);
+    return actionResult(true, u"Opened HidHide Doctor"_qs,
+        u"Doctor was launched independently and will revalidate all context before any action."_qs,
+        u"hidhide"_qs, {}, u"none"_qs);
 }
 
 void AppBackend::inspectControllerReadiness()
