@@ -143,9 +143,10 @@ progress/cancellation/rerun semantics, and statically guards against registry
 writes, service changes, process launch, device class-installer calls, and
 `IOCTL_SET` exposure. A focused metadata fixture proves that observed HID
 usage, device-class driver context, and Container ID set `HD-DEV-007`,
-`HD-DEV-010`, and `HD-DEV-012` independently. The domain-test target deploys
+`HD-DEV-010`, and `HD-DEV-012` independently. The domain-test target copies
 its `Qt6Core` and `Qt6Test` runtime beside the executable so its direct launch
-is a valid test entry point, not only a CTest-only configuration.
+is a valid test entry point, not only a CTest-only configuration; it does not
+invoke a competing QML deployment during a parallel full build.
 
 ## Local candidate results
 

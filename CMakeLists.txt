@@ -363,10 +363,15 @@ if (BUILD_TESTING)
         # The domain executable is also a useful standalone evidence probe for
         # local review.  Make its build-tree copy runnable outside CTest, so a
         # direct launch cannot fail before tests begin due to a missing Qt DLL.
+        # Do not invoke windeployqt here: full parallel builds already deploy
+        # QML for both GUI targets, and concurrent deployers race over the
+        # shared build/qml directory.
         add_custom_command(TARGET hidhide_doctor_domain_tests POST_BUILD
-            COMMAND "${HIDHIDE_DOCTOR_WINDEPLOYQT}" --no-translations --no-compiler-runtime
-                "$<TARGET_FILE:hidhide_doctor_domain_tests>"
-            COMMENT "Deploying the Qt runtime for HidHide Doctor domain tests")
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Qt6::Core>"
+                "$<TARGET_FILE_DIR:hidhide_doctor_domain_tests>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Qt6::Test>"
+                "$<TARGET_FILE_DIR:hidhide_doctor_domain_tests>"
+            COMMENT "Copying the Qt runtime for HidHide Doctor domain tests")
     endif()
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
