@@ -67,6 +67,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_store.cpp
     src/controller_manager.h
     src/controller_manager.cpp
+    src/direct_input_axis.h
+    src/direct_input_axis.cpp
     src/device_rig.h
     src/device_rig.cpp
     src/hid_device_identity.h
@@ -75,6 +77,8 @@ set(HOTAS_MAPPER_SOURCES
     src/controller_discovery.cpp
     src/controller_readiness.h
     src/controller_readiness.cpp
+    src/vjoy_ownership.h
+    src/vjoy_ownership.cpp
     src/setup_truth.cpp
     src/controller_diagnostics.h
     src/controller_diagnostics.cpp
@@ -124,6 +128,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckNavItem.qml
         qml/FlightDeckHeaderPill.qml
         qml/FlightDeckSelectedDeviceSelector.qml
+        qml/FlightDeckSelectedProfileSelector.qml
         qml/FlightDeckStatusChip.qml
         qml/FlightDeckReadiness.qml
         qml/FlightDeckHealthCard.qml
@@ -139,6 +144,8 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckOverview.qml
         qml/FlightDeckDevices.qml
         qml/FlightDeckSettings.qml
+        qml/CreateVirtualOutputDialog.qml
+        qml/GlobalNotificationHost.qml
         qml/Theme.qml
         qml/Main.qml
         qml/OverviewPage.qml
@@ -307,11 +314,13 @@ if (BUILD_TESTING)
         src/config_store.cpp
         src/controller_manager.h
         src/controller_manager.cpp
+        src/direct_input_axis.h
+        src/direct_input_axis.cpp
         src/device_rig.h
         src/device_rig.cpp
         src/event_log.h
     )
-    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test dinput8 dxguid)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     qt_add_resources(mapping_core_tests hotas_starter_profile_test_resources
         PREFIX "/"
@@ -400,6 +409,8 @@ if (BUILD_TESTING)
         tests/controller_readiness_tests.cpp
         src/controller_readiness.h
         src/controller_readiness.cpp
+        src/vjoy_ownership.h
+        src/vjoy_ownership.cpp
         src/hid_device_identity.h
         src/hid_device_identity.cpp
         src/controller_diagnostics.h
@@ -408,6 +419,7 @@ if (BUILD_TESTING)
     )
     target_link_libraries(controller_readiness_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test shell32 advapi32 cfgmgr32)
     target_include_directories(controller_readiness_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(controller_readiness_tests PRIVATE HOTAS_CONTROLLER_READINESS_TESTING)
     add_test(NAME controller_readiness_tests COMMAND controller_readiness_tests)
     if (WIN32)
         set_tests_properties(controller_readiness_tests PROPERTIES
@@ -524,7 +536,10 @@ if (BUILD_TESTING)
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
-    add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests)
+    # Backend startup fixtures must not acquire the owner's DirectInput or
+    # vJoy session. This flag keeps AppBackend on the fixture-only control
+    # plane while retaining the real models and persistence boundaries.
+    add_test(NAME app_backend_startup_tests COMMAND app_backend_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_backend_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
@@ -558,6 +573,7 @@ if (BUILD_TESTING)
             qml/FlightDeckNavItem.qml
             qml/FlightDeckHeaderPill.qml
             qml/FlightDeckSelectedDeviceSelector.qml
+            qml/FlightDeckSelectedProfileSelector.qml
             qml/FlightDeckStatusChip.qml
             qml/FlightDeckReadiness.qml
             qml/FlightDeckHealthCard.qml
@@ -573,6 +589,8 @@ if (BUILD_TESTING)
             qml/FlightDeckOverview.qml
             qml/FlightDeckDevices.qml
             qml/FlightDeckSettings.qml
+            qml/CreateVirtualOutputDialog.qml
+            qml/GlobalNotificationHost.qml
             qml/Theme.qml
             qml/Main.qml
             qml/OverviewPage.qml

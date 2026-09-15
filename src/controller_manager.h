@@ -26,6 +26,12 @@ struct ControllerMatch {
 class ControllerManager final {
 public:
     static QString capabilityFingerprint(const DiscoveredController &controller);
+    // Exact capability comparison is intentionally independent from identity
+    // matching. A stable HID/container identity can still be recognized when
+    // a driver begins reporting different controls; callers surface that as a
+    // review condition instead of deleting the saved controller or mappings.
+    static bool capabilitiesMatch(const DiscoveredController &controller,
+                                  const SavedControllerRecord &record);
     static ControllerMatch match(const DiscoveredController &controller,
                                  const std::vector<SavedControllerRecord> &records);
     static QString autoSelect(const QList<DiscoveredController> &controllers,

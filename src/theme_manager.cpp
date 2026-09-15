@@ -27,14 +27,27 @@ ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
     : QObject(parent)
     , m_settingsFilePath(settingsFilePath.isEmpty() ? defaultSettingsFilePath() : settingsFilePath)
 {
-    const QSettings stored(m_settingsFilePath, QSettings::IniFormat);
-    // A missing key is the explicit v1.7 migration path: existing installs
-    // retain the concrete v1.6.3 surface until a theme is chosen explicitly.
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    // Flight Deck is the first-run presentation.  Do not overwrite an
+    // explicit existing-theme choice made by an earlier build that predates
+    // the separate experience key: either persisted presentation key is
+    // sufficient evidence of user intent.
+    const bool hasExplicitPresentation = stored.contains(QLatin1String(kExperienceKey))
+        || stored.contains(QLatin1String(kThemeKey));
     m_currentTheme = normalizedTheme(stored.value(QLatin1String(kThemeKey), u"Legacy"_qs).toString());
     m_currentExperience = normalizedExperience(
-        stored.value(QLatin1String(kExperienceKey), u"Existing"_qs).toString());
+        stored.value(QLatin1String(kExperienceKey),
+                     hasExplicitPresentation ? u"Existing"_qs : u"Flight Deck"_qs).toString());
     m_flightDeckAppearance = normalizedFlightDeckAppearance(
         stored.value(QLatin1String(kFlightDeckAppearanceKey), u"Dark"_qs).toString());
+    // Persist the production first-run choice.  This keeps a fresh install
+    // deterministic without overwriting any presentation selection saved by
+    // an earlier version.
+    if (!hasExplicitPresentation) {
+        stored.setValue(QLatin1String(kExperienceKey), m_currentExperience);
+        stored.setValue(QLatin1String(kFlightDeckAppearanceKey), m_flightDeckAppearance);
+        stored.sync();
+    }
 }
 
 bool ThemeManager::isTopGun() const

@@ -355,6 +355,10 @@ Flickable {
                 color: root.text; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
             }
             background: Rectangle { color: parent.highlighted ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.panel }
+            onClicked: {
+                themedComboBox.currentIndex = index
+                themedComboBox.popup.close()
+            }
         }
         popup: Popup {
             y: themedComboBox.height - 1; width: themedComboBox.width
@@ -675,17 +679,31 @@ Flickable {
         }
         onOpened: { categoryName.text = ""; categoryName.forceActiveFocus() }
     }
-    ThemedDialog { id: createProfileDialog; property string categoryId: ""; heading: "New Profile"; width: 388
+    ThemedDialog { id: createProfileDialog; property string categoryId: ""; property string creationMode: "blank"; heading: "New Profile"; width: 388
         contentItem: ColumnLayout { width: 360; spacing: 10
             Text { text: "PROFILE NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
             Field { id: newProfileName; Layout.fillWidth: true; placeholderText: "Helicopter" }
             Text { text: "CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            ThemedComboBox { id: newProfileCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === createProfileDialog.categoryId) return i; return 0 } }
-            Text { text: "START FROM"; color: root.muted; font.pixelSize: 9; font.bold: true }
-            ThemedComboBox { id: newProfileSource; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: backendObject.activeProfileIndex }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: createProfileDialog.close() } ActionButton { label: "CREATE"; actionEnabled: newProfileName.text.trim().length > 0; onTriggered: { if (backendObject.createProfileInCategory(newProfileName.text, newProfileCategory.currentValue, newProfileSource.currentValue)) createProfileDialog.close() } } }
+            ThemedComboBox { id: newProfileCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: 0; onCurrentIndexChanged: createProfileDialog.categoryId = String(currentValue || "") }
+            Text { text: "CREATION MODE"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton { label: "CREATE BLANK PROFILE"; subdued: createProfileDialog.creationMode !== "blank"; Layout.fillWidth: true; onTriggered: createProfileDialog.creationMode = "blank" }
+                ActionButton { label: "COPY EXISTING PROFILE"; subdued: createProfileDialog.creationMode !== "copy"; Layout.fillWidth: true; onTriggered: createProfileDialog.creationMode = "copy" }
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: createProfileDialog.creationMode === "blank"
+                wrapMode: Text.WordWrap
+                text: "Starts with all physical inputs disabled. No mappings, buttons, hats, or automation relationships are copied."
+                color: root.muted
+                font.pixelSize: 9
+            }
+            Text { visible: createProfileDialog.creationMode === "copy"; text: "COPY FROM"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            ThemedComboBox { id: newProfileSource; visible: createProfileDialog.creationMode === "copy"; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: backendObject.activeProfileIndex }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: createProfileDialog.close() } ActionButton { label: "CREATE"; actionEnabled: newProfileName.text.trim().length > 0 && (createProfileDialog.creationMode === "blank" || newProfileSource.currentIndex >= 0); onTriggered: { const sourceId = createProfileDialog.creationMode === "copy" ? String(newProfileSource.currentValue || "") : ""; if (backendObject.createProfileInCategory(newProfileName.text, createProfileDialog.categoryId, sourceId)) createProfileDialog.close() } } }
         }
-        onOpened: { newProfileName.text = ""; newProfileName.forceActiveFocus() }
+        onOpened: { createProfileDialog.creationMode = "blank"; newProfileName.text = ""; let index = 0; for (let i=0;i<root.categories.length;++i) if (root.categories[i].id === createProfileDialog.categoryId) { index = i; break } newProfileCategory.currentIndex = index; createProfileDialog.categoryId = String(newProfileCategory.currentValue || ""); newProfileName.forceActiveFocus() }
     }
     Dialog { id: renameProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Rename Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10

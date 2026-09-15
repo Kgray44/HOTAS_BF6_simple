@@ -187,10 +187,14 @@ Item {
         frozenCheckSnapshot = ({})
         beforeAfterDiagnosticsVisible = false
         activationFeedback = ({})
+        // Opening any setup entry point is a new inspection transaction. The
+        // presentation must never reset to CHECK and then rebind an older
+        // COMPLETE snapshot from the backend.
+        if (backendObject)
+            backendObject.checkSetupHealth()
     }
     function startCheck() {
         beginNewSession()
-        if (backendObject) backendObject.checkSetupHealth()
     }
     function continueWithoutRepair() {
         if (backendObject) backendObject.completeSetupCheck()

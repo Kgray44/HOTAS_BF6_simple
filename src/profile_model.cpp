@@ -37,6 +37,17 @@ void clearProfileReferences(MapperConfiguration &configuration, const QString &p
     }
 }
 
+QString uniqueNewProfileCategoryName(const MapperConfiguration &configuration)
+{
+    const auto base = u"New Category"_qs;
+    if (isProfileCategoryNameAvailable(configuration, base)) return base;
+    for (int suffix = 2; suffix < 1000; ++suffix) {
+        const QString candidate = QString(u"%1 %2"_qs).arg(base).arg(suffix);
+        if (isProfileCategoryNameAvailable(configuration, candidate)) return candidate;
+    }
+    return {};
+}
+
 } // namespace
 
 QString categoryProfileLabel(const MapperConfiguration &configuration, const QString &profileId)
@@ -115,16 +126,75 @@ bool renameProfileCategory(MapperConfiguration &configuration, const QString &ca
     return true;
 }
 
+bool createNewProfileCategoryForProfile(MapperConfiguration &configuration, const QString &profileId,
+                                        QString *createdId)
+{
+    if (!findProfile(configuration, profileId)) return false;
+    const QString name = uniqueNewProfileCategoryName(configuration);
+    QString categoryId;
+    if (name.isEmpty() || !createProfileCategory(configuration, name, &categoryId)) return false;
+    if (moveProfileToCategory(configuration, profileId, categoryId)) {
+        if (createdId) *createdId = categoryId;
+        return true;
+    }
+    // A freshly generated category cannot normally make the move invalid, but
+    // keep this helper atomic if a future validation rule changes that.
+    configuration.profileCategories.erase(
+        std::remove_if(configuration.profileCategories.begin(), configuration.profileCategories.end(),
+            [&categoryId](const ProfileCategory &category) { return category.id == categoryId; }),
+        configuration.profileCategories.end());
+    return false;
+}
+
+bool createProfileCategoryForProfile(MapperConfiguration &configuration, const QString &name,
+                                     const QString &profileId, QString *createdId)
+{
+    if (!findProfile(configuration, profileId)) return false;
+    QString categoryId;
+    if (!createProfileCategory(configuration, name, &categoryId)) return false;
+    if (moveProfileToCategory(configuration, profileId, categoryId)) {
+        if (createdId) *createdId = categoryId;
+        return true;
+    }
+    configuration.profileCategories.erase(
+        std::remove_if(configuration.profileCategories.begin(), configuration.profileCategories.end(),
+            [&categoryId](const ProfileCategory &category) { return category.id == categoryId; }),
+        configuration.profileCategories.end());
+    return false;
+}
+
 bool deleteProfileCategory(MapperConfiguration &configuration, const QString &categoryId)
 {
     if (configuration.profileCategories.size() <= 1) return false;
-    for (auto it = configuration.profileCategories.begin(); it != configuration.profileCategories.end(); ++it) {
-        if (it->id != categoryId) continue;
-        if (!it->profileIds.empty()) return false;
-        configuration.profileCategories.erase(it);
-        return true;
+    const auto category = std::find_if(configuration.profileCategories.cbegin(),
+        configuration.profileCategories.cend(), [&categoryId](const ProfileCategory &candidate) {
+            return candidate.id == categoryId;
+        });
+    if (category == configuration.profileCategories.cend()) return false;
+
+    QStringList profileIds;
+    for (const ControllerProfile &profile : configuration.profiles) {
+        if (profile.categoryId != categoryId) continue;
+        if (profile.id == normalProfileId() || profile.id == configuration.activeProfileId) return false;
+        profileIds.push_back(profile.id);
     }
-    return false;
+    if (configuration.profiles.size() - static_cast<size_t>(profileIds.size()) < 1) return false;
+
+    for (const QString &profileId : profileIds) {
+        clearProfileReferences(configuration, profileId);
+        if (configuration.manualOverrideProfileId == profileId) {
+            configuration.manualOverrideProfileId.clear();
+            configuration.activationManualOverride = false;
+        }
+    }
+    configuration.profiles.erase(std::remove_if(configuration.profiles.begin(), configuration.profiles.end(),
+        [&categoryId](const ControllerProfile &profile) { return profile.categoryId == categoryId; }),
+        configuration.profiles.end());
+    configuration.profileCategories.erase(std::remove_if(configuration.profileCategories.begin(),
+        configuration.profileCategories.end(), [&categoryId](const ProfileCategory &candidate) {
+            return candidate.id == categoryId;
+        }), configuration.profileCategories.end());
+    return true;
 }
 
 QString uniqueCloneProfileName(const MapperConfiguration &configuration, const QString &sourceName)
@@ -151,10 +221,14 @@ QString uniqueCloneProfileName(const MapperConfiguration &configuration, const Q
 bool createProfile(MapperConfiguration &configuration, const QString &name,
                    const QString &startFromId, QString *createdId)
 {
-    const ControllerProfile *source = findProfile(configuration,
-        startFromId.isEmpty() ? configuration.activeProfileId : startFromId);
-    if (!source) source = &activeProfile(configuration);
-    return createProfileInCategory(configuration, name, source->categoryId, source->id, createdId);
+    // An omitted source is a deliberate blank-profile request.  The previous
+    // fallback silently cloned the active Profile, which made the ordinary
+    // creation path look blank while retaining physical routes, buttons,
+    // POVs, and Automation relationships from another controller setup.
+    // Keep the active category as a convenient destination only; copying is
+    // allowed exclusively when the caller supplies an explicit source id.
+    const ControllerProfile &active = activeProfile(configuration);
+    return createProfileInCategory(configuration, name, active.categoryId, startFromId, createdId);
 }
 
 bool createProfileInCategory(MapperConfiguration &configuration, const QString &name,
@@ -162,10 +236,15 @@ bool createProfileInCategory(MapperConfiguration &configuration, const QString &
 {
     const QString trimmedName = name.trimmed();
     if (!isProfileNameAvailableInCategory(configuration, trimmedName, categoryId)) return false;
-    const ControllerProfile *source = findProfile(configuration,
-        startFromId.isEmpty() ? configuration.activeProfileId : startFromId);
-    if (!source) source = &activeProfile(configuration);
-    ControllerProfile created = *source;
+    // A supplied source is the explicit Copy Existing Profile mode.  With no
+    // source, value-initialisation leaves every physical route disabled and
+    // every optional relationship empty: a true blank Profile.
+    ControllerProfile created;
+    if (!startFromId.trimmed().isEmpty()) {
+        const ControllerProfile *source = findProfile(configuration, startFromId.trimmed());
+        if (!source) return false;
+        created = *source;
+    }
     created.id = newProfileId();
     created.name = trimmedName;
     created.categoryId = categoryId;

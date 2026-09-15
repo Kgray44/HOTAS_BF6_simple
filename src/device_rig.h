@@ -66,7 +66,12 @@ struct CompiledDeviceRigMember {
     int outputIndex = -1;
     std::array<bool, kPhysicalAxisCount> fixedAxes{};
     RuntimeMappingConfiguration mapping;
-    NativePovBindings nativePovBindings;
+    // The worker reads native POV routes directly from this compiled member on
+    // every report.  It must therefore have a fixed, disabled-by-default slot
+    // for every supported physical POV even when the active Rig deliberately
+    // has no Profile.  A persisted DeviceProfileMapping remains compact and
+    // variable-length; this is the bounded runtime projection of it.
+    std::array<NativePovBinding, kMaximumPhysicalPovs> nativePovBindings{};
     std::shared_ptr<const struct CompiledAutomationSet> automation;
 };
 

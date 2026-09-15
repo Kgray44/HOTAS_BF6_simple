@@ -1996,6 +1996,34 @@ Item {
                         wrapMode: Text.WordWrap
                     }
                     Text {
+                        visible: Boolean(root.selectedNode && root.selectedNode.semantic === "mixer")
+                        Layout.fillWidth: true
+                        text: "MIXER MODE"
+                        color: root.graphLabel
+                        font.pixelSize: 9
+                        font.bold: true
+                    }
+                    ComboBox {
+                        id: selectedMixerMode
+                        visible: Boolean(root.selectedNode && root.selectedNode.semantic === "mixer")
+                        Layout.fillWidth: true
+                        model: ["Average", "Sum / Clamp", "Larger Value"]
+                        currentIndex: {
+                            const current = String(root.selectedNode && root.selectedNode.mixerMode || "")
+                            if (current === "Sum Clamped" || current === "Sum / Clamp") return 1
+                            if (current === "Highest Magnitude" || current === "Larger Value") return 2
+                            return 0
+                        }
+                        Accessible.name: "Canonical shared-output mixer mode"
+                        onActivated: function(index) {
+                            if (!root.selectedNode || !root.selectedNode.objectId) return
+                            const result = backendObject.signalFlowSetMixerMode(
+                                String(root.selectedNode.objectId), currentText,
+                                Number(root.graph.revision || 0))
+                            root.showResult(result, "Mixer mode was not changed.")
+                        }
+                    }
+                    Text {
                         visible: Boolean(root.selectedRoute && root.processorDetail("adaptive-response").settingsSummary)
                         Layout.fillWidth: true
                         text: "Adaptive Response · " + String(root.processorDetail("adaptive-response").settingsSummary)

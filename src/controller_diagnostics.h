@@ -40,6 +40,8 @@ struct ControllerDiagnosticsSnapshot {
     QList<VirtualOutputDiagnostic> virtualOutputs;
     QString activeProfileName;
     QString selectedHidInstance;
+    QString vjoyAcquireAttempt;
+    QString vjoyLastStatusTransition;
     // Known local paths are redacted before text reaches the clipboard.
     QStringList privatePaths;
 };

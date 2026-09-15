@@ -30,6 +30,9 @@ Page {
     // proof. Hiding only Standard's chrome preserves the existing page and
     // dialog behavior without forking backend-facing QML.
     property bool embedded: false
+    // Main owns this object outside the page tree.  It is intentionally not
+    // configuration or health state; it is only transient presentation.
+    property var notificationCenter: null
     // Flight Deck owns one native Overview composition while this established
     // host continues to own every route, dialog, and backend command.
     property bool flightDeckMode: false
@@ -38,6 +41,10 @@ Page {
     // Flight Deck deep links carry only presentation selection. They never
     // activate a profile, execute Automation, or change mapper configuration.
     property string flightDeckProfileContext: ""
+    // An active/unmapped Rig may direct the user to the canonical Profile
+    // workflow. This is presentation state only; creation and any later
+    // activation remain explicit backend commands.
+    property var flightDeckProfileCreationRequest: ({})
     property string flightDeckAutomationContext: ""
     property string flightDeckAdaptiveProfileContext: ""
     // Flight Deck owns the shared learning modal at the alternate-shell
@@ -138,11 +145,18 @@ Page {
         const argument = flightDeckLearningArgument
         flightDeckLearningOperation = ""
         flightDeckLearningArgument = null
-        if (operation === "button") dialog.openButtonLearning()
-        else if (operation === "quick-buttons") dialog.openQuickButtons()
-        else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
-        else if (operation === "quick-axes") dialog.openQuickAxes()
-        else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+        // A page button's release can still be in flight, or the prior
+        // learning popup can still be completing its close signal. Open on
+        // the next event turn so that stale close work cannot immediately
+        // hide the newly requested Flight Deck modal.
+        Qt.callLater(function() {
+            if (!dialog) return
+            if (operation === "button") dialog.openButtonLearning()
+            else if (operation === "quick-buttons") dialog.openQuickButtons()
+            else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
+            else if (operation === "quick-axes") dialog.openQuickAxes()
+            else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+        })
     }
     function openFlightDeckButtonLearning() { requestFlightDeckLearning("button", null) }
     function openFlightDeckQuickMap() { requestFlightDeckLearning("quick-buttons", null) }
@@ -1570,6 +1584,7 @@ Page {
                 DevicesPage {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.themeTokens; legacy: false
+                    notificationCenter: root.notificationCenter
                     onVerificationRequested: function(rigId, deviceId, outputId) {
                         if (rigId !== "") backend.setEditingDeviceContext(rigId, deviceId !== "" ? [deviceId] : [])
                         controllerSetupDialog.open()
@@ -1607,6 +1622,8 @@ Page {
             FlightDeckProfiles {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
+                notificationCenter: root.notificationCenter
+                profileCreationRequest: root.flightDeckProfileCreationRequest
                 presentationState: root.flightDeckProfilesPresentationState
                 onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
                 onNavigateToPage: function(page) { root.currentPage = page }
@@ -1656,7 +1673,7 @@ Page {
                 spacing: 14
                 RowLayout { width: parent.width
                     PageTitle { heading: "Axes"
-                        detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.activeProfileName }
+                        detail: "One selected physical axis; all configured axes continue mapping · Profile: " + backend.selectedProfileName }
                     Item { Layout.fillWidth: true }
                     CommandButton { label: "ADAPTIVE RESPONSE"; subdued: true; onTriggered: root.currentPage = 9 }
                     CommandButton { label: "QUICK MAP"; onTriggered: quickAssignDialog.open() }
@@ -1729,7 +1746,7 @@ Page {
                                     }
                                     FineLine { Layout.fillWidth: true }
                                     RowLayout { Layout.fillWidth: true
-                                        TelemetryItem { caption: "PROFILE"; value: backend.activeProfileName.toUpperCase(); tone: theme.ivory; Layout.fillWidth: true }
+                                        TelemetryItem { caption: "PROFILE"; value: backend.selectedProfileName.toUpperCase(); tone: theme.ivory; Layout.fillWidth: true }
                                         TelemetryItem { caption: "ROUTE"; value: axisIdentityPanel.info.target.toUpperCase(); tone: axisIdentityPanel.info.target === "Disabled" ? theme.textMuted : theme.orangeBright; Layout.fillWidth: true }
                                         TelemetryItem { caption: "STATUS"; value: backend.mappingActive ? "● LIVE" : "STANDBY"; tone: backend.mappingActive ? theme.ready : theme.textMuted; Layout.fillWidth: true }
                                     }
@@ -1933,7 +1950,7 @@ Page {
  spacing: 14
                 RowLayout { width: parent.width
                     PageTitle { heading: "Buttons"
- detail: "Physical DirectInput state is visible even while vJoy is offline · Profile: " + backend.activeProfileName }
+ detail: "Physical DirectInput state is visible even while vJoy is offline · Profile: " + backend.selectedProfileName }
                     Item { Layout.fillWidth: true }
                     CommandButton { label: "LEARN BUTTON"
  commandEnabled: backend.physicalConnected && backend.vjoyButtonCount > 0
@@ -2013,7 +2030,16 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 requestedContext: root.flightDeckDevicesContext
+                notificationCenter: root.notificationCenter
                 onNavigateToPage: function(page) { root.currentPage = page }
+                onRequestProfileWorkflow: function(rigId, mode) {
+                    root.flightDeckProfileCreationRequest = {
+                        rigId: String(rigId || ""),
+                        mode: String(mode || "choose"),
+                        token: Date.now()
+                    }
+                    root.currentPage = 5
+                }
             }
         }
         Component {
@@ -2404,7 +2430,10 @@ Page {
                             property bool followTail: true
                             onMovementEnded: followTail = atYEnd
                             onCountChanged: Qt.callLater(function() {
-                                if (eventLogView.followTail) eventLogView.positionViewAtEnd()
+                                // The page may have been destroyed before the
+                                // queued tail update runs during navigation.
+                                if (eventLogView && eventLogView.followTail)
+                                    eventLogView.positionViewAtEnd()
                             })
                             Component.onCompleted: positionViewAtEnd()
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -2513,8 +2542,14 @@ Page {
                 profileContext: root.flightDeckAdaptiveProfileContext
                 Component.onCompleted: {
                     if (root.flightDeckAdaptiveProfileContext.length > 0) {
-                        editScope = "profile"
-                        targetId = root.flightDeckAdaptiveProfileContext
+                        backend.selectProfileForEditing(root.flightDeckAdaptiveProfileContext)
+                        // The Profile deep link selects the configuration
+                        // container, but Adaptive Response remains a
+                        // physical-device channel editor.  Do not let this
+                        // legacy profile-wide assignment leak settings from
+                        // one controller into another.
+                        editScope = "device"
+                        targetId = ""
                         setPreview()
                         root.flightDeckAdaptiveProfileContext = ""
                     }
@@ -2531,8 +2566,9 @@ Page {
                 topGun: theme.topGun
                 Component.onCompleted: {
                     if (root.flightDeckAdaptiveProfileContext.length > 0) {
+                        backend.selectProfileForEditing(root.flightDeckAdaptiveProfileContext)
                         editScope = "profile"
-                        targetId = root.flightDeckAdaptiveProfileContext
+                        targetId = ""
                         setPreview()
                         root.flightDeckAdaptiveProfileContext = ""
                     }
@@ -2923,7 +2959,7 @@ Page {
         onClosed: backend.cancelInputLearning()
         contentItem: Column { width: quickAssignDialog.width - 52; spacing: 14
             Text { text: "QUICK MAP — AXES"; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 16; font.bold: true }
-            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "PROFILE: " + backend.selectedProfileName.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true }
             Rectangle { visible: !quickAssignDialog.complete; width: parent.width; height: 6; radius: 3; color: theme.control
                 Rectangle { width: parent.width * (quickAssignDialog.targets.length ? quickAssignDialog.step / quickAssignDialog.targets.length : 0); height: parent.height; radius: 3; color: theme.ready } }
             Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " OF " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 19; font.bold: true; font.family: theme.topGun ? theme.displayFont : root.font.family }
@@ -2970,7 +3006,7 @@ Page {
         onClosed: backend.cancelInputLearning()
         contentItem: Column { width: quickMapButtonDialog.width - 52; spacing: 12
             Text { text: "QUICK MAP — BUTTONS"; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 16; font.bold: true }
-            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "PROFILE: " + backend.selectedProfileName.toUpperCase(); color: theme.textMuted; font.pixelSize: 10; font.bold: true }
             Rectangle { visible: !quickMapButtonDialog.complete; width: parent.width; height: 6; radius: 3; color: theme.control
                 Rectangle { width: parent.width * (quickMapButtonDialog.targets.length ? quickMapButtonDialog.step / quickMapButtonDialog.targets.length : 0); height: parent.height; radius: 3; color: theme.ready } }
             Text { visible: !quickMapButtonDialog.complete; text: (quickMapButtonDialog.step + 1) + " OF " + quickMapButtonDialog.targets.length; color: theme.topGun ? theme.orangeBright : theme.textStrong; font.pixelSize: 18; font.bold: true }

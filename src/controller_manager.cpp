@@ -53,6 +53,12 @@ QString ControllerManager::capabilityFingerprint(const DiscoveredController &con
         .arg(controller.axisCount).arg(axes).arg(controller.buttonCount).arg(controller.povCount);
 }
 
+bool ControllerManager::capabilitiesMatch(const DiscoveredController &controller,
+                                          const SavedControllerRecord &record)
+{
+    return sameCapabilities(controller, record);
+}
+
 ControllerMatch ControllerManager::match(const DiscoveredController &controller,
                                          const std::vector<SavedControllerRecord> &records)
 {
@@ -129,6 +135,7 @@ SavedControllerRecord ControllerManager::verifiedRecord(
     record.vendorId = controller.vendorId;
     record.productId = controller.productId;
     record.axes = controller.axes;
+    record.axisDescriptors = controller.axisDescriptors;
     record.axisCount = controller.axisCount;
     record.buttonCount = controller.buttonCount;
     record.povCount = controller.povCount;

@@ -352,7 +352,7 @@ Item {
                         Text { text: "CURVE EDITOR"; color: "#f1f7f7"; font.pixelSize: 23; font.bold: true }
                         Text {
                             text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
-                                + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
+                                + (axisSelector.currentText || "Axis 1") + " · " + (editorState.summary || "Linear · 0%")
                             color: "#a8d3d9"
                             font.pixelSize: 13
                             font.bold: true

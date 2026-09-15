@@ -1,5 +1,6 @@
 #include "mapping_worker.h"
 #include "crash_diagnostics.h"
+#include "direct_input_axis.h"
 #include "device_rig.h"
 #include "hid_device_identity.h"
 
@@ -10,6 +11,7 @@
 #include "button_mapping.h"
 #include "physical_input_monitor.h"
 #include "profile_trigger_runtime.h"
+#include "vjoy_ownership.h"
 
 #include <dinput.h>
 #include <windows.h>
@@ -123,17 +125,100 @@ bool sameAdaptiveResponseOverlay(const RuntimeAdaptiveResponseOverride &left,
         && a.turningPointMargin == b.turningPointMargin;
 }
 
-int axisIndexForOffset(DWORD offset)
+// Publish the full latest snapshot for one physical source. This remains a
+// bounded atomics-only write in the DirectInput worker; presentation samples
+// it later and therefore cannot make a backlog in the mapper hot path.
+void publishAdaptiveAxisTelemetry(AtomicAdaptiveTelemetry &target, int axis, float raw,
+                                  float resolved, const AdaptiveMappedAxisOutput &mapped,
+                                  const AdaptiveResponseTelemetry &adaptive,
+                                  const RuntimeAdaptiveResponseConfig &configuration,
+                                  quint64 reversalCount, quint64 safetyClampCount,
+                                  const RuntimeAdaptiveResponseOverride &overlay)
 {
-    if (offset == DIJOFS_X) return static_cast<int>(PhysicalAxis::X);
-    if (offset == DIJOFS_Y) return static_cast<int>(PhysicalAxis::Y);
-    if (offset == DIJOFS_Z) return static_cast<int>(PhysicalAxis::Z);
-    if (offset == DIJOFS_RX) return static_cast<int>(PhysicalAxis::Rx);
-    if (offset == DIJOFS_RY) return static_cast<int>(PhysicalAxis::Ry);
-    if (offset == DIJOFS_RZ) return static_cast<int>(PhysicalAxis::Rz);
-    if (offset == DIJOFS_SLIDER(0)) return static_cast<int>(PhysicalAxis::Slider0);
-    if (offset == DIJOFS_SLIDER(1)) return static_cast<int>(PhysicalAxis::Slider1);
-    return -1;
+    const size_t index = static_cast<size_t>(axis);
+    target.physicalConnected.store(true, std::memory_order_relaxed);
+    target.raw[index] = raw;
+    target.normalized[index] = resolved;
+    target.afterDeadzone[index] = mapped.baselineSignalPath.afterDeadzone;
+    target.afterHysteresis[index] = mapped.baselineSignalPath.afterHysteresis;
+    target.afterInversion[index] = mapped.baselineSignalPath.afterInversion;
+    target.curveResponse[index] = mapped.baselineSignalPath.afterCurve;
+    target.transformed[index] = mapped.adaptiveOutput;
+    target.adaptiveEstimated[index] = adaptive.estimated;
+    target.adaptivePredicted[index] = adaptive.predicted;
+    target.adaptiveBaselineMapped[index] = mapped.baselineOutput;
+    target.adaptivePredictedMapped[index] = mapped.predictedMappedOutput;
+    target.adaptiveOutput[index] = mapped.adaptiveOutput;
+    target.adaptiveMappedLead[index] = mapped.mappedLead;
+    target.adaptiveAppliedLead[index] = mapped.appliedLead;
+    target.adaptiveLocalCurveGain[index] = mapped.localCurveGain;
+    target.adaptiveVelocity[index] = adaptive.velocity;
+    target.adaptiveAcceleration[index] = adaptive.acceleration;
+    target.adaptiveHorizonSeconds[index] = adaptive.activeHorizonSeconds;
+    target.adaptiveRequestedLead[index] = adaptive.requestedLead;
+    target.adaptiveCappedLead[index] = adaptive.cappedLead;
+    target.adaptiveEndpointTaper[index] = adaptive.endpointTaper;
+    target.adaptiveLead[index] = adaptive.lead;
+    target.adaptiveConfidence[index] = adaptive.confidence;
+    target.adaptiveMotionIntensity[index] = adaptive.motionIntensity;
+    target.adaptiveVelocityAuthority[index] = adaptive.velocityAuthority;
+    target.adaptiveDeliberateMotionEvidence[index] = adaptive.deliberateMotionEvidence;
+    target.adaptiveNormalMotionAuthority[index] = adaptive.normalMotionAuthority;
+    target.adaptiveRapidMotionAuthority[index] = adaptive.rapidMotionAuthority;
+    target.adaptiveRapidMotionBlend[index] = adaptive.rapidMotionBlend;
+    target.adaptiveAccelerationIntent[index] = adaptive.accelerationIntent;
+    target.adaptiveOnsetAuthority[index] = adaptive.onsetAuthority;
+    target.adaptiveSustainedEvidence[index] = adaptive.sustainedEvidence;
+    target.adaptiveSustainedAuthority[index] = adaptive.sustainedAuthority;
+    target.adaptiveMotionUrgency[index] = adaptive.motionUrgency;
+    target.adaptiveHorizonExtensionEligibility[index] = adaptive.horizonExtensionEligibility;
+    target.adaptiveNormalMaximumHorizonSeconds[index] = adaptive.normalMaximumHorizonSeconds;
+    target.adaptiveAllowedMaximumHorizonSeconds[index] = adaptive.allowedMaximumHorizonSeconds;
+    target.adaptiveTurningPointConfidence[index] = adaptive.turningPointConfidence;
+    target.adaptiveEstimatedTimeToTurnSeconds[index] = adaptive.estimatedTimeToTurnSeconds;
+    target.adaptiveEstimatedRemainingTravel[index] = adaptive.estimatedRemainingTravel;
+    target.adaptiveTurningPointHorizonLimitSeconds[index] = adaptive.turningPointHorizonLimitSeconds;
+    target.adaptiveTurningPointLeadLimit[index] = adaptive.turningPointLeadLimit;
+    target.adaptiveReacquisitionAuthority[index] = adaptive.reacquisitionAuthority;
+    target.adaptiveMotionState[index] = static_cast<int>(adaptive.state);
+    target.adaptiveReversing[index] = adaptive.reversal;
+    target.adaptiveSafetyLimited[index] = adaptive.safetyLimited || mapped.leadLimited;
+    target.adaptiveDeadzoneAuthorityBlocked[index] = mapped.deadzoneAuthorityBlocked;
+    target.adaptiveLeadLimited[index] = mapped.leadLimited;
+    target.adaptiveHighLocalCurveGain[index] = mapped.highLocalCurveGain;
+    target.adaptiveReversalCount[index] = reversalCount;
+    target.adaptiveSafetyClampCount[index] = safetyClampCount;
+    target.adaptiveRuntimeEnabled[index] = configuration.enabled;
+    target.adaptiveRuntimeModel[index] = static_cast<int>(configuration.model);
+    target.adaptiveRuntimeMaximumHorizonSeconds[index] = configuration.maximumHorizonSeconds;
+    target.adaptiveRuntimeMaximumLead[index] = configuration.maximumLead;
+    target.adaptiveRuntimeVelocityResponse[index] = configuration.velocityResponse;
+    target.adaptiveRuntimeAccelerationResponse[index] = configuration.accelerationResponse;
+    target.adaptiveRuntimeMotionSensitivity[index] = configuration.motionSensitivity;
+    target.adaptiveRuntimeNoiseRejection[index] = configuration.noiseRejection;
+    target.adaptiveRuntimeReversalDetection[index] = configuration.reversalDetection;
+    target.adaptiveRuntimeReversalResponse[index] = configuration.reversalResponse;
+    target.adaptiveRuntimeDecelerationResponse[index] = configuration.decelerationResponse;
+    target.adaptiveRuntimeSettlingResponse[index] = configuration.settlingResponse;
+    target.adaptiveRuntimeEndpointTaper[index] = configuration.endpointTaper;
+    target.adaptiveRuntimeOnsetAssist[index] = configuration.onsetAssist;
+    target.adaptiveRuntimeOnsetCap[index] = configuration.onsetCap;
+    target.adaptiveRuntimeSustainedAssist[index] = configuration.sustainedAssist;
+    target.adaptiveRuntimeSustainedCap[index] = configuration.sustainedCap;
+    target.adaptiveRuntimeHorizonExtension[index] = configuration.horizonExtension;
+    target.adaptiveRuntimeHorizonExtensionCapSeconds[index] = configuration.horizonExtensionCapSeconds;
+    target.adaptiveRuntimeTurningPointProtection[index] = configuration.turningPointProtection;
+    target.adaptiveRuntimeTurningPointMargin[index] = configuration.turningPointMargin;
+    target.adaptiveRuntimeNormalMovementResponse[index] = configuration.normalMovementResponse;
+    target.adaptiveRuntimeRapidMovementResponse[index] = configuration.rapidMovementResponse;
+    target.adaptiveRuntimeEngagementSensitivity[index] = configuration.engagementSensitivity;
+    target.adaptiveAutomationOverlayActive[index] = overlay.active;
+    target.adaptiveAutomationOverlayProperties[index] = overlay.properties;
+    const auto now = std::chrono::steady_clock::now();
+    target.adaptivePublishedAtUs[index].store(static_cast<quint64>(
+        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count()),
+        std::memory_order_relaxed);
+    target.adaptivePublicationSequence[index].fetch_add(1, std::memory_order_release);
 }
 
 int buttonIndexForOffset(DWORD offset)
@@ -147,21 +232,6 @@ int buttonIndexForOffset(DWORD offset)
 float normalizedFromDirectInput(LONG value)
 {
     return std::clamp(static_cast<float>(value) / 10000.0F, -1.0F, 1.0F);
-}
-
-LONG directInputValue(const DIJOYSTATE2 &state, int index)
-{
-    switch (static_cast<PhysicalAxis>(index)) {
-    case PhysicalAxis::X: return state.lX;
-    case PhysicalAxis::Y: return state.lY;
-    case PhysicalAxis::Z: return state.lZ;
-    case PhysicalAxis::Rx: return state.lRx;
-    case PhysicalAxis::Ry: return state.lRy;
-    case PhysicalAxis::Rz: return state.lRz;
-    case PhysicalAxis::Slider0: return state.rglSlider[0];
-    case PhysicalAxis::Slider1: return state.rglSlider[1];
-    }
-    return 0;
 }
 
 DWORD vjoyUsage(VirtualAxis axis)
@@ -212,15 +282,24 @@ public:
     bool checkDevice(int deviceId, QString *status)
     {
         if (!load(status)) {
+            m_lastAcquireAttempt = QStringLiteral("Not attempted: vJoy interface could not be loaded");
             return false;
         }
-        const int state = m_getStatus(static_cast<UINT>(deviceId));
-        if (state == kVjoyStatusBusy) {
-            if (status) *status = QString(u"Device %1 busy in another application"_qs).arg(deviceId);
+        m_lastOwnership = ownershipEvidence(deviceId);
+        if (m_lastOwnership.state == VJoyOwnershipState::BusyOtherProcess) {
+            if (status) *status = QString(u"Device %1 is owned by %2"_qs)
+                .arg(deviceId).arg(vjoyOwnershipOwnerLabel(m_lastOwnership));
             return false;
         }
-        if (state == kVjoyStatusMissing || state == kVjoyStatusUnknown) {
-            if (status) *status = QString(u"Device %1 is unavailable"_qs).arg(deviceId);
+        if (m_lastOwnership.state == VJoyOwnershipState::StaleOwnership) {
+            if (status) *status = QString(u"Device %1 has STALE OWNERSHIP / DRIVER STATE: %2"_qs)
+                .arg(deviceId).arg(m_lastOwnership.diagnostic);
+            return false;
+        }
+        if (m_lastOwnership.state == VJoyOwnershipState::Missing
+            || m_lastOwnership.state == VJoyOwnershipState::Unknown) {
+            if (status) *status = QString(u"Device %1 is unavailable: %2"_qs)
+                .arg(deviceId).arg(m_lastOwnership.diagnostic);
             return false;
         }
         const std::array<bool, kVirtualAxisSlotCount> axes = axisCapabilities(deviceId);
@@ -232,7 +311,9 @@ public:
         const int buttons = buttonCapacity(deviceId, nullptr);
         const PovCapabilities povs = povCapabilities(deviceId, nullptr);
         if (status) {
-            *status = QString(u"Device %1 Ready · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
+            *status = QString(m_lastOwnership.state == VJoyOwnershipState::OwnedByCurrentProcess
+                ? u"Device %1 CONFIGURED · ACQUIRED · OWNED BY HOTAS BF6 · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs
+                : u"Device %1 Ready · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
                 .arg(deviceId).arg(axisCount).arg(buttons).arg(povs.continuous).arg(povs.discrete);
         }
         return true;
@@ -241,36 +322,56 @@ public:
     bool acquire(int deviceId, QString *status)
     {
         if (!checkDevice(deviceId, status)) {
+            m_lastAcquireAttempt = QStringLiteral("Not attempted: %1").arg(m_lastOwnership.diagnostic);
             return false;
         }
         if (m_acquired && m_deviceId == deviceId) {
+            m_lastAcquireAttempt = QStringLiteral("Already owned by this HOTAS BF6 worker");
             return true;
         }
+        if (vjoyAcquireActionFor(m_lastOwnership) == VJoyAcquireAction::AlreadyOwned) {
+            m_acquired = true;
+            m_deviceId = deviceId;
+            m_lastAcquireAttempt = QStringLiteral("Already owned by this HOTAS BF6 process; AcquireVJD was not called");
+            return true;
+        }
+        if (vjoyAcquireActionFor(m_lastOwnership) != VJoyAcquireAction::Acquire) {
+            m_lastAcquireAttempt = QStringLiteral("Not attempted: %1").arg(m_lastOwnership.diagnostic);
+            return false;
+        }
         release();
-        const int state = m_getStatus(static_cast<UINT>(deviceId));
-        // vJoy reports OWN as 0 and FREE as 1. A FREE device must be acquired
-        // before any SetAxis/SetBtn call; OWN is already this process, while
-        // BUSY/UNAVAILABLE were rejected above.
-        if (state == kVjoyStatusFree && !m_acquire(static_cast<UINT>(deviceId))) {
+        if (!m_acquire(static_cast<UINT>(deviceId))) {
+            m_lastAcquireAttempt = QStringLiteral("AcquireVJD returned failure");
             if (status) *status = QString(u"Could not acquire vJoy device %1"_qs).arg(deviceId);
             return false;
         }
-        if (state != kVjoyStatusFree && state != kVjoyStatusOwn) {
-            if (status) *status = QString(u"Device %1 is unavailable"_qs).arg(deviceId);
+        // The post-acquire query is mandatory.  vJoy may report raw BUSY to a
+        // second interface in this process, so GetOwnerPid is authoritative.
+        m_lastOwnership = ownershipEvidence(deviceId);
+        if (m_lastOwnership.state != VJoyOwnershipState::OwnedByCurrentProcess) {
+            m_relinquish(static_cast<UINT>(deviceId));
+            m_lastAcquireAttempt = QStringLiteral("AcquireVJD returned success, but post-acquire ownership was %1")
+                .arg(vjoyOwnershipStateName(m_lastOwnership.state));
+            if (status) *status = QString(u"Device %1 did not become owned by this HOTAS BF6 process: %2"_qs)
+                .arg(deviceId).arg(m_lastOwnership.diagnostic);
             return false;
         }
         m_acquired = true;
         m_deviceId = deviceId;
+        m_lastAcquireAttempt = QStringLiteral("AcquireVJD succeeded; post-acquire ownership confirmed");
         if (status) {
             const std::array<bool, kVirtualAxisSlotCount> axes = axisCapabilities(deviceId);
             const int axisCount = static_cast<int>(std::count(axes.begin() + 1, axes.end(), true));
             const PovCapabilities povs = povCapabilities(deviceId, nullptr);
-            *status = QString(u"Device %1 Ready · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
+            *status = QString(u"Device %1 CONFIGURED · ACQUIRED · OWNED BY HOTAS BF6 · %2 axes · %3 buttons · %4 continuous / %5 discrete POV"_qs)
                 .arg(deviceId).arg(axisCount).arg(buttonCapacity(deviceId, nullptr))
                 .arg(povs.continuous).arg(povs.discrete);
         }
         return true;
     }
+
+    const VJoyOwnershipEvidence &lastOwnership() const { return m_lastOwnership; }
+    const QString &lastAcquireAttempt() const { return m_lastAcquireAttempt; }
 
     bool setAxis(VirtualAxis axis, float value)
     {
@@ -377,6 +478,7 @@ public:
 
 private:
     using GetVJDStatusFn = int(__cdecl *)(UINT);
+    using GetOwnerPidFn = DWORD(__cdecl *)(UINT);
     using GetVJDAxisExistFn = BOOL(__cdecl *)(UINT, UINT);
     using AcquireVJDFn = BOOL(__cdecl *)(UINT);
     using RelinquishVJDFn = void(__cdecl *)(UINT);
@@ -390,6 +492,7 @@ private:
     struct PersistentInterface {
         HMODULE library = nullptr;
         GetVJDStatusFn getStatus = nullptr;
+        GetOwnerPidFn getOwnerPid = nullptr;
         GetVJDAxisExistFn axisExists = nullptr;
         AcquireVJDFn acquire = nullptr;
         RelinquishVJDFn relinquish = nullptr;
@@ -416,6 +519,7 @@ private:
     {
         m_library = api.library;
         m_getStatus = api.getStatus;
+        m_getOwnerPid = api.getOwnerPid;
         m_axisExists = api.axisExists;
         m_acquire = api.acquire;
         m_relinquish = api.relinquish;
@@ -432,6 +536,7 @@ private:
     {
         m_library = nullptr;
         m_getStatus = nullptr;
+        m_getOwnerPid = nullptr;
         m_axisExists = nullptr;
         m_acquire = nullptr;
         m_relinquish = nullptr;
@@ -442,6 +547,18 @@ private:
         m_getDiscretePovNumber = nullptr;
         m_setContinuousPov = nullptr;
         m_setDiscretePov = nullptr;
+    }
+
+    VJoyOwnershipEvidence ownershipEvidence(int deviceId) const
+    {
+        const int rawStatus = m_getStatus ? m_getStatus(static_cast<UINT>(deviceId)) : kVJoyStatusUnknown;
+        const bool ownerPidAvailable = m_getOwnerPid != nullptr;
+        const quint64 ownerPid = ownerPidAvailable
+            ? static_cast<quint64>(m_getOwnerPid(static_cast<UINT>(deviceId))) : 0;
+        const VJoyOwnerProcessEvidence process = ownerPidAvailable
+            ? inspectVJoyOwnerProcess(ownerPid) : VJoyOwnerProcessEvidence{};
+        return classifyVJoyOwnership(deviceId, rawStatus, ownerPidAvailable, ownerPid,
+                                     static_cast<quint64>(GetCurrentProcessId()), process);
     }
 
     bool load(QString *status)
@@ -470,6 +587,7 @@ private:
             return false;
         }
         m_getStatus = reinterpret_cast<GetVJDStatusFn>(GetProcAddress(m_library, "GetVJDStatus"));
+        m_getOwnerPid = reinterpret_cast<GetOwnerPidFn>(GetProcAddress(m_library, "GetOwnerPid"));
         m_axisExists = reinterpret_cast<GetVJDAxisExistFn>(GetProcAddress(m_library, "GetVJDAxisExist"));
         m_acquire = reinterpret_cast<AcquireVJDFn>(GetProcAddress(m_library, "AcquireVJD"));
         m_relinquish = reinterpret_cast<RelinquishVJDFn>(GetProcAddress(m_library, "RelinquishVJD"));
@@ -493,6 +611,7 @@ private:
         }
         persistent.library = m_library;
         persistent.getStatus = m_getStatus;
+        persistent.getOwnerPid = m_getOwnerPid;
         persistent.axisExists = m_axisExists;
         persistent.acquire = m_acquire;
         persistent.relinquish = m_relinquish;
@@ -518,6 +637,7 @@ private:
 
     HMODULE m_library = nullptr;
     GetVJDStatusFn m_getStatus = nullptr;
+    GetOwnerPidFn m_getOwnerPid = nullptr;
     GetVJDAxisExistFn m_axisExists = nullptr;
     AcquireVJDFn m_acquire = nullptr;
     RelinquishVJDFn m_relinquish = nullptr;
@@ -528,6 +648,8 @@ private:
     GetPovNumberFn m_getDiscretePovNumber = nullptr;
     SetContinuousPovFn m_setContinuousPov = nullptr;
     SetDiscretePovFn m_setDiscretePov = nullptr;
+    VJoyOwnershipEvidence m_lastOwnership;
+    QString m_lastAcquireAttempt = QStringLiteral("No acquisition attempt yet");
     bool m_acquired = false;
     int m_deviceId = 0;
 };
@@ -552,9 +674,11 @@ struct ObjectEnumerationContext {
     LPDIRECTINPUTDEVICE8W device = nullptr;
     std::array<bool, kPhysicalAxisCount> *axes = nullptr;
     std::array<bool, kMaximumPhysicalButtons> *buttons = nullptr;
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> *axisDescriptors = nullptr;
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;
+    int unsupportedAxisCount = 0;
 };
 
 BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *context)
@@ -562,17 +686,16 @@ BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *
     auto *objects = static_cast<ObjectEnumerationContext *>(context);
     const DWORD objectType = DIDFT_GETTYPE(instance->dwType);
     if ((objectType & DIDFT_AXIS) != 0) {
-        DIPROPRANGE range{};
-        range.diph.dwSize = sizeof(range);
-        range.diph.dwHeaderSize = sizeof(range.diph);
-        range.diph.dwHow = DIPH_BYID;
-        range.diph.dwObj = instance->dwType;
-        range.lMin = -10000;
-        range.lMax = 10000;
-        objects->device->SetProperty(DIPROP_RANGE, &range.diph);
-        const int index = axisIndexForOffset(instance->dwOfs);
+        const int index = physicalAxisIndexForDirectInputOffset(instance->dwOfs);
         if (index >= 0) {
             (*objects->axes)[index] = true;
+            if (objects->axisDescriptors) {
+                (*objects->axisDescriptors)[static_cast<size_t>(index)] =
+                    describeDirectInputAxisObject(objects->device, *instance);
+            }
+            configureDirectInputAxisRange(objects->device, *instance);
+        } else {
+            ++objects->unsupportedAxisCount;
         }
         ++objects->axisCount;
     } else if ((objectType & DIDFT_BUTTON) != 0) {
@@ -772,7 +895,14 @@ void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float n
     m_runtime.adaptiveBaselineMapped[index].store(physical, std::memory_order_relaxed);
     m_runtime.adaptivePredictedMapped[index].store(physical, std::memory_order_relaxed);
     m_runtime.adaptiveOutput[index].store(physical, std::memory_order_relaxed);
-    m_runtime.adaptiveRuntimeEnabled[index].store(false, std::memory_order_relaxed);
+    // Give the same presentation fields a non-zero deterministic fixture so
+    // the live-path test proves propagation beyond Final Output.
+    m_runtime.adaptiveVelocity[index].store(physical * 0.5F, std::memory_order_relaxed);
+    m_runtime.adaptiveAcceleration[index].store(physical * 0.25F, std::memory_order_relaxed);
+    m_runtime.adaptiveHorizonSeconds[index].store(0.016F, std::memory_order_relaxed);
+    m_runtime.adaptiveLead[index].store(physical * 0.05F, std::memory_order_relaxed);
+    m_runtime.adaptiveConfidence[index].store(0.75F, std::memory_order_relaxed);
+    m_runtime.adaptiveRuntimeEnabled[index].store(true, std::memory_order_relaxed);
     m_runtime.adaptiveRuntimeMaximumHorizonSeconds[index].store(0.008F, std::memory_order_relaxed);
     m_runtime.adaptiveRuntimeMaximumLead[index].store(0.12F, std::memory_order_relaxed);
     m_runtime.mappingActive.store(false, std::memory_order_relaxed);
@@ -781,6 +911,11 @@ void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float n
     m_runtime.vjoyReady.store(false, std::memory_order_relaxed);
     m_runtime.inputReports.fetch_add(1, std::memory_order_relaxed);
     m_runtime.physicalReportsSinceAcquisition.fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now();
+    m_runtime.adaptivePublishedAtUs[index].store(static_cast<quint64>(
+        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count()),
+        std::memory_order_relaxed);
+    m_runtime.adaptivePublicationSequence[index].fetch_add(1, std::memory_order_release);
 }
 
 void MappingWorker::publishVirtualAxisAvailabilityForTest(bool available)
@@ -824,6 +959,11 @@ void MappingWorker::setMappingEnabled(bool enabled)
 {
     if (enabled) m_vjoyReleasedForControlPlane = false;
     m_mappingRequested = enabled;
+}
+
+void MappingWorker::requestOutputAvailabilityRetry()
+{
+    m_outputAvailabilityRetryGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool MappingWorker::mappingRequested() const
@@ -945,7 +1085,7 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     }
 
     std::array<bool, kMaximumPhysicalButtons> buttons{};
-    ObjectEnumerationContext objects{device, &result.axes, &buttons};
+    ObjectEnumerationContext objects{device, &result.axes, &buttons, &result.axisDescriptors};
     device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
     HRESULT acquired = device->Acquire();
     if (FAILED(acquired)) {
@@ -983,6 +1123,7 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     result.axisCount = objects.axisCount;
     result.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
     result.povCount = objects.povCount;
+    result.unsupportedAxisCount = objects.unsupportedAxisCount;
     result.diagnostic = u"Exact DirectInput controller acquired and returned a live state report."_qs;
     device->Unacquire();
     device->Release();
@@ -1005,6 +1146,25 @@ QString MappingWorker::vjoyStatus() const
 {
     QMutexLocker locker(&m_statusMutex);
     return m_vjoyStatus;
+}
+
+QVariantMap MappingWorker::vjoyOwnershipTelemetry() const
+{
+    QMutexLocker locker(&m_statusMutex);
+    return {{u"deviceId"_qs, m_vjoyOwnership.deviceId},
+            {u"rawStatus"_qs, m_vjoyOwnership.rawStatus},
+            {u"rawStatusName"_qs, vjoyRawStatusName(m_vjoyOwnership.rawStatus)},
+            {u"ownershipState"_qs, vjoyOwnershipStateName(m_vjoyOwnership.state)},
+            {u"ownerPidAvailable"_qs, m_vjoyOwnership.ownerPidAvailable},
+            {u"ownerPid"_qs, QVariant::fromValue(m_vjoyOwnership.ownerPid)},
+            {u"ownerProcessLive"_qs, m_vjoyOwnership.ownerProcess.live},
+            {u"ownerProcess"_qs, m_vjoyOwnership.ownerProcess.name},
+            {u"ownerProcessPath"_qs, m_vjoyOwnership.ownerProcess.path},
+            {u"ownerProcessDiagnostic"_qs, m_vjoyOwnership.ownerProcess.diagnostic},
+            {u"hotasProcessId"_qs, QVariant::fromValue(m_vjoyOwnership.hotasProcessId)},
+            {u"diagnostic"_qs, m_vjoyOwnership.diagnostic},
+            {u"acquireAttempt"_qs, m_vjoyAcquireAttempt},
+            {u"lastStatusTransition"_qs, m_vjoyLastStatusTransition}};
 }
 
 MappingLatencyPercentiles MappingWorker::latencyPercentiles() const
@@ -1072,6 +1232,29 @@ void MappingWorker::setVjoyStatus(const QString &status)
         QMutexLocker locker(&m_statusMutex);
         changed = m_vjoyStatus != status;
         m_vjoyStatus = status;
+    }
+    if (changed) emit hardwareStateChanged();
+}
+
+void MappingWorker::setVjoyOwnershipEvidence(const VJoyOwnershipEvidence &evidence,
+                                              const QString &acquireAttempt)
+{
+    bool changed = false;
+    {
+        QMutexLocker locker(&m_statusMutex);
+        const QString previous = QStringLiteral("%1|%2|%3")
+            .arg(vjoyRawStatusName(m_vjoyOwnership.rawStatus))
+            .arg(m_vjoyOwnership.ownerPid).arg(vjoyOwnershipStateName(m_vjoyOwnership.state));
+        const QString current = QStringLiteral("%1|%2|%3")
+            .arg(vjoyRawStatusName(evidence.rawStatus))
+            .arg(evidence.ownerPid).arg(vjoyOwnershipStateName(evidence.state));
+        if (previous != current) {
+            m_vjoyLastStatusTransition = QStringLiteral("%1 -> %2").arg(previous, current);
+            changed = true;
+        }
+        changed = changed || m_vjoyAcquireAttempt != acquireAttempt;
+        m_vjoyOwnership = evidence;
+        m_vjoyAcquireAttempt = acquireAttempt;
     }
     if (changed) emit hardwareStateChanged();
 }
@@ -1184,6 +1367,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     std::uint64_t latencyTotal = 0;
     std::uint64_t latencySampleSequence = 0;
     std::uint64_t handledReacquireRequest = 0;
+    std::uint64_t handledOutputAvailabilityRetry = m_outputAvailabilityRetryGeneration.load(std::memory_order_relaxed);
     auto nextDiscovery = std::chrono::steady_clock::now();
     auto nextVjoyCheck = std::chrono::steady_clock::now();
     auto nextVjoyAcquire = std::chrono::steady_clock::now();
@@ -1624,12 +1808,16 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             nextDiscovery = now + std::chrono::seconds(1);
         }
 
-        if (now >= nextVjoyCheck) {
+        const std::uint64_t outputAvailabilityRetry = m_outputAvailabilityRetryGeneration.load(std::memory_order_relaxed);
+        const bool retryOutputAvailability = outputAvailabilityRetry != handledOutputAvailabilityRetry;
+        if (now >= nextVjoyCheck || retryOutputAvailability) {
             QString status;
             const bool ready = vjoy.checkDevice(configuration.vjoyDeviceId, &status);
             m_runtime.vjoyReady = ready;
+            setVjoyOwnershipEvidence(vjoy.lastOwnership(), vjoy.lastAcquireAttempt());
             setVjoyStatus(status);
             nextVjoyCheck = now + std::chrono::seconds(1);
+            handledOutputAvailabilityRetry = outputAvailabilityRetry;
             refreshVjoyCapabilities();
         }
 
@@ -1691,7 +1879,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         PhysicalInputReport physicalReport;
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             if (!availableAxes[index]) continue;
-            physicalReport.axes[index] = normalizedFromDirectInput(directInputValue(state, index));
+            physicalReport.axes[index] = normalizedFromDirectInput(
+                directInputAxisValue(state, static_cast<PhysicalAxis>(index)));
         }
         for (int source = 0; source < kMaximumPhysicalButtons; ++source) {
             physicalReport.buttons[source] = availableButtons[source]
@@ -1962,6 +2151,11 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             const RuntimeAdaptiveResponseOverride &overlay = activeAdaptiveOverlays[static_cast<size_t>(index)];
             m_runtime.adaptiveAutomationOverlayActive[index] = overlay.active;
             m_runtime.adaptiveAutomationOverlayProperties[index] = overlay.properties;
+            publishAdaptiveAxisTelemetry(m_runtime, index, raw, resolvedNormalized, mapped, adaptive,
+                                         adaptiveConfiguration,
+                                         adaptiveProcessors[static_cast<size_t>(index)].reversalCount(),
+                                         adaptiveProcessors[static_cast<size_t>(index)].safetyClampCount(),
+                                         overlay);
             transformedAxes[static_cast<size_t>(index)] = mapped.adaptiveOutput;
         }
         if (automationEffects) {
@@ -2046,7 +2240,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
 
         const bool mappingRequested = m_mappingRequested.load();
         if (mappingRequested && !m_runtime.mappingActive.load()
-            && std::chrono::steady_clock::now() >= nextVjoyAcquire) {
+            && (retryOutputAvailability || std::chrono::steady_clock::now() >= nextVjoyAcquire)) {
             QString status;
             if (vjoy.acquire(configuration.vjoyDeviceId, &status)) {
                 // A newly selected pre-provisioned device receives a complete
@@ -2062,11 +2256,13 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Active);
                 m_runtime.outputNeutralized = false;
                 m_runtime.vjoyReady = true;
+                setVjoyOwnershipEvidence(vjoy.lastOwnership(), vjoy.lastAcquireAttempt());
                 setVjoyStatus(status);
                 emit workerEvent(u"Mapping active"_qs);
             } else {
                 m_runtime.vjoyReady = false;
                 m_runtime.mappingEffectiveState = static_cast<int>(MappingEffectiveState::Suspended);
+                setVjoyOwnershipEvidence(vjoy.lastOwnership(), vjoy.lastAcquireAttempt());
                 setVjoyStatus(status);
                 nextVjoyAcquire = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             }
@@ -2294,6 +2490,18 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
     for (std::atomic_uint64_t &writes : m_runtime.deviceRigOutputWrites) {
         writes.store(0, std::memory_order_relaxed);
     }
+    for (int member = 0; member < kMaximumDeviceRigMembers; ++member) {
+        m_runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(member)].store(
+            false, std::memory_order_relaxed);
+        for (std::atomic_bool &pressed :
+             m_runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(member)]) {
+            pressed.store(false, std::memory_order_relaxed);
+        }
+        for (std::atomic_int &pov :
+             m_runtime.deviceRigMemberPovValues[static_cast<size_t>(member)]) {
+            pov.store(-1, std::memory_order_relaxed);
+        }
+    }
     for (int index = 0; index < plan.memberCount; ++index) {
         inputs[static_cast<size_t>(index)].member = &plan.members[static_cast<size_t>(index)];
         inputs[static_cast<size_t>(index)].automation.setCompiled(
@@ -2313,6 +2521,18 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         m_runtime.povCount = 0;
         m_runtime.lastPhysicalButton = 0;
         m_runtime.lastPhysicalButtonTarget = 0;
+    };
+    const auto clearMemberPhysicalSnapshot = [this](int member) {
+        if (member < 0 || member >= kMaximumDeviceRigMembers) return;
+        const size_t memberIndex = static_cast<size_t>(member);
+        m_runtime.deviceRigMemberPhysicalConnected[memberIndex].store(
+            false, std::memory_order_relaxed);
+        for (std::atomic_bool &pressed : m_runtime.deviceRigMemberPhysicalButtonPressed[memberIndex]) {
+            pressed.store(false, std::memory_order_relaxed);
+        }
+        for (std::atomic_int &pov : m_runtime.deviceRigMemberPovValues[memberIndex]) {
+            pov.store(-1, std::memory_order_relaxed);
+        }
     };
     const auto releaseInput = [](InputSession &session) {
         if (session.device) {
@@ -2376,13 +2596,19 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         output.lastButtons.fill(false);
         for (auto &values : output.lastNativePovs) values.fill(-1);
     };
-    const auto refreshOutput = [this](OutputSession &output, QString *status) {
+    const auto refreshOutput = [this](OutputSession &output, QString *status, bool publishDiagnostics) {
         if (!output.configured) return false;
         QString checkStatus;
         if (!output.vjoy.checkDevice(output.configured->vjoyDeviceId, &checkStatus)) {
+            if (publishDiagnostics) {
+                setVjoyOwnershipEvidence(output.vjoy.lastOwnership(), output.vjoy.lastAcquireAttempt());
+            }
             output.ready = false;
             if (status) *status = checkStatus;
             return false;
+        }
+        if (publishDiagnostics) {
+            setVjoyOwnershipEvidence(output.vjoy.lastOwnership(), output.vjoy.lastAcquireAttempt());
         }
         output.axes = output.vjoy.axisCapabilities(output.configured->vjoyDeviceId, nullptr);
         output.buttonCapacity = output.vjoy.buttonCapacity(output.configured->vjoyDeviceId, nullptr);
@@ -2438,6 +2664,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
     bool lastMappingAllowed = false;
     std::uint64_t processedReports = 0;
     std::uint64_t handledReacquireRequest = m_reacquireInputAcknowledged.load();
+    std::uint64_t handledOutputAvailabilityRetry = m_outputAvailabilityRetryGeneration.load(std::memory_order_relaxed);
     const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
     if (!plan.valid) {
         setVjoyStatus(u"Device Rig needs attention: "_qs + plan.issue);
@@ -2450,6 +2677,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             break;
         }
         const auto now = std::chrono::steady_clock::now();
+        const std::uint64_t outputAvailabilityRetry = m_outputAvailabilityRetryGeneration.load(std::memory_order_relaxed);
+        const bool retryOutputAvailability = outputAvailabilityRetry != handledOutputAvailabilityRetry;
         if (m_releaseVjoyRequested.exchange(false)) {
             // A full verification or explicit driver-configuration
             // transaction is the only control-plane case that relinquishes
@@ -2479,6 +2708,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             for (int index = 0; index < plan.memberCount; ++index) {
                 InputSession &session = inputs[static_cast<size_t>(index)];
                 releaseInput(session);
+                clearMemberPhysicalSnapshot(index);
                 session.nextDiscovery = now;
             }
             clearPrimarySnapshot();
@@ -2514,6 +2744,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 session.nextDiscovery = now + std::chrono::seconds(1);
             }
             if (!session.connected) {
+                clearMemberPhysicalSnapshot(index);
                 continue;
             }
             inputStates[static_cast<size_t>(index)] = DeviceRigInputSessionState::Connected;
@@ -2547,6 +2778,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     : read == DIERR_NOTACQUIRED ? DeviceRigInputSessionState::NotAcquired
                                              : DeviceRigInputSessionState::Disconnected;
                 releaseInput(session);
+                clearMemberPhysicalSnapshot(index);
                 continue;
             }
 
@@ -2554,7 +2786,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
                 if (session.availableAxes[static_cast<size_t>(axis)]) {
                     report.axes[static_cast<size_t>(axis)] = normalizedFromDirectInput(
-                        directInputValue(state, axis));
+                        directInputAxisValue(state, static_cast<PhysicalAxis>(axis)));
                 }
             }
             for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
@@ -2568,6 +2800,22 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             }
             session.monitor.accept(report);
             const PhysicalInputSnapshot &snapshot = session.monitor.snapshot();
+            // Publish each member's physical inputs as an independent bounded
+            // snapshot.  Selected Device consumes these fields directly;
+            // member-zero's legacy aggregate must never stand in for another
+            // controller's buttons or POVs.
+            m_runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(index)].store(
+                true, std::memory_order_relaxed);
+            for (int button = 0; button < kMaximumPhysicalButtons; ++button) {
+                m_runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(index)]
+                    [static_cast<size_t>(button)].store(
+                        snapshot.buttons[static_cast<size_t>(button)], std::memory_order_relaxed);
+            }
+            for (int pov = 0; pov < kMaximumPhysicalPovs; ++pov) {
+                m_runtime.deviceRigMemberPovValues[static_cast<size_t>(index)]
+                    [static_cast<size_t>(pov)].store(
+                        snapshot.povs[static_cast<size_t>(pov)], std::memory_order_relaxed);
+            }
             if (observeMeaningfulInput(session.meaningfulInput, snapshot, session.availableAxes,
                                        session.availableButtons, session.povCount)) {
                 session.latestMeaningfulInputSequence = m_runtime.meaningfulInputSequence.fetch_add(
@@ -2613,7 +2861,11 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                                              mapping.calibration);
                 const float resolved = resolveNormalizedAxisCenter(normalized, mapping,
                     session.centers[static_cast<size_t>(axis)]);
-                RuntimeAdaptiveResponseConfig prediction = mapping.adaptiveResponse;
+                // Keep the Device Rig execution path on the same effective
+                // Adaptive Response configuration as the single-device path.
+                // The physical estimator uses its bounded candidate envelope,
+                // while the mapped-output cap remains the configured value.
+                RuntimeAdaptiveResponseConfig effectiveAdaptiveConfiguration = mapping.adaptiveResponse;
                 const RuntimeAdaptiveResponseOverride nextOverlay = automationEffects
                     ? automationEffects->adaptiveResponseOverlays[static_cast<size_t>(axis)]
                     : RuntimeAdaptiveResponseOverride{};
@@ -2626,16 +2878,29 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     session.hysteresis[static_cast<size_t>(axis)] = {};
                 }
                 if (activeOverlay.active) {
-                    prediction = applyAdaptiveResponseRuntimeOverride(prediction, activeOverlay);
+                    effectiveAdaptiveConfiguration = applyAdaptiveResponseRuntimeOverride(
+                        effectiveAdaptiveConfiguration, activeOverlay);
                 }
-                prediction.maximumLead = 0.50F;
+                RuntimeAdaptiveResponseConfig physicalPredictionConfiguration = effectiveAdaptiveConfiguration;
+                physicalPredictionConfiguration.maximumLead = 0.50F;
                 const AdaptiveResponseTelemetry adaptive = session.adaptive[static_cast<size_t>(axis)].process(
-                    resolved, prediction, timestamp);
+                    resolved, physicalPredictionConfiguration, timestamp);
                 const AdaptiveMappedAxisOutput mapped = applyCurveAwareAdaptiveResponse(resolved,
-                    adaptive.predicted, mapping.adaptiveResponse.enabled,
-                    mapping.adaptiveResponse.maximumLead, mapping,
+                    adaptive.predicted, effectiveAdaptiveConfiguration.enabled,
+                    effectiveAdaptiveConfiguration.maximumLead, mapping,
                     session.hysteresis[static_cast<size_t>(axis)]);
                 session.transformed[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
+                // Keep the exact physical source available to Selected Device.
+                // Input zero remains the legacy aggregate; every other member
+                // owns an equivalent bounded latest snapshot.
+                AtomicAdaptiveTelemetry &telemetry = index == 0
+                    ? static_cast<AtomicAdaptiveTelemetry &>(m_runtime)
+                    : m_runtime.deviceRigMemberAdaptive[static_cast<size_t>(index)];
+                publishAdaptiveAxisTelemetry(telemetry, axis, snapshot.axes[static_cast<size_t>(axis)],
+                                             resolved, mapped, adaptive, effectiveAdaptiveConfiguration,
+                                             session.adaptive[static_cast<size_t>(axis)].reversalCount(),
+                                             session.adaptive[static_cast<size_t>(axis)].safetyClampCount(),
+                                             activeOverlay);
                 // Existing overview/diagnostics atomics retain a useful
                 // primary-session view; device-specific details use the rig
                 // status model and never imply that axis indexes are global.
@@ -2649,8 +2914,74 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     m_runtime.transformed[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
                     m_runtime.adaptiveEstimated[static_cast<size_t>(axis)] = adaptive.estimated;
                     m_runtime.adaptivePredicted[static_cast<size_t>(axis)] = adaptive.predicted;
+                    m_runtime.adaptiveBaselineMapped[static_cast<size_t>(axis)] = mapped.baselineOutput;
+                    m_runtime.adaptivePredictedMapped[static_cast<size_t>(axis)] = mapped.predictedMappedOutput;
                     m_runtime.adaptiveOutput[static_cast<size_t>(axis)] = mapped.adaptiveOutput;
-                    m_runtime.adaptiveRuntimeEnabled[static_cast<size_t>(axis)] = mapping.adaptiveResponse.enabled;
+                    m_runtime.adaptiveMappedLead[static_cast<size_t>(axis)] = mapped.mappedLead;
+                    m_runtime.adaptiveAppliedLead[static_cast<size_t>(axis)] = mapped.appliedLead;
+                    m_runtime.adaptiveLocalCurveGain[static_cast<size_t>(axis)] = mapped.localCurveGain;
+                    m_runtime.adaptiveVelocity[static_cast<size_t>(axis)] = adaptive.velocity;
+                    m_runtime.adaptiveAcceleration[static_cast<size_t>(axis)] = adaptive.acceleration;
+                    m_runtime.adaptiveHorizonSeconds[static_cast<size_t>(axis)] = adaptive.activeHorizonSeconds;
+                    m_runtime.adaptiveRequestedLead[static_cast<size_t>(axis)] = adaptive.requestedLead;
+                    m_runtime.adaptiveCappedLead[static_cast<size_t>(axis)] = adaptive.cappedLead;
+                    m_runtime.adaptiveEndpointTaper[static_cast<size_t>(axis)] = adaptive.endpointTaper;
+                    m_runtime.adaptiveLead[static_cast<size_t>(axis)] = adaptive.lead;
+                    m_runtime.adaptiveConfidence[static_cast<size_t>(axis)] = adaptive.confidence;
+                    m_runtime.adaptiveMotionIntensity[static_cast<size_t>(axis)] = adaptive.motionIntensity;
+                    m_runtime.adaptiveVelocityAuthority[static_cast<size_t>(axis)] = adaptive.velocityAuthority;
+                    m_runtime.adaptiveDeliberateMotionEvidence[static_cast<size_t>(axis)] = adaptive.deliberateMotionEvidence;
+                    m_runtime.adaptiveNormalMotionAuthority[static_cast<size_t>(axis)] = adaptive.normalMotionAuthority;
+                    m_runtime.adaptiveRapidMotionAuthority[static_cast<size_t>(axis)] = adaptive.rapidMotionAuthority;
+                    m_runtime.adaptiveRapidMotionBlend[static_cast<size_t>(axis)] = adaptive.rapidMotionBlend;
+                    m_runtime.adaptiveAccelerationIntent[static_cast<size_t>(axis)] = adaptive.accelerationIntent;
+                    m_runtime.adaptiveOnsetAuthority[static_cast<size_t>(axis)] = adaptive.onsetAuthority;
+                    m_runtime.adaptiveSustainedEvidence[static_cast<size_t>(axis)] = adaptive.sustainedEvidence;
+                    m_runtime.adaptiveSustainedAuthority[static_cast<size_t>(axis)] = adaptive.sustainedAuthority;
+                    m_runtime.adaptiveMotionUrgency[static_cast<size_t>(axis)] = adaptive.motionUrgency;
+                    m_runtime.adaptiveHorizonExtensionEligibility[static_cast<size_t>(axis)] = adaptive.horizonExtensionEligibility;
+                    m_runtime.adaptiveNormalMaximumHorizonSeconds[static_cast<size_t>(axis)] = adaptive.normalMaximumHorizonSeconds;
+                    m_runtime.adaptiveAllowedMaximumHorizonSeconds[static_cast<size_t>(axis)] = adaptive.allowedMaximumHorizonSeconds;
+                    m_runtime.adaptiveTurningPointConfidence[static_cast<size_t>(axis)] = adaptive.turningPointConfidence;
+                    m_runtime.adaptiveEstimatedTimeToTurnSeconds[static_cast<size_t>(axis)] = adaptive.estimatedTimeToTurnSeconds;
+                    m_runtime.adaptiveEstimatedRemainingTravel[static_cast<size_t>(axis)] = adaptive.estimatedRemainingTravel;
+                    m_runtime.adaptiveTurningPointHorizonLimitSeconds[static_cast<size_t>(axis)] = adaptive.turningPointHorizonLimitSeconds;
+                    m_runtime.adaptiveTurningPointLeadLimit[static_cast<size_t>(axis)] = adaptive.turningPointLeadLimit;
+                    m_runtime.adaptiveReacquisitionAuthority[static_cast<size_t>(axis)] = adaptive.reacquisitionAuthority;
+                    m_runtime.adaptiveMotionState[static_cast<size_t>(axis)] = static_cast<int>(adaptive.state);
+                    m_runtime.adaptiveReversing[static_cast<size_t>(axis)] = adaptive.reversal;
+                    m_runtime.adaptiveSafetyLimited[static_cast<size_t>(axis)] = adaptive.safetyLimited || mapped.leadLimited;
+                    m_runtime.adaptiveDeadzoneAuthorityBlocked[static_cast<size_t>(axis)] = mapped.deadzoneAuthorityBlocked;
+                    m_runtime.adaptiveLeadLimited[static_cast<size_t>(axis)] = mapped.leadLimited;
+                    m_runtime.adaptiveHighLocalCurveGain[static_cast<size_t>(axis)] = mapped.highLocalCurveGain;
+                    m_runtime.adaptiveReversalCount[static_cast<size_t>(axis)] = session.adaptive[static_cast<size_t>(axis)].reversalCount();
+                    m_runtime.adaptiveSafetyClampCount[static_cast<size_t>(axis)] = session.adaptive[static_cast<size_t>(axis)].safetyClampCount();
+                    m_runtime.adaptiveRuntimeEnabled[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.enabled;
+                    m_runtime.adaptiveRuntimeModel[static_cast<size_t>(axis)] = static_cast<int>(effectiveAdaptiveConfiguration.model);
+                    m_runtime.adaptiveRuntimeMaximumHorizonSeconds[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.maximumHorizonSeconds;
+                    m_runtime.adaptiveRuntimeMaximumLead[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.maximumLead;
+                    m_runtime.adaptiveRuntimeVelocityResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.velocityResponse;
+                    m_runtime.adaptiveRuntimeAccelerationResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.accelerationResponse;
+                    m_runtime.adaptiveRuntimeMotionSensitivity[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.motionSensitivity;
+                    m_runtime.adaptiveRuntimeNoiseRejection[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.noiseRejection;
+                    m_runtime.adaptiveRuntimeReversalDetection[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.reversalDetection;
+                    m_runtime.adaptiveRuntimeReversalResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.reversalResponse;
+                    m_runtime.adaptiveRuntimeDecelerationResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.decelerationResponse;
+                    m_runtime.adaptiveRuntimeSettlingResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.settlingResponse;
+                    m_runtime.adaptiveRuntimeEndpointTaper[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.endpointTaper;
+                    m_runtime.adaptiveRuntimeOnsetAssist[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.onsetAssist;
+                    m_runtime.adaptiveRuntimeOnsetCap[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.onsetCap;
+                    m_runtime.adaptiveRuntimeSustainedAssist[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.sustainedAssist;
+                    m_runtime.adaptiveRuntimeSustainedCap[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.sustainedCap;
+                    m_runtime.adaptiveRuntimeHorizonExtension[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.horizonExtension;
+                    m_runtime.adaptiveRuntimeHorizonExtensionCapSeconds[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.horizonExtensionCapSeconds;
+                    m_runtime.adaptiveRuntimeTurningPointProtection[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.turningPointProtection;
+                    m_runtime.adaptiveRuntimeTurningPointMargin[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.turningPointMargin;
+                    m_runtime.adaptiveRuntimeNormalMovementResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.normalMovementResponse;
+                    m_runtime.adaptiveRuntimeRapidMovementResponse[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.rapidMovementResponse;
+                    m_runtime.adaptiveRuntimeEngagementSensitivity[static_cast<size_t>(axis)] = effectiveAdaptiveConfiguration.engagementSensitivity;
+                    m_runtime.adaptiveAutomationOverlayActive[static_cast<size_t>(axis)] = activeOverlay.active;
+                    m_runtime.adaptiveAutomationOverlayProperties[static_cast<size_t>(axis)] = activeOverlay.properties;
                 }
             }
             session.automation.applyAxisActions(automationInput, session.transformed);
@@ -2690,13 +3021,16 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         bool allOutputsReady = plan.outputCount > 0;
         for (int index = 0; index < plan.outputCount; ++index) {
             OutputSession &output = outputs[static_cast<size_t>(index)];
-            if (now >= output.nextCheck) {
+            if (now >= output.nextCheck || retryOutputAvailability) {
                 QString status;
-                refreshOutput(output, &status);
+                refreshOutput(output, &status, index == 0);
                 if (index == 0) outputStatus = status;
                 output.nextCheck = now + std::chrono::seconds(1);
             }
             allOutputsReady = allOutputsReady && output.ready;
+        }
+        if (retryOutputAvailability) {
+            handledOutputAvailabilityRetry = outputAvailabilityRetry;
         }
         if (plan.outputCount > 0) {
             const OutputSession &primaryOutput = outputs.front();
@@ -2735,6 +3069,9 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 if (!output.acquired) {
                     QString status;
                     output.acquired = output.vjoy.acquire(output.configured->vjoyDeviceId, &status);
+                    if (index == 0) {
+                        setVjoyOwnershipEvidence(output.vjoy.lastOwnership(), output.vjoy.lastAcquireAttempt());
+                    }
                     if (!output.acquired) {
                         output.ready = false;
                         acquired = false;
@@ -2754,6 +3091,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     OutputSession &output = outputs[static_cast<size_t>(outputIndex)];
                     std::array<float, kVirtualAxisSlotCount> desiredAxes{};
                     desiredAxes.fill(sanitizedDisabledAxisValue(configuration.disabledAxisValue));
+                    std::array<int, kVirtualAxisSlotCount> axisContributorCounts{};
                     VirtualButtonStates desiredButtons{};
                     bool outputChanged = false;
                     bool outputWriteFailed = false;
@@ -2771,16 +3109,45 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                             input.member->mapping, routableAxes, input.transformed, output.axes,
                             configuration.disabledAxisValue);
                         for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
-                            if (output.axes[static_cast<size_t>(axis)]) {
-                                desiredAxes[static_cast<size_t>(axis)] = localAxisPlan.values[static_cast<size_t>(axis)];
-                                if (outputIndex == 0) {
-                                    const int source = localAxisPlan.sourceIndexes[static_cast<size_t>(axis)];
-                                    if (source >= 0 && source < kPhysicalAxisCount) {
-                                        m_runtime.virtualValues[static_cast<size_t>(source)].store(
-                                            localAxisPlan.values[static_cast<size_t>(axis)],
-                                            std::memory_order_relaxed);
+                            if (!output.axes[static_cast<size_t>(axis)]) continue;
+                            const int source = localAxisPlan.sourceIndexes[static_cast<size_t>(axis)];
+                            if (source < 0 || source >= kPhysicalAxisCount) continue;
+                            const float value = localAxisPlan.values[static_cast<size_t>(axis)];
+                            int &contributors = axisContributorCounts[static_cast<size_t>(axis)];
+                            if (contributors == 0) {
+                                desiredAxes[static_cast<size_t>(axis)] = value;
+                            } else {
+                                // The profile-wide canonical mixer is compiled into every
+                                // participating member. This worker-side reduction is the
+                                // one bounded implementation for both Graphical Editor and
+                                // Flight Deck routes; no QML path supplies its own math.
+                                switch (input.member->mapping.signalFlowAxisMixers[static_cast<size_t>(axis)]) {
+                                case SignalFlowMixerMode::Average:
+                                    desiredAxes[static_cast<size_t>(axis)] =
+                                        (desiredAxes[static_cast<size_t>(axis)] * static_cast<float>(contributors) + value)
+                                        / static_cast<float>(contributors + 1);
+                                    break;
+                                case SignalFlowMixerMode::SumClamped:
+                                    desiredAxes[static_cast<size_t>(axis)] = std::clamp(
+                                        desiredAxes[static_cast<size_t>(axis)] + value, -1.0F, 1.0F);
+                                    break;
+                                case SignalFlowMixerMode::HighestMagnitude:
+                                    if (std::abs(value) > std::abs(desiredAxes[static_cast<size_t>(axis)])) {
+                                        desiredAxes[static_cast<size_t>(axis)] = value;
                                     }
+                                    break;
+                                case SignalFlowMixerMode::Disabled:
+                                    // Reconciliation prevents this malformed state from
+                                    // reaching runtime. Keep the first route authoritative
+                                    // rather than letting member iteration become a hidden
+                                    // last-writer-wins merge.
+                                    continue;
                                 }
+                            }
+                            ++contributors;
+                            if (outputIndex == 0) {
+                                m_runtime.virtualValues[static_cast<size_t>(source)].store(
+                                    desiredAxes[static_cast<size_t>(axis)], std::memory_order_relaxed);
                             }
                         }
                         const RuntimeButtonTargets buttonTargets = buildRuntimeButtonTargets(
@@ -2938,7 +3305,10 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         quiesceOutput(outputs[static_cast<size_t>(index)]);
         releaseOutput(outputs[static_cast<size_t>(index)]);
     }
-    for (int index = 0; index < plan.memberCount; ++index) releaseInput(inputs[static_cast<size_t>(index)]);
+    for (int index = 0; index < plan.memberCount; ++index) {
+        releaseInput(inputs[static_cast<size_t>(index)]);
+        clearMemberPhysicalSnapshot(index);
+    }
     m_runtime.mappingActive = false;
     m_runtime.outputNeutralized = true;
     m_runtime.vjoyReady = false;

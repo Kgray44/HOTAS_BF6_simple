@@ -41,7 +41,7 @@ Item {
     readonly property string displayFont: topGun && themeTokens ? themeTokens.displayFont : "Segoe UI Variable"
     readonly property string telemetryFont: themeTokens ? themeTokens.telemetryFont : "Consolas"
     readonly property var rules: backendObject ? backendObject.automationRules : []
-    readonly property var axisChoices: ["Roll", "Pitch", "Throttle", "Rotation X", "Rotation Y", "Yaw", "Additional axis 1", "Additional axis 2"]
+    readonly property var axisChoices: ["Axis 1", "Axis 2", "Axis 3", "Axis 4", "Axis 5", "Axis 6", "Axis 7", "Axis 8"]
     readonly property var requirementKinds: ["Choose what happens", "Button", "Axis", "POV / Hat", "Profile"]
     readonly property var buttonStates: ["is held", "is not held", "is pressed", "is released", "is pressed multiple times", "is held for a while"]
     readonly property var buttonStateTypes: [5, 6, 11, 12, 13, 14]

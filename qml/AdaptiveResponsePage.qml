@@ -8,7 +8,7 @@ Item {
     required property var backendObject
     required property var themeTokens
     property bool topGun: false
-    property string editScope: "profile"
+    property string editScope: "device"
     property string targetId: ""
     property string renamePresetId: ""
     property string scenario: "Human-Like Rapid Reversal"
@@ -80,13 +80,16 @@ Item {
     }
     function inheritedHere(key) { return (Number(scopeInfo().properties || 0) & propertyMask(key)) === 0 }
     function targetChoices() {
+        if (editScope === "device") return (backendObject.selectedDevices || []).filter(function(device) { return !!device.selected }).map(function(device) { return { id: device.id, name: device.name || "Selected controller" } })
         if (editScope === "global") return [{ id: "", name: "Application defaults" }]
         if (editScope === "category") return backendObject.profileCategories || []
         if (editScope === "preset") return (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn })
         return (backendObject.profiles || []).map(function(profile) { return { id: profile.id, name: profile.displayName || profile.name } })
     }
     function selectedTargetId() {
+        if (editScope === "device") { const choices = targetChoices(); return choices.length > 0 ? choices[0].id : "" }
         if (editScope === "global") return ""
+        if (editScope === "profile") return backendObject.selectedProfileId || ""
         if (targetId.length > 0) return targetId
         if (editScope === "category") return liveState.categoryId || ""
         if (editScope === "preset") return targetChoices().length > 0 ? targetChoices()[0].id : ""
@@ -283,6 +286,12 @@ Item {
     Connections {
         target: backendObject
         function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
+        function onSelectedProfileChanged() {
+            if (root.editScope === "profile" || root.editScope === "device") {
+                root.targetId = ""
+                root.setPreview()
+            }
+        }
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
     Timer { interval: 33; running: root.responseLabSource === "live" && root.responseLabNearViewport && !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory(false) }
@@ -797,7 +806,7 @@ Item {
                         Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont }
                     }
                     RowLayout {
-                        visible: liveSource && backendObject.physicalConnected
+                        visible: liveSource && telemetry.sourceConnected !== false
                         width: parent.width
                         Caption { text: root.liveReplaying ? "REPLAYING CAPTURE" : root.liveRecording ? "RECORDING" : root.historyPaused ? "PAUSED INSPECTION" : "LIVE CONTROLLER" }
                         Text { text: "Latest physical-input snapshot; observable while mapping is off, suspended, or vJoy is unavailable."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -805,7 +814,7 @@ Item {
                             delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
                         }
                     }
-                    Text { visible: liveSource && !backendObject.physicalConnected; text: "NO PHYSICAL CONTROLLER AVAILABLE — connect or select a controller to populate this same Response Lab. No mapped output, game, or vJoy device is required for observation."; color: root.themeTokens.orange; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { visible: liveSource && telemetry.sourceConnected === false; text: "NO PHYSICAL CONTROLLER AVAILABLE — connect or select a controller to populate this same Response Lab. No mapped output, game, or vJoy device is required for observation."; color: root.themeTokens.orange; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
                     RowLayout { visible: !liveSource && (root.simulatorRecordingSamples.length > 0 || root.simulatorReplaying); width: parent.width; spacing: 7
                         Caption { text: "SLOW-MOTION PLAYBACK" }
                         Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
@@ -981,11 +990,11 @@ Item {
                 RowLayout { width: parent.width; spacing: 14
                     ColumnLayout { Layout.preferredWidth: 170
                         Caption { text: "EDIT LEVEL" }
-                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2; onChoiceActivated: function(index, value) { root.editScope = String(value); root.targetId = ""; root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Selected Device Channel", value:"device"}, {name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "device" ? 0 : root.editScope === "global" ? 1 : root.editScope === "category" ? 2 : root.editScope === "preset" ? 4 : 3; onChoiceActivated: function(index, value) { root.editScope = String(value); root.targetId = ""; root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 220
                         Caption { text: "TARGET" }
-                        ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onChoiceActivated: function(index, value) { root.targetId = String(value); root.setPreview() } }
+                        ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onChoiceActivated: function(index, value) { if (root.editScope === "profile") backendObject.selectProfileForEditing(String(value)); else root.targetId = String(value); root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 240
                         Caption { text: "AXIS" }
@@ -1010,7 +1019,7 @@ Item {
                     }
                     Flow { width: parent.width; spacing: 8
                         Repeater { model: backendObject.adaptiveResponsePresets
-                            delegate: ActionButton { required property var modelData; objectName: "adaptivePresetButton_" + modelData.id; text: modelData.name.toUpperCase(); accent: (scopeInfo().presetId === modelData.id); ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: root.applySimplePreset(modelData.id) }
+                            delegate: ActionButton { required property var modelData; objectName: "adaptivePresetButton_" + modelData.id; text: modelData.name.toUpperCase(); accent: effective().enabled ? (scopeInfo().presetId === modelData.id) : (modelData.id === "off"); ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: root.applySimplePreset(modelData.id) }
                         }
                     }
                     Row { spacing: 28

@@ -11,7 +11,10 @@ Flickable {
 
     required property var backendObject
     property string profileContext: ""
-    property string editScope: "profile"
+    // Adaptive Response is owned by the selected Profile/device-channel/axis
+    // tuple. A profile layer remains available as an explicit shared policy,
+    // but the editor opens on the exact physical channel the user selected.
+    property string editScope: "device"
     property string targetId: ""
     property string scenario: "Human-Like Rapid Reversal"
     property int contextEpoch: 0
@@ -39,7 +42,8 @@ Flickable {
     property bool liveReplaying: false
     property var historySamples: []
     property int historyRevision: 0
-    property int historyLastSequence: 0
+    property double historyLastSequence: 0
+    property double historyNewestElapsedMs: 0
     property int historyInspectIndex: -1
     property bool simulatorPaused: true
     property bool simulatorRecording: false
@@ -158,8 +162,7 @@ Flickable {
     }
 
     function liveInputAvailable() {
-        return !!backendObject.physicalConnected
-            && Number(backendObject.lastPhysicalUpdateAgeMs) >= 0
+        return telemetry.sourceAvailable !== false && telemetry.sourceConnected !== false
     }
 
     function propertyMask(key) {
@@ -197,6 +200,13 @@ Flickable {
     }
 
     function targetChoices() {
+        if (editScope === "device") {
+            return (backendObject.selectedDevices || []).filter(function (device) {
+                return !!device.selected;
+            }).map(function (device) {
+                return { id: device.id, label: device.name || device.label || "Selected controller" };
+            });
+        }
         if (editScope === "global")
             return [
                 {
@@ -229,8 +239,14 @@ Flickable {
     }
 
     function selectedTargetId() {
+        if (editScope === "device") {
+            const choices = targetChoices();
+            return choices.length > 0 ? choices[0].id : "";
+        }
         if (editScope === "global")
             return "";
+        if (editScope === "profile")
+            return backendObject.selectedProfileId || "";
         if (targetId.length > 0)
             return targetId;
         if (editScope === "category")
@@ -355,6 +371,7 @@ Flickable {
             return;
         responseLabSource = source;
         historyLastSequence = 0;
+        historyNewestElapsedMs = 0;
         historySamples = [];
         historyRevision += 1;
         historyPaused = false;
@@ -375,6 +392,7 @@ Flickable {
             return;
         const update = backendObject.adaptiveResponseHistorySince(reset ? 0 : historyLastSequence, historyWindowSeconds);
         const incoming = update.samples || [];
+        const newestElapsedMs = Number(update.newestElapsedMs || 0);
         let changed = false;
         if (reset || update.reset) {
             historySamples = incoming;
@@ -382,9 +400,19 @@ Flickable {
         } else if (incoming.length > 0) {
             for (let index = 0; index < incoming.length; ++index)
                 historySamples.push(incoming[index]);
-            const maximum = Math.max(180, historyWindowSeconds * 100);
-            if (historySamples.length > maximum)
-                historySamples.splice(0, historySamples.length - maximum);
+            changed = true;
+        }
+        if (newestElapsedMs > 0)
+            historyNewestElapsedMs = newestElapsedMs;
+        const minimumElapsedMs = historyNewestElapsedMs - historyWindowSeconds * 1000;
+        while (historySamples.length > 0
+                && Number(historySamples[0].elapsedMs || 0) < minimumElapsedMs) {
+            historySamples.shift();
+            changed = true;
+        }
+        const maximum = Math.max(180, Math.ceil(historyWindowSeconds * 84) + 8);
+        if (historySamples.length > maximum) {
+            historySamples.splice(0, historySamples.length - maximum);
             changed = true;
         }
         historyLastSequence = Number(update.newestSequence || historyLastSequence);
@@ -937,14 +965,16 @@ Flickable {
     onWidthChanged: refreshViewportActivity()
     onProfileContextChanged: {
         if (profileContext.length > 0) {
-            editScope = "profile";
-            targetId = profileContext;
+            backendObject.selectProfileForEditing(profileContext);
+            editScope = "device";
+            targetId = "";
             setPreview();
         }
     }
     onStateChanged: {
         setPreview();
         historyLastSequence = 0;
+        historyNewestElapsedMs = 0;
         historySamples = [];
         historyRevision += 1;
         if (responseLabSource === "live")
@@ -952,6 +982,7 @@ Flickable {
     }
     onHistoryWindowSecondsChanged: {
         historyLastSequence = 0;
+        historyNewestElapsedMs = 0;
         historySamples = [];
         historyRevision += 1;
         if (responseLabSource === "live")
@@ -960,8 +991,9 @@ Flickable {
 
     Component.onCompleted: {
         if (profileContext.length > 0) {
-            editScope = "profile";
-            targetId = profileContext;
+            backendObject.selectProfileForEditing(profileContext);
+            editScope = "device";
+            targetId = "";
             setPreview();
         }
         refreshViewportActivity();
@@ -973,16 +1005,26 @@ Flickable {
             root.contextEpoch += 1;
             root.telemetryEpoch += 1;
         }
+        function onSelectedProfileChanged() {
+            if (root.editScope === "profile" || root.editScope === "device") {
+                root.targetId = "";
+                root.setPreview();
+            }
+        }
         function onInputTelemetryChanged() {
             root.telemetryEpoch += 1;
         }
     }
 
     Timer {
+        // The backend retains 83 Hz input history.  Refresh at display rate
+        // so a live trace scrolls smoothly without putting work on the mapper.
+        // Live data must not depend on a section-near-viewport heuristic: a
+        // visible Live Controller page always coalesces the newest snapshot.
         interval: 33
         repeat: true
         triggeredOnStart: true
-        running: root.visible && root.responseLabSource === "live" && root.responseLabNearViewport && !root.historyPaused
+        running: root.visible && root.responseLabSource === "live" && !root.historyPaused
         onTriggered: root.refreshHistory(false)
     }
     Timer {
@@ -1321,6 +1363,10 @@ Flickable {
             ? root.responseLabRevision : samples === root.historySamples ? root.historyRevision : 0
         property int sampleLimit: samples === root.responseLabSamples
             ? root.responseLabSampleCount : samples ? samples.length : 0
+        readonly property bool usesLiveTimeline: samples === root.historySamples
+            || (root.responseLabSource === "live" && samples === root.responseLabSamples)
+        readonly property real timelineNewestElapsedMs: usesLiveTimeline ? root.historyNewestElapsedMs : 0
+        readonly property real timelineWindowMs: usesLiveTimeline ? root.historyWindowSeconds * 1000 : 0
         property var series: []
         property real lowerBound: -1
         property real upperBound: 1
@@ -1363,6 +1409,16 @@ Flickable {
             const sampleCount = Math.max(0, Math.min(sampleLimit, samples ? samples.length : 0));
             if (!samples || sampleCount === 0)
                 return;
+            const hasTimeline = timelineNewestElapsedMs > 0 && timelineWindowMs > 0;
+            const timelineStartMs = timelineNewestElapsedMs - timelineWindowMs;
+            const xForSample = function(index, point) {
+                if (!hasTimeline)
+                    return horizontalPadding + index * plotWidth / Math.max(1, sampleCount - 1);
+                const elapsedMs = Number(point.elapsedMs || timelineStartMs);
+                const ratio = Math.max(0, Math.min(1,
+                    (elapsedMs - timelineStartMs) / Math.max(1, timelineWindowMs)));
+                return horizontalPadding + ratio * plotWidth;
+            };
             ctx.save();
             ctx.beginPath();
             ctx.rect(horizontalPadding, verticalPadding, plotWidth, plotHeight);
@@ -1380,7 +1436,7 @@ Flickable {
                 for (let index = 0; index < sampleCount; index += sampleStride) {
                     const point = samples[index] || ({});
                     const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(point[descriptor.field], 0)));
-                    const x = horizontalPadding + index * plotWidth / Math.max(1, sampleCount - 1);
+                    const x = xForSample(index, point);
                     const y = verticalPadding + plotHeight * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound));
                     if (index === 0)
                         ctx.moveTo(x, y);
@@ -1392,14 +1448,15 @@ Flickable {
                     const index = sampleCount - 1;
                     const point = samples[index] || ({});
                     const value = Math.max(lowerBound, Math.min(upperBound, root.numericOr(point[descriptor.field], 0)));
-                    const x = horizontalPadding + index * plotWidth / Math.max(1, sampleCount - 1);
+                    const x = xForSample(index, point);
                     const y = verticalPadding + plotHeight * (1 - (value - lowerBound) / Math.max(0.0001, upperBound - lowerBound));
                     ctx.lineTo(x, y);
                 }
                 ctx.stroke();
             }
             if (drawInspectionCursor && root.historyPaused && root.historyInspectIndex >= 0) {
-                const x = horizontalPadding + root.historyInspectIndex * plotWidth / Math.max(1, sampleCount - 1);
+                const inspected = samples[Math.min(root.historyInspectIndex, sampleCount - 1)] || ({});
+                const x = xForSample(root.historyInspectIndex, inspected);
                 ctx.strokeStyle = deck.attention;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -1918,7 +1975,7 @@ Flickable {
                         width: Math.max(180, Math.min(300, (parent.width - deck.space24) / 3))
                         spacing: 4
                         SectionLabel {
-                            textValue: root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : root.editScope === "global" ? "PROFILE SOURCE" : "PROFILE"
+                            textValue: root.editScope === "device" ? "DEVICE CHANNEL" : root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : root.editScope === "global" ? "PROFILE SOURCE" : "PROFILE"
                         }
                         DeckCombo {
                             objectName: "adaptiveTargetSelector"
@@ -1928,7 +1985,10 @@ Flickable {
                             valueRole: "id"
                             currentIndex: root.targetIndex()
                             onChoiceActivated: function (index, value) {
-                                root.targetId = String(value);
+                                if (root.editScope === "profile")
+                                    backendObject.selectProfileForEditing(String(value));
+                                else
+                                    root.targetId = String(value);
                                 root.setPreview();
                                 popup.close();
                             }
@@ -1964,6 +2024,10 @@ Flickable {
                             width: parent.width
                             model: [
                                 {
+                                    label: "Selected device channel",
+                                    value: "device"
+                                },
+                                {
                                     label: "Application defaults",
                                     value: "global"
                                 },
@@ -1982,7 +2046,7 @@ Flickable {
                             ]
                             textRole: "label"
                             valueRole: "value"
-                            currentIndex: root.editScope === "global" ? 0 : root.editScope === "category" ? 1 : root.editScope === "preset" ? 3 : 2
+                            currentIndex: root.editScope === "device" ? 0 : root.editScope === "global" ? 1 : root.editScope === "category" ? 2 : root.editScope === "preset" ? 4 : 3
                             onChoiceActivated: function (index, value) {
                                 root.editScope = String(value);
                                 root.targetId = "";
@@ -2126,7 +2190,14 @@ Flickable {
                                 }
                             }
                             checkable: true
-                            checked: String(root.scopeInfo().presetId || "") === String(modelData.id)
+                            // The effective enabled state is authoritative for
+                            // this chooser. A saved Custom/Extreme preset may
+                            // retain its tuning while disabled, but OFF must be
+                            // the only selected card until the user enables a
+                            // response again at the selected layer.
+                            checked: root.effective().enabled
+                                ? String(root.scopeInfo().presetId || "") === String(modelData.id)
+                                : String(modelData.id) === "off"
                             background: Rectangle {
                                 radius: deck.radiusControl
                                 color: presetButton.checked ? deck.accent : presetButton.hovered ? deck.selected : deck.primarySurface
@@ -2994,7 +3065,9 @@ Flickable {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: !root.liveInputAvailable() ? "Awaiting controller input. Configured limits above remain unchanged."
+                            text: root.telemetry.sourceAvailable === false
+                                ? "Selected Device is not in the active mapper Rig. Select an active Rig member to inspect live telemetry."
+                                : !root.liveInputAvailable() ? "Awaiting controller input. Configured limits above remain unchanged."
                                 : root.effective().enabled ? "Live values are observational and do not change the predictor." : "Adaptive Response is off. Physical input may remain available, but prediction is not active."
                             color: deck.textSecondary
                             font.pixelSize: 10

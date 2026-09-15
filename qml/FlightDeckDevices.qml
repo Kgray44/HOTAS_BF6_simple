@@ -25,7 +25,15 @@ Flickable {
     // create/edit/activate operation below is routed through AppBackend.
     property string selectedRigId: ""
     property var actionFeedback: ({})
+    property bool outputCreationForNewRig: false
+    // The application shell owns the actual card/queue. Keep this only for
+    // the exact-record async verification transition below.
+    property var notificationCenter: null
+    property var forgetConsequences: ({})
     signal navigateToPage(int page)
+    // The shell routes this presentation request to the one canonical
+    // Profile Library/create dialog. It carries no runtime activation.
+    signal requestProfileWorkflow(string rigId, string mode)
 
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
@@ -53,6 +61,7 @@ Flickable {
     // fixed atomics. It lets the owner distinguish a configured descriptor
     // from a mapper that has actually published to the active Rig output.
     readonly property var outputRuntime: backend.outputRuntimeTelemetry || ({})
+    readonly property var outputOwnership: outputRuntime.ownership || ({})
     readonly property var axisItems: backend.axes
     readonly property bool checking: backend.setupRepairSessionActive
     readonly property bool vjoyReady: state.vjoyReady === undefined ? backend.vjoyReady : state.vjoyReady
@@ -122,7 +131,7 @@ Flickable {
         const label = String((check || {}).state || "").toUpperCase();
         if (severity === "ready" || label === "READY")
             return "healthy";
-        if (severity === "error" || label.indexOf("ERROR") >= 0 || label.indexOf("REQUIRED") >= 0 || label.indexOf("ACTION NEEDED") >= 0)
+        if (severity === "error" || label.indexOf("ERROR") >= 0 || label.indexOf("REQUIRED") >= 0 || label.indexOf("ACTION NEEDED") >= 0 || label.indexOf("ACTION REQUIRED") >= 0)
             return "fault";
         if (severity === "warning" || severity === "waiting" || label.indexOf("ATTENTION") >= 0 || label.indexOf("WAITING") >= 0)
             return "attention";
@@ -150,6 +159,10 @@ Flickable {
     }
 
     function controllerState(controller) {
+        if (String(controller.verificationState || "") === "VERIFYING")
+            return "Verifying exact controller";
+        if (String(controller.verificationState || "") === "FAILED")
+            return "Verification failed";
         if (!controller.connected)
             return "Disconnected";
         if (controller.ambiguous)
@@ -158,6 +171,8 @@ Flickable {
             return "Setup required";
         if (controller.active)
             return "Connected · active";
+        if (!controller.inDeviceRig)
+            return "Verified · not in a Device Rig";
         if (controller.selected)
             return "Connected · selected";
         return "Connected · verified";
@@ -171,8 +186,9 @@ Flickable {
 
     function controllerActionLabel(controller) {
         if (!controller.connected) return "RESCAN";
-        if (controller.active) return "ACTIVE";
-        return controller.verified ? "USE CONTROLLER" : "VERIFY CONTROLLER";
+        if (controller.ambiguous) return "IDENTIFY CONTROLLER";
+        if (controller.verified && controller.selected) return "SELECTED";
+        return controller.verified ? "SELECT DEVICE" : "VERIFY CONTROLLER";
     }
 
     function rigFor(id) {
@@ -184,6 +200,10 @@ Flickable {
     }
 
     function rigTone(rig) {
+        const setup = String((rig || {}).setupStatus || "").toUpperCase();
+        if (setup === "NOT CHECKED" || setup === "CHECKING") return "informational";
+        if (setup === "WAITING FOR USER" || setup === "ACTION NEEDED") return "attention";
+        if (setup === "UNKNOWN / INSPECTION FAILED") return "fault";
         const health = String((rig || {}).health || "offline");
         if (health === "ready") return "healthy";
         if (health === "partial" || health === "needs-attention") return "attention";
@@ -193,20 +213,26 @@ Flickable {
 
     function rigState(rig) {
         if (!rig) return "Offline";
+        if (rig.configured && rig.unmapped) return "ACTIVE · UNMAPPED";
         if (rig.configured) return "ACTIVE";
         return "VIEWING";
     }
 
-    function memberState(member) {
+    function memberState(member, rig) {
         if (!member || !member.enabled) return "Excluded";
+        if (String(member.verificationState || "") === "VERIFYING") return "Verifying exact controller";
+        if (String(member.verificationState || "") === "FAILED") return "Verification failed";
         if (member.ambiguous) return "Identity needs selection";
-        if (member.needsVerification || !member.verified) return "Setup needed";
-        return member.connected ? "Connected" : "Offline";
+        if (!member.connected) return member.required ? "Required · offline" : "Optional · offline";
+        if (member.needsVerification || !member.verified)
+            return member.required ? "Verification required" : "Optional · verification available";
+        return "Connected · verified";
     }
 
-    function memberTone(member) {
+    function memberTone(member, rig) {
         if (!member || !member.enabled) return "informational";
-        if (member.ambiguous || member.needsVerification || !member.verified) return "attention";
+        if (member.ambiguous || (member.needsVerification || !member.verified) && member.required) return "attention";
+        if (!member.required && (member.needsVerification || !member.verified || !member.connected)) return "informational";
         if (member.connected) return "healthy";
         return member.required ? "fault" : "attention";
     }
@@ -217,6 +243,36 @@ Flickable {
                 return String(outputLayouts[index].name || "Virtual Output");
         }
         return "Virtual Output";
+    }
+
+    function configuredBusyVirtualOutput() {
+        const groups = setupTruth.groups || [];
+        for (let groupIndex = 0; groupIndex < groups.length; ++groupIndex) {
+            const group = groups[groupIndex] || ({});
+            if (String(group.id || "") !== "vjoy") continue;
+            const outputs = (group.evidence || {}).outputs || [];
+            for (let outputIndex = 0; outputIndex < outputs.length; ++outputIndex) {
+                const candidate = outputs[outputIndex] || ({});
+                if (candidate.busy && !candidate.ownedByHotasBf6) return candidate;
+            }
+        }
+        return ({});
+    }
+
+    readonly property var configuredBusyOutput: configuredBusyVirtualOutput()
+    readonly property bool virtualOutputExternallyBusy: !!configuredBusyOutput.busy
+    readonly property bool virtualOutputOwnedByHotas: String(outputOwnership.ownershipState || "") === "OWNED BY HOTAS BF6"
+    readonly property bool virtualOutputStaleOwnership: String(outputOwnership.ownershipState || "") === "STALE OWNERSHIP / DRIVER STATE"
+
+    function configuredBusyRigId() {
+        const target = String(setupTruth.setupTargetRigId || backend.editingDeviceRigId
+            || backend.activeDeviceRigId || "");
+        return rigFor(target) ? target : "";
+    }
+
+    function openCreateVirtualOutput(rigId) {
+        createVirtualOutputDialog.openFor(String(rigId || configuredBusyRigId()
+            || selectedRigId || backend.editingDeviceRigId || backend.activeDeviceRigId || ""));
     }
 
     function controllerCandidateId(controller) {
@@ -282,6 +338,22 @@ Flickable {
         return names;
     }
 
+    function rigDefaultProfileChoices(rig) {
+        const choices = [
+            { id: "", explicitlyNone: false, name: "Automatic" },
+            { id: "", explicitlyNone: true, name: "None · keep Rig active without mapping" }
+        ];
+        const rigId = String((rig || {}).id || "");
+        const profiles = backend.profiles || [];
+        for (let index = 0; index < profiles.length; ++index) {
+            const profile = profiles[index] || ({});
+            if (String(profile.deviceRigId || "") === rigId && profile.enabled)
+                choices.push({ id: String(profile.id || ""), explicitlyNone: false,
+                    name: String(profile.categoryName || "") + " / " + String(profile.name || "Profile") });
+        }
+        return choices;
+    }
+
     function selectedRig() { return rigFor(selectedRigId); }
 
     function normalizeRigSelection() {
@@ -291,18 +363,17 @@ Flickable {
     }
 
     function showActionFeedback(result, fallbackTitle, fallbackMessage) {
-        actionFeedbackDismissTimer.stop();
         actionFeedback = result && result.title
             ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage });
-        if (!actionFeedback.inProgress && !actionFeedback.persistent)
-            actionFeedbackDismissTimer.restart();
+        if (notificationCenter && !actionFeedback.persistent)
+            notificationCenter.enqueue(actionFeedback, fallbackTitle, fallbackMessage, 5000);
         return actionFeedback;
     }
 
     function showTransientActionFeedback(result, fallbackTitle, fallbackMessage, durationMs) {
         const feedback = showActionFeedback(result, fallbackTitle, fallbackMessage);
-        actionFeedbackDismissTimer.interval = durationMs > 0 ? durationMs : 5000;
-        actionFeedbackDismissTimer.restart();
+        if (notificationCenter && !feedback.persistent)
+            notificationCenter.enqueue(feedback, fallbackTitle, fallbackMessage, durationMs > 0 ? durationMs : 5000);
         return feedback;
     }
 
@@ -318,6 +389,53 @@ Flickable {
         return showActionFeedback(backend.activateDeviceRigResult(String(rig.id)),
                                   "Device Rig was not activated",
                                   "No activation decision was returned.");
+    }
+
+    function openUnmappedRigProfileWorkflow(rig, mode) {
+        if (!rig || !rig.id) return false;
+        requestProfileWorkflow(String(rig.id), String(mode || "choose"));
+        return true;
+    }
+
+    function verifyController(recordId) {
+        return showActionFeedback(backend.verifyController(String(recordId || "")),
+            "Controller verification was not started",
+            "Select a connected saved controller and try again.");
+    }
+
+    function requestForgetController(recordId) {
+        const consequences = backend.controllerForgetConsequences(String(recordId || ""));
+        if (!consequences.exists) {
+            return showTransientActionFeedback({ success: false, title: "Controller is no longer saved",
+                message: "Refresh Devices before trying this action again." }, "", "", 5000);
+        }
+        forgetConsequences = consequences;
+        forgetControllerConfirmation.open();
+        return consequences;
+    }
+
+    function settleControllerVerificationFeedback() {
+        if (!actionFeedback.inProgress
+                || String(actionFeedback.affectedObjectType || "") !== "physicalDevice") return;
+        const targetId = String(actionFeedback.affectedObjectId || "");
+        if (!targetId) return;
+        const controller = controllerForCandidate(targetId);
+        if (!controller || String(controller.verificationState || "") === "VERIFYING") return;
+        const verified = Boolean(controller.verified)
+            || String(controller.verificationState || "") === "VERIFIED";
+        const waiting = String(controller.verificationState || "") === "WAITING FOR USER";
+        showTransientActionFeedback({ success: verified,
+            title: verified ? "Controller verified" : waiting ? "Controller verification needs input"
+                : "Controller verification failed",
+            message: String(controller.verificationDetail || (verified
+                ? "The exact controller identity was saved."
+                : "Review the controller card for the exact next step.")) }, "", "", 5000);
+    }
+
+    function rescanController() {
+        backend.refreshControllers();
+        return showTransientActionFeedback({ success: true, title: "Controller rescan requested",
+            message: "HOTAS BF6 is refreshing the physical controller inventory." }, "", "", 3500);
     }
 
     function openRigDetails(rigId) {
@@ -340,11 +458,10 @@ Flickable {
         });
     }
 
-    Timer {
-        id: actionFeedbackDismissTimer
-        interval: 5000
-        repeat: false
-        onTriggered: root.actionFeedback = ({})
+    Connections {
+        target: backend
+        function onControllersChanged() { Qt.callLater(root.settleControllerVerificationFeedback); }
+        function onDeviceRigsChanged() { Qt.callLater(root.settleControllerVerificationFeedback); }
     }
 
     component RigButton: Button {
@@ -630,27 +747,6 @@ Flickable {
             }
         }
 
-        Rectangle {
-            id: deviceActionFeedback
-            objectName: "flightDeckDeviceActionFeedback"
-            visible: Object.keys(root.actionFeedback).length > 0
-            Layout.fillWidth: true
-            implicitHeight: visible ? actionFeedbackContent.implicitHeight + deck.space20 : 0
-            radius: deck.radiusControl
-            color: root.actionFeedback.success
-                ? Qt.rgba(deck.healthy.r, deck.healthy.g, deck.healthy.b, 0.12)
-                : Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12)
-            border.color: root.actionFeedback.success ? deck.healthy : deck.attention
-            ColumnLayout {
-                id: actionFeedbackContent
-                anchors.fill: parent
-                anchors.margins: deck.space10
-                spacing: deck.space4
-                Text { text: String(root.actionFeedback.title || ""); color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { text: String(root.actionFeedback.message || ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            }
-        }
-
         Item { id: controllersSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
         Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
         Text { text: "Each connected controller remains visible here. Selecting or verifying one uses the existing controller workflow."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -702,7 +798,8 @@ Flickable {
                     contentPadding: deck.cardPadding
                     Layout.fillWidth: true
                     implicitHeight: controllerContent.implicitHeight + contentPadding * 2
-                    border.color: controller.active ? deck.accent : deck.border
+                    border.color: controller.selected ? deck.accent
+                        : controller.active ? deck.healthy : deck.border
                     ColumnLayout {
                         id: controllerContent
                         anchors.fill: parent
@@ -737,21 +834,58 @@ Flickable {
                             Text { text: controllerCard.controller.verified ? "✓ Verified" : "! Not yet verified"; color: controllerCard.controller.verified ? deck.healthy : deck.attention; font.pixelSize: 10; font.bold: true }
                         }
                         Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text {
+                            visible: controllerCard.controller.verified && !controllerCard.controller.inDeviceRig
+                            text: "NOT IN A DEVICE RIG · Add this verified controller to a Device Rig before selecting it for editing."
+                            color: deck.attention
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            visible: controllerCard.controller.verified && controllerCard.controller.inDeviceRig
+                            text: "Device Rig · " + String(controllerCard.controller.rigNames || "")
+                            color: deck.textSecondary
+                            font.pixelSize: 9
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                        Text { visible: controllerCard.controller.selected; text: "Selected for editing."; color: deck.accent; font.pixelSize: 10; Layout.fillWidth: true }
                         Text { visible: controllerCard.controller.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true }
                         Text { visible: !controllerCard.controller.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: String(controllerCard.controller.verificationDetail || "").length > 0; text: String(controllerCard.controller.verificationDetail || ""); color: deck.textSecondary; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
                             Item { Layout.fillWidth: true }
                             Button {
                                 objectName: "flightDeckControllerAction_" + controllerCard.controller.directInputId
                                 text: controllerCard.controllerActionLabel
-                                enabled: !controllerCard.controller.active
+                                enabled: !(controllerCard.controller.connected
+                                    && controllerCard.controller.verified
+                                    && controllerCard.controller.selected)
                                 focusPolicy: Qt.StrongFocus
                                 implicitHeight: deck.compactControlHeight
                                 onClicked: {
-                                    if (!controllerCard.controller.connected) backend.refreshControllers()
-                                    else if (controllerCard.controller.verified && controllerCard.controller.id) backend.setActiveController(controllerCard.controller.id)
-                                    else backend.selectNewController(controllerCard.controller.directInputId)
+                                    if (!controllerCard.controller.connected) root.rescanController()
+                                    else if (controllerCard.controller.verified && controllerCard.controller.id) {
+                                        if (!controllerCard.controller.inDeviceRig) {
+                                            root.showActionFeedback({ success: false,
+                                                title: "Add this controller to a Device Rig",
+                                                message: String(controllerCard.controller.name || "This controller")
+                                                    + " is verified but is not assigned to a Device Rig. Add it to a Device Rig before selecting it for editing." },
+                                                "Add this controller to a Device Rig",
+                                                "Add the verified controller to a Device Rig before selecting it for editing.")
+                                            return
+                                        }
+                                        const selected = backend.selectControllerForEditing(controllerCard.controller.id)
+                                        root.reportBooleanAction(selected, "Selected Device updated",
+                                            "Now viewing " + String(controllerCard.controller.name || "this controller") + ".",
+                                            "Could not select this device", "This controller is no longer assigned to the selected Device Rig. Add it to a Device Rig, then try again.")
+                                    }
+                                    else root.verifyController(String(controllerCard.controller.id
+                                        || controllerCard.controller.directInputId || ""))
                                 }
                                 background: Rectangle { radius: deck.radiusControl; color: parent.enabled && parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : (parent.enabled ? deck.accent : deck.border); border.width: parent.activeFocus ? 2 : 1 }
                                 contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -762,7 +896,7 @@ Flickable {
                                 text: "FORGET"
                                 focusPolicy: Qt.StrongFocus
                                 implicitHeight: deck.compactControlHeight
-                                onClicked: backend.forgetController(controllerCard.controller.id)
+                                onClicked: root.requestForgetController(controllerCard.controller.id)
                                 background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                                 contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
@@ -845,7 +979,7 @@ Flickable {
                                 Text { text: "DEVICE RIG"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                                 Text { text: String(rig.name || "Device Rig"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 17; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
                             }
-                            FlightDeckStatusChip { tokens: deck; label: String(rig.healthLabel || "Offline").toUpperCase(); value: root.rigState(rig); tone: root.rigTone(rig) }
+                            FlightDeckStatusChip { tokens: deck; label: String(rig.setupStatus || rig.healthLabel || "Offline").toUpperCase(); value: root.rigState(rig); tone: root.rigTone(rig) }
                         }
                         Text {
                             text: (rig.members || []).length + " physical controller" + ((rig.members || []).length === 1 ? "" : "s")
@@ -862,10 +996,10 @@ Flickable {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: deck.space8
-                                Text { text: root.markerFor(root.memberTone(modelData)); color: deck.statusColor(root.memberTone(modelData)); font.pixelSize: 12; font.bold: true }
+                                Text { text: root.markerFor(root.memberTone(modelData, rig)); color: deck.statusColor(root.memberTone(modelData, rig)); font.pixelSize: 12; font.bold: true }
                                 Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: 10; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
                                 Text { text: modelData.required ? "REQUIRED" : "OPTIONAL"; color: modelData.required ? deck.textSecondary : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                Text { text: root.memberState(modelData).toUpperCase(); color: deck.statusColor(root.memberTone(modelData)); font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                                Text { text: root.memberState(modelData, rig).toUpperCase(); color: deck.statusColor(root.memberTone(modelData, rig)); font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
                             }
                         }
                         Text {
@@ -877,6 +1011,16 @@ Flickable {
                             color: deck.textMuted
                             font.family: deck.telemetryFont
                             font.pixelSize: 9
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            visible: !!rig.unmapped
+                            text: "NO PROFILE / UNMAPPED · Hardware is active and safe. Choose, copy, or create a Profile when you are ready to map controls."
+                            color: deck.accent
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -896,6 +1040,26 @@ Flickable {
                                 enabled: !!rig.enabled && !rig.configured
                                 onClicked: root.activateRig(rig)
                             }
+                        }
+                        RowLayout {
+                            visible: !!rig.unmapped
+                            Layout.fillWidth: true
+                            spacing: deck.space8
+                            RigButton {
+                                text: "CREATE BLANK PROFILE"
+                                onClicked: root.openUnmappedRigProfileWorkflow(rig, "blank")
+                            }
+                            RigButton {
+                                text: "COPY CURRENT PROFILE"
+                                subdued: true
+                                onClicked: root.openUnmappedRigProfileWorkflow(rig, "copy")
+                            }
+                            RigButton {
+                                text: "CHOOSE PROFILE"
+                                subdued: true
+                                onClicked: root.openUnmappedRigProfileWorkflow(rig, "choose")
+                            }
+                            Item { Layout.fillWidth: true }
                         }
                     }
                 }
@@ -921,7 +1085,7 @@ Flickable {
                         Layout.fillWidth: true
                         spacing: deck.space4
                         Text { text: "CURRENT ACTIVE OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.toneFor(root.vjoyCheck) === "healthy" ? "Online" : "Action needed"; color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
+                        Text { text: root.virtualOutputStaleOwnership ? "Stale ownership" : (root.virtualOutputExternallyBusy ? "Configured · busy" : (root.virtualOutputOwnedByHotas ? "Configured · acquired" : (root.toneFor(root.vjoyCheck) === "healthy" ? "Online" : "Action needed"))); color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
                         Text { text: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId + "\n" + (root.vjoyCheck.message || output.detail || "Checking virtual output."); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text {
                             visible: Number(root.outputRuntime.activeVjoyDeviceId || 0) > 0
@@ -934,11 +1098,34 @@ Flickable {
                             wrapMode: Text.WordWrap
                         }
                     }
-                    FlightDeckStatusChip { tokens: deck; label: root.toneFor(root.vjoyCheck) === "healthy" ? "ONLINE" : "ACTION NEEDED"; value: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
+                    FlightDeckStatusChip { tokens: deck; label: root.virtualOutputStaleOwnership ? "STALE DRIVER STATE" : (root.virtualOutputExternallyBusy ? "CONFIGURED · BUSY" : (root.virtualOutputOwnedByHotas ? "CONFIGURED · ACQUIRED" : (root.toneFor(root.vjoyCheck) === "healthy" ? "ONLINE" : "ACTION NEEDED"))); value: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
                 }
                 Text { text: "Virtual output is the controller signal games receive from HOTAS BF6."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
+                    RigButton {
+                        visible: root.virtualOutputExternallyBusy
+                        text: "RETRY ACQUIRE"
+                        onClicked: root.showActionFeedback(backend.retryVirtualOutputAcquire(
+                            String(root.configuredBusyOutput.layoutId || "")),
+                            "Virtual Output was not retried", "Choose the configured busy output and try again.")
+                    }
+                    RigButton {
+                        visible: root.virtualOutputExternallyBusy
+                        text: "CHOOSE ANOTHER OUTPUT"
+                        subdued: true
+                        onClicked: {
+                            const rigId = root.configuredBusyRigId();
+                            if (rigId) root.openRigDetails(rigId);
+                            else root.showActionFeedback({ success: false, title: "Choose another output", message: "Open a Device Rig to choose its primary Virtual Output." }, "Choose another output", "Open a Device Rig to choose an output.");
+                        }
+                    }
+                    RigButton {
+                        visible: root.virtualOutputExternallyBusy
+                        text: "CREATE NEW OUTPUT"
+                        subdued: true
+                        onClicked: root.openCreateVirtualOutput(root.configuredBusyRigId())
+                    }
                     Button {
                         // Manual driver configuration is an advanced fallback,
                         // never a competing normal repair route.
@@ -951,6 +1138,7 @@ Flickable {
                         contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Item { Layout.fillWidth: true }
+                    RigButton { text: "CREATE VIRTUAL OUTPUT"; subdued: true; onClicked: root.openCreateVirtualOutput("") }
                     Button {
                         text: root.virtualDetailsOpen ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"
                         focusPolicy: Qt.StrongFocus
@@ -972,8 +1160,15 @@ Flickable {
                         anchors.fill: parent
                         anchors.margins: deck.space12
                         spacing: deck.space4
-                        Text { text: "vJoy Device " + root.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
-                        Text { text: root.vjoyStatus; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "vJoy Device: " + root.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+                        Text { text: "Descriptor: " + String(root.outputOwnership.descriptor || "Not inspected"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Raw status: " + String(root.outputOwnership.rawStatusName || "UNKNOWN") + " (" + String(root.outputOwnership.rawStatus === undefined ? "?" : root.outputOwnership.rawStatus) + ")"; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Owner PID: " + String(root.outputOwnership.ownerPid || "not reported"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Owner process: " + (String(root.outputOwnership.ownerProcess || "").length ? String(root.outputOwnership.ownerProcess) : "not available") + (String(root.outputOwnership.ownerProcessPath || "").length ? "\n" + String(root.outputOwnership.ownerProcessPath) : ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                        Text { text: "HOTAS BF6 PID: " + String(root.outputOwnership.hotasProcessId || "not reported"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Acquire attempt result: " + String(root.outputOwnership.acquireAttempt || "not attempted"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Last status transition: " + String(root.outputOwnership.lastStatusTransition || "not observed"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.vjoyStatus; color: deck.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text { text: root.vjoyButtonCount + " buttons  •  " + root.vjoyContinuousPovCount + " continuous hats  •  " + root.vjoyDiscretePovCount + " discrete hats"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
@@ -1154,14 +1349,9 @@ Flickable {
             draftMembers = next;
         }
         function createOutput() {
-            const deviceId = backend.suggestedVirtualOutputDeviceId();
-            const created = backend.createFiveAxisOutputLayout("Flight Deck Output " + deviceId, deviceId);
-            if (created) {
-                outputLayoutId = created;
-                root.showTransientActionFeedback({ success: true, title: "Virtual Output created", message: "The new output is selected for this Device Rig." }, "", "", 5000);
-            } else {
-                root.showActionFeedback({ success: false, title: "Virtual Output was not created", message: "Review the vJoy Device ID and existing output names, then try again." }, "", "");
-            }
+            root.outputCreationForNewRig = true;
+            close();
+            createVirtualOutputDialog.openFor("");
         }
         function createRig() {
             const ids = draftMembers.map(function(member) { return String(member.id || ""); });
@@ -1266,6 +1456,27 @@ Flickable {
         }
     }
 
+    CreateVirtualOutputDialog {
+        id: createVirtualOutputDialog
+        objectName: "flightDeckCreateVirtualOutputDialog"
+        backendObject: backend
+        tokens: deck
+        rigItems: root.rigItems
+        onCreated: function(result) {
+            const message = String(result.message || "Virtual Output saved.")
+            root.showActionFeedback(result, "Virtual Output created", message)
+            if (root.outputCreationForNewRig) {
+                root.outputCreationForNewRig = false
+                createRigDialog.outputLayoutId = String(result.objectId || "")
+                createRigDialog.open()
+            }
+        }
+        onFailed: function(result) {
+            root.showActionFeedback(result, "Virtual Output was not created",
+                "Review the name, vJoy Device ID, and capabilities, then try again.")
+        }
+    }
+
     FlightDeckDialog {
         id: rigDetailsDialog
         objectName: "flightDeckRigDetailsDialog"
@@ -1300,8 +1511,8 @@ Flickable {
                 Text { text: rigDetailsContent.rig ? "Rig ID  ·  " + String(rigDetailsContent.rig.id || "") : "This Rig is no longer available."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                 RowLayout {
                     Layout.fillWidth: true
-                    FlightDeckStatusChip { tokens: deck; label: rigDetailsContent.rig ? String(rigDetailsContent.rig.healthLabel || "Offline").toUpperCase() : "OFFLINE"; value: root.rigState(rigDetailsContent.rig); tone: root.rigTone(rigDetailsContent.rig) }
-                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    FlightDeckStatusChip { tokens: deck; label: rigDetailsContent.rig ? String(rigDetailsContent.rig.setupStatus || rigDetailsContent.rig.healthLabel || "Offline").toUpperCase() : "OFFLINE"; value: root.rigState(rigDetailsContent.rig); tone: root.rigTone(rigDetailsContent.rig) }
+                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "Setup has not been checked yet. Run Setup Health to verify the controller, Virtual Output, and isolation." : (rigDetailsContent.rig && rigDetailsContent.rig.unmapped ? "Hardware is active with no Profile mapped. You may create, copy, or choose a Profile without reactivating this Rig." : (rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it.")); color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE" : "SET ACTIVE"; enabled: rigDetailsContent.rig && rigDetailsContent.rig.enabled && !rigDetailsContent.rig.configured; onClicked: root.activateRig(rigDetailsContent.rig) }
                 }
                 Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
@@ -1318,6 +1529,32 @@ Flickable {
                     RigButton { text: "SAVE NAME"; enabled: rigDetailsContent.rig && rigRename.text.trim().length > 0 && rigRename.text.trim() !== String(rigDetailsContent.rig.name || ""); onClicked: root.reportBooleanAction(backend.renameDeviceRig(String(rigDetailsContent.rig.id || ""), rigRename.text), "Rig renamed", "The canonical Device Rig name was updated.", "Rig name was not updated", "Names must be unique and contain text.") }
                 }
 
+                Text { text: "DEFAULT PROFILE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                RigCombo {
+                    id: defaultRigProfile
+                    Layout.fillWidth: true
+                    model: root.rigDefaultProfileChoices(rigDetailsContent.rig)
+                    textRole: "name"
+                    currentIndex: {
+                        const rig = rigDetailsContent.rig || ({});
+                        for (let index = 0; index < model.length; ++index) {
+                            const choice = model[index];
+                            if (Boolean(choice.explicitlyNone) === Boolean(rig.defaultProfileNone)
+                                    && String(choice.id || "") === String(rig.defaultProfileId || "")) return index;
+                        }
+                        return 0;
+                    }
+                    onActivated: {
+                        const choice = model[index] || ({});
+                        root.reportBooleanAction(backend.setDeviceRigDefaultProfile(
+                            String(rigDetailsContent.rig.id || ""), String(choice.id || ""),
+                            Boolean(choice.explicitlyNone)), "Rig default Profile updated",
+                            "This is a convenience policy only; the Rig remains independently activatable.",
+                            "Rig default Profile was not updated", "Choose a Profile assigned to this Device Rig.");
+                    }
+                }
+                Text { text: "Automatic uses compatible Profile resolution. None keeps this Rig active without mapping. An explicit Profile is attempted only after the hardware Rig is active."; color: deck.textSecondary; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+
                 Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
                 Text { text: "Required controllers must be connected, identity-safe, and verified for automatic activation. Optional controllers can be absent without blocking the Rig."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Repeater {
@@ -1328,7 +1565,7 @@ Flickable {
                         implicitHeight: memberDetail.implicitHeight + deck.space20
                         radius: deck.radiusControl
                         color: deck.elevatedSurface
-                        border.color: deck.statusColor(root.memberTone(modelData))
+                        border.color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig))
                         ColumnLayout {
                             id: memberDetail
                             anchors.fill: parent
@@ -1336,16 +1573,16 @@ Flickable {
                             spacing: deck.space6
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { text: root.markerFor(root.memberTone(modelData)); color: deck.statusColor(root.memberTone(modelData)); font.pixelSize: 14; font.bold: true }
+                                Text { text: root.markerFor(root.memberTone(modelData, rigDetailsContent.rig)); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: 14; font.bold: true }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: root.memberState(modelData) + (modelData.connected ? "" : modelData.required ? " — required controllers block automatic selection while offline." : " — optional controllers do not block automatic selection while offline."); color: deck.statusColor(root.memberTone(modelData)); font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: root.memberState(modelData, rigDetailsContent.rig) + (modelData.connected ? "" : modelData.required ? " — required controllers block automatic selection while offline." : " — optional controllers do not block automatic selection while offline."); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
                                 RigButton { text: modelData.required ? "REQUIRED" : "OPTIONAL"; subdued: !modelData.required; onClicked: root.reportBooleanAction(backend.setDeviceRigMemberRequired(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.required), "Controller requirement updated", !modelData.required ? "This controller is now required for automatic activation." : "This controller is now optional and will not block automatic activation while offline.", "Controller requirement was not updated", "Refresh the Rig and try again.") }
                             }
-                            Text { text: "Expected identity  ·  " + String(modelData.expectedIdentity || "Not recorded") + (modelData.seenIdentity ? "\nSeen identity  ·  " + String(modelData.seenIdentity) : ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                            Text { text: "Expected identity  ·  " + String(modelData.expectedIdentity || "Not recorded") + (modelData.seenIdentity ? "\nSeen identity  ·  " + String(modelData.seenIdentity) : "") + (String(modelData.verificationDetail || "").length ? "\nVerification  ·  " + String(modelData.verificationDetail || "") : ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                             RowLayout {
                                 Layout.fillWidth: true
                                 RigCombo {
@@ -1362,6 +1599,17 @@ Flickable {
                                     onActivated: root.reportBooleanAction(backend.setDeviceRigMemberOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), String(currentValue || "")), "Controller output assigned", "This controller will use the selected Virtual Output.", "Controller output was not assigned", "Choose an enabled output in this Rig and try again.")
                                 }
                                 RigButton { text: "OPEN"; subdued: true; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), [String(modelData.id || "")]); rigDetailsDialog.close(); Qt.callLater(function() { root.contentY = Math.max(0, controllersSection.y - deck.space8); }); } }
+                                RigButton {
+                                    text: modelData.ambiguous ? "IDENTIFY CONTROLLER"
+                                        : !modelData.connected ? "RESCAN"
+                                        : !modelData.verified ? "VERIFY CONTROLLER" : "✓ VERIFIED"
+                                    subdued: !!modelData.verified
+                                    enabled: !modelData.verified && String(modelData.verificationState || "") !== "VERIFYING"
+                                    onClicked: {
+                                        if (!modelData.connected) root.rescanController()
+                                        else root.verifyController(String(modelData.id || ""))
+                                    }
+                                }
                                 RigButton { text: "REMOVE"; destructive: true; enabled: (rigDetailsContent.rig.members || []).length > 1; onClicked: root.reportBooleanAction(backend.removeDeviceRigMember(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Controller removed", "The controller and its Rig-specific mapping payload were removed from this Rig.", "Controller was not removed", "A Device Rig must retain at least one controller.") }
                             }
                         }
@@ -1435,12 +1683,15 @@ Flickable {
                         onActivated: rigDetailsDialog.addOutputId = String(currentValue || "")
                     }
                     RigButton { text: "ADD OUTPUT"; enabled: rigOutputAdder.currentIndex >= 0; onClicked: { const added = backend.addDeviceRigOutput(String(rigDetailsContent.rig.id || ""), rigDetailsDialog.addOutputId); root.reportBooleanAction(added, "Virtual Output added", "Assign controllers to the new output before removing another output.", "Virtual Output was not added", "Choose an available output and try again."); rigDetailsDialog.resetChoices(); } }
+                    RigButton { text: "CREATE OUTPUT"; subdued: true; onClicked: root.openCreateVirtualOutput(String(rigDetailsContent.rig.id || "")) }
                 }
+
+                Text { visible: root.availableOutputChoices(rigDetailsContent.rig).length === 0; text: "No unused Virtual Output is available for this Rig. Create one, or remove an existing output from another Rig first."; color: deck.textMuted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
                 Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
-                    RigButton { text: "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
+                    RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "CHECK & SET UP RIG" : "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
                     Item { Layout.fillWidth: true }
                     RigButton { text: "DELETE RIG"; destructive: true; enabled: !!rigDetailsContent.rig; onClicked: { deleteRigDialog.rigId = String(rigDetailsContent.rig.id || ""); deleteRigDialog.open(); } }
                     RigButton { text: "CLOSE"; subdued: true; onClicked: rigDetailsDialog.close() }
@@ -1721,6 +1972,101 @@ Flickable {
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.accentMuted; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
+                }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: forgetControllerConfirmation
+        objectName: "flightDeckForgetControllerConfirmation"
+        tokens: deck
+        heading: "Forget controller?"
+        tone: "attention"
+        preferredWidth: 540
+        contentItem: ColumnLayout {
+            width: forgetControllerConfirmation.availableWidth
+            spacing: deck.space12
+            Text {
+                Layout.fillWidth: true
+                text: "Forget \"" + String(root.forgetConsequences.name || "this controller") + "\"?"
+                color: deck.textPrimary
+                font.family: deck.displayFont
+                font.pixelSize: 16
+                font.bold: true
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "This removes the saved controller and its controller-specific configuration from HOTAS BF6."
+                    + (root.forgetConsequences.willRestoreGameVisibility
+                        ? " Its exact physical HID input will be shown to games again."
+                        : "")
+                    + " If it is still connected, it may immediately reappear as a new unverified controller."
+                color: deck.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                visible: (root.forgetConsequences.rigs || []).length > 0
+                text: "IT WILL BE REMOVED FROM"
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                font.bold: true
+            }
+            Repeater {
+                model: root.forgetConsequences.rigs || []
+                delegate: Text {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    text: "• " + String(modelData.name || "Device Rig")
+                        + (modelData.required ? " · REQUIRED — the Rig will need another controller" : " · Optional")
+                        + (modelData.willRemoveRig ? " · empty Rig will be removed" : "")
+                    color: modelData.required ? deck.attention : deck.textSecondary
+                    font.pixelSize: 10
+                    wrapMode: Text.WordWrap
+                }
+            }
+            Text {
+                visible: Number(root.forgetConsequences.mappingCount || 0) > 0
+                    || Number(root.forgetConsequences.automationReferenceCount || 0) > 0
+                Layout.fillWidth: true
+                text: (Number(root.forgetConsequences.mappingCount || 0) > 0
+                        ? String(root.forgetConsequences.mappingCount) + " controller-specific Profile mapping set"
+                            + (Number(root.forgetConsequences.mappingCount) === 1 ? " will" : "s will") + " be removed. " : "")
+                    + (Number(root.forgetConsequences.automationReferenceCount || 0) > 0
+                        ? String(root.forgetConsequences.automationReferenceCount) + " controller-specific Automation reference"
+                            + (Number(root.forgetConsequences.automationReferenceCount) === 1 ? " will" : "s will") + " be removed." : "")
+                color: deck.textSecondary
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: "CANCEL"
+                    focusPolicy: Qt.StrongFocus
+                    onClicked: forgetControllerConfirmation.close()
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "FORGET CONTROLLER"
+                    focusPolicy: Qt.StrongFocus
+                    onClicked: {
+                        const name = String(root.forgetConsequences.name || "Controller")
+                        const removed = backend.forgetController(String(root.forgetConsequences.recordId || ""))
+                        forgetControllerConfirmation.close()
+                        root.forgetConsequences = ({})
+                        root.showTransientActionFeedback({ success: removed,
+                            title: removed ? "Controller forgotten" : "Controller was not forgotten",
+                            message: removed ? name + " and its scoped references were removed; its app-managed HID visibility was restored."
+                                : "The controller changed before the forget transaction could be applied." }, "", "", 5000)
+                    }
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.attention; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }

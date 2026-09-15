@@ -36,6 +36,7 @@ struct PhysicalControllerCapabilities {
     // acquisition attempt. The mapper publishes this outside its report path.
     bool inputReportsReceived = false;
     std::array<bool, kPhysicalAxisCount> axes{};
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
     int buttons = 0;
     int povs = 0;
 };
@@ -46,9 +47,21 @@ struct VJoyCapabilities {
     bool driverReady = false;
     bool devicePresent = false;
     bool busy = false;
-    // vJoyConfig only reports BUSY; the mapper already knows whether that
-    // owner is this HOTAS BF6 process. Own acquisition is a healthy state.
+    // The owner classification is based on the raw vJoy API result plus
+    // GetOwnerPid.  A raw BUSY with this process PID is a healthy owned state,
+    // never an external conflict.
     bool ownedByHotasBf6 = false;
+    bool staleOwnership = false;
+    bool ownerPidAvailable = false;
+    bool ownerProcessLive = false;
+    int rawStatus = 4;
+    quint64 ownerPid = 0;
+    quint64 hotasProcessId = 0;
+    QString rawStatusName = QStringLiteral("UNKNOWN");
+    QString ownershipState = QStringLiteral("UNKNOWN");
+    QString ownerProcessName;
+    QString ownerProcessPath;
+    QString ownershipDiagnostic;
     bool outputReportsSucceeding = false;
     bool reportValid = false;
     // A descriptor is not truth until every supported read used to interpret
@@ -79,10 +92,15 @@ struct HidHideCapabilities {
     bool serviceReady = false;
     bool cloakKnown = false;
     bool cloaked = false;
+    // Each supported read is tracked separately so a temporary process
+    // timeout can be distinguished from a successful contradictory read-back.
+    bool mapperAllowlistKnown = false;
+    bool hiddenDeviceListKnown = false;
     bool mapperAllowlisted = false;
     bool selectedControllerResolved = false;
     bool selectedControllerHidden = false;
     bool inspectionComplete = false;
+    bool inspectionTimedOut = false;
     QString mapperExecutable;
     QStringList allowlistedApplications;
     QStringList hiddenDeviceInstanceIds;
@@ -300,7 +318,11 @@ public:
                                                 VerificationMode mode);
     static bool isNewPhysicalControllerArrival(bool wasConnected, bool isConnected);
     static bool needsSetupAfterControllerArrival(bool isNewPhysicalArrival,
-                                                 const ControllerReadinessPlan &plan);
+                                                  const ControllerReadinessPlan &plan);
+    // HidHide returns a nested device inventory. Keep the parser independently
+    // testable so exact physical-instance normalization cannot regress behind
+    // the process-runner boundary.
+    static QStringList parseHidHideGamingDevices(const QString &output);
 
     const ControllerReadinessPlan &inspect(const MapperConfiguration &configuration,
                                            const PhysicalControllerCapabilities &physical,
@@ -420,7 +442,6 @@ private:
     static QString decodeOutput(const QByteArray &bytes);
     static VJoyCapabilities parseVJoyReport(const QString &report, int deviceId);
     static QStringList parseHidHideCommands(const QString &output, const QString &command);
-    static QStringList parseHidHideGamingDevices(const QString &output);
     static bool outputContainsDevice(const QString &output, const QString &instanceId);
     static QStringList vjoyConfigurationArguments(const VJoyCapabilities &before,
                                                    const MapperOutputRequirements &requirements);

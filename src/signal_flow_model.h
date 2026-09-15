@@ -24,7 +24,8 @@ QString signalFlowFanoutRouteIdentityKey(const ControllerProfile &profile,
                                          SignalFlowPortKind destinationKind, int destinationIndex,
                                          int destinationSubIndex = -1);
 QString signalFlowMixerIdentityKey(const ControllerProfile &profile,
-                                   const QString &controllerRecordId, int destinationAxis);
+                                   const QString &controllerRecordId, int destinationIndex,
+                                   SignalFlowPortKind destinationKind = SignalFlowPortKind::Axis);
 QString signalFlowSharedProcessorIdentityKey(const ControllerProfile &profile,
                                              const QString &controllerRecordId,
                                              const QString &kind, int ownerAxis);

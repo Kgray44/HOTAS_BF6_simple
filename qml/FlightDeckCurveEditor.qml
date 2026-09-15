@@ -256,9 +256,9 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: tokens.space4
-                        SectionLabel { caption: "ACTIVE CURVE CONTEXT" }
+                        SectionLabel { caption: "SELECTED CURVE CONTEXT" }
                         Text {
-                            text: (backendObject ? backendObject.activeProfileName : "Active profile")
+                            text: (backendObject ? backendObject.selectedProfileName : "Selected profile")
                                 + "  ·  " + (editorState.summary || "Linear response")
                             color: tokens.textPrimary
                             font.family: tokens.displayFont

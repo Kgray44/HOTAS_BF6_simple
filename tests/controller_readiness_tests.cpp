@@ -1,5 +1,6 @@
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "vjoy_ownership.h"
 
 #include <QClipboard>
 #include <QFile>
@@ -320,6 +321,7 @@ private slots:
     void nativePovRequirementsAndMixedPovSafety();
     void missingDependenciesAreGuidedNotAutomatic();
     void exactControllerIdentityIsRequiredForHidHide();
+    void hidhideJsonGamingInventoryNormalizesExactInstances();
     void busyVJoyBlocksAutomaticChange();
     void mapperOwnedVJoyIsHealthy();
     void mapperOwnedVJoyStillRequiresCapacity();
@@ -358,6 +360,12 @@ private slots:
     void managedVirtualOutputsSwitchWithoutElevationAndRollBackOnFailure();
     void managedPhysicalInputsRequireExactIdentityAndRollBackOnFailure();
     void vjoy219HumanReadableOutputIsParsedAsHealthyDescriptor();
+    void vjoyFreeAcquireThenOwnedIsReadyWithoutReinspection();
+    void vjoyRetryAcquireReprojectsCurrentOwnerAsReady();
+    void vjoyCurrentProcessBusyIsOwnedNotExternalBusy();
+    void vjoyExternalBusyNamesExactOwner();
+    void vjoyDeadOwnerIsStaleDriverState();
+    void vjoyReleaseReturnsFree();
 };
 
 void ControllerReadinessTests::alreadyCorrectVJoyNeedsNoChange()
@@ -389,6 +397,112 @@ void ControllerReadinessTests::vjoy219HumanReadableOutputIsParsedAsHealthyDescri
     QVERIFY(vjoy.axes[static_cast<size_t>(VirtualAxis::Rz)]);
     QVERIFY(vjoy.forceFeedbackKnown);
     QVERIFY(vjoy.forceFeedbackEffects.contains(QStringLiteral("all")));
+}
+
+void ControllerReadinessTests::vjoyFreeAcquireThenOwnedIsReadyWithoutReinspection()
+{
+    const VJoyOwnershipEvidence free = classifyVJoyOwnership(
+        1, kVJoyStatusFree, true, 0, 4242);
+    QCOMPARE(vjoyAcquireActionFor(free), VJoyAcquireAction::Acquire);
+
+    const VJoyOwnerProcessEvidence current{true, true, true, QStringLiteral("HOTAS BF6.exe"),
+                                             QStringLiteral("C:\\candidate\\HOTAS BF6.exe"), {}};
+    const VJoyOwnershipEvidence acquired = classifyVJoyOwnership(
+        1, kVJoyStatusBusy, true, 4242, 4242, current);
+    QCOMPARE(vjoyAcquireActionFor(acquired), VJoyAcquireAction::AlreadyOwned);
+    QCOMPARE(acquired.state, VJoyOwnershipState::OwnedByCurrentProcess);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.ownedByHotasBf6 = true;
+    vjoy.rawStatus = acquired.rawStatus;
+    vjoy.rawStatusName = vjoyRawStatusName(acquired.rawStatus);
+    vjoy.ownershipState = vjoyOwnershipStateName(acquired.state);
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("CONFIGURED · ACQUIRED")));
+}
+
+void ControllerReadinessTests::vjoyRetryAcquireReprojectsCurrentOwnerAsReady()
+{
+    // Retry Acquire observes vJoy's post-acquisition BUSY state. The owner
+    // PID is this process, so setup truth must immediately become ready
+    // without re-opening the verifier or claiming an external conflict.
+    const VJoyOwnerProcessEvidence current{true, true, true, QStringLiteral("HOTAS BF6.exe"),
+                                             QStringLiteral("C:\\candidate\\HOTAS BF6.exe"), {}};
+    const VJoyOwnershipEvidence acquired = classifyVJoyOwnership(
+        1, kVJoyStatusBusy, true, 4242, 4242, current);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.ownedByHotasBf6 = acquired.state == VJoyOwnershipState::OwnedByCurrentProcess;
+    vjoy.rawStatus = acquired.rawStatus;
+    vjoy.rawStatusName = vjoyRawStatusName(acquired.rawStatus);
+    vjoy.ownershipState = vjoyOwnershipStateName(acquired.state);
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Ready);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("HOTAS BF6 currently owns this device")));
+}
+
+void ControllerReadinessTests::vjoyCurrentProcessBusyIsOwnedNotExternalBusy()
+{
+    const VJoyOwnerProcessEvidence current{true, true, true, QStringLiteral("HOTAS BF6.exe"),
+                                             QStringLiteral("C:\\candidate\\HOTAS BF6.exe"), {}};
+    const VJoyOwnershipEvidence evidence = classifyVJoyOwnership(
+        1, kVJoyStatusBusy, true, 4242, 4242, current);
+    QCOMPARE(evidence.state, VJoyOwnershipState::OwnedByCurrentProcess);
+    QCOMPARE(vjoyAcquireActionFor(evidence), VJoyAcquireAction::AlreadyOwned);
+    QVERIFY(!evidence.diagnostic.contains(QStringLiteral("another application"), Qt::CaseInsensitive));
+}
+
+void ControllerReadinessTests::vjoyExternalBusyNamesExactOwner()
+{
+    const VJoyOwnerProcessEvidence owner{true, true, true, QStringLiteral("HOTAS BF6 Test Host.exe"),
+                                           QStringLiteral("C:\\tests\\HOTAS BF6 Test Host.exe"), {}};
+    const VJoyOwnershipEvidence evidence = classifyVJoyOwnership(
+        1, kVJoyStatusBusy, true, 12345, 4242, owner);
+    QCOMPARE(evidence.state, VJoyOwnershipState::BusyOtherProcess);
+    QCOMPARE(vjoyAcquireActionFor(evidence), VJoyAcquireAction::ExternalBusy);
+    QVERIFY(evidence.diagnostic.contains(QStringLiteral("HOTAS BF6 Test Host.exe")));
+    QVERIFY(evidence.diagnostic.contains(QStringLiteral("12345")));
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.busy = true;
+    vjoy.ownerPid = evidence.ownerPid;
+    vjoy.ownerProcessName = evidence.ownerProcess.name;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("HOTAS BF6 Test Host.exe")));
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("PID 12345")));
+}
+
+void ControllerReadinessTests::vjoyDeadOwnerIsStaleDriverState()
+{
+    const VJoyOwnerProcessEvidence owner{true, true, false, {}, {}, QStringLiteral("PID 12345 has exited")};
+    const VJoyOwnershipEvidence evidence = classifyVJoyOwnership(
+        1, kVJoyStatusBusy, true, 12345, 4242, owner);
+    QCOMPARE(evidence.state, VJoyOwnershipState::StaleOwnership);
+    QCOMPARE(vjoyAcquireActionFor(evidence), VJoyAcquireAction::StaleOwnership);
+
+    VJoyCapabilities vjoy = readyVJoy();
+    vjoy.staleOwnership = true;
+    vjoy.ownershipDiagnostic = evidence.diagnostic;
+    const ControllerReadinessPlan plan = ControllerReadinessService::planFor(
+        connectedController(), defaultRequirements(), vjoy, readyHidHide(), VerificationMode::Quick);
+    QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Attention);
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("STALE OWNERSHIP / DRIVER STATE")));
+    QVERIFY(!plan.vjoySummary.contains(QStringLiteral("another application"), Qt::CaseInsensitive));
+}
+
+void ControllerReadinessTests::vjoyReleaseReturnsFree()
+{
+    const VJoyOwnershipEvidence owned = classifyVJoyOwnership(
+        1, kVJoyStatusOwn, true, 4242, 4242);
+    QCOMPARE(owned.state, VJoyOwnershipState::OwnedByCurrentProcess);
+    const VJoyOwnershipEvidence released = classifyVJoyOwnership(
+        1, kVJoyStatusFree, true, 0, 4242);
+    QCOMPARE(released.state, VJoyOwnershipState::Free);
+    QCOMPARE(vjoyAcquireActionFor(released), VJoyAcquireAction::Acquire);
 }
 
 void ControllerReadinessTests::exactRequiredVJoyCapacityIsReady()
@@ -515,7 +629,7 @@ void ControllerReadinessTests::externalVJoyConflictRequiresAction()
     QVERIFY(!plan.vjoyCanApply);
     QCOMPARE(plan.vjoyStatus, VerificationSubsystemState::Attention);
     QCOMPARE(plan.state, ControllerReadinessState::Attention);
-    QVERIFY(plan.vjoySummary.contains(QStringLiteral("another application")));
+    QVERIFY(plan.vjoySummary.contains(QStringLiteral("owner PID was not exposed")));
     QVERIFY(plan.vjoySummary.contains(QStringLiteral("capabilities are correct")));
 }
 
@@ -767,6 +881,16 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
     snapshot.physical = connectedController();
     snapshot.physical.inputReportsReceived = true;
     snapshot.vjoy = readyVJoy();
+    snapshot.vjoy.rawStatus = kVJoyStatusBusy;
+    snapshot.vjoy.rawStatusName = QStringLiteral("BUSY");
+    snapshot.vjoy.ownershipState = QStringLiteral("BUSY BY OTHER PROCESS");
+    snapshot.vjoy.ownerPid = 12345;
+    snapshot.vjoy.hotasProcessId = 4242;
+    snapshot.vjoy.ownerProcessName = QStringLiteral("HOTAS BF6 Test Host.exe");
+    snapshot.vjoy.ownerProcessPath = QStringLiteral("C:\\tests\\HOTAS BF6 Test Host.exe");
+    snapshot.vjoy.ownershipDiagnostic = QStringLiteral("vJoy is owned by HOTAS BF6 Test Host.exe (PID 12345).");
+    snapshot.vjoyAcquireAttempt = QStringLiteral("Not attempted: external owner is live");
+    snapshot.vjoyLastStatusTransition = QStringLiteral("FREE|0|FREE -> BUSY|12345|BUSY BY OTHER PROCESS");
     snapshot.hidhide = readyHidHide();
     snapshot.repair.outcome = AutomaticRepairOutcome::Failed;
     snapshot.repair.message = QStringLiteral("HIDHIDE SELF-ACCESS FAILURE");
@@ -792,6 +916,9 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
     QVERIFY(report.contains(QStringLiteral("X RAW MIN: -1.000  RAW NEUTRAL: -0.041")));
     QVERIFY(report.contains(QStringLiteral("ACTIVITY: Inactive device axis")));
     QVERIFY(report.contains(QStringLiteral("ACTIVE PROFILE / OUTPUT")));
+    QVERIFY(report.contains(QStringLiteral("Owner PID: 12345")));
+    QVERIFY(report.contains(QStringLiteral("HOTAS BF6 Test Host.exe")));
+    QVERIFY(report.contains(QStringLiteral("Acquire attempt result: Not attempted: external owner is live")));
     QVERIFY(report.contains(QStringLiteral("Output: BF6 Output  vJoy 1")));
     QVERIFY(report.contains(snapshot.selectedHidInstance));
     QVERIFY(report.contains(QStringLiteral("<USER_HOME>")));
@@ -995,7 +1122,7 @@ void ControllerReadinessTests::virtualAxisCapabilitySupersetIsReady()
     QVERIFY(!plan.vjoyNeedsChanges);
     QCOMPARE(plan.state, ControllerReadinessState::Ready);
     QVERIFY(plan.vjoySummary.contains(
-        QStringLiteral("Extra available axes: Rx, Ry, Slider 0, Slider 1.")));
+        QStringLiteral("Extra available axes: Axis 4, Axis 5, Axis 7, Axis 8.")));
 }
 
 void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
@@ -1019,6 +1146,7 @@ void ControllerReadinessTests::vjoyShortSliderAliasesRemainReady()
 
 void ControllerReadinessTests::scopedVJoyRepairUsesCandidateOwnedDevice2Transaction()
 {
+    qputenv("HOTAS_TEST_FREE_VJOY_DEVICE", "2");
     auto fake = std::make_unique<FakeRunner>();
     FakeRunner *probe = fake.get();
     SetupUtilityPaths utilities;
@@ -1048,6 +1176,7 @@ void ControllerReadinessTests::scopedVJoyRepairUsesCandidateOwnedDevice2Transact
     QVERIFY(!helperCommands.contains(QStringLiteral("helper:--dev-hide")));
     QVERIFY(!service.plan().vjoyNeedsChanges);
     QCOMPARE(service.plan().vjoy.deviceId, 2);
+    qunsetenv("HOTAS_TEST_FREE_VJOY_DEVICE");
 }
 
 void ControllerReadinessTests::scopedHidHideRepairPreservesVJoyOperationScope()
@@ -1162,6 +1291,27 @@ void ControllerReadinessTests::transientHidHideGamingProbeRetriesAndRemainsRepai
     QVERIFY(plan.hidhideNeedsChanges);
     QVERIFY(plan.hidhideCanApply);
     QCOMPARE(std::count(probe->calls.cbegin(), probe->calls.cend(), QStringLiteral("--dev-gaming")), 2);
+}
+
+void ControllerReadinessTests::hidhideJsonGamingInventoryNormalizesExactInstances()
+{
+    const QString inventory = QString::fromUtf8(R"json(
+[
+  { "friendlyName": "Saitek Pro Flight Rudder Pedals", "devices": [
+    { "gamingDevice": true,
+      "deviceInstancePath": "HID\\VID_06A3&PID_0763\\7&3a9c24d6&0&0000" }
+  ] },
+  { "friendlyName": "T.Flight Hotas One", "devices": [
+    { "gamingDevice": true,
+      "deviceInstancePath": "HID\\VID_044F&PID_B68D\\7&1e5480ea&0&0000" }
+  ] }
+]
+)json");
+
+    const QStringList parsed = ControllerReadinessService::parseHidHideGamingDevices(inventory);
+    QCOMPARE(parsed, QStringList({
+        QStringLiteral("HID\\VID_06A3&PID_0763\\7&3A9C24D6&0&0000"),
+        QStringLiteral("HID\\VID_044F&PID_B68D\\7&1E5480EA&0&0000")}));
 }
 
 void ControllerReadinessTests::physicalControllerContainerIdentitySurvivesReenumeration()
@@ -1373,8 +1523,10 @@ void ControllerReadinessTests::managedPhysicalInputsRequireExactIdentityAndRollB
 {
     const QString primary = QStringLiteral("HID\\VID_044F&PID_B68D\\exact-instance");
     const QString secondary = QStringLiteral("HID\\VID_044F&PID_B68D\\second-interface");
+    const QString thirdController = QStringLiteral("HID\\VID_045E&PID_02FF&IG_00\\third-controller");
     const QString normalizedPrimary = QStringLiteral("HID\\VID_044F&PID_B68D\\EXACT-INSTANCE");
     const QString normalizedSecondary = QStringLiteral("HID\\VID_044F&PID_B68D\\SECOND-INTERFACE");
+    const QString normalizedThird = QStringLiteral("HID\\VID_045E&PID_02FF&IG_00\\THIRD-CONTROLLER");
     SetupUtilityPaths utilities;
     utilities.supplied = true;
     utilities.hidhideCli = QStringLiteral("fake-HidHideCLI.exe");
@@ -1386,22 +1538,23 @@ void ControllerReadinessTests::managedPhysicalInputsRequireExactIdentityAndRollB
     // repair fixture otherwise synthesizes one unrelated default hidden HID.
     probe->cloakEnabled = true;
     probe->allowlistedApplications = {QCoreApplication::applicationFilePath()};
-    probe->gamingDevices = {primary, secondary};
+    probe->gamingDevices = {primary, secondary, thirdController};
     ControllerReadinessService service(std::move(fake), utilities);
     QStringList normalized;
     QString status;
-    QVERIFY(service.validateManagedPhysicalInputIdentities({primary, secondary}, &normalized, &status));
-    QCOMPARE(normalized, QStringList({normalizedPrimary, normalizedSecondary}));
+    QVERIFY(service.validateManagedPhysicalInputIdentities({primary, secondary, thirdController}, &normalized, &status));
+    QCOMPARE(normalized, QStringList({normalizedPrimary, normalizedSecondary, normalizedThird}));
     QVERIFY(!service.validateManagedPhysicalInputIdentities(
         {primary, QStringLiteral("HID\\VID_1234&PID_BEAD\\vJoy")}, &normalized, &status));
     QVERIFY(status.contains(QStringLiteral("non-vJoy"), Qt::CaseInsensitive));
 
     const ManagedVisibilityTransactionResult hidden = service.applyManagedPhysicalInputVisibility(
-        {primary, secondary}, true);
+        {primary, secondary, thirdController}, true);
     QVERIFY(hidden.succeeded);
     QVERIFY(hidden.changed);
     QVERIFY(probe->hiddenDevices.contains(primary, Qt::CaseInsensitive));
     QVERIFY(probe->hiddenDevices.contains(secondary, Qt::CaseInsensitive));
+    QVERIFY(probe->hiddenDevices.contains(thirdController, Qt::CaseInsensitive));
     QVERIFY(std::none_of(probe->calls.cbegin(), probe->calls.cend(), [](const QString &call) {
         return call.startsWith(QStringLiteral("elevated:"));
     }));

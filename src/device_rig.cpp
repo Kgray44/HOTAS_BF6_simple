@@ -149,10 +149,10 @@ DeviceRigStatus evaluateDeviceRig(const DeviceRig &rig,
     else if (!result.needsVerificationRequiredMemberIds.isEmpty()) {
         result.health = DeviceRigHealth::NeedsAttention;
     }
-    else if (result.complete) result.health = result.missingOptionalMemberIds.isEmpty()
-        && result.ambiguousOptionalMemberIds.isEmpty()
-        && result.needsVerificationOptionalMemberIds.isEmpty()
-        ? DeviceRigHealth::Ready : DeviceRigHealth::Partial;
+    // Optional members are advisory by definition. Their absence, an
+    // unresolved identity, or a missing verification timestamp must never
+    // make a usable required-member Rig look Partial/ACTION NEEDED.
+    else if (result.complete) result.health = DeviceRigHealth::Ready;
     else result.health = anyConnected ? DeviceRigHealth::Partial : DeviceRigHealth::Offline;
     return result;
 }
@@ -247,17 +247,29 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         runtime.issue = u"The Device Rig needs an enabled Primary Virtual Output."_qs;
         return runtime;
     }
-    const ControllerProfile *profile = findProfile(configuration,
-        profileId.isEmpty() ? configuration.activeProfileId : profileId);
-    if (!profile) {
+    // A Device Rig is a valid hardware topology without a Profile.  An empty
+    // active profile deliberately compiles the connected, verified members
+    // and their Rig-owned output with disabled mapping payloads, so the
+    // worker can keep the topology healthy without emitting stale routes.
+    // An explicitly supplied profile is the mapping authority.  Without one,
+    // only the profile that is active *for this Rig* may contribute mappings.
+    // A different active Rig must never make an otherwise healthy viewed Rig
+    // appear invalid merely because its active Profile belongs elsewhere.
+    const QString effectiveProfileId = profileId.isEmpty()
+        ? (configuration.activeDeviceRigId == rig->id ? configuration.activeProfileId : QString{})
+        : profileId;
+    const ControllerProfile *profile = effectiveProfileId.isEmpty()
+        ? nullptr : findProfile(configuration, effectiveProfileId);
+    if (!effectiveProfileId.isEmpty() && !profile) {
         runtime.issue = u"The active profile is unavailable."_qs;
         return runtime;
     }
-    if (!profile->deviceRigId.isEmpty() && profile->deviceRigId != rig->id) {
+    if (profile && !profile->deviceRigId.isEmpty() && profile->deviceRigId != rig->id) {
         runtime.issue = u"The active profile belongs to another Device Rig."_qs;
         return runtime;
     }
-    const RuntimeProfileCache profileCache = compileRuntimeProfileCache(configuration);
+    const RuntimeProfileCache profileCache = profile ? compileRuntimeProfileCache(configuration)
+                                                     : RuntimeProfileCache{};
 
     for (int index = 0; index < static_cast<int>(rig->outputs.size()); ++index) {
         const DeviceRigOutputTarget &configured = rig->outputs[static_cast<size_t>(index)];
@@ -312,11 +324,13 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
             // cannot emit routes until it has completed the same setup path.
             continue;
         }
-        const DeviceProfileMapping *deviceMapping = findDeviceProfileMapping(*profile, record->id);
-        if (!deviceMapping || !deviceMapping->enabled) {
-            runtime.issue = u"The active profile has no enabled mapping for a Device Rig member."_qs;
-            return runtime;
-        }
+        const DeviceProfileMapping *deviceMapping = profile
+            ? findDeviceProfileMapping(*profile, record->id) : nullptr;
+        // A Profile may intentionally leave a Rig member unconfigured. This
+        // is how a true blank Profile and incremental multi-controller setup
+        // remain safe: preserve the verified hardware topology while this
+        // member contributes a neutral, disabled route. Missing or disabled
+        // per-device mapping is therefore not a Rig-compilation defect.
         // Member-specific destinations remain Rig topology. A member without
         // an explicit advanced assignment always routes to the Rig-owned
         // primary output; a Profile can never redirect it.
@@ -344,14 +358,21 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         member.outputLayoutId = outputLayoutId;
         member.required = configured.required;
         member.outputIndex = compiledOutputFor(outputLayoutId);
-        member.mapping = compileDeviceProfileMapping(configuration, *profile, *deviceMapping, record);
-        member.nativePovBindings = deviceMapping->nativePovBindings;
-        QString automationIssue;
-        member.automation = compileDeviceAutomationSet(configuration, profileCache, record->id,
-            outputLayoutId, rig->members.size() > 1, &automationIssue);
-        if (!automationIssue.isEmpty()) {
-            runtime.issue = automationIssue;
-            return runtime;
+        if (profile && deviceMapping) {
+            member.mapping = compileDeviceProfileMapping(configuration, *profile, *deviceMapping, record);
+            const int nativePovCount = std::min(
+                static_cast<int>(deviceMapping->nativePovBindings.size()), kMaximumPhysicalPovs);
+            for (int pov = 0; pov < nativePovCount; ++pov) {
+                member.nativePovBindings[static_cast<size_t>(pov)] =
+                    deviceMapping->nativePovBindings[static_cast<size_t>(pov)];
+            }
+            QString automationIssue;
+            member.automation = compileDeviceAutomationSet(configuration, profileCache, record->id,
+                outputLayoutId, rig->members.size() > 1, &automationIssue);
+            if (!automationIssue.isEmpty()) {
+                runtime.issue = automationIssue;
+                return runtime;
+            }
         }
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             member.fixedAxes[static_cast<size_t>(axis)] = record->axisActivity[static_cast<size_t>(axis)]

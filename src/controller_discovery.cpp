@@ -1,4 +1,5 @@
 #include "controller_discovery.h"
+#include "direct_input_axis.h"
 #include "hid_device_identity.h"
 
 #include <dinput.h>
@@ -52,11 +53,12 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
     const DWORD type = DIDFT_GETTYPE(instance->dwType);
     if ((type & DIDFT_AXIS) != 0) {
         ++objects->controller->axisCount;
-        const DWORD offset = instance->dwOfs;
-        const int index = offset == DIJOFS_X ? 0 : offset == DIJOFS_Y ? 1 : offset == DIJOFS_Z ? 2
-            : offset == DIJOFS_RX ? 3 : offset == DIJOFS_RY ? 4 : offset == DIJOFS_RZ ? 5
-            : offset == DIJOFS_SLIDER(0) ? 6 : offset == DIJOFS_SLIDER(1) ? 7 : -1;
-        if (index >= 0) objects->controller->axes[static_cast<size_t>(index)] = true;
+        const int index = physicalAxisIndexForDirectInputOffset(instance->dwOfs);
+        if (index >= 0) {
+            objects->controller->axes[static_cast<size_t>(index)] = true;
+            objects->controller->axisDescriptors[static_cast<size_t>(index)] =
+                describeDirectInputAxisObject(nullptr, *instance);
+        }
     } else if ((type & DIDFT_BUTTON) != 0) {
         ++objects->controller->buttonCount;
     } else if ((type & DIDFT_POV) != 0) {

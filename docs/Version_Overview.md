@@ -2,11 +2,22 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.2**
+**Current version: v2.6.3**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.3 — Verified multi-controller Profiles & readiness
+
+Strengthens the V2.6.2 setup foundation with a truthful verified-device lifecycle, explicit multi-controller Profile ownership, resilient hardware-topology activation, and a polished Flight Deck operational surface.
+
+- Verify Controller now uses one exact-record transaction from every entry point, captures canonical native control metadata, and keeps reconnect matching independent from Device Rig membership. Forget Controller atomically removes its saved references while a connected device can reappear as a fresh unverified record.
+- Profile creation supports genuinely blank or explicit-copy modes, category placement, per-device source mappings, intentional shared-output Mixer choices, and explicit collision ownership without making device selection mutate setup or mapping state.
+- Device Rigs and Profiles are independent runtime authorities: a healthy Rig can become active without a compatible Profile, entering a safe active/unmapped state with clear next actions instead of a circular activation failure.
+- Setup Health distinguishes required blocking failures from optional-controller advisories and preserves last-known-good HidHide evidence through transient inspection delays. HidHide read-back and controller identity evidence remain separate facts.
+- Flight Deck now provides canonical Virtual Output creation, global themed transient notifications, per-device editor context, safer source labels, and bounded live telemetry presentation across controller surfaces.
+- The native-axis pipeline records deterministic X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 sampling identities independent of enumeration order; focused coverage protects Rz and all-axis sentinel routing.
 
 ## v2.6.2 — Setup Truth & Repair Convergence
 

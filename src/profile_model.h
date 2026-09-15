@@ -11,6 +11,16 @@ bool createProfileCategory(MapperConfiguration &configuration, const QString &na
                            QString *createdId = nullptr);
 bool renameProfileCategory(MapperConfiguration &configuration, const QString &categoryId,
                            const QString &name);
+// Creates a uniquely named category and moves the supplied Profile into it as
+// one configuration transaction.  This supports the Profile Library's
+// drag-to-new-category affordance without leaving an empty category behind.
+bool createNewProfileCategoryForProfile(MapperConfiguration &configuration, const QString &profileId,
+                                        QString *createdId = nullptr);
+// Creates the named category and moves the Profile in one model transaction.
+// A failed move removes the just-created category, so a drop never leaves an
+// empty category or a duplicate Profile behind.
+bool createProfileCategoryForProfile(MapperConfiguration &configuration, const QString &name,
+                                     const QString &profileId, QString *createdId = nullptr);
 bool deleteProfileCategory(MapperConfiguration &configuration, const QString &categoryId);
 bool createProfile(MapperConfiguration &configuration, const QString &name,
                    const QString &startFromId = {}, QString *createdId = nullptr);

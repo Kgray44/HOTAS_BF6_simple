@@ -25,7 +25,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 29;
+constexpr int kProfileSchemaVersion = 32;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -69,6 +69,37 @@ Calibration calibrationFromJson(const QJsonObject &json)
         calibration.centered = true;
     }
     return calibration;
+}
+
+QJsonObject nativeAxisDescriptorToJson(const NativeAxisDescriptor &descriptor)
+{
+    return {{u"present"_qs, descriptor.present},
+            {u"nativeName"_qs, descriptor.nativeName.trimmed().left(128)},
+            {u"directInputGuid"_qs, descriptor.directInputGuid.trimmed().left(96)},
+            {u"directInputType"_qs, static_cast<qint64>(descriptor.directInputType)},
+            {u"directInputOffset"_qs, static_cast<qint64>(descriptor.directInputOffset)},
+            {u"nativeMinimum"_qs, descriptor.nativeMinimum},
+            {u"nativeMaximum"_qs, descriptor.nativeMaximum},
+            {u"relative"_qs, descriptor.relative}};
+}
+
+bool nativeAxisDescriptorFromJson(const QJsonObject &json, NativeAxisDescriptor *descriptor)
+{
+    if (!descriptor || json.isEmpty()) return false;
+    NativeAxisDescriptor restored;
+    restored.present = json.value(u"present"_qs).toBool(false);
+    restored.nativeName = json.value(u"nativeName"_qs).toString().trimmed().left(128);
+    restored.directInputGuid = json.value(u"directInputGuid"_qs).toString().trimmed().left(96);
+    restored.directInputType = static_cast<quint32>(std::max<qint64>(0,
+        json.value(u"directInputType"_qs).toVariant().toLongLong()));
+    restored.directInputOffset = static_cast<quint32>(std::max<qint64>(0,
+        json.value(u"directInputOffset"_qs).toVariant().toLongLong()));
+    restored.nativeMinimum = std::clamp(json.value(u"nativeMinimum"_qs).toInt(-10000), -1000000, 1000000);
+    restored.nativeMaximum = std::clamp(json.value(u"nativeMaximum"_qs).toInt(10000), -1000000, 1000000);
+    restored.relative = json.value(u"relative"_qs).toBool(false);
+    if (restored.present && restored.nativeMinimum > restored.nativeMaximum) return false;
+    *descriptor = std::move(restored);
+    return true;
 }
 
 QJsonObject signalFlowIdentityToJson(const SignalFlowIdentityRecord &identity)
@@ -213,6 +244,7 @@ QJsonObject signalFlowMixerToJson(const SignalFlowMixer &mixer)
             {u"id"_qs, mixer.id.trimmed().left(96)},
             {u"profileId"_qs, mixer.profileId.trimmed().left(96)},
             {u"controllerRecordId"_qs, mixer.controllerRecordId.trimmed().left(96)},
+            {u"destinationKind"_qs, signalFlowPortKindKey(mixer.destinationKind)},
             {u"destinationAxis"_qs, mixer.destinationAxis},
             {u"mode"_qs, signalFlowMixerModeKey(mixer.mode)},
             {u"enabled"_qs, mixer.enabled}};
@@ -229,6 +261,12 @@ bool signalFlowMixerFromJson(const QJsonObject &json, SignalFlowMixer *mixer)
     restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
     if (restored.identityKey.isEmpty() || restored.id.isEmpty() || restored.profileId.isEmpty()
         || !signalFlowMixerModeFromJson(json.value(u"mode"_qs), &restored.mode)) return false;
+    // Older V2.6.3 candidates stored axis-only mixers. Missing kind therefore
+    // remains an analog destination rather than invalidating an existing map.
+    if (json.contains(u"destinationKind"_qs)
+        && !signalFlowPortKindFromJson(json.value(u"destinationKind"_qs), &restored.destinationKind)) {
+        return false;
+    }
     restored.destinationAxis = json.value(u"destinationAxis"_qs).toInt();
     restored.enabled = json.value(u"enabled"_qs).toBool();
     *mixer = std::move(restored);
@@ -445,6 +483,7 @@ bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
                                         [](const auto &mixer) {
                                             return mixer.profileId + u":"_qs
                                                 + mixer.controllerRecordId + u":"_qs
+                                                + signalFlowPortKindKey(mixer.destinationKind) + u":"_qs
                                                 + QString::number(mixer.destinationAxis);
                                         })
             || (json.contains(u"sharedProcessors"_qs)
@@ -732,16 +771,19 @@ QJsonObject savedControllerToJson(const SavedControllerRecord &record)
 {
     QJsonArray axes;
     QJsonArray calibration;
+    QJsonArray axisDescriptors;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         axes.append(record.axes[static_cast<size_t>(index)]);
         calibration.append(calibrationToJson(record.calibration[static_cast<size_t>(index)]));
+        axisDescriptors.append(nativeAxisDescriptorToJson(
+            record.axisDescriptors[static_cast<size_t>(index)]));
     }
     QJsonArray ownedInstances;
     for (const QString &instance : record.ownedHidHideDeviceInstances) ownedInstances.append(instance);
     return {{u"id"_qs, record.id}, {u"displayName"_qs, record.displayName},
             {u"lastDirectInputId"_qs, record.lastDirectInputId}, {u"productGuid"_qs, record.productGuid},
             {u"hidInstanceId"_qs, record.hidInstanceId}, {u"hidContainerId"_qs, record.hidContainerId}, {u"vendorId"_qs, record.vendorId},
-            {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisCount"_qs, record.axisCount},
+            {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisDescriptors"_qs, axisDescriptors}, {u"axisCount"_qs, record.axisCount},
             {u"buttonCount"_qs, record.buttonCount}, {u"povCount"_qs, record.povCount},
             {u"capabilityFingerprint"_qs, record.capabilityFingerprint}, {u"lastSeen"_qs, record.lastSeen},
             {u"lastVerified"_qs, record.lastVerified}, {u"verificationVersion"_qs, record.verificationVersion},
@@ -762,14 +804,27 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
     parsed.hidContainerId = json.value(u"hidContainerId"_qs).toString().trimmed();
     const QJsonArray axes = json.value(u"axes"_qs).toArray();
     const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
+    const QJsonArray axisDescriptors = json.value(u"axisDescriptors"_qs).toArray();
     if (parsed.id.isEmpty() || parsed.displayName.isEmpty() || axes.size() != kPhysicalAxisCount
         || calibration.size() != kPhysicalAxisCount
         || !controllerVjoyRequirementsFromJson(json.value(u"vjoyRequirements"_qs).toObject(), &parsed.vjoyRequirements)) {
         return false;
     }
+    if (!axisDescriptors.isEmpty() && axisDescriptors.size() != kPhysicalAxisCount) return false;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         parsed.axes[static_cast<size_t>(index)] = axes.at(index).toBool();
         parsed.calibration[static_cast<size_t>(index)] = calibrationFromJson(calibration.at(index).toObject());
+        NativeAxisDescriptor &descriptor = parsed.axisDescriptors[static_cast<size_t>(index)];
+        if (axisDescriptors.size() == kPhysicalAxisCount) {
+            if (!nativeAxisDescriptorFromJson(axisDescriptors.at(index).toObject(), &descriptor)) return false;
+        } else if (parsed.axes[static_cast<size_t>(index)]) {
+            // Schema <= 30 retains its verified identity exactly.  This
+            // synthetic placeholder is only a migration marker; a matching
+            // connected controller automatically replaces it with actual
+            // DirectInput object metadata during inventory refresh.
+            descriptor.present = true;
+            descriptor.nativeName = physicalAxisLabel(static_cast<PhysicalAxis>(index));
+        }
     }
     if (json.contains(u"axisActivity"_qs)
         && !axisActivityFromJson(json.value(u"axisActivity"_qs), &parsed.axisActivity)) {
@@ -797,7 +852,7 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
 QJsonObject axisMappingToJson(const AxisMapping &mapping)
 {
     QJsonObject json{
-        {u"target"_qs, virtualAxisLabel(mapping.target)},
+        {u"target"_qs, virtualAxisTechnicalLabel(mapping.target)},
         {u"rangeMode"_qs, axisRangeModeKey(mapping.rangeMode)},
         {u"customName"_qs, mapping.customName.trimmed().left(48)},
         {u"inverted"_qs, mapping.inverted},
@@ -1465,10 +1520,13 @@ QJsonObject deviceRigToJson(const DeviceRig &rig)
     return {{u"id"_qs, rig.id}, {u"name"_qs, rig.name}, {u"enabled"_qs, rig.enabled},
             {u"isDefault"_qs, rig.isDefault}, {u"autoActivate"_qs, rig.autoActivate},
             {u"activationPriority"_qs, rig.activationPriority}, {u"fallbackRigId"_qs, rig.fallbackRigId},
+            {u"defaultProfileId"_qs, rig.defaultProfileId},
+            {u"defaultProfileNone"_qs, rig.defaultProfileNone},
             {u"disconnectBehavior"_qs, static_cast<int>(rig.disconnectBehavior)},
             {u"members"_qs, members}, {u"outputs"_qs, outputs},
             {u"primaryOutputLayoutId"_qs, deviceRigPrimaryOutputLayoutId(rig)},
-            {u"hidhideManaged"_qs, rig.hidhideManaged}, {u"presentationOrder"_qs, rig.presentationOrder}};
+            {u"hidhideManaged"_qs, rig.hidhideManaged}, {u"presentationOrder"_qs, rig.presentationOrder},
+            {u"setupStatus"_qs, rig.setupStatus}, {u"setupLastChecked"_qs, rig.setupLastChecked}};
 }
 
 bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
@@ -1487,6 +1545,8 @@ bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
     restored.autoActivate = json.value(u"autoActivate"_qs).toBool(true);
     restored.activationPriority = std::clamp(json.value(u"activationPriority"_qs).toInt(50), 0, 100);
     restored.fallbackRigId = json.value(u"fallbackRigId"_qs).toString().trimmed().left(96);
+    restored.defaultProfileId = json.value(u"defaultProfileId"_qs).toString().trimmed().left(96);
+    restored.defaultProfileNone = json.value(u"defaultProfileNone"_qs).toBool(false);
     const int behavior = json.value(u"disconnectBehavior"_qs)
         .toInt(static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes));
     if (behavior < static_cast<int>(DeviceRigDisconnectBehavior::SuspendAffectedRoutes)
@@ -1496,6 +1556,13 @@ bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
         .toString().trimmed().left(96);
     restored.hidhideManaged = json.value(u"hidhideManaged"_qs).toBool(false);
     restored.presentationOrder = std::max(0, json.value(u"presentationOrder"_qs).toInt());
+    const QString setupStatus = json.value(u"setupStatus"_qs).toString().trimmed();
+    static const QSet<QString> knownSetupStatuses{
+        u"READY"_qs, u"ACTION NEEDED"_qs, u"WAITING FOR USER"_qs,
+        u"UNKNOWN / INSPECTION FAILED"_qs};
+    restored.setupStatus = knownSetupStatuses.contains(setupStatus) ? setupStatus : QString{};
+    restored.setupLastChecked = restored.setupStatus.isEmpty()
+        ? QString{} : json.value(u"setupLastChecked"_qs).toString().trimmed();
     QSet<QString> memberIds;
     for (const QJsonValue &value : members) {
         const QJsonObject member = value.toObject();
@@ -1531,7 +1598,7 @@ QJsonObject profileToJson(const ControllerProfile &profile)
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         const QString alias = profile.virtualAxisAliases[static_cast<size_t>(index)].trimmed().left(48);
         if (!alias.isEmpty()) {
-            virtualAliases.insert(virtualAxisLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
+            virtualAliases.insert(virtualAxisTechnicalLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
                                       .remove(u" "_qs), alias);
         }
     }
@@ -1601,7 +1668,7 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     normalizePovMappings(restored.povs, restored.buttons, kMaximumVirtualButtons);
     const QJsonObject virtualAliases = json.value(u"virtualAxisAliases"_qs).toObject();
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
-        const QString key = virtualAxisLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
+        const QString key = virtualAxisTechnicalLabel(static_cast<VirtualAxis>(index)).toCaseFolded()
             .remove(u" "_qs);
         restored.virtualAxisAliases[static_cast<size_t>(index)] = virtualAliases.value(key)
             .toString().trimmed().left(48);
@@ -2014,6 +2081,72 @@ void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
     }
 }
 
+void retireDuplicatedImplicitDeviceButtonMappings(MapperConfiguration *configuration)
+{
+    if (!configuration) return;
+    // A pre-V2.6.3 multi-device migration could copy untouched 1:1 button
+    // defaults into every later Device Rig member. Those routes are neither a
+    // user action nor an intentional canonical Mixer, but they make the
+    // selected controller appear to own another controller's bindings. Keep
+    // the first physical owner and retire only a later, provably implicit
+    // duplicate. Explicit routes and every mixer topology remain untouched.
+    for (ControllerProfile &profile : configuration->profiles) {
+        for (size_t mappingIndex = 1; mappingIndex < profile.deviceMappings.size(); ++mappingIndex) {
+            DeviceProfileMapping &mapping = profile.deviceMappings[mappingIndex];
+            for (size_t source = 0; source < mapping.buttons.size(); ++source) {
+                ButtonBinding &binding = mapping.buttons[source];
+                if (binding.explicitlyConfigured
+                    || binding.type != ButtonActionType::VirtualButton
+                    || binding.target != static_cast<int>(source + 1)) {
+                    continue;
+                }
+                const bool mixerOwnsDestination = std::any_of(
+                    configuration->signalFlow.mixers.cbegin(), configuration->signalFlow.mixers.cend(),
+                    [&profile, &binding](const SignalFlowMixer &mixer) {
+                        return mixer.enabled && mixer.mode != SignalFlowMixerMode::Disabled
+                            && mixer.profileId == profile.id
+                            && mixer.destinationKind == SignalFlowPortKind::Button
+                            && mixer.destinationAxis == binding.target;
+                    });
+                if (mixerOwnsDestination) continue;
+
+                bool earlierOwner = false;
+                for (size_t earlier = 0; earlier < mappingIndex && !earlierOwner; ++earlier) {
+                    for (const ButtonBinding &candidate : profile.deviceMappings[earlier].buttons) {
+                        if (candidate.type == ButtonActionType::VirtualButton
+                            && candidate.target == binding.target) {
+                            earlierOwner = true;
+                            break;
+                        }
+                    }
+                }
+                if (!earlierOwner) continue;
+
+                bool sawRoute = false;
+                bool onlyImplicitPrimaryRoute = true;
+                for (const SignalFlowRoute &route : configuration->signalFlow.routes) {
+                    if (route.profileId != profile.id
+                        || route.controllerRecordId != mapping.controllerRecordId
+                        || route.sourceKind != SignalFlowPortKind::Button
+                        || route.sourceIndex != static_cast<int>(source)
+                        || route.sourceSubIndex != -1) {
+                        continue;
+                    }
+                    sawRoute = true;
+                    if (!route.primaryProjection || !route.implicitDefault) {
+                        onlyImplicitPrimaryRoute = false;
+                        break;
+                    }
+                }
+                if (!sawRoute || !onlyImplicitPrimaryRoute) continue;
+
+                const QString customName = binding.customName;
+                binding = {ButtonActionType::Disabled, 0, true, customName};
+            }
+        }
+    }
+}
+
 } // namespace
 
 MapperConfiguration ConfigStore::load()
@@ -2167,6 +2300,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         && version != 26
         && version != 27
         && version != 28
+        && version != 29
+        && version != 30
+        && version != 31
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -2726,6 +2862,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     // editor projection before reconciliation so a parser's legacy duplicate
     // normalizer cannot erase an explicit mixer/fan-out route from disk.
     if (version >= 27) projectSignalFlowTopologyToFocusedEditors(&configuration);
+    if (version < 30) {
+        retireDuplicatedImplicitDeviceButtonMappings(&configuration);
+    }
     // The V2.6 migration backfills identity from the existing canonical
     // mappings without changing any route, processor setting, profile, or
     // runtime behavior. Reconciliation also safely retires IDs for removed

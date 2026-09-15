@@ -6,6 +6,7 @@
 #include "button_mapping.h"
 #include "config_store.h"
 #include "controller_manager.h"
+#include "direct_input_axis.h"
 #include "device_rig.h"
 #include "event_log.h"
 #include "input_learning.h"
@@ -858,6 +859,9 @@ private slots:
     void signalFlowMixerRuntimeModesAreDeterministic();
     void outputLimitsRoundTripAcrossDomainsAndSchemaMigration();
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
+    void directInputAxesUseDeterministicNativeStateFields();
+    void nativeAxisIdentityIsIndependentOfEnumerationOrder();
+    void saitekRudderRzSamplesDistinctly();
     void v24MigrationPreservesVerifiedSavedActiveController();
     void v24MigrationPreservesUnverifiedSavedActiveController();
     void v24MigrationResolvesPreferredSavedController();
@@ -866,6 +870,7 @@ private slots:
     void v24MigrationNoticeIsOneLaunchOnly();
     void v29MigrationMakesDeviceRigOwnExactBf6Output();
     void singleMemberDeviceRigRuntimeRetainsControllerQualifiedRoutes();
+    void deviceRigRuntimeCompilesHealthyUnmappedTopology();
     void deviceRigRuntimeCompilesDistinctInputsAndOutputs();
     void deviceRigRuntimeRejectsAmbiguousAxisDestination();
     void deviceRigRuntimeProjectsQualifiedAutomationByInputAndOutput();
@@ -914,6 +919,7 @@ private slots:
     void profileMigrationIsIdempotent();
     void categoryMigrationPreservesExistingProfiles();
     void categoryScopedNamesAndStableReferencesSurviveMove();
+    void categoryDeletionCascadesProfilesAndClearsReferences();
     void portableProfileRoundTripIsAtomicAndRemapsIds();
     void bundledBattlefieldHelicopterStarterProfileMigratesSafely();
     void portablePackRoundTripPreservesCategoryAndSkipsHardwareByDefault();
@@ -922,6 +928,9 @@ private slots:
     void portableFormatValidationRejectsFutureAndInvalidDependenciesAtomically();
     void gameCategoryDetectionIsPureLowFrequencyControlPlaneLogic();
     void profileCrudValidatesNamesAndProtectsNormal();
+    void blankProfileStartsWithNoPhysicalRoutes();
+    void deviceChannelAdaptiveResponseAndCurvesRemainIsolated();
+    void duplicatedImplicitDeviceButtonsMigrateToTheOriginalPhysicalOwner();
     void newProfileClonesRequestedSourceIndependently();
     void profilesRemainIsolatedAndPersist();
     void profileSwitchCompilesCompleteAxisConfiguration();
@@ -1829,7 +1838,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -3810,7 +3819,7 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
 
     bool valid = false;
     const QJsonObject serialized = ConfigStore::toJson(configuration);
-    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 29);
+    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 32);
     QVERIFY(serialized.value(QStringLiteral("signalFlow")).isObject());
     const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
     QVERIFY(valid);
@@ -4211,6 +4220,10 @@ void MappingCoreTests::controllerRegistryPersistsPerDeviceCalibrationAndRequirem
     controller.connected = true;
     controller.axes[0] = true;
     controller.axes[1] = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::X)] = {
+        true, QStringLiteral("X Axis"), QStringLiteral("{GUID-X}"), 0x11, DIJOFS_X, -32768, 32767, false};
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Y)] = {
+        true, QStringLiteral("Y Axis"), QStringLiteral("{GUID-Y}"), 0x12, DIJOFS_Y, -32768, 32767, false};
     controller.axisCount = 2;
     controller.buttonCount = 29;
     controller.povCount = 1;
@@ -4236,6 +4249,68 @@ void MappingCoreTests::controllerRegistryPersistsPerDeviceCalibrationAndRequirem
     QCOMPARE(restored.savedControllers.front().calibration[0].center, 0.05F);
     QCOMPARE(restored.savedControllers.front().vjoyRequirements.buttons, 29);
     QCOMPARE(restored.savedControllers.front().vjoyRequirements.deviceId, 2);
+    QVERIFY(restored.savedControllers.front().axisDescriptors[static_cast<size_t>(PhysicalAxis::X)].present);
+    QCOMPARE(restored.savedControllers.front().axisDescriptors[static_cast<size_t>(PhysicalAxis::X)].directInputOffset,
+             quint32{DIJOFS_X});
+}
+
+void MappingCoreTests::directInputAxesUseDeterministicNativeStateFields()
+{
+    DIJOYSTATE2 state{};
+    state.lX = 1001;
+    state.lY = 2002;
+    state.lZ = 3003;
+    state.lRx = 4004;
+    state.lRy = 5005;
+    state.lRz = 6006;
+    state.rglSlider[0] = 7007;
+    state.rglSlider[1] = 8008;
+
+    const std::array<LONG, kPhysicalAxisCount> expected{
+        1001, 2002, 3003, 4004, 5005, 6006, 7007, 8008};
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(index)),
+                 expected[static_cast<size_t>(index)]);
+    }
+
+    // Change only the Rz sentinel: no other canonical axis may share that
+    // raw location or fall through to a fixed zero value.
+    state.lRz = -12345;
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Rz), LONG{-12345});
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Ry), LONG{5005});
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Slider0), LONG{7007});
+}
+
+void MappingCoreTests::nativeAxisIdentityIsIndependentOfEnumerationOrder()
+{
+    const std::array<DWORD, 8> scrambled{
+        DIJOFS_RZ, DIJOFS_X, DIJOFS_SLIDER(0), DIJOFS_Y,
+        DIJOFS_RX, DIJOFS_SLIDER(1), DIJOFS_Z, DIJOFS_RY};
+    const std::array<PhysicalAxis, 8> expected{
+        PhysicalAxis::Rz, PhysicalAxis::X, PhysicalAxis::Slider0, PhysicalAxis::Y,
+        PhysicalAxis::Rx, PhysicalAxis::Slider1, PhysicalAxis::Z, PhysicalAxis::Ry};
+    for (int index = 0; index < static_cast<int>(scrambled.size()); ++index) {
+        QCOMPARE(physicalAxisIndexForDirectInputOffset(scrambled[static_cast<size_t>(index)]),
+                 static_cast<int>(expected[static_cast<size_t>(index)]));
+    }
+}
+
+void MappingCoreTests::saitekRudderRzSamplesDistinctly()
+{
+    // Representative Saitek Pro Flight Rudder Pedals descriptor: X, Y, Rz.
+    // The third enumerated axis must resolve through DIJOYSTATE2::lRz rather
+    // than being inferred from enumeration position or left at zero.
+    DIJOYSTATE2 state{};
+    state.lX = -7000;
+    state.lY = 2500;
+    state.lRz = -9000;
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::X), LONG{-7000});
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Y), LONG{2500});
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Rz), LONG{-9000});
+    state.lRz = 0;
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Rz), LONG{0});
+    state.lRz = 9000;
+    QCOMPARE(directInputAxisValue(state, PhysicalAxis::Rz), LONG{9000});
 }
 
 void MappingCoreTests::v24MigrationPreservesVerifiedSavedActiveController()
@@ -4524,6 +4599,34 @@ void MappingCoreTests::singleMemberDeviceRigRuntimeRetainsControllerQualifiedRou
     QVERIFY(buttons[14]);
 }
 
+void MappingCoreTests::deviceRigRuntimeCompilesHealthyUnmappedTopology()
+{
+    // A hardware Rig must retain its verified input/output topology even
+    // while no Profile is active. The compiled payload is intentionally
+    // neutral: no inherited axis, button, POV, or automation route may leak
+    // from the previously active profile.
+    MapperConfiguration configuration = activationResolverFixture();
+    const QString rigId = QStringLiteral("resolver-preferred-rig");
+    configuration.activeProfileId.clear();
+    const CompiledDeviceRigRuntime runtime = compileDeviceRigRuntime(configuration, rigId);
+    QVERIFY(runtime.valid);
+    QCOMPARE(runtime.memberCount, 1);
+    QCOMPARE(runtime.outputCount, 1);
+    for (const RuntimeAxisMapping &axis : runtime.members[0].mapping.axes) {
+        QCOMPARE(axis.profile.target, VirtualAxis::Disabled);
+    }
+    QVERIFY(std::all_of(runtime.members[0].mapping.buttons.cbegin(), runtime.members[0].mapping.buttons.cend(),
+        [](const ButtonBinding &binding) { return binding.type == ButtonActionType::Disabled; }));
+    // Regression: changing from a zero-POV Rig (for example pedals) to a
+    // HOTAS with a physical POV must read a bounded, disabled slot here, never
+    // index an empty persisted vector while the active Rig is unmapped.
+    for (const NativePovBinding &binding : runtime.members[0].nativePovBindings) {
+        QVERIFY(!binding.enabled);
+        QCOMPARE(binding.targetType, NativePovTargetType::Disabled);
+    }
+    QVERIFY(!runtime.members[0].automation);
+}
+
 void MappingCoreTests::deviceRigRuntimeCompilesDistinctInputsAndOutputs()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -4789,9 +4892,34 @@ void MappingCoreTests::deviceRigHealthKeepsOptionalOfflineNonBlocking()
     const DeviceRigStatus status = evaluateDeviceRig(rig, {required, optional},
                                                        {connectedRequired});
     QVERIFY(status.complete);
-    QCOMPARE(status.health, DeviceRigHealth::Partial);
+    QCOMPARE(status.health, DeviceRigHealth::Ready);
     QCOMPARE(status.missingOptionalMemberIds, QStringList{optional.id});
     QVERIFY(status.missingRequiredMemberIds.isEmpty());
+
+    SavedControllerRecord unverifiedOptional = optional;
+    unverifiedOptional.lastVerified.clear();
+    DiscoveredController connectedOptional = connectedRequired;
+    connectedOptional.name = unverifiedOptional.displayName;
+    connectedOptional.directInputId = unverifiedOptional.lastDirectInputId;
+    connectedOptional.productGuid = unverifiedOptional.productGuid;
+    connectedOptional.hidInstanceId = unverifiedOptional.hidInstanceId;
+    connectedOptional.vendorId = unverifiedOptional.vendorId;
+    connectedOptional.productId = unverifiedOptional.productId;
+    const DeviceRigStatus optionalUnverified = evaluateDeviceRig(rig,
+        {required, unverifiedOptional}, {connectedRequired, connectedOptional});
+    QVERIFY(optionalUnverified.complete);
+    QCOMPARE(optionalUnverified.health, DeviceRigHealth::Ready);
+    QCOMPARE(optionalUnverified.needsVerificationOptionalMemberIds,
+             QStringList{unverifiedOptional.id});
+    QVERIFY(optionalUnverified.needsVerificationRequiredMemberIds.isEmpty());
+
+    rig.members[1].required = true;
+    const DeviceRigStatus nowRequired = evaluateDeviceRig(rig,
+        {required, unverifiedOptional}, {connectedRequired, connectedOptional});
+    QVERIFY(!nowRequired.complete);
+    QCOMPARE(nowRequired.health, DeviceRigHealth::NeedsAttention);
+    QCOMPARE(nowRequired.needsVerificationRequiredMemberIds,
+             QStringList{unverifiedOptional.id});
 
     rig.members[0].enabled = false;
     rig.members[1].enabled = false;
@@ -4937,7 +5065,7 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
     configuration.manualOverrideProfileId = precision->id;
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
     QVERIFY(!json.contains(QStringLiteral("activationManualOverride")));
     QVERIFY(!json.contains(QStringLiteral("manualOverrideProfileId")));
 
@@ -6273,6 +6401,53 @@ void MappingCoreTests::categoryScopedNamesAndStableReferencesSurviveMove()
     QCOMPARE(findProfileCategory(configuration, flightCategory)->lastActiveProfileId, precisionProfileId());
 }
 
+void MappingCoreTests::categoryDeletionCascadesProfilesAndClearsReferences()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+
+    QString generatedCategory;
+    QVERIFY(createNewProfileCategoryForProfile(configuration, precisionProfileId(), &generatedCategory));
+    QVERIFY(!generatedCategory.isEmpty());
+    QCOMPARE(findProfileCategory(configuration, generatedCategory)->name, QStringLiteral("New Category"));
+    QCOMPARE(findProfile(configuration, precisionProfileId())->categoryId, generatedCategory);
+
+    QString namedDroppedCategory;
+    QVERIFY(createProfileCategoryForProfile(configuration, QStringLiteral("Test Category 2"),
+                                             precisionProfileId(), &namedDroppedCategory));
+    QCOMPARE(findProfileCategory(configuration, namedDroppedCategory)->name,
+             QStringLiteral("Test Category 2"));
+    QCOMPARE(findProfile(configuration, precisionProfileId())->categoryId, namedDroppedCategory);
+    const std::vector<QString> &generatedIds = findProfileCategory(configuration, generatedCategory)->profileIds;
+    QVERIFY(std::find(generatedIds.cbegin(), generatedIds.cend(), precisionProfileId()) == generatedIds.cend());
+
+    QString categoryId;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Battlefield"), &categoryId));
+    QString helicopterId;
+    QString vehicleId;
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Helicopter"), categoryId,
+                                    normalProfileId(), &helicopterId));
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Vehicle"), categoryId,
+                                    normalProfileId(), &vehicleId));
+    setProfileTrigger(configuration, 1, helicopterId, ProfileTriggerMode::Hold);
+    AutomationDefinition automation;
+    AutomationConditionDefinition condition;
+    condition.profileId = vehicleId;
+    automation.conditions = {condition};
+    configuration.automations = {automation};
+    configuration.manualOverrideProfileId = vehicleId;
+    configuration.activationManualOverride = true;
+
+    QVERIFY(deleteProfileCategory(configuration, categoryId));
+    QVERIFY(!findProfileCategory(configuration, categoryId));
+    QVERIFY(!findProfile(configuration, helicopterId));
+    QVERIFY(!findProfile(configuration, vehicleId));
+    QVERIFY(findProfile(configuration, normalProfileId()));
+    QCOMPARE(configuration.profileTriggers[0].targetProfileId, QString{});
+    QCOMPARE(configuration.automations.front().conditions.front().profileId, QString{});
+    QVERIFY(configuration.manualOverrideProfileId.isEmpty());
+    QVERIFY(!configuration.activationManualOverride);
+}
+
 void MappingCoreTests::portableProfileRoundTripIsAtomicAndRemapsIds()
 {
     QTemporaryDir temporary;
@@ -7006,6 +7181,123 @@ void MappingCoreTests::profileCrudValidatesNamesAndProtectsNormal()
     QVERIFY(!findProfile(configuration, helicopterId));
 }
 
+void MappingCoreTests::blankProfileStartsWithNoPhysicalRoutes()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile *normal = findProfile(configuration, normalProfileId());
+    QVERIFY(normal);
+
+    // Make the source configuration deliberately non-blank. The creation
+    // contract must not inherit any of these routes unless Copy Existing is
+    // explicitly requested with this profile's id.
+    normal->axes[static_cast<int>(PhysicalAxis::X)].target = VirtualAxis::X;
+    normal->buttons = defaultButtonMappings(3, 32);
+    normal->povs.resize(1);
+    normal->povs[0][0] = {ButtonActionType::VirtualButton, 7, true};
+    DeviceProfileMapping sourceDeviceMapping;
+    sourceDeviceMapping.controllerRecordId = QStringLiteral("physical-source");
+    sourceDeviceMapping.axes[static_cast<int>(PhysicalAxis::Y)].target = VirtualAxis::Y;
+    sourceDeviceMapping.buttons = defaultButtonMappings(2, 32);
+    normal->deviceMappings.push_back(sourceDeviceMapping);
+
+    QString categoryId;
+    QVERIFY(createProfileCategory(configuration, QStringLiteral("Battlefield Test"), &categoryId));
+    QString blankId;
+    QVERIFY(createProfileInCategory(configuration, QStringLiteral("Blank Helicopter"), categoryId,
+                                    {}, &blankId));
+    const ControllerProfile *blank = findProfile(configuration, blankId);
+    QVERIFY(blank);
+    QCOMPARE(blank->categoryId, categoryId);
+    QVERIFY(std::all_of(blank->axes.cbegin(), blank->axes.cend(), [](const AxisMapping &axis) {
+        return axis.target == VirtualAxis::Disabled;
+    }));
+    QVERIFY(blank->buttons.empty());
+    QVERIFY(blank->povs.empty());
+    QVERIFY(blank->deviceMappings.empty());
+}
+
+void MappingCoreTests::deviceChannelAdaptiveResponseAndCurvesRemainIsolated()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    DeviceProfileMapping &hotas = ensureDeviceProfileMapping(profile, QStringLiteral("hotas"));
+    DeviceProfileMapping &xbox = ensureDeviceProfileMapping(profile, QStringLiteral("xbox"));
+
+    // Make one channel intentionally distinct. Neither the adaptive layer nor
+    // its curve definition may spill into another physical controller.
+    hotas.adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].properties =
+        AdaptiveResponseEnabled | AdaptiveResponseMaximumHorizon;
+    hotas.adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].settings.enabled = true;
+    hotas.adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].settings.maximumHorizonMs = 18.0F;
+    hotas.axes[static_cast<size_t>(PhysicalAxis::X)].curve.family = CurveFamily::JCurve;
+    hotas.axes[static_cast<size_t>(PhysicalAxis::X)].curve.strength = 0.65F;
+
+    const RuntimeAdaptiveResponseConfig hotasRuntime = resolveAdaptiveResponseConfiguration(
+        configuration, profile, hotas, static_cast<int>(PhysicalAxis::X));
+    const RuntimeAdaptiveResponseConfig xboxRuntime = resolveAdaptiveResponseConfiguration(
+        configuration, profile, xbox, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(hotasRuntime.enabled);
+    QVERIFY(!xboxRuntime.enabled);
+    QVERIFY(nearlyEqual(hotasRuntime.maximumHorizonSeconds, 0.018F));
+    QCOMPARE(xbox.adaptiveResponse.axes[static_cast<size_t>(PhysicalAxis::X)].properties,
+             std::uint32_t{0});
+    QCOMPARE(hotas.axes[static_cast<size_t>(PhysicalAxis::X)].curve.family, CurveFamily::JCurve);
+    QCOMPARE(xbox.axes[static_cast<size_t>(PhysicalAxis::X)].curve.family, CurveFamily::Linear);
+}
+
+void MappingCoreTests::duplicatedImplicitDeviceButtonsMigrateToTheOriginalPhysicalOwner()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    const SavedControllerRecord hotasRecord = legacyMigrationRecord(
+        QStringLiteral("hotas"), QStringLiteral("{TEST-HOTAS}"), true);
+    const SavedControllerRecord xboxRecord = legacyMigrationRecord(
+        QStringLiteral("xbox"), QStringLiteral("{TEST-XBOX}"), true);
+    configuration.savedControllers = {hotasRecord, xboxRecord};
+    DeviceRig rig;
+    rig.id = QStringLiteral("migration-rig");
+    rig.name = QStringLiteral("Migration Rig");
+    rig.members = {{hotasRecord.id, true, true, {}}, {xboxRecord.id, true, false, {}}};
+    rig.outputs = {{defaultOutputLayoutId(), true}};
+    rig.primaryOutputLayoutId = defaultOutputLayoutId();
+    configuration.deviceRigs = {rig};
+    configuration.activeDeviceRigId = rig.id;
+    configuration.editingDeviceRigId = rig.id;
+    configuration.editingDeviceRecordIds = {hotasRecord.id};
+    profile.deviceRigId = rig.id;
+    ensureDeviceProfileMapping(profile, QStringLiteral("hotas"));
+    ensureDeviceProfileMapping(profile, QStringLiteral("xbox"));
+    DeviceProfileMapping *hotas = findDeviceProfileMapping(profile, QStringLiteral("hotas"));
+    DeviceProfileMapping *xbox = findDeviceProfileMapping(profile, QStringLiteral("xbox"));
+    QVERIFY(hotas);
+    QVERIFY(xbox);
+    hotas->buttons = defaultButtonMappings(2, 32);
+    xbox->buttons = defaultButtonMappings(2, 32);
+    reconcileSignalFlowState(&configuration);
+
+    // Simulate an existing V2.6.3 candidate whose untouched default routes
+    // were copied into a controller added later to the Device Rig.
+    QJsonObject legacy = ConfigStore::toJson(configuration);
+    legacy.insert(QStringLiteral("version"), 29);
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    const ControllerProfile *restoredProfile = findProfile(restored, profile.id);
+    QVERIFY(restoredProfile);
+    const DeviceProfileMapping *restoredHotas = findDeviceProfileMapping(*restoredProfile,
+                                                                          QStringLiteral("hotas"));
+    const DeviceProfileMapping *restoredXbox = findDeviceProfileMapping(*restoredProfile,
+                                                                         QStringLiteral("xbox"));
+    QVERIFY(restoredHotas);
+    QVERIFY(restoredXbox);
+    QCOMPARE(restoredHotas->buttons[0].type, ButtonActionType::VirtualButton);
+    QCOMPARE(restoredHotas->buttons[0].target, 1);
+    QCOMPARE(restoredXbox->buttons[0].type, ButtonActionType::Disabled);
+    QVERIFY(restoredXbox->buttons[0].explicitlyConfigured);
+    QCOMPARE(restoredXbox->buttons[1].type, ButtonActionType::Disabled);
+    QVERIFY(restoredXbox->buttons[1].explicitlyConfigured);
+}
+
 void MappingCoreTests::newProfileClonesRequestedSourceIndependently()
 {
     MapperConfiguration configuration = defaultConfiguration();
@@ -7142,7 +7434,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -7385,7 +7677,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 29);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);

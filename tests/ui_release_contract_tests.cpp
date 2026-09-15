@@ -36,6 +36,7 @@ private slots:
     void installerUpgradeAcceptanceTracksSchema29();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
+    void multiControllerVerificationAndSelectionStayScoped();
     void mapperPostBuildDeploymentIncludesQmlModules();
     void curveTransitionSmoothingUsesThemedSettingsAndProfileControls();
     void profileLibraryPortabilityIsSharedAndThemed();
@@ -138,6 +139,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString flightDeckAxes = sourceFile(QStringLiteral("qml/FlightDeckAxes.qml"));
+    const QString flightDeckButtons = sourceFile(QStringLiteral("qml/FlightDeckButtons.qml"));
     const QString signalFlow = sourceFile(QStringLiteral("qml/FlightDeckSignalFlow.qml"));
     const QString qmlLifecycle = sourceFile(QStringLiteral("tests/app_qml_startup_tests.cpp"));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)")));
@@ -146,10 +148,11 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged")));
-    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)")));
     QVERIFY(header.contains(QStringLiteral("void controllersChanged();")));
     QVERIFY(header.contains(QStringLiteral("void telemetryChanged();")));
     QVERIFY(header.contains(QStringLiteral("void buttonTelemetryChanged();")));
@@ -172,6 +175,10 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(snapshot.contains(QStringLiteral("emit inputTelemetryChanged();")));
     QVERIFY(backend.contains(QStringLiteral("void AppBackend::rebuildButtonUiModel()")));
     QVERIFY(backend.contains(QStringLiteral("bool AppBackend::refreshButtonUiModelRuntimeState()")));
+    QVERIFY(backend.contains(QStringLiteral("void AppBackend::rebuildSelectedButtonPresentationModel()")));
+    QVERIFY(backend.contains(QStringLiteral("bool AppBackend::refreshSelectedButtonInputTelemetryRuntimeState()")));
+    QVERIFY(header.contains(QStringLiteral("buttonConfiguration READ buttonConfiguration NOTIFY buttonConfigurationChanged")));
+    QVERIFY(header.contains(QStringLiteral("buttonInputTelemetry READ buttonInputTelemetry NOTIFY selectedButtonTelemetryChanged")));
     QVERIFY(backend.contains(QStringLiteral("QThread::create([this]")));
     QVERIFY(backend.contains(QStringLiteral("ControllerDiscovery::enumerate()")));
     QVERIFY(backend.contains(QStringLiteral("startRunningApplicationSnapshot(false)")));
@@ -181,6 +188,10 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisConfiguration")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisTelemetry")));
     QVERIFY(!flightDeckAxes.contains(QStringLiteral("backend.axes")));
+    QVERIFY(flightDeckButtons.contains(QStringLiteral("backend.buttonConfiguration")));
+    QVERIFY(flightDeckButtons.contains(QStringLiteral("backend.buttonInputTelemetry")));
+    QVERIFY(flightDeckButtons.contains(QStringLiteral("const position = Number(index || 0) - 1")));
+    QVERIFY(!flightDeckButtons.contains(QStringLiteral("backend.buttonSharedOutputState")));
     QVERIFY(signalFlow.contains(QStringLiteral("function rebuildGraphIndexes()")));
     QVERIFY(signalFlow.contains(QStringLiteral("function rebuildLiveTelemetryIndex()")));
     QVERIFY(signalFlow.contains(QStringLiteral("routeLiveById[String(route && route.id || \"\")]")));
@@ -314,12 +325,14 @@ void UiReleaseContractTests::deviceDialogsUseSharedThemedHeaders()
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString context = sourceFile(QStringLiteral("qml/DeviceContextSelector.qml"));
 
-    // Devices owns eleven transactional dialogs plus the batch-review dialog.
+    // Devices owns eleven transactional dialogs, including the batch-review dialog.
+    // Virtual-output creation is intentionally shared through the canonical
+    // Flight Deck component rather than duplicated in this page.
     // They must all use the shared header; otherwise Day Ops can silently
     // inherit a generic white Qt title bar even if its dialog body is themed.
     QVERIFY(devices.contains(QStringLiteral("component DeviceDialog: Dialog")));
     QVERIFY(devices.contains(QStringLiteral("header: ThemedDialogHeader")));
-    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 12);
+    QCOMPARE(devices.count(QStringLiteral("DeviceDialog {")), 11);
     QCOMPARE(devices.count(QStringLiteral("\n    Dialog {")), 0);
     QVERIFY(header.contains(QStringLiteral("property bool legacy")));
     QVERIFY(header.contains(QStringLiteral("theme.panelRaised")));
@@ -384,6 +397,7 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     const QString readinessPanel = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
     const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
+    const QString virtualOutputCreator = sourceFile(QStringLiteral("qml/CreateVirtualOutputDialog.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
 
@@ -403,7 +417,12 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(worker.contains(QStringLiteral("outputLayoutAxes")));
     QVERIFY(worker.contains(QStringLiteral("|| !outputLayoutAxes[static_cast<size_t>(target)]) continue;")));
     QVERIFY(settings.contains(QStringLiteral("Virtual Outputs")));
-    QVERIFY(settings.contains(QStringLiteral("CREATE 5-AXIS OUTPUT")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("objectName: \"canonicalCreateVirtualOutputDialog\"")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("MATCH EXISTING")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("USE PRESET")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("CUSTOM")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("CONTINUOUS POVs")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("DISCRETE POVs")));
     QVERIFY(settings.contains(QStringLiteral("PREPARE VISIBILITY")));
     QVERIFY(settings.contains(QStringLiteral("already-open controller handle")));
     QVERIFY(readinessPanel.contains(QStringLiteral("RECONNECT CONTROLLER")));
@@ -596,7 +615,13 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     QVERIFY(flightDeckAdaptive.contains(QStringLiteral("Math.ceil(sampleCount / Math.max(1, Math.floor(plotWidth)))")));
     QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("simulatorSamples.slice(0)")));
     QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("simulatorDisplaySamples = simulatorSamples.slice(0)")));
-    QVERIFY(!flightDeckAdaptive.contains(QStringLiteral("interval: 16")));
+    // The live response graph has a fixed time horizon and refreshes at
+    // display cadence; it must not repeatedly rescale a growing sample list.
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("property double historyNewestElapsedMs")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("elapsedMs - timelineStartMs")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("interval: 33")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("root.responseLabSource === \"live\" && !root.historyPaused")));
+    QVERIFY(backend.contains(QStringLiteral("{u\"newestElapsedMs\"_qs, newestMs}")));
 }
 
 void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts()
@@ -636,6 +661,21 @@ void UiReleaseContractTests::deviceRigRuntimeRetainsDisconnectAndControlPlaneSaf
     QVERIFY(rigSource.contains(QStringLiteral("deactivateForRequiredLoss = disconnectBehavior")));
     QVERIFY(rigSource.contains(QStringLiteral("availability.mappingAllowed = mappingRequested")));
 
+    // Device Rig input is the authoritative source for the same bounded
+    // Adaptive Response snapshot consumed by Diagnostics and the Adaptive
+    // Response page.  Do not regress to publishing only the final output.
+    const qsizetype rigRuntimeStart = worker.indexOf(QStringLiteral("void MappingWorker::runDeviceRig"));
+    QVERIFY(rigRuntimeStart >= 0);
+    const QString rigRuntime = worker.mid(rigRuntimeStart);
+    QVERIFY(rigRuntime.contains(QStringLiteral("effectiveAdaptiveConfiguration")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveVelocity[static_cast<size_t>(axis)] = adaptive.velocity;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveAcceleration[static_cast<size_t>(axis)] = adaptive.acceleration;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveHorizonSeconds[static_cast<size_t>(axis)] = adaptive.activeHorizonSeconds;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveLead[static_cast<size_t>(axis)] = adaptive.lead;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveConfidence[static_cast<size_t>(axis)] = adaptive.confidence;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptivePredictedMapped[static_cast<size_t>(axis)] = mapped.predictedMappedOutput;")));
+    QVERIFY(rigRuntime.contains(QStringLiteral("m_runtime.adaptiveAppliedLead[static_cast<size_t>(axis)] = mapped.appliedLead;")));
+
     // Devices derives member use from the selected Profile's compiled routes,
     // not from Device Rig membership. Its independent user-facing states must
     // not collapse a connected-but-unused controller into "Disabled".
@@ -660,6 +700,9 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     const QString assistant = sourceFile(QStringLiteral("qml/ControllerReadinessPanel.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString flightDeckDevices = sourceFile(QStringLiteral("qml/FlightDeckDevices.qml"));
+    const QString virtualOutputCreator = sourceFile(QStringLiteral("qml/CreateVirtualOutputDialog.qml"));
+    const QString notifications = sourceFile(QStringLiteral("qml/GlobalNotificationHost.qml"));
+    const QString main = sourceFile(QStringLiteral("qml/Main.qml"));
     const QString flightDeckOverview = sourceFile(QStringLiteral("qml/FlightDeckOverview.qml"));
     const QString overview = sourceFile(QStringLiteral("qml/OverviewPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
@@ -695,7 +738,7 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(completeSetup.contains(QStringLiteral("ControllerManager::match(controller")));
     QVERIFY(completeSetup.contains(QStringLiteral("!match.ambiguous && match.recordId == targetId")));
     QVERIFY(completeSetup.contains(QStringLiteral(
-        "startExplicitNewControllerVerification(discovered->directInputId, discovered->name)")));
+        "startExplicitNewControllerVerification(discovered->directInputId, discovered->name")));
     QVERIFY(!completeSetup.contains(QStringLiteral("currentPhysicalCapabilities()")));
     QVERIFY(backend.contains(QStringLiteral("PhysicalDeviceAcquisitionFailed")));
     QVERIFY(backend.contains(QStringLiteral("RETRY ACQUISITION")));
@@ -753,7 +796,45 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
         QVERIFY(ui.contains(QStringLiteral("onOpened: setupAssistantPanel.beginNewSession()")));
     }
     QVERIFY(devices.contains(QStringLiteral("function showTransientActionFeedback")));
-    QVERIFY(devices.contains(QStringLiteral("actionFeedbackDismissTimer")));
+    QVERIFY(devices.contains(QStringLiteral("notificationCenter.enqueue")));
+    QVERIFY(!devices.contains(QStringLiteral("ThemedActionFeedback")));
+    QVERIFY(!devices.contains(QStringLiteral("deviceActionFeedback")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("notificationCenter.enqueue")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("flightDeckDeviceActionFeedback")));
+    QVERIFY(main.contains(QStringLiteral("GlobalNotificationHost")));
+    QVERIFY(!main.contains(QStringLiteral("id: globalNotifications\n        anchors.fill: parent")));
+    QVERIFY(notifications.contains(QStringLiteral("objectName: \"globalNotificationHost\"")));
+    QVERIFY(notifications.contains(QStringLiteral("visibleLimit: 3")));
+    QVERIFY(notifications.contains(QStringLiteral("dismissRequested")));
+    QVERIFY(notifications.contains(QStringLiteral("notificationDetailsDialog")));
+    QVERIFY(notifications.contains(QStringLiteral("copyTextToClipboard")));
+    // The global host is a bounded overlay column, so it cannot intercept
+    // clicks across an otherwise empty page. Flight Deck gets its own tight
+    // safe edge and themed modal/button primitives rather than Controls'
+    // white/default dialog presentation.
+    QVERIFY(notifications.contains(QStringLiteral("width: hostWidth")));
+    QVERIFY(notifications.contains(QStringLiteral("topSafeMargin: flightDeck ? 66 : 104")));
+    QVERIFY(notifications.contains(QStringLiteral("FlightDeckDialog")));
+    QVERIFY(notifications.contains(QStringLiteral("COPY DETAILS")));
+    QVERIFY(notifications.contains(QStringLiteral("✓ COPIED")));
+    QVERIFY(notifications.contains(QStringLiteral("notificationDelegate.hovered")));
+    QVERIFY(notifications.contains(QStringLiteral("root.dismiss(id)")));
+    // Every entry point delegates creation to one capability-complete modal.
+    // The mode labels, attach transaction and custom supported-axis list are
+    // observable contracts, not page-local variations.
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("MATCH EXISTING")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("USE PRESET")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("CUSTOM")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("Axis 7")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("Axis 8")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("CONTINUOUS POVs")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("DISCRETE POVs")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("ADD TO ")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("createVirtualOutputLayoutResult")));
+    QVERIFY(devices.contains(QStringLiteral("CreateVirtualOutputDialog")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("CreateVirtualOutputDialog")));
+    QVERIFY(!devices.contains(QStringLiteral("outputCreateName")));
+    QVERIFY(!flightDeckDevices.contains(QStringLiteral("outputCreateName")));
     QVERIFY(devices.contains(QStringLiteral("contentHeight: contentLayout ? contentLayout.measuredHeight + 20 : 0")));
     QVERIFY(devices.contains(QStringLiteral("rigDetailsActionsDismissArea")));
     QVERIFY(devices.contains(QStringLiteral("function reposition()")));
@@ -818,10 +899,12 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(overview.contains(QStringLiteral("backend.setupTruthSnapshot")));
     QVERIFY(standard.contains(QStringLiteral("showTitle: false")));
     QVERIFY(legacy.contains(QStringLiteral("showTitle: false")));
-    QVERIFY(devices.contains(QStringLiteral("MATCH PHYSICAL DEVICE")));
-    QVERIFY(devices.contains(QStringLiteral("COPY VJOY OUTPUT")));
-    QVERIFY(devices.contains(QStringLiteral("CREATE OUTPUT")));
-    QVERIFY(devices.contains(QStringLiteral("Copy ")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("MATCH EXISTING")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("USE PRESET")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("CUSTOM")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("SAVE OUTPUT")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("CreateVirtualOutputDialog")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("openCreateVirtualOutput")));
     QVERIFY(devices.contains(QStringLiteral("firstDeviceInputsPanel")));
     QVERIFY(devices.contains(QStringLiteral("PHYSICAL INPUTS")));
     QVERIFY(devices.contains(QStringLiteral("virtualInputsPanel")));
@@ -830,12 +913,11 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(devices.contains(QStringLiteral("openStandaloneOutputCreator")));
     QVERIFY(devices.contains(QStringLiteral("openStandaloneCreateOutputFromEmptyButton")));
     QVERIFY(devices.contains(QStringLiteral("returnToOutputInventory")));
-    QVERIFY(devices.contains(QStringLiteral("BUTTON CAPACITY")));
-    QVERIFY(devices.contains(QStringLiteral("customButtonCapacityStepper")));
-    QVERIFY(devices.contains(QStringLiteral("customContinuousPovsStepper")));
-    QVERIFY(devices.contains(QStringLiteral("customDiscretePovsStepper")));
+    // Capability controls are now deliberately owned by the canonical
+    // CreateVirtualOutputDialog, rather than duplicated in this page-local
+    // legacy creator.
     QVERIFY(devices.contains(QStringLiteral("createRigWithInputs")));
-    QVERIFY(devices.contains(QStringLiteral("deviceActionFeedback")));
+    QVERIFY(devices.contains(QStringLiteral("property var notificationCenter")));
     QVERIFY(devices.contains(QStringLiteral("function focusIssueTarget(target)")));
     QVERIFY(devices.contains(QStringLiteral("REFRESH DEVICES")));
     QVERIFY(devices.contains(QStringLiteral("verificationRequested(string rigId, string deviceId, string outputId)")));
@@ -961,13 +1043,23 @@ void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
     QVERIFY(backend.contains(QStringLiteral("QVariantMap AppBackend::resolveAxisMappingConflict")));
     QVERIFY(backend.contains(QStringLiteral("SignalFlowMixerMode::HighestMagnitude")));
     QVERIFY(backend.contains(QStringLiteral("commitSignalFlowCommand")));
-    for (const QString &editor : editors) {
+    for (int editorIndex = 0; editorIndex < 2; ++editorIndex) {
+        const QString &editor = editors.at(editorIndex);
         QVERIFY(editor.contains(QStringLiteral("resolveAxisMappingConflict")));
         QVERIFY(editor.contains(QStringLiteral("REPLACE")));
         QVERIFY(editor.contains(QStringLiteral("AVERAGE")));
         QVERIFY(editor.contains(QStringLiteral("HIGHEST")));
         QVERIFY(!editor.contains(QStringLiteral("row-order output policy")));
     }
+
+    const QString &flightDeckAxes = editors.at(2);
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("axisMappingCollision")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("replaceMappingConflict")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("mixAxisMapping")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("REPLACE")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("MIX")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("AVERAGE")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("LARGER VALUE")));
 }
 
 void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema29()
@@ -1023,11 +1115,15 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     const QString flightDeck = sourceFile(QStringLiteral("qml/FlightDeck.qml"));
     const QString headerPill = sourceFile(QStringLiteral("qml/FlightDeckHeaderPill.qml"));
     const QString selector = sourceFile(QStringLiteral("qml/FlightDeckSelectedDeviceSelector.qml"));
+    const QString profileSelector = sourceFile(QStringLiteral("qml/FlightDeckSelectedProfileSelector.qml"));
     const QString adaptive = sourceFile(QStringLiteral("qml/FlightDeckAdaptiveResponse.qml"));
     const QString profiles = sourceFile(QStringLiteral("qml/FlightDeckProfiles.qml"));
+    const QString legacyProfiles = sourceFile(QStringLiteral("qml/ProfileLibrary.qml"));
     const QString curve = sourceFile(QStringLiteral("qml/CurveEditor.qml"));
     const QString flightDeckCurve = sourceFile(QStringLiteral("qml/FlightDeckCurveEditor.qml"));
     const QString flightDeckTheme = sourceFile(QStringLiteral("qml/FlightDeckTheme.qml"));
+    const QString flightDeckSettings = sourceFile(QStringLiteral("qml/FlightDeckSettings.qml"));
+    const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
     const QString standard = sourceFile(QStringLiteral("qml/Standard.qml"));
     const QString backendHeader = sourceFile(QStringLiteral("src/app_backend.h"));
 
@@ -1049,8 +1145,19 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(selector.contains(QStringLiteral("SELECTED DEVICE")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.selectedDevices")));
     QVERIFY(selector.contains(QStringLiteral("backendObject.setSelectedDeviceContext")));
+    QVERIFY(flightDeck.contains(QStringLiteral("FlightDeckSelectedProfileSelector")));
+    QVERIFY(profileSelector.contains(QStringLiteral("SELECTED PROFILE")));
+    QVERIFY(profileSelector.contains(QStringLiteral("backendObject.selectProfileForEditing")));
+    QVERIFY(profileSelector.contains(QStringLiteral("backendObject.activateProfileResult")));
+    QVERIFY(profileSelector.contains(QStringLiteral("text: \"ACTIVATE\"")));
+    QVERIFY(profileSelector.contains(QStringLiteral("profileEntry.selected && !profileEntry.active")));
+    QVERIFY(profileSelector.contains(QStringLiteral("ACTIVE AT RUNTIME")));
+    QVERIFY(profileSelector.contains(QStringLiteral("VIEWING FOR EDITING")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QString selectedDeviceRigId")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool setSelectedDeviceContext")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QString selectedProfileId")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool selectProfileForEditing")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QString applicationVersion")));
     QVERIFY(adaptive.contains(QStringLiteral("BASIC RESPONSE · CONFIGURED LIMITS")));
     QVERIFY(adaptive.contains(QStringLiteral("root.effective().maximumHorizonMs")));
     QVERIFY(adaptive.contains(QStringLiteral("VISIBLE TRACES")));
@@ -1088,13 +1195,30 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(profiles.contains(QStringLiteral("flightDeckCategoryActivationResolver")));
     QVERIFY(profiles.contains(QStringLiteral("flightDeckProfileAutomaticPolicySelector")));
     QVERIFY(profiles.contains(QStringLiteral("reorderCategoryAutomaticProfiles")));
+    QVERIFY(profiles.contains(QStringLiteral("onCurrentIndexChanged: newProfileDialog.categoryId = String(currentValue || \"\")")));
+    QVERIFY(profiles.contains(QStringLiteral("backend.createProfileInCategory(newProfileName.text,")));
+    QVERIFY(profiles.contains(QStringLiteral("newProfileCategory.currentValue, copySource)")));
+    QVERIFY(profiles.contains(QStringLiteral("CREATE BLANK PROFILE")));
+    QVERIFY(profiles.contains(QStringLiteral("COPY EXISTING PROFILE")));
+    QVERIFY(legacyProfiles.contains(QStringLiteral("CREATE BLANK PROFILE")));
+    QVERIFY(legacyProfiles.contains(QStringLiteral("COPY EXISTING PROFILE")));
+    QVERIFY(legacyProfiles.contains(QStringLiteral("createProfileDialog.creationMode === \"copy\"")));
+    QVERIFY(profiles.contains(QStringLiteral("DragHandler")));
+    QVERIFY(profiles.contains(QStringLiteral("DropArea")));
+    QVERIFY(profiles.contains(QStringLiteral("+ NEW CATEGORY")));
+    QVERIFY(profiles.contains(QStringLiteral("createProfileCategoryForDroppedProfile")));
+    QVERIFY(profiles.contains(QStringLiteral("sequence: \"Delete\"")));
+    QVERIFY(profiles.contains(QStringLiteral("Delete category and profiles?")));
+    QVERIFY(profiles.contains(QStringLiteral("deleteCategoryDialog.profileNames")));
     QVERIFY(profiles.contains(QStringLiteral("backend.activateProfileResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(QVariantMap activationResolverState")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE QVariantMap activateProfileResult")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE bool resumeAutomaticActivation")));
+    QVERIFY(backendHeader.contains(QStringLiteral("Q_INVOKABLE QString createNewProfileCategoryForProfile")));
+    QVERIFY(backendHeader.contains(QStringLiteral("createProfileCategoryForDroppedProfile")));
     QVERIFY(standard.contains(QStringLiteral("root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("objectName: \"flightDeckCurveEditor\"")));
-    QVERIFY(flightDeckCurve.contains(QStringLiteral("ACTIVE CURVE CONTEXT")));
+    QVERIFY(flightDeckCurve.contains(QStringLiteral("SELECTED CURVE CONTEXT")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("RESPONSE SURFACE")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("OVERLAY & WORKSPACE TOOLS")));
     QVERIFY(flightDeckCurve.contains(QStringLiteral("backendObject.setCurveFamily")));
@@ -1111,6 +1235,46 @@ void UiReleaseContractTests::flightDeckInformationArchitectureContract()
     QVERIFY(curve.contains(QStringLiteral("PHYSICAL INPUT  ·  %")));
     QVERIFY(curve.contains(QStringLiteral("MAPPED OUTPUT  ·  %")));
     QVERIFY(curve.contains(QStringLiteral("CURVE ANALYSIS")));
+    QVERIFY(flightDeckSettings.contains(QStringLiteral("flightDeckSettingsApplicationVersion")));
+    QVERIFY(flightDeckSettings.contains(QStringLiteral("backend.applicationVersion")));
+    QVERIFY(settings.contains(QStringLiteral("backend.applicationVersion")));
+    QVERIFY(!settings.contains(QStringLiteral("Qt.application.version")));
+}
+
+void UiReleaseContractTests::multiControllerVerificationAndSelectionStayScoped()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
+    const QString rig = sourceFile(QStringLiteral("src/device_rig.cpp"));
+    const QString devices = sourceFile(QStringLiteral("qml/FlightDeckDevices.qml"));
+
+    const qsizetype selectionStart = backend.indexOf(QStringLiteral("bool AppBackend::setEditingDeviceContext("));
+    const qsizetype selectionEnd = backend.indexOf(QStringLiteral("bool AppBackend::focusIssueTarget("), selectionStart);
+    QVERIFY(selectionStart >= 0 && selectionEnd > selectionStart);
+    const QString selection = backend.mid(selectionStart, selectionEnd - selectionStart);
+    QVERIFY(!selection.contains(QStringLiteral("persistAndApply()")));
+    QVERIFY(!selection.contains(QStringLiteral("m_worker.updateConfiguration")));
+    QVERIFY(!selection.contains(QStringLiteral("scheduleActivationResolution")));
+    QVERIFY(selection.contains(QStringLiteral("rebuildSelectedAxisCurve()")));
+
+    QVERIFY(header.contains(QStringLiteral("Q_INVOKABLE QVariantMap verifyController")));
+    QVERIFY(backend.contains(QStringLiteral("startExplicitNewControllerVerification(discovered->directInputId, discovered->name, targetId)")));
+    const qsizetype exactVerificationStart = backend.indexOf(QStringLiteral("if (!setupSessionBound && !targetId.isEmpty())"));
+    const qsizetype exactVerificationEnd = backend.indexOf(QStringLiteral("m_setupDirectInputProof.name = probe.name;"), exactVerificationStart);
+    QVERIFY(exactVerificationStart >= 0 && exactVerificationEnd > exactVerificationStart);
+    const QString exactVerification = backend.mid(exactVerificationStart,
+                                                  exactVerificationEnd - exactVerificationStart);
+    QVERIFY(exactVerification.contains(QStringLiteral("commitExactControllerVerification(targetId")));
+    QVERIFY(!exactVerification.contains(QStringLiteral("startVerification(")));
+    QVERIFY(!exactVerification.contains(QStringLiteral("applyControllerReadiness")));
+    QVERIFY(backend.contains(QStringLiteral("m_setupMemberAcquisitionEvidence")));
+    QVERIFY(backend.contains(QStringLiteral("setupMemberDirectInputIds")));
+    QVERIFY(backend.contains(QStringLiteral("Acquisition diagnostic:")));
+    QVERIFY(rig.contains(QStringLiteral("else if (result.complete) result.health = DeviceRigHealth::Ready")));
+    QVERIFY(devices.contains(QStringLiteral("VERIFY CONTROLLER")));
+    QVERIFY(devices.contains(QStringLiteral("IDENTIFY CONTROLLER")));
+    QVERIFY(devices.contains(QStringLiteral("backend.verifyController")));
+    QVERIFY(devices.contains(QStringLiteral("Optional · verification available")));
 }
 
 void UiReleaseContractTests::mapperPostBuildDeploymentIncludesQmlModules()

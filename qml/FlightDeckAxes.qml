@@ -20,6 +20,7 @@ Flickable {
     property int conflictAxis: -1
     property string conflictTarget: ""
     property string conflictNotice: ""
+    property var conflictOwner: ({})
     signal navigateToPage(int page)
     signal requestAxisLearning(string target)
     signal requestQuickMap()
@@ -30,8 +31,29 @@ Flickable {
     // Repeater model or reevaluating every card's editor bindings.
     readonly property var axisItems: usingPresentationOverride ? axisPresentationOverride : backend.axisConfiguration
     readonly property var axisTelemetryItems: usingPresentationOverride ? axisPresentationOverride : backend.axisTelemetry
-    readonly property var outputChoices: backend.virtualAxisChoices
-    readonly property string inputDeviceName: inputDeviceNameOverride.length > 0 ? inputDeviceNameOverride : (backend.deviceName || "Selected controller")
+    // The canonical output vocabulary remains available at page scope for
+    // summaries and assistive tooling. Per-card selectors below still narrow
+    // their choices to the selected source and expose collision ownership.
+    readonly property var outputChoices: backend.virtualAxisChoices || []
+    readonly property string inputDeviceName: inputDeviceNameOverride.length > 0 ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "All Devices")
+    // Do not borrow backend.physicalConnected here: that reports the active
+    // mapper source.  Axes is an editor and must describe the top-bar
+    // Selected Device, including a saved controller that is currently offline.
+    readonly property string selectedInputDeviceId: selectedDeviceId()
+    readonly property bool selectedInputDeviceConnected: {
+        const devices = backend.selectedDevices || []
+        for (let index = 0; index < devices.length; ++index) {
+            const device = devices[index] || ({})
+            if (String(device.id || "") === selectedInputDeviceId)
+                return Boolean(device.connected)
+        }
+        return false
+    }
+    readonly property var mixerModeChoices: [
+        { key: "sum-clamped", label: "Sum / Clamp" },
+        { key: "highest-magnitude", label: "Larger Value" },
+        { key: "average", label: "Average" }
+    ]
     readonly property bool hasVisibleAxes: visibleAxisCount() > 0
 
     contentWidth: width
@@ -62,6 +84,15 @@ Flickable {
         return count;
     }
 
+    function selectedDeviceId() {
+        const devices = backend.selectedDevices || []
+        for (let index = 0; index < devices.length; ++index) {
+            const device = devices[index] || ({})
+            if (Boolean(device.selected)) return String(device.id || "")
+        }
+        return ""
+    }
+
     function axisForIndex(index) {
         for (let candidate = 0; candidate < axisItems.length; ++candidate) {
             if (Number(axisItems[candidate].index) === Number(index))
@@ -82,8 +113,22 @@ Flickable {
     }
 
     function sourceLabel(axis) {
-        const reportedDevice = String((axis || {}).deviceName || "");
+        const reportedDevice = String((axis || {}).sourceDevice || "");
         return (reportedDevice.length > 0 ? reportedDevice : inputDeviceName) + " · " + String((axis || {}).detail || (axis || {}).hardwareLabel || "Physical axis");
+    }
+
+    function outputChoiceIndex(choices, target) {
+        for (let index = 0; index < choices.length; ++index) {
+            if (String(choices[index].target || "") === String(target || "Disabled")) return index;
+        }
+        return 0;
+    }
+
+    function mixerModeIndex(key) {
+        for (let index = 0; index < mixerModeChoices.length; ++index) {
+            if (String(mixerModeChoices[index].key) === String(key)) return index;
+        }
+        return 0;
     }
 
     function destinationLabel(axis) {
@@ -102,17 +147,18 @@ Flickable {
     // depend on the high-frequency axis snapshot used by the live meters.
     function adaptiveStateFor(axisIndex) {
         const revision = configurationRevision;
-        return backend.adaptiveResponseContextState("profile", backend.activeProfileId, axisIndex);
+        return backend.adaptiveResponseContextState("device", "", axisIndex);
     }
 
     function adaptiveLabel(axisIndex) {
         const state = adaptiveStateFor(axisIndex);
         if (!state || !state.effective || !state.effective.enabled)
             return "Adaptive off";
+        const device = state.deviceLayer || ({});
         const profile = state.profileLayer || ({});
         const category = state.categoryLayer || ({});
         const global = state.global || ({});
-        const source = String(profile.source || category.source || global.source || "Enabled");
+        const source = String(device.source || profile.source || category.source || global.source || "Enabled");
         return "Adaptive · " + source;
     }
 
@@ -139,9 +185,17 @@ Flickable {
             return true;
         }
         if (!explicitOverride) {
-            conflictAxis = axisIndex;
-            conflictTarget = target;
-            routeConflictDialog.open();
+            const collision = backend.axisMappingCollision(axisIndex, target);
+            if (collision.exists) {
+                conflictAxis = axisIndex;
+                conflictTarget = target;
+                conflictOwner = collision;
+                conflictNotice = "";
+                routeConflictDialog.open();
+            } else {
+                routeNoticeAxis = axisIndex;
+                routeNotice = "The requested route could not be applied. Review the selected device and Virtual Output.";
+            }
         } else {
             routeNoticeAxis = axisIndex;
             routeNotice = "The requested route is not exposed by the current vJoy device. Open setup to review output availability.";
@@ -149,19 +203,30 @@ Flickable {
         return false;
     }
 
-    function resolveMappingConflict(decision) {
-        const result = backend.resolveAxisMappingConflict(conflictAxis, conflictTarget, decision,
-                                                          backend.signalFlowRevision);
-        if (result.success) {
+    function replaceMappingConflict() {
+        if (backend.setMapping(conflictAxis, conflictTarget, true)) {
             conflictNotice = "";
             routeNoticeAxis = -1;
             routeNotice = "";
             routeConflictDialog.close();
             return true;
         }
-        conflictNotice = String(result.message || "The route decision could not be applied.");
+        conflictNotice = "The replacement could not be applied. Review the selected device and output.";
         routeNoticeAxis = conflictAxis;
         routeNotice = conflictNotice;
+        return false;
+    }
+
+    function applyMixer(mode) {
+        const result = backend.mixAxisMapping(conflictAxis, conflictTarget, mode);
+        if (result.success) {
+            conflictNotice = "";
+            routeNoticeAxis = -1;
+            routeNotice = "";
+            mixerModeDialog.close();
+            return true;
+        }
+        conflictNotice = String(result.message || "The mixer could not be created.");
         return false;
     }
 
@@ -334,6 +399,7 @@ Flickable {
         readonly property int axisIndex: Number(axis.index)
         readonly property var telemetry: root.telemetryForIndex(axisIndex)
         readonly property bool expanded: root.expandedAxisIndex === axisIndex
+        readonly property var sharedOutput: backend.axisSharedOutputState(axisIndex)
         readonly property var adaptiveState: root.adaptiveStateFor(axisIndex)
         readonly property bool adaptiveEnabled: Boolean(adaptiveState.effective && adaptiveState.effective.enabled)
         readonly property var curveState: backend.curveEditorState
@@ -380,6 +446,11 @@ Flickable {
                 SummaryChip {
                     label: axis.target === "Disabled" ? "OUTPUT DISABLED" : (axis.fixed ? "FIXED INPUT" : "OUTPUT ACTIVE")
                     tone: axis.target === "Disabled" ? "attention" : (axis.fixed ? "attention" : "healthy")
+                }
+                SummaryChip {
+                    visible: Boolean(card.sharedOutput.mixed)
+                    label: "MIXED · " + Number((card.sharedOutput.participants || []).length) + " SOURCES"
+                    tone: "informational"
                 }
                 DeckButton {
                     text: card.expanded ? "CLOSE" : "CONFIGURE"
@@ -437,8 +508,9 @@ Flickable {
                     tokens: deck
                     caption: axis.unipolar ? "NORMALIZED INPUT" : "NORMALIZED INPUT"
                     value: Number(card.telemetry.calibrated)
-                    valid: true
+                    valid: Boolean(axis.liveAvailable)
                     unipolar: Boolean(axis.unipolar)
+                    unavailableText: Boolean(axis.sourceConnected) ? "Waiting for input" : "Disconnected"
                     Layout.fillWidth: true
                 }
                 FlightDeckAxisValueMeter {
@@ -515,18 +587,31 @@ Flickable {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     Text {
-                                        text: "INPUT"
+                                        text: "SOURCE DEVICE"
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
                                         font.pixelSize: 8
                                         font.bold: true
                                     }
                                     Text {
-                                        text: root.sourceLabel(axis)
+                                        text: String(axis.sourceDevice || root.inputDeviceName)
                                         color: deck.textPrimary
                                         font.pixelSize: 11
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
+                                    }
+                                    Text {
+                                        text: "SOURCE AXIS"
+                                        color: deck.textSecondary
+                                        font.family: deck.telemetryFont
+                                        font.pixelSize: 9
+                                    }
+                                    Text {
+                                        text: String(axis.hardwareLabel || axis.detail || "Axis " + (card.axisIndex + 1))
+                                        color: deck.textPrimary
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
                                     }
                                 }
                                 Text {
@@ -537,6 +622,7 @@ Flickable {
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true
+                                    readonly property var choices: backend.virtualAxisChoiceDetailsForSource(card.axisIndex)
                                     Text {
                                         text: "OUTPUT · vJoy " + backend.vjoyDeviceId
                                         color: deck.textMuted
@@ -547,11 +633,40 @@ Flickable {
                                     DeckCombo {
                                         id: mappingSelector
                                         objectName: "flightDeckMappingSelector_" + card.axisIndex
-                                        model: root.outputChoices
-                                        currentIndex: Math.max(0, root.outputChoices.indexOf(axis.target))
+                                        model: parent.choices
+                                        textRole: "label"
+                                        currentIndex: root.outputChoiceIndex(parent.choices, axis.target)
                                         Layout.fillWidth: true
                                         onActivated: function (index) {
-                                            root.requestMapping(card.axisIndex, mappingSelector.textAt(index), false);
+                                            root.requestMapping(card.axisIndex, String(parent.choices[index].target), false);
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                visible: Boolean(card.sharedOutput.mixed)
+                                Layout.fillWidth: true
+                                implicitHeight: sharedContent.implicitHeight + deck.space16
+                                radius: deck.radiusControl
+                                color: deck.elevatedSurface
+                                border.color: deck.accentMuted
+                                ColumnLayout {
+                                    id: sharedContent
+                                    anchors.fill: parent
+                                    anchors.margins: deck.space8
+                                    spacing: 3
+                                    Text { text: "MIXED OUTPUT"; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                    Text { text: "With: " + String(card.sharedOutput.with || "another source"); color: deck.textPrimary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text { text: "MIXER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                        DeckCombo {
+                                            id: sharedMixerSelector
+                                            Layout.fillWidth: true
+                                            model: root.mixerModeChoices
+                                            textRole: "label"
+                                            currentIndex: root.mixerModeIndex(String(card.sharedOutput.modeKey || "average"))
+                                            onActivated: function(index) { backend.setSharedAxisMixerMode(axis.target, String(root.mixerModeChoices[index].key)); }
                                         }
                                     }
                                 }
@@ -899,7 +1014,7 @@ Flickable {
                                 }
                             }
                             Text {
-                                text: "Technical identity: " + (axis.key || axis.hardwareLabel || "Unknown") + " · " + (axis.rangeModeLabel || "Configured domain")
+                                text: "Technical identity: " + (axis.nativeIdentity || axis.key || axis.hardwareLabel || "Unknown") + " · " + (axis.rangeModeLabel || "Configured domain")
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
                                 font.pixelSize: 9
@@ -997,11 +1112,17 @@ Flickable {
                         label: backend.vjoyReady ? "VJOY READY" : "VJOY ATTENTION"
                         tone: backend.vjoyReady ? "healthy" : "attention"
                     }
+                    SummaryChip {
+                        visible: root.selectedInputDeviceId.length > 0
+                        label: root.selectedInputDeviceConnected ? "SELECTED DEVICE CONNECTED"
+                            : "SELECTED DEVICE DISCONNECTED"
+                        tone: root.selectedInputDeviceConnected ? "healthy" : "attention"
+                    }
                     DeckButton {
                         objectName: "flightDeckAxesQuickMap"
                         text: "QUICK MAP"
                         subdued: true
-                        enabled: backend.physicalConnected && backend.quickAssignAxisTargets.length > 0
+                        enabled: backend.selectedDeviceIsSpecific && backend.quickAssignAxisTargets.length > 0
                         onClicked: root.requestQuickMap()
                     }
                 }
@@ -1030,7 +1151,7 @@ Flickable {
                         font.bold: true
                     }
                     Text {
-                        text: backend.effectiveProfileDisplayName || backend.activeProfileName
+                        text: backend.selectedProfileDisplayName || backend.selectedProfileName
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
                         font.pixelSize: 10
@@ -1039,8 +1160,8 @@ Flickable {
                     }
                 }
                 Text {
-                    visible: backend.connectedControllerCount > 1 && !usingPresentationOverride
-                    text: "This baseline maps the selected controller's axes. Other connected controllers remain available in Devices & setup; select one there to inspect its authoritative axes."
+                    visible: !backend.selectedDeviceIsSpecific && !usingPresentationOverride
+                    text: "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices is an overview only and never chooses a controller for you."
                     color: deck.textMuted
                     font.pixelSize: 9
                     wrapMode: Text.WordWrap
@@ -1069,20 +1190,25 @@ Flickable {
                 anchors.margins: parent.contentPadding
                 spacing: deck.space8
                 Text {
-                    text: "NO PHYSICAL AXES AVAILABLE"
+                    text: backend.selectedDeviceIsSpecific ? "NO PHYSICAL AXES AVAILABLE" : "SELECT A SPECIFIC CONTROLLER"
                     color: deck.textPrimary
                     font.family: deck.displayFont
                     font.pixelSize: 15
                     font.bold: true
                 }
                 Text {
-                    text: "Connect or select a verified controller to inspect its axis routing. Existing mappings are not changed while the controller is unavailable."
+                    text: backend.selectedDeviceIsSpecific
+                        ? root.selectedInputDeviceConnected
+                            ? "The selected saved controller has no axis descriptors. Existing mappings are not changed while it is unavailable."
+                            : root.inputDeviceName + " is disconnected. Its saved axis routes remain available for editing."
+                        : "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices only shows overview state."
                     color: deck.textSecondary
                     font.pixelSize: 10
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
                 DeckButton {
+                    visible: backend.selectedDeviceIsSpecific
                     text: "OPEN DEVICES & SETUP"
                     Layout.preferredWidth: 172
                     onClicked: root.navigateToPage(2)
@@ -1103,21 +1229,22 @@ Flickable {
         id: routeConflictDialog
         objectName: "flightDeckAxisRouteConflict"
         tokens: deck
-        heading: "Route needs a decision"
+        heading: "Virtual output is already in use"
         tone: "attention"
         preferredWidth: 460
         contentItem: ColumnLayout {
             width: routeConflictDialog.availableWidth
             spacing: deck.space12
             Text {
-                text: "This vJoy axis already has a source. Replace it, or choose an explicit visible mixer."
+                text: "Existing source:\n    " + String(root.conflictOwner.ownerLabel || "Configured source")
+                    + "\n\nNew source:\n    " + root.sourceLabel(root.axisForIndex(root.conflictAxis))
                 color: deck.textPrimary
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
             Text {
-                text: "Signal Flow never creates a hidden analog merge. The chosen mixer remains visible and inspectable on the route."
+                text: "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
                 color: deck.textMuted
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
@@ -1145,18 +1272,35 @@ Flickable {
                 DeckButton {
                     text: "REPLACE"
                     Layout.preferredWidth: 88
-                    onClicked: root.resolveMappingConflict("replace")
+                    onClicked: root.replaceMappingConflict()
                 }
                 DeckButton {
-                    text: "AVERAGE"
+                    text: "MIX"
                     Layout.preferredWidth: 88
-                    onClicked: root.resolveMappingConflict("average")
+                    onClicked: { routeConflictDialog.close(); mixerModeDialog.open(); }
                 }
-                DeckButton {
-                    text: "HIGHEST"
-                    Layout.preferredWidth: 88
-                    onClicked: root.resolveMappingConflict("highest-magnitude")
-                }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: mixerModeDialog
+        objectName: "flightDeckAxisMixerMode"
+        tokens: deck
+        heading: "Choose mixer type"
+        tone: "informational"
+        preferredWidth: 430
+        contentItem: ColumnLayout {
+            width: mixerModeDialog.availableWidth
+            spacing: deck.space12
+            Text { Layout.fillWidth: true; text: "Mix " + String(root.conflictTarget) + " from the participating sources using the canonical Graphical Editor mixer."; color: deck.textPrimary; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            RowLayout {
+                Layout.fillWidth: true
+                DeckButton { text: "CANCEL"; subdued: true; onClicked: mixerModeDialog.close() }
+                Item { Layout.fillWidth: true }
+                DeckButton { text: "SUM / CLAMP"; onClicked: root.applyMixer("sum-clamped") }
+                DeckButton { text: "LARGER VALUE"; onClicked: root.applyMixer("highest-magnitude") }
+                DeckButton { text: "AVERAGE"; onClicked: root.applyMixer("average") }
             }
         }
     }

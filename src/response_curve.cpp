@@ -960,7 +960,8 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
     }
     for (const SignalFlowMixer &mixer : configuration.signalFlow.mixers) {
         if (!mixer.enabled || mixer.profileId != profile.id
-            || mixer.controllerRecordId != controllerRecordId
+            || (!mixer.controllerRecordId.isEmpty() && mixer.controllerRecordId != controllerRecordId)
+            || mixer.destinationKind != SignalFlowPortKind::Axis
             || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount) continue;
         runtime->signalFlowAxisMixers[static_cast<size_t>(mixer.destinationAxis)] = mixer.mode;
     }
